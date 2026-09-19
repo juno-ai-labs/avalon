@@ -215,10 +215,10 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
       <Dialog.Content className="rally-search-modal" aria-describedby={undefined}
         onOpenAutoFocus={(event) => { event.preventDefault(); input.current?.focus(); input.current?.select(); }}
         onEscapeKeyDown={(event) => { if (isComposingKeyEvent(event)) event.preventDefault(); }}>
-        <Dialog.Title className="sr-only">Search workspace</Dialog.Title>
+        <Dialog.Title className="sr-only">Search organization</Dialog.Title>
         <div className="rally-search-input-row">
           <Search aria-hidden="true" size={16} />
-          <input ref={input} aria-label="Search workspace" role="combobox" aria-autocomplete="list"
+          <input ref={input} aria-label="Search organization" role="combobox" aria-autocomplete="list"
             aria-expanded={results.length > 0} aria-controls={listId}
             aria-activedescendant={results[active] ? `${listId}-${active}` : undefined}
             placeholder="Search" value={query} autoComplete="off" spellCheck={false}

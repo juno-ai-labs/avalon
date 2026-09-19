@@ -164,7 +164,7 @@ export function SubstreamLaunchSurface({
    */
   const pendingChild: WorkstreamDetail = {
     ...parent,
-    title: 'New substream',
+    title: 'New breakout',
     scope: 'personal',
     // Nothing is running in a substream that does not exist, and the composer
     // reads this to decide whether it is steering a run or starting one.
@@ -287,14 +287,14 @@ export function SubstreamLaunchSurface({
     </div>
 
     <section aria-labelledby="new-substream-heading" className="composer-dock launch-dock">
-      <h2 className="sr-only" id="new-substream-heading">Start a new substream</h2>
+      <h2 className="sr-only" id="new-substream-heading">Start a new breakout</h2>
       <div className="launch-modifiers">
         <div className="substream-launch-banner">
           <span className="substream-launch-label">
             <IconCornerDownRight aria-hidden="true" size={20} stroke={1.5} />
             <span>{draft.throughTurnId
-              ? 'New substream from this message'
-              : 'New substream'}</span>
+              ? 'New breakout from this message'
+              : 'New breakout'}</span>
           </span>
           <span className="substream-launch-note">
             Private to you until you add somebody. Rally brings the conversation so far with it.
@@ -307,7 +307,7 @@ export function SubstreamLaunchSurface({
               said no. Creation is not cancellable once it is claimed. */}
           <IconButton
             disabled={launching !== null}
-            label="Cancel new substream"
+            label="Cancel new breakout"
             onClick={onCancel}
           ><X size={15} /></IconButton>
         </div>
@@ -319,7 +319,7 @@ export function SubstreamLaunchSurface({
           autoFocus
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? error ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
-          footerHint={sendBlocked ? 'Starting a substream is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
+          footerHint={sendBlocked ? 'Starting a breakout is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
           members={members}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
@@ -328,10 +328,10 @@ export function SubstreamLaunchSurface({
           onRetryAttachment={attachmentDraft.retryAttachment}
           onSend={send}
           onStop={async () => undefined}
-          placeholder="What should this substream work on?"
+          placeholder="What should this breakout work on?"
           sendBlocked={sendBlocked}
           sending={launching !== null}
-          submitLabel="Create substream"
+          submitLabel="Create breakout"
           substreamId={PENDING_SUBSTREAM_DRAFT_ID}
           uploading={attachmentDraft.uploading}
           workspaceId={workspaceId}

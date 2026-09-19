@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('renderer semantic telemetry helpers', () => {
-  it('keeps work-stream opening lineage and socket generations in distinct cache keys', () => {
+  it('keeps channel opening lineage and socket generations in distinct cache keys', () => {
     const workstreamId = '00000000-0000-4000-8000-000000000200';
     expect(workstreamFeedSourceQueryKey(workstreamId))
       .toEqual(['workstream-feed-source', workstreamId]);

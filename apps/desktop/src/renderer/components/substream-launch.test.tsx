@@ -112,7 +112,7 @@ function renderSurface(overrides: Partial<SubstreamLaunchProps> = {}): {
 }
 
 const composer = (): HTMLElement =>
-  screen.getByRole('textbox', { name: 'What should this substream work on?' });
+  screen.getByRole('textbox', { name: 'What should this breakout work on?' });
 
 /** Open the composer's model pill, the way Radix's trigger expects to be opened. */
 async function openModelMenu(): Promise<void> {
@@ -120,7 +120,7 @@ async function openModelMenu(): Promise<void> {
   fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
 }
 
-describe('substream launch surface', () => {
+describe('breakout launch surface', () => {
   beforeEach(() => {
     clearAllDrafts();
     vi.clearAllMocks();
@@ -133,7 +133,7 @@ describe('substream launch surface', () => {
     const branch = screen.getByRole('region', { name: 'Branching from' });
     expect(branch.textContent).toContain('Main turn 3');
     expect(branch.textContent).toContain('Main turn 4');
-    expect(screen.getByText('New substream from this message')).toBeInTheDocument();
+    expect(screen.getByText('New breakout from this message')).toBeInTheDocument();
 
     fireEvent.change(composer(), { target: { value: 'Compare it with last release' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
@@ -172,12 +172,12 @@ describe('substream launch surface', () => {
   it('says only what it is when there is no branch point to show', () => {
     renderSurface({ draft: { throughTurnId: null, provenance: [] } });
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
-    expect(screen.getByText('New substream')).toBeInTheDocument();
+    expect(screen.getByText('New breakout')).toBeInTheDocument();
   });
 
   it('carries the parent\'s connecting card and holds creation while the parent is a seed', () => {
     const { onCreate } = renderSurface({
-      connecting: <ConnectingCard detail="Starting a substream is available once Rally connects" name="Remembered" state="connecting" subject="work stream" />,
+      connecting: <ConnectingCard detail="Starting a breakout is available once Rally connects" name="Remembered" state="connecting" subject="channel" />,
       sendBlocked: true,
     });
 
@@ -186,9 +186,9 @@ describe('substream launch surface', () => {
     fireEvent.keyDown(composer(), { key: 'Enter' });
     expect(onCreate).not.toHaveBeenCalled();
     expect(composer()).toHaveValue('Branch from a seed');
-    expect(screen.getByRole('button', { name: /Create substream/u })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Create breakout/u })).toBeDisabled();
     // Once on the card, once as the launch composer's footer hint.
-    expect(screen.getAllByText('Starting a substream is available once Rally connects')).toHaveLength(2);
+    expect(screen.getAllByText('Starting a breakout is available once Rally connects')).toHaveLength(2);
   });
 
   it('offers no stop control for the parent run it is standing in front of', () => {
@@ -198,7 +198,7 @@ describe('substream launch surface', () => {
     expect(slot).toHaveAttribute('data-visible', 'false');
   });
 
-  it('draws the typed turn and the work timer while the substream is being created', () => {
+  it('draws the typed turn and the work timer while the breakout is being created', () => {
     renderSurface({
       launching: {
         attachments: [],
@@ -224,12 +224,12 @@ describe('substream launch surface', () => {
     });
     // The row is on its way out, but it is still in the tab order while it
     // goes — and this control cannot stop a creation the server has claimed.
-    expect(screen.getByRole('button', { name: 'Cancel new substream' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel new breakout' })).toBeDisabled();
   });
 
   it('keeps the words when creation fails, because the composer restores what it cleared', async () => {
     const { onCreate } = renderSurface();
-    onCreate.mockRejectedValueOnce(new Error('The substream could not be created.'));
+    onCreate.mockRejectedValueOnce(new Error('The breakout could not be created.'));
     fireEvent.change(composer(), { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
     await waitFor(() => expect(composer()).toHaveValue('Look at the invoice'));
@@ -240,7 +240,7 @@ describe('substream launch surface', () => {
     // committed for a message that never landed are gone, and they are the one
     // part of a draft that cannot be typed again.
     const { onCreate } = renderSurface();
-    onCreate.mockRejectedValueOnce(new Error('The substream could not be created.'));
+    onCreate.mockRejectedValueOnce(new Error('The breakout could not be created.'));
     fireEvent.change(composer(), { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
     await waitFor(() => expect(attachments.restoreLease).toHaveBeenCalledWith('lease'));
@@ -253,11 +253,11 @@ describe('substream launch surface', () => {
   it('hides the model selector unless developer mode is on', async () => {
     renderSurface();
 
-    await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
   });
 
-  it('pins the substream to the model chosen in developer mode', async () => {
+  it('pins the breakout to the model chosen in developer mode', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     const { onCreate } = renderSurface();
 

@@ -104,7 +104,7 @@ function NotFoundScreen(): React.JSX.Element {
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <EmptyState
-        action={<Button onClick={() => openFirstWorkstream()}>Go to your work streams</Button>}
+        action={<Button onClick={() => openFirstWorkstream()}>Go to your channels</Button>}
         description="This Rally view does not exist or is no longer available."
         title="Nothing here"
       />
@@ -241,7 +241,7 @@ function WorkspaceApp(): React.JSX.Element {
   const content = workspace.error
     ? <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />
     : workspace.data ? <WorkspaceAppContent workspace={workspace.data} />
-      : <LoadingState label="Opening workspace…" />;
+      : <LoadingState label="Opening organization…" />;
   return (
     // Named above the socket provider so the directory it seeds and the
     // conversations every feed hook below it seeds belong to this workspace.
@@ -345,7 +345,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
       onSignInRequired: () => setActivationSigningIn(true),
     }).catch((error: unknown) => {
       setActivationSigningIn(false);
-      setActivationError(error instanceof Error ? error : new Error('Rally could not open this workspace.'));
+      setActivationError(error instanceof Error ? error : new Error('Rally could not open this organization.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
@@ -361,7 +361,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [onboarding.data]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
-    return <LoadingState label="Checking your workspaces…" />;
+    return <LoadingState label="Checking your organizations…" />;
   }
   if (onboarding.error) {
     return <ServiceSetupState error={onboarding.error} onRetry={() => void onboarding.refetch()} />;
@@ -372,7 +372,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
     // show, and the state reads as the setup failure it is.
     return (
       <ServiceSetupState
-        error={new Error(onboarding.data.identityError ?? 'Rally could not check your workspaces.')}
+        error={new Error(onboarding.data.identityError ?? 'Rally could not check your organizations.')}
         onRetry={() => void onboarding.refetch()}
       />
     );

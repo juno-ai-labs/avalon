@@ -118,7 +118,7 @@ function WorkstreamRouteControls(): React.JSX.Element {
   return (
     <>
       <button onClick={() => void navigate(`/workstreams/${secondWorkstreamId}`)} type="button">
-        Switch work stream
+        Switch channel
       </button>
     </>
   );
@@ -128,8 +128,8 @@ function renderScreen(child = false): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  seedWorkstream(queryClient, firstWorkstreamId, 'First work stream');
-  seedWorkstream(queryClient, secondWorkstreamId, 'Second work stream');
+  seedWorkstream(queryClient, firstWorkstreamId, 'First channel');
+  seedWorkstream(queryClient, secondWorkstreamId, 'Second channel');
   if (child) {
     const { transcript, ...detail } = boot(firstWorkstreamId, 'Shared child');
     queryClient.setQueryData(['substream-workstream', firstWorkstreamId, 'child'], detail);
@@ -152,11 +152,11 @@ function renderScreen(child = false): QueryClient {
 
 function switchWorkstream(): void {
   // Route changes can arrive outside the modal (e.g. a native deep link).
-  fireEvent.click(screen.getByRole('button', { name: 'Switch work stream', hidden: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Switch channel', hidden: true }));
 }
 
 
-describe('the right sidebar does not follow a work-stream switch', () => {
+describe('the right sidebar does not follow a channel switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     session.current = null;
@@ -189,26 +189,26 @@ describe('the right sidebar does not follow a work-stream switch', () => {
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
-    expect(screen.getByRole('complementary', { name: 'Work-stream sidebar' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: First work stream', current: 'page' }));
+    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
+    expect(screen.getByRole('complementary', { name: 'Channel sidebar' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: First channel', current: 'page' }));
     expect(screen.getByRole('log')).toHaveFocus();
 
     act(() => { useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } }); });
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
-  it('does not offer resource management before or after switching work streams', async () => {
+  it('does not offer resource management before or after switching channels', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
     act(() => switchWorkstream());
-    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
   });
@@ -218,13 +218,13 @@ describe('the right sidebar does not follow a work-stream switch', () => {
   // as long as it lasted.
   it('keeps the retained inspector dormant even with stale open state and across a route switch', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
     act(() => { useUiStore.setState({ railOpen: true, inspector: null }); });
     expect(document.querySelector('.rail-surface')).toBeNull();
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
     expect(document.querySelector('.rail-surface')).toBeNull();
     // What AppShell lays the feed out against, so a leaking value here reserves
     // the sidebar's width over a work stream that has no sidebar.

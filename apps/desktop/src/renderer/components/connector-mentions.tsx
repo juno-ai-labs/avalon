@@ -276,7 +276,7 @@ export function ConnectorConnectionCardView({
         <div className="connector-connection-card-body">
           <strong>{provider.name}</strong>
           <p>{provider.description}</p>
-          <small>{request.scope === 'personal' ? 'Personal connection' : 'Workspace connection'}</small>
+          <small>{request.scope === 'personal' ? 'Personal connection' : 'Organization connection'}</small>
         </div>
         {connected ? (
           <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Connected</span>
@@ -285,7 +285,7 @@ export function ConnectorConnectionCardView({
             className="connector-connection-card-action button-primary"
             disabled={adminRequired || unavailable || pending}
             onClick={onConnect}
-            title={adminRequired ? 'Only a workspace owner or admin can connect a workspace account.' : undefined}
+            title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
           >
             {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
             {buttonLabel}

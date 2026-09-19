@@ -181,7 +181,7 @@ function revealWindow(): void {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Digest' | 'Workspace' | 'Internet access' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
+  name: 'Account' | 'Digest' | 'Organization' | 'Internet access' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -247,7 +247,7 @@ function applicationSettings(
   };
 }
 
-describe('Workspace settings', () => {
+describe('Organization settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // `clearAllMocks` wipes recorded calls but leaves a queued
@@ -331,7 +331,7 @@ describe('Workspace settings', () => {
       id: '00000000-0000-7000-8000-000000000018',
       connectorType: 'granola',
       scope: 'workspace',
-      displayName: 'Granola workspace',
+      displayName: 'Granola organization',
       capabilities: ['granola.workspace.read'],
       status: 'healthy',
     });
@@ -418,7 +418,7 @@ describe('Workspace settings', () => {
       return {};
     });
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
     fireEvent.click(await screen.findByRole('button', { name: 'Make Guest Sam a member' }));
     expect(api.promoteWorkspaceGuest).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Make member' }));
@@ -473,7 +473,7 @@ describe('Workspace settings', () => {
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    fireEvent.change(search, { target: { value: 'Connect for workspace' } });
+    fireEvent.change(search, { target: { value: 'Connect for organization' } });
     expect(document.querySelector('[data-setting-result="provider:google-mail-calendar"]')).toBeNull();
     fireEvent.change(search, { target: { value: 'Connect for me' } });
     expect(document.querySelector('[data-setting-result="provider:x"]')).toBeNull();
@@ -526,20 +526,20 @@ describe('Workspace settings', () => {
     expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
   });
 
-  it('keeps the network policy on its own page under Workspace', async () => {
+  it('keeps the network policy on its own page under Organization', async () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     const internetAccess = within(navigation).getByRole('button', { name: 'Internet access' });
     expect(internetAccess).toHaveClass('settings-navigation-child');
     // Indented under Workspace, so it has to follow it and precede Connections.
-    const workspaceNavigation = within(navigation).getByRole('button', { name: 'Workspace' });
+    const workspaceNavigation = within(navigation).getByRole('button', { name: 'Organization' });
     expect(workspaceNavigation.compareDocumentPosition(internetAccess) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(internetAccess.compareDocumentPosition(
       within(navigation).getByRole('button', { name: 'Connections' }),
     ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     // The destructive review-and-confirm flow is not sitting in the middle of
     // the preferences list, and Workspace does not pay for its read.
@@ -592,12 +592,12 @@ describe('Workspace settings', () => {
       proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
       remainingCustomSlots: 6,
       affectedWorkstreamIds: [], affectedWorkstreams: [],
-      warning: 'Trusted only applies managed and workspace-approved access.',
+      warning: 'Trusted only applies managed and organization-approved access.',
     });
     renderSettings();
     openSettingsSection('Internet access');
 
-    expect(await screen.findByText('Workspace-approved domains', undefined, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText('Organization-approved domains', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
     for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
       expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
@@ -608,13 +608,13 @@ describe('Workspace settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
     fireEvent.click(await screen.findByText('Review exact before and after targets', undefined, { timeout: 10_000 }));
     expect(await screen.findAllByText('packages.example.com', undefined, { timeout: 10_000 })).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Download workspace domains' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Download organization domains' })).toBeVisible();
     for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
       expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
     }
   }, 30_000);
 
-  it('reports stopped and quarantined work streams after provider verification fails', async () => {
+  it('reports stopped and quarantined channels after provider verification fails', async () => {
     api.applyTerminalNetworkPolicy.mockRejectedValueOnce(new ApiError(
       'Daytona did not confirm the requested network policy.',
       502,
@@ -642,8 +642,8 @@ describe('Workspace settings', () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(within(navigation).getByRole('button', { name: 'Organization' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
     expect(await screen.findByText('Sam')).toBeVisible();
   });
 
@@ -707,7 +707,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const card = (await screen.findByText('Custom MCP server')).closest('article');
-    fireEvent.click(await enabledConnectAction(card!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(card!, 'Connect for organization'));
     // The labels carry their help text too, so each matcher is anchored on the
     // field's own name rather than the whole string.
     fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'Acme docs' } });
@@ -769,7 +769,7 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://mcp.acme.test/authorize?state=abc'));
   });
 
-  it('shows a connected server its live catalog and changes what the workspace may call', async () => {
+  it('shows a connected server its live catalog and changes what the organization may call', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000030',
       connectorType: 'custom_mcp',
@@ -857,7 +857,7 @@ describe('Workspace settings', () => {
       connectionId, 'read_only_tools',
     ));
     openSettingsSection('Connections');
-    const table = await screen.findByRole('table', { name: 'Workspace connections' });
+    const table = await screen.findByRole('table', { name: 'Organization connections' });
     expect(await within(table).findByRole('cell', { name: '2' })).toBeVisible();
 
     api.getConnectionToolCount.mockResolvedValue(1);
@@ -925,7 +925,7 @@ describe('Workspace settings', () => {
     );
   });
 
-  it('shows workspace GitHub policy read-only to non-admin members', async () => {
+  it('shows organization GitHub policy read-only to non-admin members', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000020',
       connectorType: 'github',
@@ -939,12 +939,12 @@ describe('Workspace settings', () => {
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
 
-    expect(await screen.findByText(/Ask a workspace administrator to change it/u)).toBeVisible();
+    expect(await screen.findByText(/Ask an organization administrator to change it/u)).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Default remote access' })).toBeDisabled();
   });
 
-  it('lets a member switch from a workspace GitHub policy to personal settings', async () => {
+  it('lets a member switch from an organization GitHub policy to personal settings', async () => {
     const workspaceConnectionId = '00000000-0000-7000-8000-000000000020';
     const personalConnectionId = '00000000-0000-7000-8000-000000000021';
     api.getConnections.mockResolvedValue([{
@@ -1038,7 +1038,7 @@ describe('Workspace settings', () => {
     ageCacheEntry(client, ['workspace-members'], 60_000);
 
     renderSettings(workspace, client);
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
 
     expect(screen.getByText('Adam')).toBeVisible();
     await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalledTimes(1));
@@ -1063,13 +1063,13 @@ describe('Workspace settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
   });
 
-  it('offers separate Google presets with their exact personal and workspace capabilities', async () => {
+  it('offers separate Google presets with their exact personal and organization capabilities', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
     const mailCard = (await screen.findByText('Google Mail + Calendar', undefined, { timeout: 10_000 })).closest('article');
     expect(mailCard).not.toBeNull();
-    expect(within(mailCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
+    expect(within(mailCard!).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
     // The card's name renders from the static provider list, but the button
     // stays disabled until the connector catalog answers — `providerAvailable`
     // is `catalog.data?.includes(...) ?? false`. Clicking before then is a
@@ -1086,7 +1086,7 @@ describe('Workspace settings', () => {
 
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');
     expect(driveCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect for organization'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'google',
       'workspace',
@@ -1095,14 +1095,14 @@ describe('Workspace settings', () => {
     expect(openExternal).toHaveBeenCalledTimes(2);
   }, 30_000);
 
-  it('explains personal and workspace connector scope from each connect action', async () => {
+  it('explains personal and organization connector scope from each connect action', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
     const personalButton = await enabledConnectAction(driveCard!, 'Connect for me');
-    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect for workspace');
+    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect for organization');
 
     fireEvent.focus(personalButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1113,7 +1113,7 @@ describe('Workspace settings', () => {
 
     fireEvent.focus(workspaceButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Everyone in this workspace can use this connection; it acts for the workspace.',
+      'Everyone in this organization can use this connection; it acts for the organization.',
     );
     fireEvent.blur(workspaceButton);
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
@@ -1133,23 +1133,23 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect for workspace' });
+    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect for organization' });
     await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
-    expect(workspaceButton).toHaveAccessibleName('Connect for workspace');
+    expect(workspaceButton).toHaveAccessibleName('Connect for organization');
 
     fireEvent.focus(workspaceButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Everyone in this workspace can use this connection; it acts for the workspace. A Google Drive + Docs + Sheets workspace connection is already installed. Manage it above.',
+      'Everyone in this organization can use this connection; it acts for the organization. A Google Drive + Docs + Sheets organization connection is already installed. Manage it above.',
     );
   });
 
-  it('offers personal Notion MCP separately from the shared workspace bot connection', async () => {
+  it('offers personal Notion MCP separately from the shared organization bot connection', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
-    expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
+    expect(screen.getByText(/organization automations use only the connections explicitly bound to them/iu)).toBeVisible();
     const personalButton = await enabledConnectAction(notionCard!, 'Connect for me');
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
@@ -1157,7 +1157,7 @@ describe('Workspace settings', () => {
       'you',
       ['notion.personal.mcp'],
     ));
-    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect for workspace');
+    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect for organization');
     fireEvent.click(workspaceButton);
 
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
@@ -1319,7 +1319,7 @@ describe('Workspace settings', () => {
       .toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {
+  it('offers personal and organization Linear authorization without granting agent identity personally', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
@@ -1332,7 +1332,7 @@ describe('Workspace settings', () => {
       ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
     ));
 
-    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for organization'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'linear',
       'workspace',
@@ -1340,7 +1340,7 @@ describe('Workspace settings', () => {
     ));
   });
 
-  it('offers one Slack card with personal MCP and workspace Agent authorization', async () => {
+  it('offers one Slack card with personal MCP and organization Agent authorization', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
@@ -1362,7 +1362,7 @@ describe('Workspace settings', () => {
       ['slack.personal.mcp'],
     ));
 
-    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for organization'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'slack',
       'workspace',
@@ -1387,7 +1387,7 @@ describe('Workspace settings', () => {
     expect(screen.queryByRole('button', { name: 'Policy' })).not.toBeInTheDocument();
   });
 
-  it('offers personal Granola MCP and submits a workspace API key only through the secure setup dialog', async () => {
+  it('offers personal Granola MCP and submits an organization API key only through the secure setup dialog', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
@@ -1401,9 +1401,9 @@ describe('Workspace settings', () => {
       ['granola.personal.read'],
     ));
 
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
     expect(within(dialog).getByRole('heading', { name: 'Generate the key in Granola' })).toBeVisible();
     expect(within(dialog).getByText('Open the Granola desktop app as a workspace administrator.')).toBeVisible();
     expect(within(dialog).getByText('Go to Settings → Connectors → Workspace API keys.')).toBeVisible();
@@ -1411,10 +1411,10 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByText('Copy the new key, then paste it below.')).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Open Granola’s API key guide ↗' }));
     expect(openExternal).toHaveBeenLastCalledWith('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
-    const apiKeyInput = within(dialog).getByLabelText('Workspace API key');
+    const apiKeyInput = within(dialog).getByLabelText('Organization API key');
     expect(apiKeyInput).toHaveAttribute('type', 'password');
     expect(dialog).toHaveAccessibleDescription(
-      'A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key.',
+      'An organization-wide Granola connection requires an Organization API key. Personal Granola connections use browser sign-in and do not need a key.',
     );
 
     // A paste that cannot be a Granola key says so, rather than leaving a dead
@@ -1425,43 +1425,43 @@ describe('Workspace settings', () => {
     fireEvent.paste(apiKeyInput);
     fireEvent.change(apiKeyInput, { target: { value: 'sk-live-wrong-provider-key' } });
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
-    expect(within(dialog).getByRole('button', { name: 'Connect for workspace' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Connect for organization' })).toBeDisabled();
 
     const apiKey = `grn_${'a'.repeat(24)}`;
     fireEvent.change(apiKeyInput, { target: { value: apiKey } });
     expect(within(dialog).queryByRole('alert')).toBeNull();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
 
     await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));
     expect(await screen.findByText('No personal connections yet')).toBeVisible();
-    expect(screen.getByText('No workspace connections yet')).toBeVisible();
+    expect(screen.getByText('No organization connections yet')).toBeVisible();
   });
 
   it('opens the existing Granola installation when setup loses its response', async () => {
     renderSettings();
     openSettingsSection('Connections');
     const granolaCard = (await screen.findByText('Granola')).closest('article');
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
     api.createGranolaWorkspaceConnection.mockRejectedValue(new Error('Response lost'));
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000018', connectorType: 'granola', scope: 'workspace',
-      displayName: 'Granola workspace events', capabilities: ['granola.workspace.read'], status: 'error',
+      displayName: 'Granola organization events', capabilities: ['granola.workspace.read'], status: 'error',
     }]);
     api.connectorInstallation.mockResolvedValue({ installation: null });
-    fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
-    await screen.findByRole('dialog', { name: 'Workspace events' });
+    fireEvent.change(within(dialog).getByLabelText('Organization API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
+    await screen.findByRole('dialog', { name: 'Organization events' });
     expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
     expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage events for Granola organization events', hidden: true })).toBeInTheDocument();
   });
 
-  it('offers Fireflies to a person and never to the workspace', async () => {
+  it('offers Fireflies to a person and never to the organization', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue(['fireflies']);
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000021', connectorType: 'fireflies', scope: 'workspace',
-      displayName: 'Fireflies workspace meetings', capabilities: ['fireflies.workspace.read'], status: 'healthy',
+      displayName: 'Fireflies organization meetings', capabilities: ['fireflies.workspace.read'], status: 'healthy',
     }]);
     renderSettings();
     openSettingsSection('Connections');
@@ -1470,17 +1470,17 @@ describe('Workspace settings', () => {
     expect(firefliesCard).not.toBeNull();
     // One administrator's key is every member's read of every meeting it can
     // see, so there is no workspace connection to start.
-    expect(within(firefliesCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
+    expect(within(firefliesCard!).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
     // The workspace connection a customer already has keeps its row — it still
     // receives meetings — and offers no webhook console over it.
-    expect(screen.getByText('Fireflies workspace meetings')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Manage events for Fireflies workspace meetings', hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByText('Fireflies organization meetings')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Manage events for Fireflies organization meetings', hidden: true })).not.toBeInTheDocument();
 
     fireEvent.click(await enabledConnectAction(firefliesCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith('fireflies', 'you', ['fireflies.personal.read']));
   });
 
-  it('offers the read-only X connector only at workspace scope', async () => {
+  it('offers the read-only X connector only at organization scope', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
@@ -1488,7 +1488,7 @@ describe('Workspace settings', () => {
     expect(xCard).not.toBeNull();
     expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
 
-    fireEvent.click(await enabledConnectAction(xCard!, 'Connect for workspace'));
+    fireEvent.click(await enabledConnectAction(xCard!, 'Connect for organization'));
     await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith(['x.read']));
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
@@ -1532,15 +1532,15 @@ describe('Workspace settings', () => {
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).getByText('Unavailable')).toBeVisible();
-    const connect = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
+    const connect = within(xCard!).getByRole('button', { name: 'Connect for organization' });
     expect(connect).toHaveAttribute('aria-disabled', 'true');
     fireEvent.focus(connect);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Everyone in this workspace can use this connection; it acts for the workspace. Public X via TwitterAPI.io is not configured in this Rally region.',
+      'Everyone in this organization can use this connection; it acts for the organization. Public X via TwitterAPI.io is not configured in this Rally region.',
     );
   });
 
-  it('disables duplicate workspace X connections', async () => {
+  it('disables duplicate organization X connections', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000017',
       connectorType: 'x',
@@ -1557,7 +1557,7 @@ describe('Workspace settings', () => {
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
-    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
+    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect for organization' });
     await waitFor(() => {
       expect(workspaceButton).toHaveAttribute('aria-disabled', 'true');
     });
@@ -1565,7 +1565,7 @@ describe('Workspace settings', () => {
   });
 
   it.each(['healthy', 'reconnect_required'] as const)(
-    'disables duplicate Slack workspace authorization for an existing %s installation',
+    'disables duplicate Slack organization authorization for an existing %s installation',
     async (status) => {
       api.getConnections.mockResolvedValue([{
         id: '00000000-0000-7000-8000-000000000015',
@@ -1586,14 +1586,14 @@ describe('Workspace settings', () => {
         expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
       });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
-      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect for workspace' });
+      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect for organization' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
     },
   );
 
-  it('allows replacing a disabled Slack workspace installation', async () => {
+  it('allows replacing a disabled Slack organization installation', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000016',
       connectorType: 'slack',
@@ -1609,7 +1609,7 @@ describe('Workspace settings', () => {
 
     const slackCard = (await screen.findByText('Slack')).closest('article');
     expect(slackCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect for workspace');
+    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect for organization');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
@@ -1619,7 +1619,7 @@ describe('Workspace settings', () => {
   });
 
   it.each(['healthy', 'reconnect_required'] as const)(
-    'disables duplicate workspace authorization for an existing %s Linear installation',
+    'disables duplicate organization authorization for an existing %s Linear installation',
     async (status) => {
       api.getConnections.mockResolvedValue([{
         id: '00000000-0000-7000-8000-000000000011',
@@ -1638,14 +1638,14 @@ describe('Workspace settings', () => {
       expect(linearCard).not.toBeNull();
       // The catalog query gates enablement; `findByText` resolves before it.
       await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
-      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect for workspace' });
+      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect for organization' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
     },
   );
 
-  it('allows a replacement workspace authorization after the existing connection is disabled', async () => {
+  it('allows a replacement organization authorization after the existing connection is disabled', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000012',
       connectorType: 'linear',
@@ -1661,7 +1661,7 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect for workspace');
+    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect for organization');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'linear',
@@ -1692,23 +1692,23 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for workspace' }))
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for organization' }))
       .toHaveAttribute('aria-disabled', 'true'));
     await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
 
     const linearCard = screen.getByText('Linear').closest('article');
     expect(linearCard).not.toBeNull();
-    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for workspace' })).toBeEnabled());
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for organization' })).toBeEnabled());
   });
 
-  it('lets members connect Linear personally without offering a workspace installation', async () => {
+  it('lets members connect Linear personally without offering an organization installation', async () => {
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Connections');
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
     await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
-    expect(within(linearCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
+    expect(within(linearCard!).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
   });
 
   it('does not request tool inventories for disabled connections', async () => {
@@ -1757,7 +1757,7 @@ describe('Workspace settings', () => {
     expect(within(table).queryByRole('cell', { name: '9' })).not.toBeInTheDocument();
   });
 
-  it('separates personal and workspace connections into tables with scoped empty states', async () => {
+  it('separates personal and organization connections into tables with scoped empty states', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       workspaceId: workspace.id,
@@ -1779,10 +1779,10 @@ describe('Workspace settings', () => {
     expect(connectionName).toBeVisible();
     expect(await screen.findByText('7')).toBeVisible();
     const personalTable = screen.getByRole('table', { name: 'Personal connections' });
-    const workspaceTable = screen.getByRole('table', { name: 'Workspace connections' });
+    const workspaceTable = screen.getByRole('table', { name: 'Organization connections' });
     expect(personalTable.compareDocumentPosition(workspaceTable) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(within(personalTable).getByText('Google · adam@example.com')).toBeVisible();
-    expect(within(workspaceTable).getByText('No workspace connections yet')).toBeVisible();
+    expect(within(workspaceTable).getByText('No organization connections yet')).toBeVisible();
     expect(within(workspaceTable).getByText(/Connect a connector below/iu)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Test' })).not.toBeInTheDocument();
     const connectionsHeading = screen.getByRole('heading', { level: 2, name: 'Your connections' });
@@ -1841,8 +1841,8 @@ describe('Workspace settings', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
-    expect(screen.getByRole('table', { name: 'Workspace connections' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Workspace connections' }).parentElement).toHaveTextContent('1');
+    expect(screen.getByRole('table', { name: 'Organization connections' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Organization connections' }).parentElement).toHaveTextContent('1');
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
@@ -1872,7 +1872,7 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
-  it('allows members to refresh their personal connections while hiding workspace controls', async () => {
+  it('allows members to refresh their personal connections while hiding organization controls', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       connectorType: 'google',
@@ -1929,7 +1929,7 @@ describe('Workspace settings', () => {
 
   it('lets an owner create, copy, and revoke an invite', async () => {
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
 
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
@@ -1965,7 +1965,7 @@ describe('Workspace settings', () => {
     api.setWorkspaceMemberRole.mockResolvedValue(undefined);
     api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
     renderSettings({ ...workspace, currentUser: secondAdmin });
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
     expect(await screen.findAllByText('Sam')).toHaveLength(2);
 
     // One control per eligible row, each with an accessible name only that row
@@ -2003,40 +2003,40 @@ describe('Workspace settings', () => {
   it('offers an ordinary member no member-role controls at all', async () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
     renderSettings({ ...workspace, currentUser: member });
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('button', { name: /administrator/i })).not.toBeInTheDocument();
   });
 
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
     expect(api.getWorkspaceInvitations).not.toHaveBeenCalled();
   });
 
-  it('confirms leaving a workspace without describing it as deleted', async () => {
+  it('confirms leaving an organization without describing it as deleted', async () => {
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
 
-    const leave = await screen.findByRole('button', { name: 'Leave this workspace' });
+    const leave = await screen.findByRole('button', { name: 'Leave this organization' });
     fireEvent.click(leave);
 
     const dialog = await screen.findByRole('dialog', { name: 'Leave Rally Studio?' });
     expect(within(dialog).getByText('Rally Studio stays available to its other members.')).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Leave workspace' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Leave organization' }));
 
     await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'left'));
   });
 
-  it('warns that the last member will close the workspace', async () => {
+  it('warns that the last member will close the organization', async () => {
     api.getWorkspaceMembers.mockResolvedValue([owner]);
     leaveWorkspace.mockResolvedValue({ outcome: 'abandoned' });
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
 
-    const leave = await screen.findByRole('button', { name: 'Leave and close workspace' });
+    const leave = await screen.findByRole('button', { name: 'Leave and close organization' });
     fireEvent.click(leave);
 
     const dialog = await screen.findByRole('dialog', { name: 'Leave and close Rally Studio?' });
@@ -2053,12 +2053,12 @@ describe('Workspace settings', () => {
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
     fireEvent.change(search, { target: { value: 'organization' } });
     expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Workspace Workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Organization Organization' }));
     await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceIdentity'));
-    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
-    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
   });
 
   it('selects a macOS app icon with an immediate jump state', async () => {
@@ -2748,7 +2748,7 @@ describe('Closing the settings window with Escape', () => {
 
   it('keeps an invitation draft the caret has already left', async () => {
     renderSettings(workspace, createTestQueryClient(), true);
-    openSettingsSection('Workspace');
+    openSettingsSection('Organization');
 
     const email = await screen.findByPlaceholderText('teammate@company.com');
     fireEvent.change(email, { target: { value: 'teammate@company.com' } });
@@ -2786,7 +2786,7 @@ describe('Closing the settings window with Escape', () => {
     // to render a saved value into a writable text field would make Escape
     // permanently dead in that section, and the symptom is a key that quietly
     // stopped working rather than a failing assertion anywhere near the cause.
-    for (const section of ['Account', 'Digest', 'Workspace', 'Internet access', 'Connections', 'Application'] as const) {
+    for (const section of ['Account', 'Digest', 'Organization', 'Internet access', 'Connections', 'Application'] as const) {
       openSettingsSection(section);
       await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
 
@@ -2820,13 +2820,13 @@ describe('Closing the settings window with Escape', () => {
     openSettingsSection('Connections');
 
     const granolaCard = (await screen.findByText('Granola')).closest('article');
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
 
     // Radix closes the dialog on this keystroke itself. The window listener sees
     // the same event, and closing over a confirmation is exactly what the guard
     // on dismissable layers exists to prevent.
-    fireEvent.keyDown(within(dialog).getByLabelText('Workspace API key'), { key: 'Escape' });
+    fireEvent.keyDown(within(dialog).getByLabelText('Organization API key'), { key: 'Escape' });
 
     expect(close).not.toHaveBeenCalled();
   });

@@ -243,7 +243,7 @@ describe('InspectorRail details', () => {
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
   });
 
-  it('shows the complete work-stream email address in Details and copies it with feedback', async () => {
+  it('shows the complete channel email address in Details and copies it with feedback', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
@@ -253,7 +253,7 @@ describe('InspectorRail details', () => {
     const emailAddress = 'luminous-tidal-structured-curie@automation.rallywith.ai';
     expect(screen.getByText(emailAddress)).toBeVisible();
 
-    const copyButton = screen.getByRole('button', { name: 'Copy work-stream email address' });
+    const copyButton = screen.getByRole('button', { name: 'Copy channel email address' });
     fireEvent.click(copyButton);
 
     expect(copyText).toHaveBeenCalledWith(emailAddress);
@@ -271,7 +271,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy work-stream email address' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy channel email address' }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Copy failed — click to retry' })).toBeEnabled();
     });
@@ -642,7 +642,7 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
-    expect(dialog).toHaveAccessibleDescription(/will leave this work stream/u);
+    expect(dialog).toHaveAccessibleDescription(/will leave this channel/u);
     expect(within(dialog).getByText(new RegExp(watched.title, 'u'))).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onDetachResource).not.toHaveBeenCalled();
@@ -658,7 +658,7 @@ describe('InspectorRail details', () => {
 
   it('keeps the archive dialog open when the unlink fails', async () => {
     const onDetachResource = vi.fn(async () => {
-      throw new Error('The work stream refused the unlink.');
+      throw new Error('The channel refused the unlink.');
     });
     render(
       <Tooltip.Provider>
@@ -673,7 +673,7 @@ describe('InspectorRail details', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText('The resource couldn’t be archived.')).toBeVisible();
-    expect(screen.queryByText('The work stream refused the unlink.')).not.toBeInTheDocument();
+    expect(screen.queryByText('The channel refused the unlink.')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
     expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
   });
@@ -1155,7 +1155,7 @@ describe('resource detail content preview', () => {
   });
 });
 
-describe('a work stream’s Sidekicks in the main workstream rail', () => {
+describe('a channel’s Sidekicks in the main workstream rail', () => {
   beforeEach(() => {
     useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
   });
@@ -1174,7 +1174,7 @@ describe('a work stream’s Sidekicks in the main workstream rail', () => {
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
     expect(screen.getByText('Write clearly.')).toBeVisible();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(onRemove).toHaveBeenCalledOnce();
   });
   it('keeps an authorized unavailable attachment visible', () => {

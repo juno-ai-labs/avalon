@@ -373,7 +373,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [pendingInvitation, runtime]);
 
   const createDevelopmentSession = useCallback(async () => {
-    if (!api) throw new Error('Open a workspace first.');
+    if (!api) throw new Error('Open an organization first.');
     const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Rally Development');
     setSession(nextSession);
     if (nextSession.workspace) {
@@ -554,7 +554,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     expectedOutcome: WorkspaceDepartureOutcome,
   ): Promise<WorkspaceDeparture> => {
     if (!session?.workspace || session.workspace.id !== workspaceId) {
-      throw new Error('The workspace is no longer active');
+      throw new Error('The organization is no longer active');
     }
     const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(session.workspace.region, workspaceId);
@@ -578,7 +578,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     progress?: AccountActionProgress,
   ): Promise<void> => {
     const normalized = name.trim();
-    if (normalized.length < 2) throw new Error('Enter a workspace name with at least two characters.');
+    if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
     const nextSession = await withAccountIdentity(
@@ -742,7 +742,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           region: renewedSession.workspace.region,
           workspaceId: renewedSession.workspace.id,
         }, target))) {
-          throw new Error('The requested workspace could not be renewed.');
+          throw new Error('The requested organization could not be renewed.');
         }
         applySession(renewedSession);
         return renewedSession;
@@ -774,7 +774,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const enterDeepLinkWorkspace = async (
       target: WorkspaceTarget,
     ): Promise<{ api: RallyApi; workspaceChanged: boolean }> => {
-      if (!sessionRef.current) throw new Error('Sign in before opening a workspace link.');
+      if (!sessionRef.current) throw new Error('Sign in before opening an organization link.');
       const reclaimed = await bridge.reselectActiveWorkspace({
         region: target.region,
         workspaceId: target.workspaceId,
@@ -787,7 +787,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         workspaceId: target.workspaceId,
       });
       if (!sessionMatchesTarget(nextSession, target)) {
-        throw new Error('The requested workspace could not be activated.');
+        throw new Error('The requested organization could not be activated.');
       }
       applySession(nextSession);
       return { api: apiForSession(nextSession, target), workspaceChanged: true };
@@ -838,14 +838,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             : activationFailure === 'account_reconnect_required'
               ? 'Sign in to Rally again, then reopen this link.'
             : activationFailure === 'workspace_access_denied'
-              ? 'Rally could not access the workspace this link belongs to.'
+              ? 'Rally could not access the organization this link belongs to.'
             : activationFailure === 'workspace_activation_unavailable'
-              ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
+              ? 'Rally could not reach that organization. Check your connection, then reopen this link.'
             : /sign in/iu.test(message)
               ? message
             : /reach|network|offline|timeout|unavailable/iu.test(message)
-              ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
-              : 'Rally could not access the workspace this link belongs to.',
+              ? 'Rally could not reach that organization. Check your connection, then reopen this link.'
+              : 'Rally could not access the organization this link belongs to.',
         );
     }
     const handleDeepLink = async (navigation: DesktopDeepLinkNavigation): Promise<void> => {
@@ -883,7 +883,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return activeSession;
       };
       if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a work stream.')) return;
+        if (!requireActiveWorkspace('Sign in before starting a channel.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = '/workstreams/new';
@@ -896,7 +896,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           window.location.hash = `/workstreams/${intent.workstreamId}${intent.substreamId ? `?substream=${intent.substreamId}` : ""}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this work-stream link.')) openWorkstream();
+        else if (requireActiveWorkspace('Sign in before opening this channel link.')) openWorkstream();
         return;
       }
       if (intent.kind === 'settings') {
@@ -956,7 +956,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack);
         else {
           const activeSession = requireActiveWorkspace(
-            'Sign in to the matching Rally workspace before connecting your Slack account.',
+            'Sign in to the matching Rally organization before connecting your Slack account.',
           );
           if (activeSession) await linkSlack(apiForSession(activeSession));
         }

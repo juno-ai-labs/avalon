@@ -360,7 +360,7 @@ export function AddParticipantDialog({
   return (
     <Modal
       description={privateSubstream
-        ? 'Added participants can read this substream and its shared context. This does not grant access to the parent work stream.'
+        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent channel.'
         : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
       onOpenChange={onOpenChange}
       open={open}
@@ -376,7 +376,7 @@ export function AddParticipantDialog({
           if (!isParticipant) {
             return (
               <button
-                aria-label={`Add ${member.name} to ${privateSubstream ? 'substream' : 'main conversation'}`}
+                aria-label={`Add ${member.name} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
                 className="member-action-row"
                 disabled={pending}
                 key={member.id}
@@ -410,7 +410,7 @@ export function AddParticipantDialog({
                       disabled={current.length <= 1 || pending}
                       onSelect={() => onRemove(member)}
                     >
-                      Remove from {privateSubstream ? 'substream' : 'main conversation'}
+                      Remove from {privateSubstream ? 'breakout' : 'main conversation'}
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
@@ -536,13 +536,13 @@ export function AddResourceDialog({
 export function WorkstreamErrorState({
   description,
   onRetry,
-  parentNoun = 'work stream',
+  parentNoun = 'channel',
   workstreamId,
 }: {
   description: string;
   onRetry: () => void;
   /** What could not be opened, for the title: a work stream or an automation. */
-  parentNoun?: 'work stream' | 'automation';
+  parentNoun?: 'channel' | 'automation';
   workstreamId: string;
 }): React.JSX.Element {
   const copyWorkstreamId = (): void => {
@@ -557,10 +557,10 @@ export function WorkstreamErrorState({
       <div className="screen-drag-strip window-drag" />
       <div className="screen-state-actions window-no-drag">
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="More channel actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy channel ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -568,7 +568,7 @@ export function WorkstreamErrorState({
       <EmptyState
         action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
         description={description}
-        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Work stream'} could not be opened`}
+        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Channel'} could not be opened`}
       />
     </div>
   );
@@ -794,7 +794,7 @@ export function ConversationSurface({
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
-  const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
+  const parentNoun = parentKind === 'automation' ? 'automation' : 'channel';
   const navigate = useNavigate();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1805,7 +1805,7 @@ export function ConversationSurface({
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
   ): Promise<void> => {
-    if (!api || !routedDetail) throw new Error('This work stream is not ready to receive messages.');
+    if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -2183,14 +2183,14 @@ export function ConversationSurface({
       {substreamLaunch ? <SubstreamLaunchSurface
         api={api}
         connecting={feedFromLocalCache ? <ConnectingCard
-          detail="Starting a substream is available once Rally connects"
+          detail="Starting a breakout is available once Rally connects"
           error={socketConnection.openingError}
           name={detail.titleStatus === 'naming' ? null : detail.title}
           onRetry={socketConnection.retryOpening}
           state={socketConnection.openingError
             ? 'failed'
             : socketState === 'unavailable' ? 'offline' : 'connecting'}
-          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
+          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
         /> : null}
         currentUser={launchAuthor}
         draft={{
@@ -2274,7 +2274,7 @@ export function ConversationSurface({
               state={socketConnection.openingError
                 ? 'failed'
                 : socketState === 'unavailable' ? 'offline' : 'connecting'}
-              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
+              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
             />
           )}
         </ConnectingCardSlot>
@@ -2372,7 +2372,7 @@ export function ConversationSurface({
           {showsStoppingRow && <RunStoppingIndicator />}
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
+            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the channel…'}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error

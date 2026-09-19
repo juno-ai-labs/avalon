@@ -7,14 +7,14 @@ import { Plus } from 'lucide-react';
 import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
 
 describe('workstreamAppearance', () => {
-  it('derives a stable color and icon from the work-stream id', () => {
+  it('derives a stable color and icon from the channel id', () => {
     expect(workstreamAppearance('00000000-0000-7000-8000-000000000001'))
       .toEqual({ color: 'red', iconIndex: 0 });
     expect(workstreamAppearance('launch-room'))
       .toEqual({ color: 'lime', iconIndex: 7 });
   });
 
-  it('never derives the neutral, so an unassigned work stream still reads as coloured', () => {
+  it('never derives the neutral, so an unassigned channel still reads as coloured', () => {
     // `black` is in the palette but not the ring. If it leaked into the
     // derivation, roughly one work stream in fifteen would look deliberately
     // unaccented when nobody had chosen anything.

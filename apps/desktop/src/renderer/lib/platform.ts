@@ -149,7 +149,7 @@ async function browserOnboardingRequest<T>(
   path: string,
   options: { body?: unknown; method?: 'GET' | 'POST' | 'PATCH' } = {},
 ): Promise<T> {
-  if (!browserSession) throw new Error('Sign in before continuing workspace setup.');
+  if (!browserSession) throw new Error('Sign in before continuing organization setup.');
   const response = await fetch(`${browserGlobalApiBaseUrl()}${path}`, {
     method: options.method ?? 'GET',
     headers: {
@@ -161,7 +161,7 @@ async function browserOnboardingRequest<T>(
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(payload?.message ?? `Workspace setup failed (${response.status})`);
+    throw new Error(payload?.message ?? `Organization setup failed (${response.status})`);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -188,7 +188,7 @@ async function browserOnboardingSession(
     || (expected.workspaceId !== undefined && raw.workspace.id !== expected.workspaceId)
     || (identityEmail !== undefined && raw.user.email.toLocaleLowerCase('en-US') !== identityEmail)
   ) {
-    throw new Error('Rally rejected a workspace session that did not match this workspace request.');
+    throw new Error('Rally rejected an organization session that did not match this organization request.');
   }
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
@@ -336,7 +336,7 @@ const browserBridge: RallyDesktopBridge = {
           throw new Error('A newer Rally sign-in attempt replaced this callback.');
         }
         if (identitySession.workspace) {
-          throw new Error('Rally sign-in returned a workspace before platform discovery.');
+          throw new Error('Rally sign-in returned an organization before platform discovery.');
         }
       },
     );
@@ -379,12 +379,12 @@ const browserBridge: RallyDesktopBridge = {
       || browserSession.workspace.id !== workspaceId
       || browserSession.workspace.region !== region
     ) {
-      throw new Error('The browser keeps only its active workspace session.');
+      throw new Error('The browser keeps only its active organization session.');
     }
     const response = await fetch(`${browserSession.apiBaseUrl}/workspace/attention`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${browserSession.accessToken}` },
     });
-    if (!response.ok) throw new Error(`Workspace attention failed (${response.status})`);
+    if (!response.ok) throw new Error(`Organization attention failed (${response.status})`);
     return response.json();
   },
   async leaveWorkspace({ expectedOutcome, region, workspaceId }) {
@@ -393,7 +393,7 @@ const browserBridge: RallyDesktopBridge = {
       || browserSession.workspace.id !== workspaceId
       || browserSession.workspace.region !== region
     ) {
-      throw new Error('The browser keeps only its active workspace session.');
+      throw new Error('The browser keeps only its active organization session.');
     }
     const response = await fetch(
       `${browserSession.apiBaseUrl}/workspaces/${encodeURIComponent(workspaceId)}/membership`
@@ -405,7 +405,7 @@ const browserBridge: RallyDesktopBridge = {
     );
     if (!response.ok) {
       const payload = await response.json().catch(() => null) as { message?: string } | null;
-      throw new Error(payload?.message ?? `Leaving the workspace failed (${response.status})`);
+      throw new Error(payload?.message ?? `Leaving the organization failed (${response.status})`);
     }
     const departure = await response.json();
     browserSession = null;

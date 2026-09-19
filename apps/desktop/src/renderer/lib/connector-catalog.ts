@@ -70,7 +70,7 @@ export const connectorProviders = [
     id: 'linear' as const,
     provider: ConnectorConnectionCardCatalog.linear.providerType,
     name: 'Linear',
-    description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
+    description: 'Connect personally to act as you, or install Rally for shared organization access and real-time activity.',
     mark: ConnectorConnectionCardCatalog.linear.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: [
@@ -101,7 +101,7 @@ export const connectorProviders = [
     id: 'notion' as const,
     provider: ConnectorConnectionCardCatalog.notion.providerType,
     name: 'Notion',
-    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
+    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally organization.',
     mark: ConnectorConnectionCardCatalog.notion.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['notion.personal.mcp'],

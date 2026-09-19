@@ -2008,7 +2008,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles',
   });
   if (session.workspace) {
-    throw new Error('Rally sign-in returned a workspace before platform discovery');
+    throw new Error('Rally sign-in returned an organization before platform discovery');
   }
   if (session.apiBaseUrl !== apiBaseUrl) throw new Error('The regional service returned a mismatched endpoint');
   return withSessionMutation(async () => {
@@ -2037,7 +2037,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
           !== session.user.email.toLocaleLowerCase('en-US')
       ) {
         desktopAuthAttempts.discard(candidate.attemptId as string);
-        throw new Error('This Rally account does not match the active workspace');
+        throw new Error('This Rally account does not match the active organization');
       }
       desktopAuthAttempts.clear();
       inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
@@ -2080,7 +2080,7 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
   const candidate = input as { apiBaseUrl?: unknown; workspaceName?: unknown };
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
   if (typeof candidate.workspaceName !== 'string' || candidate.workspaceName.trim().length < 2 || candidate.workspaceName.length > 120) {
-    throw new Error('Invalid workspace name');
+    throw new Error('Invalid organization name');
   }
   const session = await requestSession(apiBaseUrl, '/auth/dev/session', { workspaceName: candidate.workspaceName.trim() });
   const identity = await requestSession(configuredApiBase('global'), '/auth/dev/identity', {});
@@ -2122,7 +2122,7 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
   });
   if (!stored) throw accountReconnectRequiredFailure();
   if (stored.apiBaseUrl !== configuredApiBase('global')) {
-    throw new Error('Workspace setup requires a Rally platform identity session');
+    throw new Error('Organization setup requires a Rally platform identity session');
   }
   return stored;
 }
@@ -2193,7 +2193,7 @@ async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
   ));
   if (!response.ok) throw await responseError(response);
   const parsed = WorkspaceOnboardingStateSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Rally returned an invalid workspace setup response');
+  if (!parsed.success) throw new Error('Rally returned an invalid organization setup response');
   const accountEmail = identity.user.email.toLocaleLowerCase('en-US');
   if (parsed.data.invitations.some((invitation) => invitation.email.toLocaleLowerCase('en-US') !== accountEmail)) {
     throw new Error('Rally returned an invitation for another account');
@@ -2252,7 +2252,7 @@ async function reconcileStoredWorkspaces(
     );
     inMemoryAuthSet = nextAuth;
     inMemoryProfileSet = nextProfiles;
-    logWarn('rally', `removed ${ended.length} stored workspace credential(s) whose membership has ended`);
+    logWarn('rally', `removed ${ended.length} stored organization credential(s) whose membership has ended`);
   });
 }
 
@@ -2281,7 +2281,7 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
       // coded failure's own detail is written for a caption, without the stop.
       identityError: !identityStored
         ? 'Sign in to Rally again to continue.'
-        : error instanceof Error ? error.message : 'Rally could not check your workspaces.',
+        : error instanceof Error ? error.message : 'Rally could not check your organizations.',
     };
   }
   lastWorkspaceDiscovery = { workspaces: discovered.workspaces, invitations: discovered.invitations };
@@ -2359,11 +2359,11 @@ async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention
     || !region.success
     || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')
   ) {
-    throw new Error('Invalid workspace attention request');
+    throw new Error('Invalid organization attention request');
   }
   const authSet = await loadStoredAuthSet();
   const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
-  if (!auth) throw new Error('No credential is stored for this workspace');
+  if (!auth) throw new Error('No credential is stored for this organization');
   const ask = (credential: StoredAuth) => net.fetch(`${apiBaseForAuth(credential)}/workspace/attention`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` },
   });
@@ -2387,14 +2387,14 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
     || !parsedDeparture.success
     || Object.keys(candidate).some((key) => !['expectedOutcome', 'workspaceId', 'region'].includes(key))
   ) {
-    throw new Error('Invalid workspace departure request');
+    throw new Error('Invalid organization departure request');
   }
   {
     const authSet = await loadStoredAuthSet();
     let credential = authSet
       ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
       : null;
-    if (!credential) throw new Error('No credential is stored for this workspace');
+    if (!credential) throw new Error('No credential is stored for this organization');
     const ask = (stored: StoredAuth) => net.fetch(
       `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`
         + `?expectedOutcome=${parsedDeparture.data.expectedOutcome}`,
@@ -2427,7 +2427,7 @@ async function requestOnboardingSession(
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const identity = await requireOnboardingIdentitySession();
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-    throw new Error('Rally was signed out while workspace setup was running');
+    throw new Error('Rally was signed out while organization setup was running');
   }
   const requested = await onboardingIdentityRequest((credential) => net.fetch(
     `${configuredApiBase('global')}${path}`,
@@ -2446,7 +2446,7 @@ async function requestOnboardingSession(
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
   if (!parsed.success || !parsed.data.workspace) {
-    throw new Error('Rally returned an invalid regional workspace session');
+    throw new Error('Rally returned an invalid regional organization session');
   }
   const targetApiBaseUrl = validatedApiBase(parsed.data.apiBaseUrl);
   if (
@@ -2454,19 +2454,19 @@ async function requestOnboardingSession(
     || parsed.data.workspace.region !== expectedRegion
     || (expectedWorkspaceId !== undefined && parsed.data.workspace.id !== expectedWorkspaceId)
   ) {
-    throw new Error('Rally returned a workspace session for the wrong workspace or region');
+    throw new Error('Rally returned an organization session for the wrong organization or region');
   }
   if (parsed.data.user.email.toLocaleLowerCase('en-US') !== identity.user.email.toLocaleLowerCase('en-US')) {
-    throw new Error('Rally returned a workspace session for another account');
+    throw new Error('Rally returned an organization session for another account');
   }
   const session = { ...parsed.data, apiBaseUrl: targetApiBaseUrl };
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-      throw new Error('Rally was signed out while workspace setup was running');
+      throw new Error('Rally was signed out while organization setup was running');
     }
     const currentAuth = await loadStoredAuthSet();
     if (!currentAuth?.account || currentAuth.account.binding.userId !== identity.user.id) {
-      throw new Error('The signed-in Rally account changed during workspace setup');
+      throw new Error('The signed-in Rally account changed during organization setup');
     }
     const activate = selectionIntent === workspaceSelectionIntent;
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
@@ -2476,7 +2476,7 @@ async function requestOnboardingSession(
       return publicSession(session);
     }
     const current = await loadStoredSession() ?? await loadStoredIdentitySession();
-    if (!current) throw new Error('Rally was signed out while workspace setup was running');
+    if (!current) throw new Error('Rally was signed out while organization setup was running');
     return publicSession(current);
   });
 }
@@ -2484,15 +2484,15 @@ async function requestOnboardingSession(
 async function activateWorkspace(input: unknown): Promise<DesktopSession> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (Object.keys(candidate).some((key) => !['region', 'workspaceId', 'operationId'].includes(key))) {
-    throw new Error('Invalid workspace activation request');
+    throw new Error('Invalid organization activation request');
   }
   const parsed = ActivateWorkspaceRequestSchema.safeParse({
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
-  if (!parsed.success) throw new Error('Invalid workspace activation request');
+  if (!parsed.success) throw new Error('Invalid organization activation request');
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
-    throw new Error('Invalid workspace activation operation ID');
+    throw new Error('Invalid organization activation operation ID');
   }
   return revalidateWorkspaceActivation(parsed.data, operationId as string | undefined, {
     nextSelectionIntent: () => ++workspaceSelectionIntent,
@@ -2516,12 +2516,12 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
 async function reselectActiveWorkspace(input: unknown): Promise<DesktopSession | null> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (Object.keys(candidate).some((key) => !['region', 'workspaceId'].includes(key))) {
-    throw new Error('Invalid workspace selection request');
+    throw new Error('Invalid organization selection request');
   }
   const parsed = ActivateWorkspaceRequestSchema.safeParse({
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
-  if (!parsed.success) throw new Error('Invalid workspace selection request');
+  if (!parsed.success) throw new Error('Invalid organization selection request');
   if (loggingOut) return null;
   const claimed = claimActiveWorkspace(parsed.data, {
     activeSession: await loadStoredSession(),
@@ -2533,13 +2533,13 @@ async function reselectActiveWorkspace(input: unknown): Promise<DesktopSession |
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (Object.keys(candidate).some((key) => !['region', 'name', 'operationId'].includes(key))) {
-    throw new Error('Invalid workspace creation request');
+    throw new Error('Invalid organization creation request');
   }
   const parsed = CreateWorkspaceRequestSchema.safeParse({ region: candidate['region'], name: candidate['name'] });
-  if (!parsed.success) throw new Error('Invalid workspace creation request');
+  if (!parsed.success) throw new Error('Invalid organization creation request');
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
-    throw new Error('Invalid workspace creation operation ID');
+    throw new Error('Invalid organization creation operation ID');
   }
   {
     return await requestOnboardingSession(
@@ -2553,17 +2553,17 @@ function parseInvitationAction(input: unknown): {
   region: RallyRegion;
   operationId?: string;
 } {
-  if (!input || typeof input !== 'object') throw new Error('Invalid workspace invitation request');
+  if (!input || typeof input !== 'object') throw new Error('Invalid organization invitation request');
   const candidate = input as { invitationId?: unknown; region?: unknown; operationId?: unknown };
   if (Object.keys(candidate).some((key) => !['region', 'invitationId', 'operationId'].includes(key))) {
-    throw new Error('Invalid workspace invitation request');
+    throw new Error('Invalid organization invitation request');
   }
   const invitationId = IdSchema.safeParse(candidate.invitationId);
   const region = OnboardingRegionRequestSchema.safeParse({ region: candidate.region });
-  if (!invitationId.success || !region.success) throw new Error('Invalid workspace invitation request');
+  if (!invitationId.success || !region.success) throw new Error('Invalid organization invitation request');
   if (candidate.operationId !== undefined
     && (typeof candidate.operationId !== 'string' || !UUID_V7_PATTERN.test(candidate.operationId))) {
-    throw new Error('Invalid workspace invitation operation ID');
+    throw new Error('Invalid organization invitation operation ID');
   }
   return {
     invitationId: invitationId.data,

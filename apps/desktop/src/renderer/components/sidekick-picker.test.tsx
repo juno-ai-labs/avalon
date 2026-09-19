@@ -113,7 +113,7 @@ describe('Sidekick recommendation picker', () => {
     expect(client.getQueryData(['recommended-sidekicks', 'room', '0'])).toEqual(recommended);
   });
 
-  it('lists workspace Sidekicks, searches, and updates the shared recommendation query', async () => {
+  it('lists organization Sidekicks, searches, and updates the shared recommendation query', async () => {
     api.getSidekicks.mockResolvedValue([
       { id: 'workspace-helper', scope: 'workspace', name: 'Writing guide', description: 'House style' },
       { id: 'personal-helper', scope: 'personal', name: 'Private notes', description: '' },
@@ -128,9 +128,9 @@ describe('Sidekick recommendation picker', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Attach existing Sidekick' }));
     expect(await screen.findByRole('button', { name: 'Writing guide' })).toBeVisible();
     expect(screen.queryByText('Private notes')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search workspace Sidekicks' }), { target: { value: 'missing' } });
-    expect(screen.getByText('No workspace Sidekicks found.')).toBeVisible();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search workspace Sidekicks' }), { target: { value: 'writing' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search organization Sidekicks' }), { target: { value: 'missing' } });
+    expect(screen.getByText('No organization Sidekicks found.')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search organization Sidekicks' }), { target: { value: 'writing' } });
     fireEvent.click(screen.getByRole('button', { name: 'Writing guide' }));
     await waitFor(() => expect(client.getQueryData(['recommended-sidekicks', 'room', '0'])).toEqual(recommended));
     expect(api.setRecommendedSidekick).toHaveBeenCalledWith('room', 'workspace-helper', true, '0');

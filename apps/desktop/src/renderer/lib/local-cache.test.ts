@@ -68,7 +68,7 @@ describe('local cache store', () => {
     expect(await notes.read(global1, 'a')).toEqual({ text: 'after' });
   });
 
-  it('clears one workspace and leaves the others', async () => {
+  it('clears one organization and leaves the others', async () => {
     await notes.write(global1, 'a', { text: 'global' });
     await notes.write(eu1, 'a', { text: 'enterprise' });
 
@@ -78,7 +78,7 @@ describe('local cache store', () => {
     expect(await notes.read(eu1, 'a')).toEqual({ text: 'enterprise' });
   });
 
-  it('keeps two accounts\' rows for one workspace apart, and clears only the leaving account\'s', async () => {
+  it('keeps two accounts\' rows for one organization apart, and clears only the leaving account\'s', async () => {
     const otherAccount = localCacheScope(OTHER_USER, 'global', '00000000-0000-7000-8000-000000000001');
     await notes.write(global1, 'a', { text: 'first account' });
     await notes.write(otherAccount, 'a', { text: 'second account' });
@@ -134,7 +134,7 @@ describe('local cache store', () => {
 });
 
 
-it('upgrades inactive cached workspaces and removes only structured meeting content', async () => {
+it('upgrades inactive cached organizations and removes only structured meeting content', async () => {
   closeLocalCache();
   const request = <T>(value: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
     value.onsuccess = () => resolve(value.result);

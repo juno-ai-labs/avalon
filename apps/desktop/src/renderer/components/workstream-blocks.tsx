@@ -1574,9 +1574,9 @@ function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.E
       // which is what every button beside it does — Copy is "Copy response",
       // PDF is "Save response as a PDF" — and the arrow is decorative, so it
       // stays out of both the name and the announcement.
-      description="New substream from this message"
+      description="New breakout from this message"
       onClick={onStart}
-    ><span aria-hidden="true">↳</span> New substream</MessageAction>
+    ><span aria-hidden="true">↳</span> New breakout</MessageAction>
   );
 }
 
@@ -1879,8 +1879,8 @@ function DraftProposedCard({
   failed?: boolean | undefined;
 }): React.JSX.Element {
   const scope = detail.suggestedScope === 'workstream'
-    ? 'This work stream'
-    : detail.suggestedScope === 'workspace' ? 'The workspace' : 'You';
+    ? 'This channel'
+    : detail.suggestedScope === 'workspace' ? 'The organization' : 'You';
   return (
     <div className="system-message automation-draft-card" id={`message-${messageId}`} role="group">
       <span aria-hidden="true" className="system-message-dot" />
@@ -2607,7 +2607,7 @@ export function MessageBlock({
         // own name stands in for that window.
         : profile?.displayName ?? message.author?.name
           ?? (ownHumanResponse ? currentUserName : undefined)
-          ?? 'Workspace member';
+          ?? 'Organization member';
       return (
         <article
           aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
@@ -2675,7 +2675,7 @@ export function MessageBlock({
   const ownHumanMessage = message.authorType === 'human' && currentUserId !== undefined && message.author?.id === currentUserId;
   const humanAuthorName = external
     ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
-    : profile?.displayName ?? message.author?.name ?? 'Workspace member';
+    : profile?.displayName ?? message.author?.name ?? 'Organization member';
   const sending = message.deliveryState === 'sending';
   const pending = message.deliveryState === 'steer_pending'
     || message.deliveryState === 'queue_pending';

@@ -138,7 +138,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     {colorPicker}
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
     <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
-    <div className="personal-shell-preview" style={{ '--personal-preview-color': personalColor(color) } as CSSProperties}><aside><PersonalAvatar color={color} initials={initials} /><span>{name} · You</span><i /><i /></aside><div><strong>Your next idea starts here</strong><span>One place for your team to get work done.</span><button type="button" tabIndex={-1}>New work stream</button></div></div>
+    <div className="personal-shell-preview" style={{ '--personal-preview-color': personalColor(color) } as CSSProperties}><aside><PersonalAvatar color={color} initials={initials} /><span>{name} · You</span><i /><i /></aside><div><strong>Your next idea starts here</strong><span>One place for your team to get work done.</span><button type="button" tabIndex={-1}>New channel</button></div></div>
     {error && <InlineError>{error}</InlineError>}
     <Button className="button-primary" disabled={busy || !name.trim() || !initials.trim()} onClick={() => void save()}>{busy ? 'Saving…' : onSaved ? 'Continue with this look' : 'Save appearance'}</Button>
   </div>;
@@ -238,9 +238,9 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     else void perform(() => advance('profile'));
   };
   if (state.stage === 'connectors') return <OnboardingPage
-    title={connectorScope === 'workspace' ? 'Connect tools for your workspace' : 'Connect your personal tools'}
+    title={connectorScope === 'workspace' ? 'Connect tools for your organization' : 'Connect your personal tools'}
     subtitle={connectorScope === 'workspace'
-      ? 'Everyone in your workspace can ask Rally to use these connections and the data you grant access to.'
+      ? 'Everyone in your organization can ask Rally to use these connections and the data you grant access to.'
       : 'Only you can use these connections through Rally. Teammates do not gain access by sharing a stream with you.'}
     footer={<>
       <Button className="button-primary" disabled={busy} onClick={() => {
@@ -261,7 +261,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       <Button disabled={busy} onClick={nextConnectorPage}>Skip for now</Button>
       {(configuring || connectorScope === 'you') && <Button disabled={busy} onClick={() => configuring ? setConfiguring(false) : changeConnectorPage('workspace')}>Back</Button>}
     </>}>
-    <p className="connector-access-note">{connectorScope === 'workspace' ? 'Workspace connections · 1 of 2' : 'Personal connections · 2 of 2. Any results you post in a shared stream are visible to its participants.'}</p>
+    <p className="connector-access-note">{connectorScope === 'workspace' ? 'Organization connections · 1 of 2' : 'Personal connections · 2 of 2. Any results you post in a shared stream are visible to its participants.'}</p>
     <label className="guided-search"><Search size={19} /><input aria-label="Search connectors" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
     <div className={configuring ? 'guided-connector-grid' : 'guided-connector-grid is-picking'}>{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
       const connected = connections.data?.some((connection) => connection.connectorType === provider.provider && connection.scope === connectorScope && connection.status === 'healthy' && (connection.scope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities).every((capability) => connection.capabilities?.includes(capability)));
@@ -272,7 +272,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
         const authorization = await api!.startProviderConnection(provider.provider, scope, capabilities);
         setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
         await desktopBridge().openExternal(authorization.url);
-      })}>{scope === 'you' ? PERSONAL_CONNECT_LABEL : 'Connect for workspace'}</Button>)}</div></>}</div>;
+      })}>{scope === 'you' ? PERSONAL_CONNECT_LABEL : 'Connect for organization'}</Button>)}</div></>}</div>;
     })}</div>{connectors.isLoading && <p>Loading available connectors…</p>}{(error ?? connectors.error?.message ?? connections.error?.message) && <InlineError>{error ?? connectors.error?.message ?? connections.error?.message}</InlineError>}
   </OnboardingPage>;
   const inviteAddresses = [...new Set([...emails, ...emailDraft.split(/[\s,;]+/u)].map((email) => email.trim().toLowerCase()).filter(Boolean))];
@@ -283,7 +283,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     setEmails((previous) => [...new Set([...previous, ...parts.map((email) => email.trim().toLowerCase()).filter(Boolean)])]);
     setEmailDraft(remaining);
   };
-  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Add email addresses to invite people to your workspace." footer={<>
+  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Add email addresses to invite people to your organization." footer={<>
     <Button className="button-primary" disabled={busy || !inviteAddresses.length || invalidEmails} onClick={() => void perform(async () => {
       const addresses = inviteAddresses.filter((email) => !sent.includes(email));
       setEmailDraft('');
@@ -316,7 +316,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       </div>
       <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
       {invalidEmails && <p className="inline-error">Enter a complete email address for each teammate.</p>}
-      <p>Everyone invited joins as a Member and can use workspace connections. Your private streams stay private.</p>
+      <p>Everyone invited joins as a Member and can use organization connections. Your private streams stay private.</p>
     </div>
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <InlineError>{error}</InlineError>}
   </OnboardingPage>;

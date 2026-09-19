@@ -235,7 +235,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       // the timezone it borrows — not a workspace-level setting.
       { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'notifications', label: 'Notifications', icon: Bell },
-      { id: 'workspace', label: 'Workspace', icon: Users },
+      { id: 'workspace', label: 'Organization', icon: Users },
       // Under Workspace rather than beside it: the Terminal egress policy is a
       // workspace-wide setting, but it is a page of its own — a review-then-
       // confirm flow that stops running sandboxes, which does not belong in the
@@ -259,7 +259,7 @@ function providerSetting(provider: { id: string; name: string; description: stri
     label: provider.name, description: provider.description,
     options: [
       ...(provider.scopes.includes('you') ? [PERSONAL_CONNECT_LABEL] : []),
-      ...(admin && provider.scopes.includes('workspace') ? ['Connect for workspace'] : []),
+      ...(admin && provider.scopes.includes('workspace') ? ['Connect for organization'] : []),
       'Setup', 'Authorization',
     ],
   });
@@ -976,7 +976,7 @@ export function WorkspaceSettingsScreen({
   ], settingsContext), [connections.data, githubSettingsConnections, customMcpSettingsConnections, isAdmin, settingsContext]);
   const searchResults = useMemo(() => {
     const action = navigationQuery.trim().toLowerCase();
-    const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for workspace'].some((label) => label.toLowerCase() === action);
+    const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for organization'].some((label) => label.toLowerCase() === action);
     return searchSettings(searchEntries, navigationQuery).filter((entry) =>
       !exactConnectAction || !entry.key.startsWith('provider:')
       || entry.definition.options?.some((option) => option.toLowerCase() === action));
@@ -1284,7 +1284,7 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Review workspace details and defaults shared by workspace automations.</p></div>
+                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by organization automations.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
@@ -1293,7 +1293,7 @@ export function WorkspaceSettingsScreen({
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceTimezone} />
                     <DropdownSelect
-                      ariaLabel="Workspace default timezone"
+                      ariaLabel="Organization default timezone"
                       disabled={!isAdmin || updateWorkspaceTimezone.isPending}
                       onValueChange={(timezone) => {
                         setWorkspaceTimezone(timezone);
@@ -1362,7 +1362,7 @@ export function WorkspaceSettingsScreen({
                 {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
-                  description={`${promotion?.name ?? 'This guest'} will gain normal workspace membership. Existing conversations and contributions stay with their account.`}>
+                  description={`${promotion?.name ?? 'This guest'} will gain normal organization membership. Existing conversations and contributions stay with their account.`}>
                   {promoteGuest.error && <InlineError>{promoteGuest.error.message}</InlineError>}
                   <Button disabled={promoteGuest.isPending} onClick={() => setPromotion(null)}>Cancel</Button>
                   <Button disabled={promoteGuest.isPending} onClick={() => { if (promotion) promoteGuest.mutate(promotion); }}>Make member</Button>
@@ -1435,22 +1435,22 @@ export function WorkspaceSettingsScreen({
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
                   <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
-                  <p>Leaving removes this workspace from your Rally account on every device.</p>
+                  <p>Leaving removes this organization from your Rally account on every device.</p>
                 </div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <span className="settings-row-copy">
-                      <strong>{leavingClosesWorkspace ? 'Leave and close this workspace' : 'Leave this workspace'}</strong>
+                      <strong>{leavingClosesWorkspace ? 'Leave and close this organization' : 'Leave this organization'}</strong>
                       <small>{leavingClosesWorkspace
-                        ? 'You are the last member. The workspace will become unavailable without deleting its retained data.'
-                        : 'The workspace stays available to its other members.'}</small>
+                        ? 'You are the last member. The organization will become unavailable without deleting its retained data.'
+                        : 'The organization stays available to its other members.'}</small>
                     </span>
                     <Button
                       className="button-danger"
                       disabled={members.isLoading || members.isError}
                       onClick={() => setLeaveConfirmationOpen(true)}
                     >
-                      {leavingClosesWorkspace ? 'Leave and close workspace' : 'Leave this workspace'}
+                      {leavingClosesWorkspace ? 'Leave and close organization' : 'Leave this organization'}
                     </Button>
                   </div>
                 </div>
@@ -1490,7 +1490,7 @@ export function WorkspaceSettingsScreen({
                     {terminalMode === 'full_internet' && searchTarget?.definition.id === 'terminalDomains' && (
                       <div className="terminal-network-domains">
                         <SettingCopy setting={settings.terminalDomains}
-                          description="Workspace-approved domains apply only to Trusted only mode." />
+                          description="Organization-approved domains apply only to Trusted only mode." />
                       </div>
                     )}
                     {terminalMode === 'trusted_only' && (
@@ -1507,8 +1507,8 @@ export function WorkspaceSettingsScreen({
                             value={terminalDomains}
                           />
                           <small>{terminalDraftRemainingSlots === null
-                            ? 'Review the change to verify remaining workspace-domain capacity.'
-                            : `${terminalDraftRemainingSlots ?? 0} workspace domain slots remain.`} Enter domains only—no schemes, ports, paths, IPs, or CIDR blocks.</small>
+                            ? 'Review the change to verify remaining organization-domain capacity.'
+                            : `${terminalDraftRemainingSlots ?? 0} organization domain slots remain.`} Enter domains only—no schemes, ports, paths, IPs, or CIDR blocks.</small>
                         </label>
                       </div>
                     )}
@@ -1549,7 +1549,7 @@ export function WorkspaceSettingsScreen({
                               ? terminalPreview.customDomains.map((domain) => <li key={`after:${domain}`}><code>{domain}</code></li>)
                               : <li>None</li>}</ul>
                             {terminalPreview.affectedWorkstreams.length > 0 && (
-                              <><strong>Work streams stopped</strong><ul>{terminalPreview.affectedWorkstreams.map((stream) => <li key={stream.id}>{stream.title}</li>)}</ul></>
+                              <><strong>Channels stopped</strong><ul>{terminalPreview.affectedWorkstreams.map((stream) => <li key={stream.id}>{stream.title}</li>)}</ul></>
                             )}
                           </details>
                         </span>
@@ -1562,7 +1562,7 @@ export function WorkspaceSettingsScreen({
                             anchor.download = `terminal-workspace-domains-revision-${terminalPreview.expectedRevision + 1}.txt`;
                             anchor.click();
                             URL.revokeObjectURL(url);
-                          }}>Download workspace domains</Button>
+                          }}>Download organization domains</Button>
                           <Button disabled={applyTerminalPolicy.isPending} onClick={() => applyTerminalPolicy.mutate()}>
                             {applyTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
                             Confirm network change
@@ -1593,10 +1593,10 @@ export function WorkspaceSettingsScreen({
                     },
                     {
                       id: 'workspace-connections',
-                      title: 'Workspace connections',
+                      title: 'Organization connections',
                       items: workspaceConnections,
-                      emptyTitle: 'No workspace connections yet',
-                      emptyDescription: 'Connect a connector below to make its tools available across this workspace.',
+                      emptyTitle: 'No organization connections yet',
+                      emptyDescription: 'Connect a connector below to make its tools available across this organization.',
                     },
                   ] as const).map((group) => (
                     <section className="settings-connection-group" key={group.id}>
@@ -1703,7 +1703,7 @@ export function WorkspaceSettingsScreen({
                     />
                     <span>{healthyConnections.length} connected</span>
                   </div>
-                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member; workspace automations use only the connections explicitly bound to them.</p>
+                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
                       const mark = 'mark' in provider ? provider.mark : null;
@@ -1728,13 +1728,13 @@ export function WorkspaceSettingsScreen({
                             : undefined;
                       const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
-                        ? `A ${provider.name} workspace connection is already installed. Manage it above.`
+                        ? `A ${provider.name} organization connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
                         : connections.isLoading
-                          ? 'Checking installed workspace connections…'
+                          ? 'Checking installed organization connections…'
                           : connections.isError
-                            ? 'Installed workspace connections could not be loaded.'
+                            ? 'Installed organization connections could not be loaded.'
                             : undefined;
                       return (
                         <article className="provider-card" key={provider.id}>
@@ -1747,7 +1747,7 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
+                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Organization events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
                           {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
                           {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}.</p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
@@ -1782,7 +1782,7 @@ export function WorkspaceSettingsScreen({
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <ConnectorButton
                                 disabled={workspaceConnectDisabled}
-                                label={'Connect for workspace'}
+                                label={'Connect for organization'}
                                 onClick={() => {
                                   if (provider.provider === 'custom_mcp') {
                                     openCustomMcpModal('workspace');
@@ -1798,7 +1798,7 @@ export function WorkspaceSettingsScreen({
                                   }
                                   if (provider.provider === 'generic_webhook') {
                                     setWebhookModalScope('workspace');
-                                    setWebhookDisplayName('Workspace inbound webhook');
+                                    setWebhookDisplayName('Organization inbound webhook');
                                     setWebhookEventTypes('');
                                     setWebhookIdempotencyKey(crypto.randomUUID());
                                     setWebhookSecretResult(null);
@@ -1807,9 +1807,9 @@ export function WorkspaceSettingsScreen({
                                   }
                                   connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
                                 }}
-                                tooltip={`Everyone in this workspace can use this connection; it acts for the workspace.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
+                                tooltip={`Everyone in this organization can use this connection; it acts for the organization.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
                               >
-                                {'Connect for workspace'}
+                                {'Connect for organization'}
                               </ConnectorButton>
                             )}
                           </div>
@@ -1841,7 +1841,7 @@ export function WorkspaceSettingsScreen({
                       value={githubSettingsConnectionId ?? ''}
                     >
                       {githubSettingsConnections.map((connection) => (
-                        <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Workspace'}</option>
+                        <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Organization'}</option>
                       ))}
                     </select>
                   </label>
@@ -1851,7 +1851,7 @@ export function WorkspaceSettingsScreen({
                 ) : githubSettings ? (
                   <>
                     {!canEditGitHubSettings && (
-                      <p className="settings-section-copy">Workspace repository access is read-only here. Ask a workspace administrator to change it.</p>
+                      <p className="settings-section-copy">Organization repository access is read-only here. Ask an organization administrator to change it.</p>
                     )}
                     <div className="settings-list-card settings-github-policy">
                       <label className="settings-preference-row">
@@ -1987,7 +1987,7 @@ export function WorkspaceSettingsScreen({
                     >
                       {customMcpSettingsConnections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
-                          {connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Workspace'}
+                          {connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Organization'}
                         </option>
                       ))}
                     </select>
@@ -2340,7 +2340,7 @@ export function WorkspaceSettingsScreen({
         </Modal>
         <Modal
           description={customMcpModalScope === 'workspace'
-            ? 'Everyone in this workspace will be able to use this server’s tools, acting through the one authorization set up here.'
+            ? 'Everyone in this organization will be able to use this server’s tools, acting through the one authorization set up here.'
             : 'Only you will be able to use this server’s tools, acting as whoever you authorize as.'}
           footer={(
             <>
@@ -2403,7 +2403,7 @@ export function WorkspaceSettingsScreen({
             <small>
               {customMcpAuthMode === 'oauth'
                 ? customMcpModalScope === 'workspace'
-                  ? 'You authorize once, in your browser. The workspace shares the resulting token, so everybody reaches the server as the account you sign in with.'
+                  ? 'You authorize once, in your browser. The organization shares the resulting token, so everybody reaches the server as the account you sign in with.'
                   : 'You authorize in your browser and Rally holds the resulting token for you alone.'
                 : 'Sent with every request to this server and encrypted at rest. Rally never shows them again or returns them to this app.'}
             </small>
@@ -2486,7 +2486,7 @@ export function WorkspaceSettingsScreen({
         {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
         {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
         <Modal
-          description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
+          description="An organization-wide Granola connection requires an Organization API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(
             <>
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
@@ -2496,7 +2496,7 @@ export function WorkspaceSettingsScreen({
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
-                Connect for workspace
+                Connect for organization
               </Button>
             </>
           )}
@@ -2505,7 +2505,7 @@ export function WorkspaceSettingsScreen({
             if (!open && !createGranolaWorkspaceConnection.isPending) setGranolaWorkspaceApiKey('');
           }}
           open={granolaWorkspaceModalOpen}
-          title="Connect Granola workspace"
+          title="Connect Granola organization"
         >
           <section aria-labelledby="granola-key-guide-title" className="granola-key-guide">
             <h3 id="granola-key-guide-title">Generate the key in Granola</h3>
@@ -2523,14 +2523,14 @@ export function WorkspaceSettingsScreen({
             help="Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook."
             id="granola-workspace-api-key"
             inputClassName="connector-key-input"
-            inputLabel="Workspace API key"
+            inputLabel="Organization API key"
             label={<SettingLabel setting={settings.granolaKey} />}
             onChange={setGranolaWorkspaceApiKey}
             provider="granola"
             value={granolaWorkspaceApiKey}
           />
           {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
-          {granolaRecovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+          {granolaRecovery.isPending && <p role="status">Checking for an existing organization installation…</p>}
           {granolaRecovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
         </Modal>
         <Modal
@@ -2578,7 +2578,7 @@ export function WorkspaceSettingsScreen({
                 onClick={() => departWorkspace.mutate()}
               >
                 {departWorkspace.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                {leavingClosesWorkspace ? 'Leave and close' : 'Leave workspace'}
+                {leavingClosesWorkspace ? 'Leave and close' : 'Leave organization'}
               </Button>
             </>
           )}
@@ -2595,7 +2595,7 @@ export function WorkspaceSettingsScreen({
         </Modal>
         <Modal
           description={disconnectTarget?.scope === 'workspace'
-            ? 'This removes the connection and its tools from everyone in this workspace.'
+            ? 'This removes the connection and its tools from everyone in this organization.'
             : 'This removes the connection and its tools from your Rally account.'}
           footer={(
             <>

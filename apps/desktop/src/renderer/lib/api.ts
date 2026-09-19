@@ -585,7 +585,7 @@ export class RallyApi {
     const session = this.session;
     if (!session || !('authentication' in session) || session.authentication !== 'cookie') return socketTicketSchema;
     return socketTicketSchema.transform((ticket, ctx): SocketTicket => {
-      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected workspace' }); return z.NEVER; }
+      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected organization' }); return z.NEVER; }
       const source = new URL(ticket.url);
       if (!source.pathname.startsWith('/socket/')) { ctx.addIssue({ code: 'custom', path: ['url'], message: 'Invalid browser socket destination' }); return z.NEVER; }
       const target = new URL(this.baseUrl, location.origin);
@@ -808,7 +808,7 @@ export class RallyApi {
       const matched = members.find((member) => member.role === raw.role) ?? members[0];
       currentUser = matched ? { ...matched, role: raw.role } : undefined;
     }
-    if (!currentUser) throw new ApiError('The signed-in user is missing from this workspace.', 401, 'session_profile_missing');
+    if (!currentUser) throw new ApiError('The signed-in user is missing from this organization.', 401, 'session_profile_missing');
     return {
       id: raw.id,
       name: raw.name,
