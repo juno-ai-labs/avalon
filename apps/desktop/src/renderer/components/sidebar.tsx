@@ -60,6 +60,15 @@ interface SidebarProps {
    * can forget is a flag that reads "empty workspace" on a cold sidebar.
    */
   automations: AutomationSummary[] | undefined;
+  /**
+   * The active Space directory, or absent for a host with no Space navigation.
+   *
+   * Absent is not empty: an empty directory is an Organization whose Spaces
+   * have not been made yet, which still has a **Spaces** heading and a **New
+   * space**. No directory at all is the guest shell, where Space discovery is
+   * deferred — the host decides that, per the PRD's design decision 9, rather
+   * than this component inferring it from a refusal.
+   */
   spaces?: SpaceSummary[];
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
@@ -1017,7 +1026,7 @@ export function Sidebar({
   constrained = false,
   workspace,
   automations,
-  spaces = [],
+  spaces,
   inactiveSpaces = [],
   spacesReady = true,
   spacesOutOfDate = false,
@@ -1475,11 +1484,12 @@ export function Sidebar({
     void onAddChannelToSpace(spaceId, workstream.id).catch(() => setMenuFailure('add_to_space'));
   };
 
-  // Where a Channel could be placed from its row, which is nowhere until the
-  // Organization has finished opening: the section is showing its opening card
-  // instead of the hierarchy, and the server refuses the membership with
-  // `space_bootstrap_pending`. One decision for all three row sites.
-  const placementSpaces = spacesReady ? spaces : [];
+  // Where a Channel could be placed from its row: nowhere in a shell without
+  // Space navigation, and nowhere until the Organization has finished opening
+  // — the section is showing its opening card instead of the hierarchy, and
+  // the server refuses the membership with `space_bootstrap_pending`. One
+  // decision for all three row sites.
+  const placementSpaces = spaces !== undefined && spacesReady ? spaces : [];
 
   const workstreamRowActions = {
     onAddToSpace: addToSpace,
@@ -1774,23 +1784,27 @@ export function Sidebar({
             </NewWorkstreamMenu>
           </div>}
 
-          {/* Drawn in every shell, the conversation-only one included: every
-              Channel belongs to at least one Space, so a sidebar without this
-              section cannot say where anything lives. */}
-          <SpaceSidebarSection
-            inactiveSpaces={inactiveSpaces}
-            loading={loading === true}
-            onAddChannel={onAddChannelToSpace}
-            onCreate={onCreateSpace}
-            onReorder={onReorderSpaces}
-            onRestore={onRestoreSpace}
-            onRetry={onRetrySpaces}
-            outOfDate={spacesOutOfDate}
-            ready={spacesReady}
-            renderWorkstream={renderWorkstream}
-            spaces={spaces}
-            workstreams={visibleWorkstreams}
-          />
+          {/* Drawn wherever the host supplies a directory, the
+              conversation-only shell included: every Channel belongs to at
+              least one Space, so a sidebar without this section cannot say
+              where anything lives. A host that supplies none — the guest
+              shell — has no Space navigation at all. */}
+          {spaces !== undefined && (
+            <SpaceSidebarSection
+              inactiveSpaces={inactiveSpaces}
+              loading={loading === true}
+              onAddChannel={onAddChannelToSpace}
+              onCreate={onCreateSpace}
+              onReorder={onReorderSpaces}
+              onRestore={onRestoreSpace}
+              onRetry={onRetrySpaces}
+              outOfDate={spacesOutOfDate}
+              ready={spacesReady}
+              renderWorkstream={renderWorkstream}
+              spaces={spaces}
+              workstreams={visibleWorkstreams}
+            />
+          )}
 
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting
