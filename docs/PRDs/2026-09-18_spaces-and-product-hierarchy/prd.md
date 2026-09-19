@@ -322,6 +322,60 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
+### 2026-09-19 — A Space's icon, colour and name are visible to anyone who can see a conversation inside it
+
+**Decided:** A person who can read at least one Channel placed in a Space sees
+that Space's **icon, colour and name**, even when the Space is
+participants-only and they are not a participant. (A breakout is visible only
+when its parent Channel is, so "or a breakout" reduces to the same rule.)
+
+That is the whole of the disclosure. Nothing else about the Space reaches them:
+not its participants, not its audience setting beyond the lock the mark already
+carries, not its resources, not its Sidekick recommendations, not the Channels
+in it they could not already read, and not how many Channels are in it — the
+count they are handed is of the Channels *they* can see. No control on any
+surface offers them a write: the sidebar row has no **+**, is not a drop target
+and is not offered under **Add to space**; its dashboard is the header and the
+conversation list, with no audience, participants, archive, **Add channel**,
+Resources or Sidekicks section and no **Remove** on a row; **Manage access**
+names the Space where it used to say "a space you can't see" and still offers
+no **Remove from space**. Every one of those is refused by the server by name.
+
+Arranging such a Space, and the Channels under it, stays available: an
+arrangement is that person's own view preference, stored under their user id
+and read by nobody else.
+
+**Why:** Space navigation (section 3) says the sidebar's job is to say where
+every Channel lives, and until now it could not for the one case that matters
+most — a Channel somebody shared into a Space of their own. Its only placement
+was invisible to every other reader of that Channel, so the Channel fell into
+the flat **Other channels** list, and the product's answer to "where does this
+live?" was a list that declined to say. The name of the folder a conversation
+you can already read sits in is the smallest thing that answers it.
+
+The cost is real and is accepted: **a Space's name is now something its
+participants choose that every reader of its member Channels will see.** A
+Space called "Performance review — Sam" placed over a Channel Sam can read
+tells Sam that. That is a naming consequence people can act on, and it is a
+better trade than a hierarchy that cannot describe itself. What is *not*
+accepted is the count: the size of a participants-only Space is inferable from
+nothing, which is why the count a reached-through viewer is handed is narrowed
+to what they can see.
+
+**Changes:** Nothing in sections 1 to 6. Space navigation gains a third way a
+Space becomes visible, beside its own Organization-wide scope and the viewer's
+participation in it, and `SpaceSummary` gains one field — `reach`
+(`participant`, `organization`, `through_channel`) — that every surface decides
+from. **Other channels** narrows to two transient states, an Organization still
+opening and a Channel whose every Space is archived, rather than the standing
+case it was introduced for in the 2026-09-19 entry below. An archived Space is
+*not* reachable this way: an archive stages every membership out of `active`
+before it commits, and no surface draws a Channel under an archived Space, so
+there would be nothing for the mark and name to explain.
+[`docs/spaces.md`](../../spaces.md#who-may-see-a-space-and-why) owns the
+predicate and the refusals; [`docs/authorization.md`](../../authorization.md)
+records that the disclosure is discovery and grants nothing.
+
 ### 2026-09-19 — No recency list for members, and every list a person can see is theirs to arrange
 
 **Decided:** Four product decisions, taken together because each is the reason
