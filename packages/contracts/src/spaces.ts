@@ -245,6 +245,23 @@ export const SpaceChannelPageSchema = z.strictObject({
 export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
 
 /**
+ * What a Space hands down to its member Channels, as one kind-keyed value.
+ *
+ * A resource and a Sidekick recommendation are the same mechanism with a
+ * different consumer: staged per membership, fenced on a generation, published
+ * through the outbox, rechecked by the Queue consumer, settled by receipt. The
+ * Project model had that machinery for resources alone, so a Sidekick default
+ * would have been a second copy of it. `kind` is what stops that.
+ *
+ * It lives here rather than beside the RPCs that carry it because it is on the
+ * wire in both directions — `POST /spaces/:id/defaults/:kind` sends it and the
+ * dashboard renders one section per value — and a renderer that cannot import
+ * the Worker's protocol module was restating it from a comment.
+ */
+export const SpaceDefaultKindSchema = z.enum(["resource", "sidekick"]);
+export type SpaceDefaultKind = z.infer<typeof SpaceDefaultKindSchema>;
+
+/**
  * Every source that currently grants a reader access to one Channel.
  *
  * What **Manage access** renders, and the shape the Channel's effective

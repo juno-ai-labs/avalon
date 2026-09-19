@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import {
   type SpaceColorKey,
+  type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceIconKey,
   type SpaceSummary,
@@ -35,7 +36,7 @@ import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
-import type { AutomationSummary, SpaceDefaultKind, Workspace } from '../lib/types';
+import type { AutomationSummary, Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
