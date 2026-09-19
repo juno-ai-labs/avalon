@@ -12,6 +12,7 @@ import {
 
 import { workstreamDOName } from "../durable-objects/names";
 import type {
+  ConfirmedAccessSource,
   ObservedChannel,
   SetChannelDirectScopeResult,
   SpaceAccessRetraction,
@@ -252,6 +253,7 @@ export class ChannelAccessService {
   async applySpaceSource(workstreamId: string, source: SpaceAccessSource): Promise<void> {
     const client = this.client(workstreamId);
     const detail = await client.get();
+    const observed = this.observed(detail);
     const room = await this.room(workstreamId);
     const applied = await room.applySpaceAccessSource({
       ...this.address(workstreamId),
@@ -261,9 +263,21 @@ export class ChannelAccessService {
       spaceRevision: source.spaceRevision,
       membershipGeneration: source.membershipGeneration,
       operationId: source.operationId,
-      channel: this.observed(detail),
+      channel: observed,
     });
     if (!applied.ok) throw spaceAccessError(applied.code, detail.title);
+
+    // The source the confirmation below commits, and the Channel as it was
+    // before any of this ran. Carried rather than re-read: by the time the
+    // confirmation lands the audience may already be Organization-wide
+    // because of this very source.
+    const confirmedSource = {
+      scope: source.scope,
+      participantUserIds: [...source.participantUserIds],
+      spaceRevision: source.spaceRevision,
+      membershipGeneration: source.membershipGeneration,
+      channel: observed,
+    };
 
     const seated: UserId[] = [];
     try {
@@ -275,10 +289,7 @@ export class ChannelAccessService {
         seated.push(userId);
       }
     } catch (error) {
-      // Attribute what did get seated before withdrawing, so the rollback
-      // removes it. Retracting an unconfirmed source would leave a half-applied
-      // audience behind as participants nothing accounts for.
-      await this.rollbackSpaceSource(workstreamId, source.spaceId, seated);
+      await this.rollbackSpaceSource(workstreamId, source.spaceId, seated, confirmedSource);
       const refusal = asApiError(error);
       if (refusal?.code === "workstream_audience_restricted_content") {
         throw spaceAccessError("space_membership_content_fence", detail.title);
@@ -291,6 +302,7 @@ export class ChannelAccessService {
       spaceId: source.spaceId,
       operationId: uuidV7(),
       seatedUserIds: seated,
+      source: confirmedSource,
     });
     if (!confirmed.ok) throw spaceAccessError(confirmed.code, detail.title);
   }
@@ -311,12 +323,26 @@ export class ChannelAccessService {
   /**
    * Withdraw what an application seated after it failed part way through.
    *
-   * The same retraction the product path uses, rather than an unwind of its
+   * Nothing seated is nothing to withdraw: the application records no source,
+   * so a failure before the first canonical add leaves the Channel exactly as
+   * it was and this returns without touching it. There is no half-applied
+   * audience and no orphaned provenance to clean up, which is the whole reason
+   * the source moved to the confirmation.
+   *
+   * Otherwise the readers that *were* seated are attributed first — committing
+   * the source as the successful path would have — and then withdrawn through
+   * the same retraction the product path uses, rather than an unwind of its
    * own: the plan is computed against the Channel as it is now and against the
    * other sources that still reach it, so a reader another Space also supplies
    * survives a rollback exactly as it survives a removal.
    */
-  private async rollbackSpaceSource(workstreamId: string, spaceId: SpaceId, seated: readonly UserId[]): Promise<void> {
+  private async rollbackSpaceSource(
+    workstreamId: string,
+    spaceId: SpaceId,
+    seated: readonly UserId[],
+    source: ConfirmedAccessSource,
+  ): Promise<void> {
+    if (seated.length === 0) return;
     try {
       const room = await this.room(workstreamId);
       await room.confirmSpaceAccessSource({
@@ -324,6 +350,7 @@ export class ChannelAccessService {
         spaceId,
         operationId: uuidV7(),
         seatedUserIds: [...seated],
+        source,
       });
       await this.retractSpaceSource(workstreamId, spaceId, uuidV7());
     } catch (error) {
