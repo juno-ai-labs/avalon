@@ -26,9 +26,10 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import type { ProjectIconKey } from '@rally/contracts';
+import type { SpaceIconKey } from '@rally/contracts';
 
-export const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
+/** The Space appearance catalog's glyphs, keyed by `SPACE_ICON_KEYS`. */
+export const SPACE_ICONS: Record<SpaceIconKey, LucideIcon> = {
   briefcase: Briefcase,
   target: Target,
   'calendar-days': CalendarDays,
