@@ -1814,9 +1814,28 @@ export class WorkstreamObjectProductService {
       this.assertRetainedContentContains({ scope: "workspace" });
     }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
+    // Narrowing takes away the reading everybody in the Organization had, so
+    // whoever narrows is seated — otherwise they lock themselves out of the
+    // Channel they just made private. Where that seat is *written* depends on
+    // which authority owns the roster.
+    //
+    // On a Channel whose participants have moved to the grant ledger, the
+    // roster is a projection and `participants` is frozen by
+    // `participant_authority_freeze_insert`. The seat therefore goes through
+    // the same grant mutation `add_participant` takes on a migrated Channel,
+    // and the projection puts the row back. Writing it here instead aborted the
+    // whole narrowing — which is how a shared Channel that had ever been shared
+    // could not be made private at all, and how a Space retraction whose plan
+    // narrows the scope failed on a trigger rather than on a decision.
+    //
+    // And the seat is written only when it is *needed*. The upsert below used
+    // to run on every `scope: "personal"` update, so re-stating a scope that
+    // had not changed fired the same frozen insert for a row that was already
+    // active.
+    const seatThroughGrants = joined && await this.migratedRosterSeat(auth);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
-        if (input.scope === "personal") {
+        if (joined && !seatThroughGrants) {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -2579,6 +2598,58 @@ export class WorkstreamObjectProductService {
     }
   }
 
+  /**
+   * Seat the person narrowing this Channel through the grant authority, when
+   * that is where its roster lives.
+   *
+   * Answers `false` for a Channel that has never been shared — `participants`
+   * is still the authority there and the caller writes the row itself — and
+   * `true` once the seat has been written as a grant and projected back.
+   *
+   * A refusal is named rather than swallowed. Narrowing to yourself is a share
+   * decision, and the grant authority is what decides whether this person may
+   * make one: somebody who reads the Channel only because it is
+   * Organization-wide holds no grant, so they have nothing to narrow it *from*
+   * and the ledger refuses them. Returning `false` there would send the write
+   * back to the frozen table and abort on the trigger with no reason attached.
+   */
+  private async migratedRosterSeat(auth: AuthContext): Promise<boolean> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "workstream" || this.externalSubstreamId() !== "0") return false;
+    if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return false;
+    const parent = await durableObjectStubForWorkspace(
+      this.env, this.env.WORKSTREAM_DOS, identity.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)),
+    );
+    const result = await parent.mutateParticipantGrant({
+      operationId: await stableUuid(["narrow-scope-seat", identity.parentId, auth.userId]),
+      actorUserId: asUserId(auth.userId),
+      userId: asUserId(auth.userId),
+      active: true,
+      target: {
+        kind: "conversation",
+        workspaceId: identity.workspaceId,
+        parentId: identity.parentId,
+        substreamId: this.externalSubstreamId(),
+      },
+    });
+    if (result.status === "denied" || result.status === "conflict") {
+      throw new ApiError(
+        403,
+        "workstream_scope_narrow_forbidden",
+        "Share this work stream with yourself before making it private",
+      );
+    }
+    if (!this.isParticipant(auth.userId)) {
+      throw new ApiError(
+        409,
+        "participant_access_changed",
+        "Participant access changed; refresh and try again",
+      );
+    }
+    return true;
+  }
+
   private async prepareMessageParticipants(auth: AuthContext, clientMessageId: string, missingUserIds: readonly string[]): Promise<void> {
     const identity = this.objectStore.identity();
     if (identity?.parentKind !== "workstream"
@@ -3123,20 +3194,35 @@ export class WorkstreamObjectProductService {
     return parsed.success ? parsed.data : null;
   }
 
-  /** Retained attachments cannot acquire readers outside their original source audience. */
-  private assertRetainedContentContains(targetAudience: WorkstreamReaderAudience): void {
+  /**
+   * Whether every retained attachment's source audience already contains this
+   * proposed one.
+   *
+   * The predicate behind {@link assertRetainedContentContains}, exposed so a
+   * caller that is about to widen several Channels at once can ask before it
+   * starts. A Space audience change is exactly that: applying it Channel by
+   * Channel and discovering a fence on the fourth leaves three already widened,
+   * and widening is the one effect that cannot be taken back — somebody may
+   * have read.
+   */
+  retainedContentContains(targetAudience: WorkstreamReaderAudience): boolean {
     const rows = this.storage.sql.exec<{ audience_json: string }>(
       `SELECT audience_json FROM content_audience_fences`,
     ).toArray();
-    for (const row of rows) {
+    return rows.every((row) => {
       const sourceAudience = this.contentFenceAudience(row.audience_json);
-      if (sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
-      throw new ApiError(
-        409,
-        "workstream_audience_restricted_content",
-        "This work stream contains retained content that the wider audience cannot view",
-      );
-    }
+      return Boolean(sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience));
+    });
+  }
+
+  /** Retained attachments cannot acquire readers outside their original source audience. */
+  private assertRetainedContentContains(targetAudience: WorkstreamReaderAudience): void {
+    if (this.retainedContentContains(targetAudience)) return;
+    throw new ApiError(
+      409,
+      "workstream_audience_restricted_content",
+      "This work stream contains retained content that the wider audience cannot view",
+    );
   }
 
   private backgroundTasks(): WorkstreamDetail["backgroundTasks"] {
@@ -5032,7 +5118,31 @@ export class WorkstreamObjectProductService {
 
   async setAppearanceForAdmittedSocket(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
     this.locallyAuthorizedRoot(auth);
-    if (this.externalSubstreamId() !== "0" || this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
+    if (this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
+    return this.applyAppearance(auth, operationId, raw);
+  }
+
+  /**
+   * The same appearance write, reached over the product request rather than an
+   * admitted feed socket.
+   *
+   * A Space has no socket to admit — its role refuses the upgrade — and its
+   * icon and colour are the same stored appearance a Channel's are. So the
+   * write is one implementation with two doors, rather than a second appearance
+   * writer whose payload hash and effect would have to be kept in step with
+   * this one.
+   */
+  async setAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
+    await this.authorize(auth);
+    const parentKind = this.objectStore.identity()?.parentKind;
+    if (parentKind !== "workstream" && parentKind !== "space") {
+      throw new ApiError(403, "main_conversation_required", "Change the appearance from Main");
+    }
+    return this.applyAppearance(auth, operationId, raw);
+  }
+
+  private async applyAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
+    if (this.externalSubstreamId() !== "0") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
     const patch = WorkstreamAppearancePatchSchema.parse(raw);
     const requestHash = workstreamImportHash({ command: "set_workstream_appearance", patch });
     let changed = false;

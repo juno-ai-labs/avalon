@@ -51,6 +51,7 @@ import {
   asWorkspaceId,
   ServerSocketEventSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamAppearancePatchSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
@@ -365,6 +366,19 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
 });
+/**
+ * A proposed audience, asked about rather than applied.
+ *
+ * Read-only by construction: it names the audience a caller is *considering*,
+ * and the answer is a boolean. A Space audience change reaches several Channels
+ * and widening cannot be taken back, so every one of them is asked before any
+ * of them is changed.
+ */
+const PreviewAudienceContainmentRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  audience: WorkstreamReaderAudienceSchema,
+});
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentKind: ConversationParentKindSchema,
@@ -422,6 +436,11 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   // and it is carried here because nothing downstream can infer it.
   z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema,
     operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  // The appearance write over the product request. A Space admits no feed
+  // socket, so the socket command that carries this for a Channel cannot reach
+  // it; the write itself is the same one.
+  z.strictObject({ operation: z.literal("set_appearance"), auth: ProductAuthSchema,
+    operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema,
     operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
   z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
@@ -2214,6 +2233,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
   }
 
+  /**
+   * Whether this conversation's retained content would still be contained by a
+   * proposed audience.
+   *
+   * `null` when this object is not the addressed Channel's main conversation,
+   * the way `readerAudience` answers: a misaddressed call is a refusal rather
+   * than a wrong answer, and a preflight that read `false` as "no fences" would
+   * be the one place a fence could be skipped.
+   *
+   * It writes nothing and is not the fence. The fence is the canonical scope
+   * and participant operations, which run the same predicate inside the
+   * transaction that changes the audience; this only lets a caller stop before
+   * it has widened Channels it cannot un-widen.
+   */
+  async previewAudienceContainment(
+    input: z.input<typeof PreviewAudienceContainmentRequestSchema>,
+  ): Promise<boolean | null> {
+    await this.initialized;
+    const request = parseRpcInput(
+      PreviewAudienceContainmentRequestSchema, input, "preview_audience_containment",
+    );
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") return null;
+    return this.product.retainedContentContains(request.audience);
+  }
+
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
     await this.initialized;
     const request = RuntimeReaderAudienceRequestSchema.parse(input);
@@ -3355,6 +3403,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
         await this.publishLocalProductEvent(identity, { type: "participant_removed", userId: request.userId });
+        return jsonResponse({ ok: true });
+      }
+      if (request.operation === "set_appearance") {
+        await this.product.setAppearance(current, request.operationId, request.patch);
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {

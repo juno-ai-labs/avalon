@@ -100,6 +100,14 @@ const ArtifactRegistryRowSchema = z.strictObject({
   updated_at: z.number().int().nonnegative(),
 });
 
+const SpaceDirectoryRowSchema = z.strictObject({
+  space_id: z.string(),
+  title: z.string(),
+  scope: z.string(),
+  system_role: z.string().nullable(),
+  archived_at: z.number().int().nonnegative().nullable(),
+});
+
 const SidekickDirectoryRowSchema = z.strictObject({
   automation_id: z.string(),
   lifecycle: z.string(),
@@ -199,31 +207,19 @@ async function resolveInspectionSidekickRoute(
 }
 
 /**
- * A Space is fenced by its workspace and then by its own identity row.
+ * A Space is fenced by its workspace and then by the Organization's own record
+ * of it.
  *
- * A Sidekick is fenced on `automation_directory`, the workspace-held row that
- * proves the object exists. Phase 1 of the Spaces work has no equivalent: the
- * Space directory projection arrives with the WorkspaceDO migration that
- * introduces it, so there is nothing in reach that can say a Space is real
- * before the object is addressed.
+ * The same fence a Sidekick has: `workspace_space_directory` is the row that
+ * proves the object exists, read from an object that is already open, so a miss
+ * is answered without naming anything in `SPACE_DOS`. Naming a Durable Object
+ * creates it, and an id that is not a Space would otherwise leave an empty
+ * object behind in the namespace and a phantom in the migration tracker's
+ * `SpaceDO` count.
  *
- * So the fence is the two things that do exist. The workspace route is the
- * D1 anchor — the same `workstream_authority_routes`-backed resolver every
- * other target starts from, which is what proves this region serves this
- * Organization at all. Then the object's own `workstream_metadata` row has to
- * name this workspace and this Space id; anything else answers `found: false`.
- *
- * What that costs is the thing the Sidekick fence exists to avoid: a miss has
- * already named the object, and naming a Durable Object creates it. The
- * consolation is that it creates it in `SPACE_DOS`, where an empty object is
- * unreachable by any product path and confusable with nothing — as opposed to
- * the Sidekick case, where a work-stream id would have materialized an empty
- * SidekickDO in the namespace real Sidekicks live in. It still shows up in the
- * migration tracker's `SpaceDO` count, which is the visible cost.
- *
- * // Phase 3: replace the identity read with `workspace_space_directory` in
- * WorkspaceDO, the way `resolveInspectionSidekickRoute` reads
- * `automation_directory`, and this window closes.
+ * The workspace route is still read first — the same
+ * `workstream_authority_routes`-backed resolver every other target starts from
+ * — because it is what proves this region serves this Organization at all.
  */
 async function resolveInspectionSpaceRoute(
   env: Env,
@@ -236,13 +232,12 @@ async function resolveInspectionSpaceRoute(
     expectedGeneration,
   );
   if (!route) return null;
-  const space = await spaceStub(env, input.workspaceId, input.spaceId);
-  const identity = await space.runInspectionSql({
-    sql: `SELECT workstream_id FROM workstream_metadata
-           WHERE id = 1 AND workspace_id = ? AND workstream_id = ?`,
-    bindings: [input.workspaceId, input.spaceId],
+  const workspace = await workspaceStub(env, input.workspaceId);
+  const directory = await workspace.runInspectionSql({
+    sql: `SELECT space_id FROM workspace_space_directory WHERE space_id = ?`,
+    bindings: [input.spaceId],
   });
-  return identity.rows.length === 0 ? null : route;
+  return directory.rows.length === 0 ? null : route;
 }
 
 /**
@@ -424,27 +419,40 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   }
 
   /**
-   * Every Space in a workspace.
+   * Every Space in a workspace, archived ones included.
    *
-   * Phase 1 of the Spaces work answers with an empty list, and that answer is
-   * true rather than a placeholder: no product path creates a Space yet, so a
-   * workspace has none. It lists nothing because there is nothing, not because
-   * the projection this will read is missing.
-   *
-   * // Phase 3: read `workspace_space_directory` in WorkspaceDO, the way
-   * `listSidekicks` reads `automation_directory`.
+   * Read from `workspace_space_directory` the way `listSidekicks` reads
+   * `automation_directory`: the Organization's projection is what says a Space
+   * exists, and an archived Space is a common inspection target even though no
+   * product list shows it.
    */
   async listSpaces(input: unknown): Promise<EngineeringSpaceListLookup> {
     const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSpaces");
     if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
       return { found: false };
     }
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const result = await workspace.runInspectionSql({
+      sql: `SELECT space_id, title, scope, system_role, archived_at
+              FROM workspace_space_directory
+             ORDER BY created_at, space_id`,
+      bindings: [],
+    });
     return EngineeringSpaceListLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        items: [],
+        items: z.array(SpaceDirectoryRowSchema).parse(result.rows).map((row) => ({
+          workspaceId: request.workspaceId,
+          spaceId: row.space_id,
+          region: this.env.AVALON_REGION,
+          name: row.title,
+          scope: row.scope,
+          status: row.archived_at === null ? "active" : "archived",
+          systemRole: row.system_role,
+          archivedAt: row.archived_at,
+        })),
       },
     });
   }
