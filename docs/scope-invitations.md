@@ -23,7 +23,7 @@ conversation owner.
 | `apps/api/src/services/scope-invitation-link.ts` | The emailed link's token kind, what opens it, and the workstream address it names. |
 | `apps/api/src/services/scope-invitation-email.ts` | What the invitation says: the heading, the quoted preview, and the line about Rally. |
 | `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
-| `packages/db/src/link-payloads.ts` | `defineLinkPayload`/`issueLinkPayload`/`openLinkPayload`: opaque tokens for any link a person receives, typed by their prefix. |
+| `packages/db/src/link-payloads.ts` | The shared opaque-token store, documented in [`link-payloads.md`](link-payloads.md). |
 | `packages/db/migrations/0114_link_payloads.sql` | The shared `link_payloads` table: token digest, type, JSON and optional expiry. |
 | `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, verified mailbox, relationship admission, grant activation and email delivery. |
@@ -82,19 +82,15 @@ protecting it. Reading the row therefore proves only *which* invitation is being
 asked about, and the owner still checks the presented token against the HMAC it
 recorded.
 
-`link_payloads` is shared rather than invitation-specific, because a link whose
-URL should not describe its subject is a recurring shape rather than one
-feature. `defineLinkPayload` pairs a prefix with the schema that prefix
-promises; nothing is written or read without satisfying it, so a token minted
-for one kind can never be presented as another even though every kind shares the
-table. A row carries the expiry of the thing it addresses, which for an
-invitation is `expiresAt` or null, and each issue deletes rows already past
-their own deadline, so rows that carry one are swept by the writes that grow the
-table rather than by a schedule nobody owns. A row issued with no expiry is
-swept by nothing: it is keyed by the digest of a token that is never stored, so
-neither the invitation it addresses nor a later revocation of it can find the
-row again. Reclaiming those would mean deleting on `created_at` age, and that
-age is a retention number the team sets rather than one this module picks.
+**The store itself is [`link-payloads.md`](link-payloads.md)**, which owns the
+prefix typing, a row's lifecycle and the rule that a payload may never carry a
+presentable secret. It is shared rather than invitation-specific because a link
+whose URL should not describe its subject is a recurring shape, and this is only
+its first kind. What belongs here is what an invitation puts in it: `inv` carries
+`expiresAt` or null as the row's deadline, so a row dies with the invitation it
+addresses, and a row for an invitation with no expiry is retained — see that
+document's **Invariants** for why nothing can reclaim it and what the open
+retention question is.
 
 `expiresAt` itself is bounded at the largest instant a `Date` can represent.
 That is not a policy ceiling — policy expiry is still `null` until the team sets
@@ -204,9 +200,18 @@ turns are quoted with `>` below the real link so a message ending in its own
 sign-in sentence cannot sit where ours does.
 
 `POST /browser/invitation` is the one unauthenticated read here, and it exists
-because a sealed link cannot tell the sign-in form under it which mailbox to
-fill in. It checks the secret exactly as acceptance does, on the same
-invitation state, and returns that mailbox alone — never the workspace, the work
+because an opaque link cannot tell the sign-in form under it which mailbox to
+fill in. It takes the token and nothing else: on the addressed body, which
+acceptance still accepts, nothing is looked up, so the caller's own identifiers
+would reach a Durable Object stub with no session behind the request — one
+instantiated per workspace and parent id anyone cares to name, and a missing
+work stream answered with a 500 where every other answer here is one 403. A link
+minted in that format never carried a mailbox to fill in, so refusing it here
+regresses nothing.
+
+It checks the secret exactly as acceptance does, on the same invitation state
+and through the same predicate for everything acceptance would refuse it for,
+and returns that mailbox alone — never the workspace, the work
 stream, the sharer or the scopes. A holder who can read it can also accept with
 it once they hold the mailbox, so it releases no authority that the link did not
 already carry.
@@ -299,16 +304,22 @@ and the panel states that distinction. Existing last-participant rules apply.
   second browser deployment must give the link its own routing again rather than
   offering a token to every deployment in turn.
 - A row whose payload no longer matches the shape its prefix promises is this
-  deployment's own drift, not a forged link, and is raised as
-  `link_payload_drifted:<prefix>:<field>:<issue>` rather than reported as one
-  more unavailable invitation — otherwise a deploy that stopped honouring every
-  outstanding link of that kind looks exactly like recipients mistyping.
+  deployment's own drift rather than a forged link, and says so;
+  [`link-payloads.md`](link-payloads.md) owns that rule and the code it raises.
 - The token in the link is the acceptance secret, not a handle to one. It
   carries 256 bits for that reason, and neither store it is recorded in — the
   owner's HMAC, the row's digest — holds a value that can be presented.
 - Describing an invitation checks its expiry itself rather than inheriting the
   acceptance path's state check. An accepted invitation is still usable, so
   without that check a lapsed link would keep naming its mailbox forever.
+- The preview and acceptance ask one predicate for everything else that can
+  withdraw an invitation — the targets' migration, and whether the sharer still
+  holds the share in the incarnation they offered it from. A preview that
+  outlives acceptance's conditions is a mailbox oracle, and two copies of the
+  conditions is how it gets there.
+- The unauthenticated preview takes the opaque token only. The addressed body
+  reaches a Durable Object without a lookup, which is not something an
+  unauthenticated caller may choose.
 - A creation that does not record what it minted discards those links itself.
   Nothing else can: the row is keyed by a digest of a token nothing stores, so
   the minting call is the last place it is reachable.
@@ -361,6 +372,12 @@ digest rather than that token and no secret beside the address it stores, that a
 dump of it replayed through the addressed body is refused, previews and accepts
 by the token alone, and refuses an edited token, a wrong secret, a revoked
 invitation and one past its deadline whether or not it was accepted first.
+It also proves the bound the whole feature rests on, against real conversation
+objects with distinct transcripts in Main and in a child: an offer of the child
+quotes the child and never Main, an offer of Main quotes Main and never the
+child, and a system notice in either is not conversation and never leaves. That
+case needs the runtime — the Node fixture resolves every substream id to one
+database, so the same assertions there would pass with the boundary broken.
 It covers the housekeeping around those rows too: that a replayed and a denied
 creation each leave the table where they found it, that an `expiresAt` past the
 `Date` range is refused with the field named in the diagnostic rather than
@@ -419,6 +436,20 @@ weigh if this is ever revisited. The row is also why the link still names no
 region: only the deployment holding it can resolve it, so naming one would be
 routing the client already has.
 
+Review also caught the preview drifting from acceptance. `describe` checked the
+secret and `usable()` and stopped there, while acceptance also requires the
+targets' migration to be complete and the sharer to still hold the share they
+offered, in the incarnation they offered it from. A preview that outlives those
+is a mailbox oracle — it keeps naming who an invitation was for after nobody can
+accept it, which is not something its holder could have learned by trying. Both
+now ask one predicate, which returns the reason so acceptance can keep answering
+`migration_pending` and `sharing_required` separately while the preview collapses
+every reason into its one sentence. The same round narrowed
+`POST /browser/invitation` to the opaque token: on the addressed branch nothing
+is looked up, so an unauthenticated caller's own identifiers reached a Durable
+Object stub, and a missing work stream came back as a 500 where every other
+answer there is one 403.
+
 Two smaller things the first revision got wrong are worth keeping written down,
 because both are properties of minting before committing rather than of this
 feature. A row is reachable only by the token that reads it, and that token is
@@ -472,6 +503,8 @@ template that renders correctly in a browser says nothing about the clients it
 is read in. `html` is optional in the stored payload for exactly one reason: an
 invitation recorded before this change still delivers, as the text it was
 composed as.
+
+PR: [#863](https://github.com/juno-ai-labs/avalon/pull/863).
 
 ### 2026-09-19 — Dismiss the share dialog, and drop the invited-address notice
 

@@ -213,3 +213,16 @@ it("has nothing to preview in a conversation nobody has spoken in", async () => 
     workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
   })).toBeNull();
 });
+it("names the conversation in both parts, or in neither", () => {
+  // A transcript read that fails while the title read succeeds is the case the
+  // two parts used to disagree about: the styled part put the title in its
+  // heading and the plain one dropped it with the quotes it never got.
+  const { text, html } = scopeInvitationEmailParts({
+    recipientEmail: "guest@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: "Adam Owner", workspaceName: "Juno Labs",
+    conversationTitle: "Pricing for the Q4 launch", preview: null,
+  });
+  expect(text).toContain("Pricing for the Q4 launch");
+  expect(html).toContain("Pricing for the Q4 launch");
+  expect(text).not.toContain(">");
+});

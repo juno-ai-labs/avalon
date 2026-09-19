@@ -98,10 +98,14 @@ function textPart(content: ScopeInvitationEmailContent, rendered: ReturnType<typ
     // because the turns are written by workspace members: a message ending in a
     // plausible-looking sign-in sentence must not be able to sit where the real
     // one does.
-    ...(rendered.turns.length === 0 ? [] : ["",
-      ...(rendered.title ? [rendered.title] : []),
-      ...(rendered.earlier ? [rendered.earlier] : []),
-      ...rendered.turns.flatMap((turn) => ["", `> ${turn.author}: ${turn.text}`])]),
+    // The title is here rather than beside the heading for the same reason the
+    // turns are: it is written by a member. It appears whenever it is known,
+    // with or without turns, because the styled part always shows it and the
+    // two parts are composed together so they cannot say different things.
+    ...(rendered.title || rendered.turns.length > 0 ? [""] : []),
+    ...(rendered.title ? [rendered.title] : []),
+    ...(rendered.earlier && rendered.turns.length > 0 ? [rendered.earlier] : []),
+    ...rendered.turns.flatMap((turn) => ["", `> ${turn.author}: ${turn.text}`]),
     "",
     NOT_ACCESS_YET,
     "",

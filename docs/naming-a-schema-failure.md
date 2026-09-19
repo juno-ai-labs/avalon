@@ -148,6 +148,7 @@ its own is a boundary that drifts.
 | `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
 | `apps/api/src/durable-objects/workspace-do.ts` | the entry points on the Sidekick's publication tail and the connector-event pipeline: `applyExternalEventRegistrations`, `ensureMemoryScope`, `createMemoryTable`, `memoryTableWithColumns`, `recordMemoryTableOpenReceipt`, `memoryTableMutationReceipt`, `applyAutomationDirectory`, `ingestConnectorEvent`, `claimConnectorEvent`, `settleConnectorEvent`, `matchExternalEventDestinations` |
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
+| `packages/db/src/link-payloads.ts` | a link payload that no longer satisfies the schema its prefix promises reports `link_payload_drift_invalid:<prefix>:<path>:<code>` — including when it is no longer JSON, as `-root-:invalid_json` — where the row's own existence proves this deployment wrote it. The `_invalid:` label is what `isDiagnosticCode` matches, without which the code reaches an operator as the caller's generic fallback |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
 
 The label a Durable Object entry point passes to `parseRpcInput` is the RPC

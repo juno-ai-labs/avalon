@@ -21,8 +21,13 @@ export interface LinkPayloadKind<Schema extends z.ZodType> {
   readonly schema: Schema;
 }
 
-/** Short, lowercase, and free of the separator, so the first `_` always splits a token cleanly. */
-const PREFIX = /^[a-z][a-z0-9]{1,11}$/u;
+/**
+ * Lowercase and free of the separator, so the first `_` always splits a token
+ * cleanly. No length ceiling: only this tree's own `defineLinkPayload` calls
+ * reach it, and a limit on a value nobody outside supplies is a number invented
+ * for nothing.
+ */
+const PREFIX = /^[a-z][a-z0-9]*$/u;
 
 /** 256 bits, matching every other bearer secret in this tree: the token is what guards the payload. */
 const TOKEN_BYTES = 32;
@@ -52,6 +57,9 @@ function token(prefix: string): string {
  * row is retained until its issuer discards it by token. Reclaiming the rest
  * would mean deleting on `created_at` age, and that age is a retention number
  * the team sets rather than one this file invents.
+ *
+ * The scheduled sweep in {@link purgeExpiredLinkPayloads} covers the rest, so a
+ * row with a deadline dies on time rather than on the next write.
  */
 export async function issueLinkPayload<Schema extends z.ZodType>(
   db: D1DatabaseLike,
@@ -71,6 +79,19 @@ export async function issueLinkPayload<Schema extends z.ZodType>(
     db.prepare(`DELETE FROM link_payloads WHERE expires_at IS NOT NULL AND expires_at <= ?`).bind(now),
   ]);
   return issued;
+}
+
+/**
+ * Drops every row whose own deadline has passed, for the scheduled sweep that
+ * already reaps this region's other expiring credentials.
+ *
+ * Issuing sweeps too, but only a table that is still being written to is swept
+ * that way, and an expired link should stop resolving whether or not anyone has
+ * minted another since.
+ */
+export async function purgeExpiredLinkPayloads(db: D1DatabaseLike): Promise<void> {
+  await db.prepare(`DELETE FROM link_payloads WHERE expires_at IS NOT NULL AND expires_at <= ?`)
+    .bind(new Date().toISOString()).run();
 }
 
 /**
@@ -101,12 +122,11 @@ export async function openLinkPayload<Schema extends z.ZodType>(
   db: D1DatabaseLike,
   kind: LinkPayloadKind<Schema>,
   presented: string,
-  now = new Date(),
 ): Promise<z.infer<Schema> | null> {
   if (!presented.startsWith(`${kind.prefix}_`)) return null;
   const row = await db.prepare(`SELECT payload FROM link_payloads
     WHERE token_hash = ? AND type = ? AND (expires_at IS NULL OR expires_at > ?)`)
-    .bind(await sha256Hex(presented), kind.prefix, now.toISOString()).first<{ payload: string }>();
+    .bind(await sha256Hex(presented), kind.prefix, new Date().toISOString()).first<{ payload: string }>();
   if (!row) return null;
   // The row exists, so this deployment wrote it: whatever is wrong with it is
   // drift on our side, not a forged token. Reporting either as one more
@@ -117,9 +137,9 @@ export async function openLinkPayload<Schema extends z.ZodType>(
   try {
     stored = JSON.parse(row.payload);
   } catch {
-    throw new Error(codeShaped(`link_payload_drifted:${kind.prefix}:-root-:invalid_json`));
+    throw new Error(codeShaped(`link_payload_drift_invalid:${kind.prefix}:-root-:invalid_json`));
   }
   const parsed = kind.schema.safeParse(stored);
   if (parsed.success) return parsed.data;
-  throw new Error(codeShaped(`link_payload_drifted:${kind.prefix}:${describeZodIssues(parsed.error)}`));
+  throw new Error(codeShaped(`link_payload_drift_invalid:${kind.prefix}:${describeZodIssues(parsed.error)}`));
 }

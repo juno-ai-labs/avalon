@@ -401,6 +401,8 @@ deployment cannot open fills nothing and reports the invitation as unavailable;
 a transport failure says so separately, because it is not evidence about the
 link.
 
+PR: [#863](https://github.com/juno-ai-labs/avalon/pull/863).
+
 ### 2026-09-18 — Enable the production browser origin
 
 **What changed:** Host the lite browser at `app.rallywith.ai`, deploy it on main
