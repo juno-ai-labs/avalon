@@ -342,16 +342,95 @@ export type WorkspaceSpaceGeneralResult = z.infer<typeof WorkspaceSpaceGeneralRe
  *
  * `ready` is what the sidebar reads: false while anything here is unfinished,
  * so the desktop shows the Organization-opening state rather than a hierarchy
- * that is half built. Phase 5 drives the phases; this phase creates the row and
- * exposes it.
+ * that is half built.
+ *
+ * The phase is the pass that is *running*, which is what lets the alarm turn it
+ * into a message kind without a second table. There is no separate audience
+ * pass: applying General's Organization-wide source is what widens a formerly
+ * personal Channel, and it happens inside the placement, through the Channel's
+ * canonical scope operation and the retained-content trigger that guards it.
  */
 export const WorkspaceSpaceBootstrapStatusSchema = z.strictObject({
-  phase: z.enum(["pending", "general", "memberships", "audience", "complete"]),
+  phase: z.enum(["pending", "general", "memberships", "finalize", "complete"]),
   generalSpaceId: SpaceIdSchema.nullable(),
   blockedWorkstreamIds: z.array(WorkstreamIdSchema),
   ready: z.boolean(),
 });
 export type WorkspaceSpaceBootstrapStatus = z.infer<typeof WorkspaceSpaceBootstrapStatusSchema>;
+
+/**
+ * One piece of cutover work, republished until its consumer reports back.
+ *
+ * The alarm claims it and the activity consumer runs it, which is the shape
+ * every other staged fan-out in WorkspaceDO already has — and the reason the
+ * cutover needs no user access to make progress. `cursor` is the Channel id the
+ * previous page stopped at, so an interrupted pass resumes from a row rather
+ * than from an offset that the directory may have moved under.
+ */
+export const SpaceBootstrapQueueMessageSchema = z.strictObject({
+  type: z.literal("space_bootstrap"),
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  kind: z.enum(["general", "memberships", "finalize"]),
+  cursor: WorkstreamIdSchema.nullable(),
+}).strict();
+export type SpaceBootstrapQueueMessage = z.infer<typeof SpaceBootstrapQueueMessageSchema>;
+
+/**
+ * One Channel the cutover has to place, as the Organization already knows it.
+ *
+ * Everything a placement needs travels on the row because the alternative is a
+ * cross-object read per Channel to learn what the directory projection already
+ * says. `participantUserIds` is who could act on this Channel: the canonical
+ * audience operation authorizes an actor, and a personal Channel admits only
+ * its own participants — so the cutover acts as one of them rather than
+ * inventing an authority of its own.
+ */
+export const SpaceBootstrapChannelSchema = z.strictObject({
+  workstreamId: WorkstreamIdSchema,
+  scope: SpaceScopeSchema,
+  archived: z.boolean(),
+  placed: z.boolean(),
+  participantUserIds: z.array(UserIdSchema),
+});
+export type SpaceBootstrapChannel = z.infer<typeof SpaceBootstrapChannelSchema>;
+
+export const WorkspaceSpaceBootstrapPageSchema = z.strictObject({
+  generalSpaceId: SpaceIdSchema.nullable(),
+  items: z.array(SpaceBootstrapChannelSchema),
+  nextCursor: WorkstreamIdSchema.nullable(),
+});
+export type WorkspaceSpaceBootstrapPage = z.infer<typeof WorkspaceSpaceBootstrapPageSchema>;
+
+/** What one page of placements finished, and what it could not. */
+export const WorkspaceSpaceBootstrapSettleRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  phase: z.enum(["general", "memberships", "finalize"]),
+  cursor: WorkstreamIdSchema.nullable(),
+  placedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
+  blocked: z.array(z.strictObject({
+    workstreamId: WorkstreamIdSchema,
+    // The consumer's `diagnosticErrorCode`, not a literal this object writes:
+    // `blocked_json` is the only durable record of *why* an Organization's
+    // cutover has not finished.
+    code: z.string().min(1).max(200),
+  })).default([]),
+}).strict();
+export type WorkspaceSpaceBootstrapSettleRequest =
+  z.infer<typeof WorkspaceSpaceBootstrapSettleRequestSchema>;
+
+/**
+ * Why the cutover did not close, when it did not.
+ *
+ * `project_effects_pending` is the PRD's shutdown barrier: an Organization
+ * cannot report a finished cutover while a Project default is still queued to
+ * be delivered to one of its Channels.
+ */
+export const WorkspaceSpaceBootstrapFinalizeResultSchema = z.strictObject({
+  outcome: z.enum(["complete", "blocked", "unplaced", "project_effects_pending"]),
+});
+export type WorkspaceSpaceBootstrapFinalizeResult =
+  z.infer<typeof WorkspaceSpaceBootstrapFinalizeResultSchema>;
 
 /**
  * One step of a staged operation, recorded against its intent.

@@ -11,6 +11,7 @@ export type WorkspaceScheduledAlarmPhase =
   | "project_default_publish"
   | "space_default_publish"
   | "space_intent_resume"
+  | "space_bootstrap"
   | "schedule_reconcile"
   | "final_rearm";
 

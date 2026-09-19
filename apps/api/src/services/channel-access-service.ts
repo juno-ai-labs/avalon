@@ -263,10 +263,25 @@ export class ChannelAccessService {
     });
   }
 
-  async applySpaceSource(workstreamId: string, source: SpaceAccessSource): Promise<void> {
+  /**
+   * Apply a Space's source to one Channel.
+   *
+   * `known` is for a caller that already has the Channel's readers and cannot
+   * ask for them: the cutover walks archived Channels, and `get` answers 404
+   * for an archived one, so the observation comes from the Organization's own
+   * directory projection instead. It is the same two facts either way — who may
+   * read, and who is listed — and the plan is computed from them by the
+   * Channel's own authority, not here.
+   */
+  async applySpaceSource(
+    workstreamId: string,
+    source: SpaceAccessSource,
+    known?: { channel: ObservedChannel; title: string },
+  ): Promise<void> {
     const client = this.client(workstreamId);
-    const detail = await client.get();
-    const observed = this.observed(detail);
+    const detail = known ? null : await client.get();
+    const observed = known?.channel ?? this.observed(detail!);
+    const title = known?.title ?? detail!.title;
     const room = await this.room(workstreamId);
     const applied = await room.applySpaceAccessSource({
       ...this.address(workstreamId),
@@ -278,7 +293,7 @@ export class ChannelAccessService {
       operationId: source.operationId,
       channel: observed,
     });
-    if (!applied.ok) throw spaceAccessError(applied.code, detail.title);
+    if (!applied.ok) throw spaceAccessError(applied.code, title);
 
     // The source the confirmation below commits, and the Channel as it was
     // before any of this ran. Carried rather than re-read: by the time the
@@ -305,7 +320,7 @@ export class ChannelAccessService {
       await this.rollbackSpaceSource(workstreamId, source.spaceId, seated, confirmedSource);
       const refusal = asApiError(error);
       if (refusal?.code === "workstream_audience_restricted_content") {
-        throw spaceAccessError("space_membership_content_fence", detail.title);
+        throw spaceAccessError("space_membership_content_fence", title);
       }
       throw error;
     }
@@ -317,7 +332,7 @@ export class ChannelAccessService {
       seatedUserIds: seated,
       source: confirmedSource,
     });
-    if (!confirmed.ok) throw spaceAccessError(confirmed.code, detail.title);
+    if (!confirmed.ok) throw spaceAccessError(confirmed.code, title);
   }
 
   /**
