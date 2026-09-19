@@ -1530,6 +1530,20 @@ describe('attachment lightbox', () => {
     expect(overlay).toContain('background: var(--av-sys-color-scrim-veil);');
     expect(overlay).toContain('backdrop-filter: blur(6px);');
   });
+
+  /*
+    Asserting the base rule is not enough: a reduced-motion block cancelled this
+    blur for as long as the wash was opaque, where cancelling it changed nothing
+    anyone could see. Against a half-strength wash the same override hands that
+    reader a sharp, legible window through a veil — the one thing the wash and
+    the blur exist together to prevent. Nothing may take the blur back off,
+    under any query.
+  */
+  it('never cancels that blur, reduced motion included', () => {
+    expect(stylesheet).not.toMatch(
+      /\.attachment-lightbox-overlay[^{}]*\{[^}]*backdrop-filter:\s*none/u,
+    );
+  });
 });
 
 /**
