@@ -2045,16 +2045,28 @@ export class WorkspaceSpaceStorage {
    * created while the cutover is running is placed by the creation path and has
    * no receipt, so counting receipts against the directory would leave an
    * Organization permanently one short of complete.
+   *
+   * `workstreamIds` narrows the same question to a named set, which is what the
+   * directory handoff's guard asks about the Channels one batch just committed.
+   * One SQL text deliberately: the close and the guard have to mean the same
+   * thing by "outside every Space", and a second query written to the same
+   * description is how the two come to disagree about a system Channel or a
+   * `joining` membership. `json_each` rather than a placeholder list because a
+   * batch has no bound on its size.
    */
-  private unplacedChannelExists(): boolean {
+  unplacedChannelExists(workstreamIds?: readonly string[]): boolean {
     if (!this.ready()) return false;
+    if (workstreamIds !== undefined && workstreamIds.length === 0) return false;
+    const scoped = workstreamIds !== undefined;
     return this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS one FROM workspace_workstream_directory directory
         WHERE directory.system_kind IS NULL
           AND NOT EXISTS (SELECT 1 FROM space_channel_memberships membership
                            WHERE membership.workstream_id = directory.workstream_id
                              AND membership.state = 'active')
+          ${scoped ? "AND directory.workstream_id IN (SELECT value FROM json_each(?))" : ""}
         LIMIT 1`,
+      ...(scoped ? [JSON.stringify([...workstreamIds])] : []),
     ).toArray().length > 0;
   }
 

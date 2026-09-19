@@ -339,6 +339,22 @@ development-only. It buys a second property there: because the close asks
 whether any Channel *in the directory* is outside every Space, a walk that a
 refusal reopens cannot find an empty directory and close over it.
 
+**And the directory handoff itself is the backstop under all of them.** Every
+path above is a path that knows it has to place a Channel; what has no such
+path is a Channel that simply *appears* in the directory unplaced, which a
+future creation path that forgets to place would produce and which the
+development seed already did. `applyWorkstreamDirectoryEffects` therefore asks,
+after it commits a batch's channel envelopes, whether a `directory_common`
+effect in it was for a Channel that is now outside every Space — the close's own
+predicate, `unplacedChannelExists`, narrowed to those ids so there is one SQL
+text rather than two descriptions of the same question — and reopens the cutover
+when one was. The row is still committed: the guard is a backstop, not a
+refusal, and dropping the Organization's projection of a Channel would be a
+worse state than the one it is reacting to. It reads this object's own SQLite
+and nothing else, so an ordinary projection pays one local query. The invariant
+it holds is the same one everything above holds, and it is the only place that
+holds it for a writer nobody has thought of yet.
+
 ### A Channel's first Space
 
 Creation is the other half of "every Channel belongs to at least one Space", and
@@ -698,7 +714,7 @@ readers keep their open sockets until they reconnect.
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. |
-| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
+| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row arrives unplaced, and leaving it closed for a placed Channel and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
@@ -1082,6 +1098,35 @@ Organization's directory. That wait is not politeness: the parent authority a
 placement addresses is what publishes that row, and the cutover's close asks
 its question about the Channels the directory holds, so without it neither the
 placement nor the reopened walk behind it has anything to work from.
+
+**That seed was the second path to be caught by hand, so the third is caught by
+the Organization itself.** Each of the fixes above teaches one writer to place
+what it creates, and the invariant is written about every Channel rather than
+about the writers anybody has enumerated — so the failure was not the seed, it
+was that a Channel could reach `workspace_workstream_directory` in no Space and
+`spacesReady` went on saying the hierarchy was renderable.
+`reopenBootstrap`'s own doc already named that event as one of its two reasons
+to exist and nothing called it on one: `applyWorkstreamDirectoryEffects`
+committed the row and moved on. It now asks the close's own predicate about the
+Channels the batch committed and reopens the cutover when the answer is yes,
+which turns a Channel nobody placed into an Organization that walks itself
+again rather than one that is quietly wrong. The predicate is the close's,
+taking an optional list of ids rather than being rewritten: the guard and the
+close have to mean the same thing by "outside every Space", and a second query
+is how they come to disagree about a system Channel or a `joining` membership.
+The three steps a reopen owes — the row, the published snapshot that takes
+`spacesReady` away, the armed alarm — are one helper the `reopenSpaceBootstrap`
+RPC shares, because a copy at the second call site is a copy that can lose one
+of them and leave a walk scheduled that nobody is told about.
+
+**Considered and rejected:** refusing the envelope, which would have kept the
+Organization consistent by dropping its own projection of a Channel — a worse
+state than the one being repaired, and one with no path out, because the walk
+that repairs it reads that very row. Also rejected: making the dev seed's
+wait-then-place redundant and deleting it. The guard is a backstop that costs a
+Queue round trip and an Organization-wide `spacesReady` blip; a path that knows
+which Channel it just created should still place it directly, and the seed is
+also what keeps the reopened walk from finding an empty directory.
 
 A pending cutover is also what makes every WorkspaceDO wake immediately: the
 `space_bootstrap` row is a derived alarm candidate due at the epoch until the
