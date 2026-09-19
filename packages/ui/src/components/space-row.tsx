@@ -81,13 +81,13 @@ export function SpaceRow({
   active: boolean;
   /** The placements under this Space, drawn by the host from its own rows. */
   children?: ReactNode;
-  drag?: SpaceRowDrag | undefined;
+  /** Both a reorder source and a Channel drop target; see {@link SpaceRowDrag}. */
+  drag: SpaceRowDrag;
   expanded: boolean;
   /** The host's navigation element, wrapping {@link SpaceRowContent}. */
   link: ReactNode;
   newChannelLabel: string;
-  /** Omitted when the host has nowhere for a new Channel to go. */
-  onNewChannel?: (() => void) | undefined;
+  onNewChannel: () => void;
   onRowKeyDown?: ((event: KeyboardEvent<HTMLDivElement>) => void) | undefined;
   onToggleExpanded: () => void;
   space: SpaceRowSpace;
@@ -95,12 +95,12 @@ export function SpaceRow({
   return (
     <div
       className="space-sidebar-item"
-      draggable={drag !== undefined}
-      onDragEnd={drag?.onDragEnd}
-      onDragEnter={drag?.onDragEnter}
-      onDragOver={drag ? (event) => event.preventDefault() : undefined}
-      onDragStart={drag?.onDragStart}
-      onDrop={drag?.onDrop}
+      draggable
+      onDragEnd={drag.onDragEnd}
+      onDragEnter={drag.onDragEnter}
+      onDragOver={(event) => event.preventDefault()}
+      onDragStart={drag.onDragStart}
+      onDrop={drag.onDrop}
     >
       {/* Held: a Space reordered past another glides with its expanded
           placements rather than jumping while they slide. The row rather than
@@ -122,15 +122,13 @@ export function SpaceRow({
           <IconTriangle className={clsx(expanded && 'is-expanded')} size={10} stroke={1.8} />
         </button>
         {link}
-        {onNewChannel && (
-          <IconButton
-            className="space-sidebar-action space-sidebar-row-action"
-            label={newChannelLabel}
-            onClick={onNewChannel}
-          >
-            <IconPlus size={14} stroke={1.8} />
-          </IconButton>
-        )}
+        <IconButton
+          className="space-sidebar-action space-sidebar-row-action"
+          label={newChannelLabel}
+          onClick={onNewChannel}
+        >
+          <IconPlus size={14} stroke={1.8} />
+        </IconButton>
       </div>
       {children}
     </div>
