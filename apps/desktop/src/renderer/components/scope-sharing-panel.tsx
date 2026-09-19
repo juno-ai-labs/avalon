@@ -7,8 +7,11 @@ import { CreateScopeInvitationsSchema, type ScopeGrantTarget } from '@rally/cont
 import type { RallyApi } from '../lib/api';
 import { InlineError, Modal } from './primitives';
 
-export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
+export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared }: {
   api: RallyApi; workspaceId: string; parentId: string; substreamId: string;
+  // Told when an invitation was created, so a container whose only job is this
+  // form can dismiss itself rather than leave the user to close it.
+  onShared?: () => void;
 }): React.JSX.Element {
   const [emails, setEmails] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
@@ -28,6 +31,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
   }, onSuccess: (result) => {
     setNotice(`Invited ${result.invitations.map((item) => item.email).join(', ')}.`);
     setEmails(''); setFailure(null); operation.current = null;
+    onShared?.();
   }, onError: () => { setFailure('share'); } });
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={invite.isPending}>
     <form onSubmit={(event) => {
@@ -48,15 +52,18 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
   </section>;
 }
 
-export function ShareConversationDialog({ open, onOpenChange, ...props }: Parameters<typeof ScopeSharingPanel>[0] & {
+export function ShareConversationDialog({ open, onOpenChange, ...props }: Omit<Parameters<typeof ScopeSharingPanel>[0], 'onShared'> & {
   open: boolean; onOpenChange: (open: boolean) => void;
 }): React.JSX.Element {
+  // Sharing is the dialog's only job, so a created invitation dismisses it. The
+  // panel still renders its confirmation for containers that stay open, such as
+  // the participant dialog, which embeds it beside other controls.
   return <Modal open={open} onOpenChange={onOpenChange} title="Share conversation" description="Invite people to collaborate using their email address.">
-    {open ? <ScopeSharingPanel {...props} /> : null}
+    {open ? <ScopeSharingPanel {...props} onShared={() => onOpenChange(false)} /> : null}
   </Modal>;
 }
 
-export function ShareConversationButton({ disabled = false, ...props }: Parameters<typeof ScopeSharingPanel>[0] & { disabled?: boolean }): React.JSX.Element {
+export function ShareConversationButton({ disabled = false, ...props }: Omit<Parameters<typeof ScopeSharingPanel>[0], 'onShared'> & { disabled?: boolean }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   return <><IconButton label="Share" disabled={disabled} aria-haspopup="dialog" aria-expanded={open} data-state={open ? 'open' : 'closed'} onClick={() => setOpen(true)}><IconShare2 aria-hidden="true" size={18} stroke={1.8} /></IconButton>
     <ShareConversationDialog {...props} open={open} onOpenChange={setOpen} /></>;
