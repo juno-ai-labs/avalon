@@ -106,6 +106,8 @@ describe("Terminal provider Service Binding RPC protocol", () => {
       { ok: true, value: { idOrName: "sandbox-1", options: { deadlineAtMs: 1_700_000_120_000 } } },
       { ok: true, value: { idOrName: "sandbox-1", options: { deadlineAtMs: 1_700_000_180_000 } } },
     ]);
+  });
+
   /**
    * The platform fact that zeroed `provider_duration_ms` on every
    * `terminal_tool_finished` row. `AsyncLocalStorage` follows an async chain
