@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import type { PendingTranscriptInput } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
   collapseSettledWorkIntoAccordion,
@@ -3485,5 +3486,484 @@ describe('openingTranscriptSnapshot', () => {
     } satisfies WorkstreamTranscriptSnapshot;
 
     expect(openingTranscriptSnapshot(snapshot)).toBe(snapshot);
+  });
+});
+
+describe('agent messages as counted rows', () => {
+  const createdAt = '2026-09-18T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+  const sendRow = (id: string, name: 'send_message' | 'reply_to_message'): Message => row(id, {
+    messageType: 'tool_event',
+    workSpans: [{ startedAtMs: 1_000, endedAtMs: 1_400 }],
+    toolEvent: {
+      id, toolCallId: id, name, status: 'completed', durationMs: 400,
+      pluginId: 'avalon:agents', pluginName: 'Background agents',
+    },
+  });
+
+  it('counts outbound sends on their own row and leaves the rest of the plugin alone', () => {
+    const grouped = groupPluginToolMessages([
+      sendRow('send-one', 'send_message'),
+      row('list', {
+        messageType: 'tool_event',
+        toolEvent: {
+          id: 'list', toolCallId: 'list', name: 'list_agents', status: 'completed',
+          durationMs: 900, pluginId: 'avalon:agents', pluginName: 'Background agents',
+        },
+      }),
+      sendRow('reply-one', 'reply_to_message'),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 messages sent to a background agent',
+      'Used Background agents',
+    ]);
+    expect(grouped[0]!.pluginActivity?.icon).toBe('agent-messages');
+    expect(grouped[0]!.pluginActivity?.count).toBe(2);
+    // The phrase is the whole row: a counted group prints no duration, so the
+    // number beside it would be the second `send_message` spent rather than
+    // the messages it carried.
+    expect(grouped[0]!.pluginActivity?.durationMs).toBeNull();
+    // `list_agents` really is the reader using a plugin, and keeps its time.
+    expect(grouped[1]!.pluginActivity?.icon).toBe('background-agents');
+    expect(grouped[1]!.pluginActivity?.durationMs).toBe(900);
+  });
+
+  it('reads an inbound message as a counted row rather than a system note', () => {
+    const block = {
+      type: 'text' as const,
+      blockId: 'block-agent-message',
+      blockIndex: 0,
+      text: 'Working on Goose + Cline. Primary docs confirm neither presents a built-in /goal.',
+      streaming: false,
+      messageType: 'system' as const,
+      structuredContent: {
+        kind: 'agent_message',
+        teamId: 'workstream/workstream-one/0',
+        messageId: '019fc068-22e8-739a-8394-a760fdc7c376',
+        senderAgentId: 'workstream/workstream-one/2',
+        attachmentIds: [],
+      },
+    };
+    const turn = {
+      transcriptSequence: 1, turnId: 'turn-agent-message', entryKind: 'conversation' as const,
+      actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+      createdAtUtc: createdAt, revision: 1, blocks: [block], activityId: null,
+    };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'agent-message', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const [message] = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    expect(message?.messageType).toBe('plugin_activity');
+    expect(message?.pluginActivity?.completedVerb).toBe('1 message from a background agent');
+    expect(message?.pluginActivity?.icon).toBe('agent-messages');
+    // The prose was written by one agent for another. A row that still carried
+    // it would put the same wall of text back in the feed behind a `more`.
+    expect(message?.text).toBeUndefined();
+    // Machinery carries no ordinal: a row scrolling into view must not
+    // acknowledge an answer still below the fold.
+    expect(message?.attentionSequenceNumber).toBeNull();
+  });
+
+  it('folds counted rows into the accordion without silencing its total', () => {
+    const collapsed = collapseSettledWorkIntoAccordion(groupPluginToolMessages([
+      row('slack', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 0, endedAtMs: 4_000 }],
+        toolEvent: {
+          id: 'slack', toolCallId: 'slack', name: 'slack_read', status: 'completed',
+          durationMs: 4_000, pluginId: 'connection:one', pluginName: 'Slack',
+        },
+      }),
+      row('inbound', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'agent-messages:inbound', name: 'Background agents', icon: 'agent-messages',
+          active: false, durationMs: null, count: 1,
+          activeVerb: 'Receiving a message from a background agent',
+          completedVerb: '1 message from a background agent',
+        },
+      }),
+      row('answer', { messageType: 'text', text: 'Here is what they found.' }),
+    ]));
+
+    const accordion = collapsed.find((message) => message.messageType === 'work_accordion');
+    expect(accordion?.workAccordion?.rows.map((inner) => inner.pluginActivity?.completedVerb)).toEqual([
+      'Used Slack',
+      '1 message from a background agent',
+    ]);
+    // A message is an event, not an unmeasured stretch of work. Reading its
+    // missing spans as unknown time would drop this drawer to a bare "Worked"
+    // every time a teammate answered mid-run.
+    expect(accordion?.workAccordion?.durationMs).toBe(4_000);
+  });
+});
+
+describe('a background worker starting and ending', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+  const startRow = (id: string, status: 'completed' | 'failed' | 'ambiguous'): Message => row(id, {
+    messageType: 'tool_event',
+    toolEvent: {
+      id, toolCallId: id, name: 'start_agent', status, durationMs: 700,
+      pluginId: 'avalon:agents', pluginName: 'Background agents',
+    },
+  });
+  const noticeTurn = (seq: number, id: string, notice: string | null, text: string) => ({
+    transcriptSequence: seq, turnId: id, entryKind: 'conversation' as const,
+    actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+    createdAtUtc: createdAt, revision: 1, activityId: null,
+    blocks: [{
+      type: 'text' as const, blockId: `${id}:text:0`, blockIndex: 0, text, streaming: false,
+      messageType: 'system' as const,
+      structuredContent: {
+        kind: 'agent_message',
+        teamId: 'workstream/workstream-one/0',
+        messageId: `0199${seq}`,
+        senderAgentId: `workstream/workstream-one/${seq}`,
+        attachmentIds: [],
+        ...(notice ? { notice } : {}),
+      },
+    }],
+  });
+
+  it('counts started workers, and leaves a start that started nothing on the plugin row', () => {
+    const grouped = groupPluginToolMessages([
+      startRow('start-one', 'completed'),
+      startRow('start-two', 'ambiguous'),
+      startRow('start-failed', 'failed'),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 background agents started',
+      'Used Background agents',
+    ]);
+    // Rally did reach for the plugin; what it did not do is start a worker.
+    expect(grouped[1]!.pluginActivity?.icon).toBe('background-agents');
+  });
+
+  it('separates the host notices from a teammate\'s own messages', () => {
+    const turns = [
+      noticeTurn(1, 't1', null, 'Here is what I found.'),
+      noticeTurn(2, 't2', 'finished_without_reply', 'Agent Prospector finished without replying.'),
+      noticeTurn(3, 't3', 'failed', 'Agent failed due to harness_execution_failed.'),
+    ];
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'notices', snapshotThrough: 3, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
+        covered: { startInclusive: 1, endExclusive: 4 }, turns, activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const grouped = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    // Three rows, not one of three messages: an outcome the reader may act on
+    // must not be counted away inside a teammate's traffic.
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '1 message from a background agent',
+      '1 background agent finished without replying',
+      '1 background agent failed',
+    ]);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual([
+      'agent-messages', 'agent-finished', 'agent-failed',
+    ]);
+  });
+});
+
+describe('counted rows and the plugin run behind them', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+
+  it('does not count a send that failed as a message delivered', () => {
+    const send = (id: string, status: 'completed' | 'failed'): Message => row(id, {
+      messageType: 'tool_event',
+      toolEvent: {
+        id, toolCallId: id, name: 'send_message', status, durationMs: 300,
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      },
+    });
+
+    const grouped = groupPluginToolMessages([send('ok', 'completed'), send('lost', 'failed')])
+      .filter((message) => message.pluginActivity);
+
+    // The host counts only completed and ambiguous effects as a hand-off, so a
+    // run whose send failed is told its worker finished without replying. A
+    // feed claiming the message was sent would contradict that two rows later.
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '1 message sent to a background agent',
+      'Used Background agents',
+    ]);
+  });
+
+  it('drops the plugin run whose every call moved to a counted row, and keeps a mixed one', () => {
+    const snapshotFor = (toolNames: readonly string[]): WorkstreamTranscriptSnapshot => {
+      const blocks = toolNames.map((toolName, index) => ({
+        type: 'tool' as const, blockId: `block-${index}`, blockIndex: index,
+        toolCallId: `call-${index}`, pluginId: 'avalon:agents', toolName, callIndex: index,
+        status: 'completed' as const, participantSafeInput: null, participantSafeResult: null,
+        error: null, activityId: null,
+      }));
+      const turn = {
+        transcriptSequence: 1, turnId: 'turn-one', entryKind: 'conversation' as const,
+        actor: 'assistant' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+        createdAtUtc: createdAt, revision: 1, blocks, activityId: 'turn-activity',
+      };
+      return {
+        snapshotId: 'runs', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: createdAt,
+        unreadAnchorSequence: null, unreadReason: 'no_unread',
+        ranges: [{
+          purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+          covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [],
+        }],
+        // The server's own aggregate for the whole plugin, which is keyed on
+        // the plugin id and therefore survives rerouting the blocks.
+        pluginRuns: [{
+          pluginRunId: 'run-agents', turnId: 'turn-one', pluginId: 'avalon:agents',
+          displayName: 'Background agents', state: 'completed' as const,
+          durationMs: 1_400, elapsedMsAtSnapshot: null, timingAccuracy: 'observed' as const,
+          toolCallIds: blocks.map((block) => block.toolCallId),
+        }],
+        activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      };
+    };
+
+    // The verb and the time separately: `AgentWorkTiming` assembles the label
+    // from the two, so the duration is never in `completedVerb`.
+    const rows = (toolNames: readonly string[]) =>
+      groupPluginToolMessages(orderedTranscriptMessages(snapshotFor(toolNames), 'workstream-one'))
+        .filter((message) => message.pluginActivity)
+        .map((message) => [message.pluginActivity?.completedVerb, message.pluginActivity?.durationMs]);
+
+    // Every call moved, so the aggregate stands for nothing left in the feed.
+    // Left in, it puts the row this change removes back beside its replacement,
+    // with the server's whole 1.4s on it.
+    expect(rows(['send_message', 'start_agent'])).toEqual([
+      ['1 message sent to a background agent', null],
+      ['1 background agent started', null],
+    ]);
+    // A call stayed, so the plugin's own stretch is still worth a row, and it
+    // still reports the stretch the server timed.
+    expect(rows(['send_message', 'list_agents'])).toEqual([
+      ['1 message sent to a background agent', null],
+      ['Used Background agents', 1_400],
+    ]);
+  });
+});
+
+describe('counted rows across the rename and before reconciliation', () => {
+  const row = (id: string, toolEvent: Message['toolEvent']): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'tool_event',
+    createdAt: '2026-09-19T12:00:00.000Z',
+    toolEvent,
+  });
+
+  it('counts calls stored under the retired wire names', () => {
+    // `avalon:agents` dropped its wire prefix and renamed `reply`, and a stored
+    // row keeps the name it was written under. A predicate that knows only the
+    // current spellings drops every historical call onto the generic row.
+    const grouped = groupPluginToolMessages([
+      row('old-send', {
+        id: 'old-send', toolCallId: 'old-send', name: 'agents_send_message',
+        wireName: 'agents_send_message', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+      row('old-reply', {
+        id: 'old-reply', toolCallId: 'old-reply', name: 'agents_reply',
+        wireName: 'agents_reply', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+      row('old-start', {
+        id: 'old-start', toolCallId: 'old-start', name: 'agents_start_agent',
+        wireName: 'agents_start_agent', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 messages sent to a background agent',
+      '1 background agent started',
+    ]);
+  });
+
+  it('routes a live invocation on its wire name, not the prose it displays', () => {
+    // A live row's `name` is the activity's prose. Reading it would leave the
+    // row on the generic plugin row until canonical reconciliation replaced it,
+    // so the counted row would appear a beat late and the feed would jump.
+    const grouped = groupPluginToolMessages([
+      row('live', {
+        id: 'live', toolCallId: 'live', name: 'Messaging a teammate',
+        wireName: 'send_message', status: 'started',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.activeVerb)).toEqual([
+      'Sending a message to a background agent',
+    ]);
+    expect(grouped[0]!.pluginActivity?.active).toBe(true);
+  });
+});
+
+describe('an agent message before promotion, and the unread it carries', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const exchange = (extra: Record<string, unknown> = {}) => ({
+    kind: 'agent_message',
+    teamId: 'workstream/workstream-one/0',
+    messageId: '0199aaaa-0000-7000-8000-000000000001',
+    senderAgentId: 'workstream/workstream-one/2',
+    attachmentIds: [],
+    ...extra,
+  });
+  const noticeTurn = (seq: number, id: string, structured: Record<string, unknown>, ordinal: number) => ({
+    transcriptSequence: seq, turnId: id, entryKind: 'conversation' as const,
+    actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: ordinal,
+    createdAtUtc: createdAt, revision: 1, activityId: null,
+    blocks: [{
+      type: 'text' as const, blockId: `${id}:text:0`, blockIndex: 0,
+      text: 'Agent failed due to harness_execution_failed.', streaming: false,
+      messageType: 'system' as const, structuredContent: structured,
+    }],
+  });
+
+  it('keeps the turn\'s attention ordinal, so the unread waterline can move past it', () => {
+    // The server allocates an ordinal to every non-tool turn, an admitted agent
+    // message included, and `highestVisibleAttentionSequence` skips a row whose
+    // ordinal is null. With no row carrying it, the unread dot survives reading
+    // the stream and only a sent message clears it.
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'unread', snapshotThrough: 2, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 3 },
+        covered: { startInclusive: 1, endExclusive: 3 },
+        turns: [noticeTurn(1, 't1', exchange(), 7), noticeTurn(2, 't2', exchange(), 9)],
+        activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const [message] = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    expect(message?.pluginActivity?.completedVerb).toBe('2 messages from a background agent');
+    // The highest of the two: one row stands for both, so acknowledging it has
+    // to acknowledge both or the waterline stalls inside the group.
+    expect(message?.attentionSequenceNumber).toBe(9);
+  });
+
+  it('names the diagnostic on a failure row, and keeps two reasons apart', () => {
+    const failed = (reason: string) => noticeTurn(1, `t-${reason}`, exchange({ notice: 'failed', noticeReason: reason }), 1);
+    const snapshotOf = (reasons: readonly string[]): WorkstreamTranscriptSnapshot => ({
+      snapshotId: 'failures', snapshotThrough: reasons.length, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: reasons.length + 1 },
+        covered: { startInclusive: 1, endExclusive: reasons.length + 1 },
+        turns: reasons.map((reason, index) => ({
+          ...failed(reason), transcriptSequence: index + 1, turnId: `t${index}`,
+          blocks: [{ ...failed(reason).blocks[0]!, blockId: `t${index}:text:0` }],
+        })),
+        activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    });
+    const verbs = (reasons: readonly string[]) =>
+      groupPluginToolMessages(orderedTranscriptMessages(snapshotOf(reasons), 'workstream-one'))
+        .map((message) => message.pluginActivity?.completedVerb);
+
+    // The row is the reader's whole record of the failure — the body is not
+    // shown — so a bare "1 background agent failed" names nothing to act on.
+    expect(verbs(['harness_execution_failed'])).toEqual(['1 background agent failed: harness_execution_failed']);
+    // Two failures for one reason still collapse; two reasons stay two rows,
+    // because aggregating them would have to drop one of the reasons.
+    expect(verbs(['connector_unavailable', 'connector_unavailable'])).toEqual([
+      '2 background agents failed: connector_unavailable',
+    ]);
+    expect(verbs(['connector_unavailable', 'harness_execution_failed'])).toEqual([
+      '1 background agent failed: connector_unavailable',
+      '1 background agent failed: harness_execution_failed',
+    ]);
+  });
+
+  it('draws the counted row while the message is still a pending input', () => {
+    // A message sits in the mailbox until the recipient's next safe boundary,
+    // which for a busy recipient is a whole step. Projecting only the canonical
+    // turn left the raw agent-to-agent prose on screen for that window, on the
+    // composer queue, and swapped it for a counted row on promotion.
+    // `futureTurnId` equals `inputId`, which the schema's own refinement
+    // requires; the value is a real pending input rather than a shape cast at
+    // the production signature.
+    const input: PendingTranscriptInput = {
+      inputId: 'turn-future',
+      futureTurnId: 'turn-future',
+      afterTranscriptSequence: 4,
+      inputSequence: 1,
+      actor: 'system',
+      authorUserId: null,
+      authorSnapshot: null,
+      externalActor: null,
+      clientMessageId: null,
+      deliveryMode: 'steer',
+      admittedAtUtc: createdAt,
+      block: {
+        type: 'text',
+        blockId: 'turn-future:text:0',
+        blockIndex: 0,
+        streaming: false,
+        messageType: 'system',
+        text: 'Working on Goose + Cline. Primary docs confirm neither presents a literal /goal.',
+        structuredContent: exchange(),
+      },
+    };
+    const overlay = pendingTranscriptInputOverlay(
+      input,
+      'workstream-one',
+      { source: 'socket_snapshot', snapshotId: 'snap' },
+    );
+
+    expect(overlay.message.messageType).toBe('plugin_activity');
+    expect(overlay.message.pluginActivity?.completedVerb).toBe('1 message from a background agent');
+    // Not the reader's prose, and not a row they can reorder.
+    expect(overlay.message.text).toBeUndefined();
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
   });
 });

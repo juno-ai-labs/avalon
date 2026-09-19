@@ -148,7 +148,92 @@ absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
 other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
-row and uses Tabler's **stack-backward** glyph.
+row and uses Tabler's **stack-backward** glyph for `list_agents`, `stop_agent`,
+`sidekicks_list` and `create_sidekick`.
+
+Three of its tools are not on that row, because their subject is a message or a
+worker rather than a plugin Rally reached for. All three are counted rather than
+timed — see [the row itself](#the-row-itself) — and all three are keyed on the
+wire name, ahead of the plugin lookup:
+
+| Tool | Row | Glyph |
+| --- | --- | --- |
+| `send_message`, `reply_to_message` | **messages sent to a background agent** | **mail-ai** |
+| `start_agent` | **background agents started** | **stack-backward** |
+
+Routing reads `toolEvent.wireName`, never `name`. A live invocation's `name` is
+the activity's **prose** — "Messaging a teammate", not `send_message` — so a
+predicate reading it would leave the row on the generic plugin row until
+canonical reconciliation replaced it, and the counted row would appear a beat
+late with the feed jumping under the reader. The predicates also recognize the
+retired spellings (`agents_send_message`, `agents_reply`,
+`agents_start_agent`): `avalon:agents` dropped its wire prefix and renamed
+`reply`, a stored row keeps the name it was written under, and
+`tool-activity.ts` keeps those spellings registered for the same reason.
+
+A call that **failed** did none of those things, so it is not one of the things
+those rows count and falls back to the Background agents plugin row, which says
+only that Rally used the plugin and is still true. `countedGroupForToolCall` is
+that rule, and is deliberately the only copy of it — two places ask, and the
+symptom of their disagreeing is a duplicated row rather than a type error.
+
+For a send this matters beyond tidiness. The host counts only `completed` and
+`ambiguous` effects as a hand-off, so a run whose only send failed is told its
+worker *finished without replying*; a feed that had already claimed the message
+was sent would be contradicting itself two rows later. `ambiguous` counts, on
+the same authority: a write whose confirmation was lost most likely landed, and
+reporting the worker as never started would invite the reader to conclude the
+work was dropped.
+
+Three more rows come in the other direction, from a `system` block whose
+structured content is `AGENT_MESSAGE_CONTENT_KIND`. Which one it is depends on
+`agentMessageNotice`:
+
+| Notice | Row | Glyph |
+| --- | --- | --- |
+| none — a teammate's own message | **messages from a background agent** | **mail-ai** |
+| `finished_without_reply` | **background agents finished without replying** | **circle-check** |
+| `failed` | **background agents failed: `<reason>`** | **alert-triangle** |
+
+A failure row names its diagnostic, and groups on it: two failures for one
+reason collapse into a row, two reasons stay two rows. The row is the reader's
+whole record of the failure — the body is not shown — so a bare "1 background
+agent failed" would name nothing anybody can act on, which is the generic code
+[`naming-a-schema-failure.md`](naming-a-schema-failure.md) calls a defect rather
+than a fallback. Aggregating two reasons into one row would have to drop one of
+them, so the reason is part of the group key.
+
+**These rows are drawn before the message is promoted, too.** A message reaches
+its recipient through the mailbox and can sit there until the next safe
+execution boundary, which for a busy recipient is a whole step;
+`pendingTranscriptInputOverlay` runs the same projection, so the feed does not
+show the raw prose for that window and then swap it for a counted row. The
+overlay also carries no delivery state, which keeps a teammate's message off the
+composer queue — a queued row is something a person wrote and can reorder.
+
+The two notices are written by the host on a run's behalf rather than by a
+model, and they travel the ordinary delivery path, so before `notice` existed
+nothing here could tell them from a teammate's message: all three collapsed into
+one "3 messages from a background agent" row, which buried the only two ends of
+a worker's life the transcript records inside its ordinary traffic. They wear
+marks of their own rather than the mail one because a reader may have to act on
+either.
+
+**There is no row for a worker that finished normally, and nothing to build one
+from.** The host writes a notice only when a run fails or ends without a word:
+a run that replied has already said it is done, in the message that *is* the
+"messages from a background agent" row. A row claiming to be general completion
+would be silent for exactly the workers that did their job. Making one would
+mean emitting a host notice on every completion, which is a model-visible
+message in the owner's conversation and therefore an inference cost and an
+agent-behaviour change, not a rendering decision —
+[`agent-communication.md`](agent-communication.md) owns that call.
+
+The constants behind all of this live in `@rally/contracts` for the reason
+`isConnectorConnectionCardWireName` does, and because both sides need them: the
+API asks whether a run handed off before telling its owner the run said nothing,
+and the client asks which row a call belongs to. A rename reaching one side only
+would silently drop the row.
 
 Custom MCP activity carries its host-authored `connectorType` independently
 of the configured label. It groups by canonical connection id and always draws
@@ -234,6 +319,19 @@ name is a common noun rather than a proper one, so it is the one that takes an
 article: "Used a computer for 11s". A row whose duration is unknown drops the
 duration rather than printing `0ms`, running or settled: printing the active
 segment alone would read as the whole.
+
+**A group can be counted instead of timed.** Most rows answer "how long",
+because a plugin is a place Rally worked and the time it spent there is the
+fact worth carrying. A message is not a place: it either happened or it did
+not, and `Used Background agents for 1s` said nothing about the two messages
+that second contained. A group that supplies `PluginGroup.countPhrase` phrases
+its own settled total from the number of contributions it holds — "2 messages
+from a background agent" — and leaves `durationMs` null, so the row prints the
+phrase alone. That needs no second row component: `AgentWorkTiming` already
+draws the verb by itself for a stretch whose time is unknown, and an unknown
+time and an irrelevant one want exactly the same row. The count rides on
+`PluginActivityData.count`, which is also what marks the row as carrying no
+interval — see the invariant below.
 
 Every row's label opens with a capital, and `AgentWorkTiming` is what puts it
 there rather than each producer. A plugin group already names itself in
@@ -400,6 +498,35 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   timer is never part of that total — it is the whole response, not a step in
   it, and summing it into a turn's thinking would double-count it and put it out
   of reach of `foldSettledWorkIntoMessages`.
+- **A plugin run whose every call was rerouted prints no row.** The server
+  reports one aggregate per plugin per turn, keyed on the plugin id, and it
+  survives rerouting the blocks underneath it: without this, a turn whose only
+  `avalon:agents` calls were sends rendered "1 message sent to a background
+  agent" *and* "Used Background agents for 1s" — the row this feature removes,
+  back beside its own replacement, wearing the whole duration. A run with a
+  call left keeps its row, because that row is the plugin's own stretch, gaps
+  and gone-elsewhere calls alike, which is what a plugin row has always
+  reported. A run with no `toolCallIds`, or whose blocks have not all arrived,
+  also keeps it: dropping a row on an unknown is the worse of the two failures.
+- **A counted row built from message turns carries the highest attention
+  ordinal it stands for.** This is the one place a row in this column carries
+  one. A grouped plugin row does not, because the tool turns behind it never
+  had one; an admitted agent message is a non-tool turn, so the server
+  allocates it an ordinal and the room's unread waterline moves with it. Null
+  it and no row carries it at all: `highestVisibleAttentionSequence` skips a
+  null, `conversationReadAcknowledgement` never advances `seen_attention_ordinal`,
+  and the work stream keeps an unread dot that reading it cannot clear — only
+  sending a message clears it. The *highest* rather than the first, because one
+  row stands for several messages: the divider belongs above it whenever any of
+  them is unread, and acknowledging it has to acknowledge all of them.
+- **A counted row reports no interval, and that is not the same as an unknown
+  one.** A message is an event rather than a stretch of work, and
+  `send_message` returns at once by contract, so a counted row carries no
+  `workSpans` and `foldedStretchTotal` skips it. Reading its absent spans the
+  way it reads a work row's — as time it cannot account for — would drop the
+  enclosing drawer to a bare "Worked" every time a teammate answered mid-run,
+  reporting less because the feed learned more. The test is
+  `pluginActivity.count`, which only a counted group sets.
 - **A group row's position is its plugin's first row in the run, never its
   last.** The feed's order is the order work started in; the alternative makes a
   row jump downward as the plugin is used again.
@@ -642,6 +769,85 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-09-19 — A background agent's messages and its two ends are counted rows
+
+**What changed:** A message from a background agent no longer renders as a
+clamped system note in the feed. It joins this column as a `plugin_activity`
+row wearing Tabler's **mail-ai** glyph and reading "2 messages from a
+background agent", and the `send_message` and `reply_to_message` calls split
+out of the Background agents row as "2 messages sent to a background agent".
+Both fold into the work accordion behind the answer that reports on them, and
+both stop closing the plugin run around them, because a message arriving is not
+something a person read. `PluginGroup` gained `countPhrase` and
+`PluginActivityData` gained `count`; `AGENT_MESSAGE_CONTENT_KIND` and
+`isAgentMessageSendWireName` are in `@rally/contracts`.
+
+Routing reads the call's wire name rather than its display name, which a live
+invocation fills with prose, and recognizes the pre-rename spellings so a
+historical call is not dropped onto the generic row. A call that failed sent
+nothing and started nothing, so it keeps the plugin row; `countedGroupForToolCall` holds that rule for both the contribution and
+the aggregate-run check, and the aggregate run itself is dropped when every one
+of its calls was rerouted, which is what stops the old row reappearing beside
+the new one.
+
+The worker's own life got rows too: `start_agent` reads "2 background agents
+started", and the host's two settlement notices — which travelled the ordinary
+message path and were therefore indistinguishable from a teammate's own message
+— now carry `AgentExchangeSchema.notice` and read "1 background agent finished
+without replying" and "1 background agent failed", on a circle-check and an
+alert-triangle. Without that tag all three collapsed into one "3 messages from a
+background agent" row. The API's `AGENT_MESSAGE_TOOL_NAMES` and
+`AGENT_HANDOFF_TOOL_NAMES` moved to `@rally/contracts` and are re-exported from
+their old home: the client needs the same lists, and two copies of them lasted
+one week.
+
+**Why:** Four background agents on one question put four walls of
+agent-to-agent prose into the feed. Every one of them was written for another
+agent — sender identity, a message id to reply to, findings taken mid-
+investigation — and the feed printed each as a bullet with a `more` behind it,
+in front of a reader who was never its audience and with no way to tell which
+of the four had written it. The row that stood for the outbound half said "Used
+Background agents for 1s": a duration in place of a count, over a second that
+carried two messages.
+
+**Considered and rejected:** A second row type for messages, parallel to the
+plugin rows. It would have cloned run grouping, the accordion's fold and
+`WorkAccordionRow` to say the same thing in the same 20px column. Widening one
+primitive from "how long" to "how much" was the smaller change, and leaves the
+next counted strand — files written, pages read — with nothing to build.
+
+Also rejected: keeping the prose behind a disclosure on the row. A plugin row
+shows none of the calls it stands for; a message row that reopened its body
+would put the same wall of text one click away rather than deciding it is
+machinery. If that body is worth reading, it belongs on a surface built to hold
+it, not folded into this column.
+
+Also rejected: pluralizing the agent when the senders differ, which
+`senderAgentId` would support for the inbound row. Nothing carries the
+recipient on the outbound one, and a row that said "agents" in one direction
+and "a background agent" in the other would read as a distinction the feed does
+not draw.
+
+Also rejected: a general "background agent finished" row. Only two endings
+reach the transcript, because the host deliberately writes no notice for a run
+that replied — its message is the completion. A row that said "finished" would
+be silent for exactly the workers that did their job, so the label says
+"finished without replying", which is what the underlying fact is. Emitting a
+notice on every completion would fix the gap and is not a rendering decision:
+each notice is a model-visible message in the owner's conversation, so it costs
+inference and changes how the owner behaves. [`agent-communication.md`](agent-communication.md)
+owns that call.
+
+**Consequences:** The message body is unreachable from the feed, which is what
+makes the failure row's `reason` and the model-facing host attribution in
+`renderAgentMessage` load-bearing rather than cosmetic: they are what is left
+when the prose is gone. Any group
+given a `countPhrase` must leave `durationMs` null, or the row will print a
+number its own phrase contradicts, and must accept that `foldedStretchTotal`
+attributes it no time at all. A message stored before `notice` existed reads as
+a teammate's message, which is what it was indistinguishable from anyway; only
+new notices get the two outcome rows.
 
 ### 2026-09-15 — Local official marks for brands the catalog does not ship
 
