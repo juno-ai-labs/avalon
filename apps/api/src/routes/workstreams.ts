@@ -32,6 +32,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
+import { requireCurrentClientContract } from "../lib/client-contract";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
 import { ChannelAccessService } from "../services/channel-access-service";
 import { ConversationService } from "../services/conversation-service";
@@ -161,6 +162,9 @@ async function authoritativeWorkstreamClient(
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
+  // Every row now carries its Spaces, and a build from before the cutover
+  // parses this page with a schema that has never heard of them.
+  requireCurrentClientContract((name) => c.req.header(name));
   await requireOpenWorkstreamAuthority(c.env);
   const service = new WorkstreamDirectoryService(c.env, getAuth(c));
   return c.json(WorkstreamPageSchema.parse(await service.list(

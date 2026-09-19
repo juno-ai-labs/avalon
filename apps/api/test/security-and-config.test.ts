@@ -607,7 +607,7 @@ describe("environment guardrails", () => {
           headers: {
             origin: "app://avalon",
             "access-control-request-method": "POST",
-            "access-control-request-headers": "authorization,content-type,x-rally-operation-id,x-avalon-operation-id,x-request-id",
+            "access-control-request-headers": "authorization,content-type,x-rally-client-contract,x-avalon-client-contract,x-rally-operation-id,x-avalon-operation-id,x-request-id",
           },
         },
         createTestEnv({
@@ -622,6 +622,12 @@ describe("environment guardrails", () => {
       const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
       expect(allowedHeaders).toContain("x-rally-operation-id");
       expect(allowedHeaders).toContain("x-avalon-operation-id");
+      // The desktop sends its wire contract on every request, so a missing
+      // entry here blocks the preflight for *every* call rather than for the
+      // two routes that read it — and a blocked preflight reaches the renderer
+      // as a bare network error with no Worker log behind it.
+      expect(allowedHeaders).toContain("x-rally-client-contract");
+      expect(allowedHeaders).toContain("x-avalon-client-contract");
       // The desktop stamps `x-request-id` on every call so its performance
       // traces name the same id the Worker's rows carry. A missing entry here
       // is a blocked preflight, which reaches the renderer as a bare network
