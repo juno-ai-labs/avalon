@@ -259,11 +259,27 @@ answer is one this object already holds:
   that names nothing costs this person one row and nobody else anything: the
   rows are theirs, and the only reader is their own sidebar.
 
-The Organization's list is *updated in place* and the other two are *replaced*.
-Nothing but the client's own helper reads the second and third, so an item
-nobody mentioned belongs at its natural position rather than pinned to a stale
-one; the Organization's rows, by contrast, are what the directory join needs to
-exist at all.
+**A write merges; it never deletes a position it was not about.** All three
+kinds put the ids the request named first, in the order it named them, and every
+other id this person already holds for that container behind them in the order it
+already had. A request is not a picture of the list. The only client there is
+sends the ids it is *drawing*, which is what is left after the client's own
+helper has dropped an archived Channel, a Breakout on a page this device never
+loaded, or a Channel past the sidebar's first page of 250 — so reading that
+silence as "delete the rest" meant one nudge on a laptop that had loaded one page
+threw away the arrangement made on a desktop that had loaded four, everywhere,
+with no error and no signal. `mergedOrder` is the one function all three go
+through.
+
+The `space` filter runs over the merge rather than over the request, so the rule
+that decides what may arrive also decides what stays: a Channel that has left the
+Space loses the position it was keeping only because nobody mentioned it. An
+archived Channel is not one of those — neither `spaceIdsByChannel` nor
+`listableChannelIds` reads `archived_at` — so it keeps its place and a restore
+brings the arrangement back.
+
+The Organization's list is additionally *updated in place* rather than rewritten,
+because its rows are what the directory join needs to exist at all.
 
 **Authorization is what every other Space write has**: an active non-guest
 member of this Organization, through `spaceRefusalCode(..., "write")`. A
@@ -926,7 +942,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, and a write reaching a second session of the same person without it asking. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, and a write reaching a second session of the same person without it asking. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
@@ -1316,6 +1332,16 @@ deliberate: without it the Spaces are the one list whose arrangement comes from
 the order the server happened to serialize, which a drag cannot move
 optimistically or roll back, and the client would have two rules where it now
 has one.
+
+A write merges rather than replaces, for every kind. The `organization` list
+always did; the other two did not, and the justification — "an item nobody
+mentioned belongs at its natural position" — was about a caller that does not
+exist. The only client sends the ids it is *drawing*, so every id it cannot
+draw was silently deleted by the next drag: an archived Channel lost the place
+it was being kept in, and a person arranging 60 Channels on one machine lost
+them all by nudging one row on another that had loaded fewer pages. What a
+future change has to respect is that the request says where the named ids go
+and nothing at all about the rest.
 
 A stored list has no length bound. Capping it would silently lose the tail of a
 list somebody actually arranged, which is worse than the row it prevents; the
