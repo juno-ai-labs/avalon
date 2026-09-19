@@ -226,10 +226,13 @@
   /* Failure and destructive action. */
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
 
-  /* What sits between a layer and what it covers. */
+  /* What sits between a layer and what it covers. `solid` hides the backdrop
+   * outright; `veil` is the same colour at half strength, for a layer that
+   * means to leave the window it covers legible behind it. */
   --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
   --av-sys-color-scrim-subtle: rgba(38, 36, 30, 0.18);
   --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
+  --av-sys-color-scrim-veil: rgba(246, 245, 241, 0.5);
 
   /* The colour of a focus indicator. */
   --av-sys-color-focus-default: #0c64c1;
@@ -649,6 +652,7 @@
   --av-sys-color-scrim-default: rgba(6, 4, 2, 0.72);
   --av-sys-color-scrim-subtle: rgba(6, 4, 2, 0.5);
   --av-sys-color-scrim-solid: rgba(7, 5, 3, 0.98);
+  --av-sys-color-scrim-veil: rgba(7, 5, 3, 0.5);
 
   --av-sys-color-focus-default: #3d91ef;
   --av-sys-color-focus-quiet: #3d91ef;
