@@ -1,5 +1,5 @@
 import type { SpaceSnapshot } from '@rally/contracts';
-import type { QueryClient } from '@tanstack/react-query';
+import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { AutomationSummary } from './types';
 
 /**
@@ -127,4 +127,30 @@ export function applyVersionedSpaceSnapshot(
   queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
+}
+
+/**
+ * Read a list the workspace socket owns and nothing here fetches.
+ *
+ * `useWorkstreamsQuery`'s opening batch seeds it and WorkspaceDO re-sends it
+ * whole on every change, so there is no fetch to make and no staleness for
+ * React Query to police. The query exists only to subscribe the caller to the
+ * cache entry; the fetcher is unreachable and says so, because a silent
+ * `undefined` from an accidentally enabled query would look like an empty
+ * sidebar rather than a bug. Invalidating one of these keys does nothing by
+ * design — the socket is the only *authority* for the contents.
+ *
+ * Subscribing is the point: a `getQueryData` read of the same entry returns the
+ * same rows and never re-renders when the socket replaces them, so the caller
+ * paints whatever it happened to hold until something unrelated re-renders it.
+ */
+export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
+  return useQuery<T[]>({
+    queryKey,
+    queryFn: () => {
+      throw new Error(`${String(queryKey[0])} is pushed by the organization socket, never fetched`);
+    },
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 }

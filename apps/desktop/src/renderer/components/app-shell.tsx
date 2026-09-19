@@ -1,6 +1,6 @@
 import type { CreateSpaceRequest, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
@@ -23,7 +23,7 @@ import {
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -168,17 +168,6 @@ export function applyPinnedWorkstreamsIfCurrent(
   return true;
 }
 
-/**
- * Read a list the workspace socket owns and nothing here fetches.
- *
- * `useWorkstreamsQuery`'s opening batch seeds it and WorkspaceDO re-sends it
- * whole on every change, so there is no fetch to make and no staleness for
- * React Query to police. The query exists only to subscribe this component to
- * the cache entry; the fetcher is unreachable and says so, because a silent
- * `undefined` from an accidentally enabled query would look like an empty
- * sidebar rather than a bug. Invalidating one of these keys does nothing by
- * design — the socket is the only *authority* for the contents.
- */
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
 
@@ -195,17 +184,6 @@ const WORKSPACE_ENTER_MS = 320;
  */
 export function spacesEnabledForSession(session: ClientSession | null): boolean {
   return session?.workspace?.accessClass !== 'guest';
-}
-
-export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
-  return useQuery<T[]>({
-    queryKey,
-    queryFn: () => {
-      throw new Error(`${String(queryKey[0])} is pushed by the organization socket, never fetched`);
-    },
-    enabled: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
@@ -282,7 +260,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // it changes a row. This query exists for what a person asks for afterwards:
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
-  const automations = useSocketOwnedList<AutomationSummary>(['automations']);
+  const automations = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(0);
