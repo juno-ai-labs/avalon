@@ -164,6 +164,22 @@ test('the secret scan covers what this pull request adds, and nothing else', asy
     1,
     'CI must keep a single Gitleaks invocation, so the range cannot be bypassed by a second one',
   );
+
+  // Which commit the range excludes is the subtle half, and the assertions
+  // above cannot see it: `base_tip="$BASE_SHA"` satisfies every one of them
+  // while quietly reintroducing the failure. The base SHA is the base branch's
+  // tip when the event fired, so a finding that lands on the base branch after
+  // that and is then merged in is inside the range again — which is the whole
+  // bug. The live tip is the excluded side; the recorded SHA is the fallback
+  // for a checkout that somehow has no remote-tracking ref, and is a wider
+  // scan rather than a failed job.
+  assert.match(secretsJob, /^ {10}BASE_REF: \$\{\{ github\.base_ref \}\}$/mu);
+  assert.match(secretsJob, /^ {10}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/mu);
+  assert.match(secretsJob, /^ {10}base_tip="origin\/\$BASE_REF"$/mu);
+  assert.match(
+    secretsJob,
+    /^ {10}git rev-parse --verify --quiet "\$base_tip" > \/dev\/null \|\| base_tip="\$BASE_SHA"$/mu,
+  );
 });
 
 test('CI still runs every repository quality gate', async () => {
