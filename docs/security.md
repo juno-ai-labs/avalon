@@ -128,8 +128,11 @@ same as desktop.
   Cloudflare KV's value limit without a second retained chunk copy, applies a
   25-second deadline across branding discovery and the origin response,
   validates image bytes, and keeps only a 30-day platform-wide KV entry. The
-  renderer requests each HTTP(S) anchor when its message renders, receives the
-  cached bytes, and exposes them through a revocable local object URL.
+  renderer requests each HTTP(S) anchor and each web citation's marker when its
+  message renders, receives the cached bytes, and exposes them through a
+  revocable local object URL. Both go through the regional Worker; neither
+  position ever contacts the destination, and the marker's request is skipped
+  entirely for a still export.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
