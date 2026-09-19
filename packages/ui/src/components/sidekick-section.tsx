@@ -23,6 +23,15 @@ export interface SidekickRow {
   onRecommend?: (() => void) | undefined;
 }
 
+export type SidekickSectionFailure = 'load' | 'remove' | 'recommend' | 'unrecommend';
+
+const sidekickSectionFailureCopy: Record<SidekickSectionFailure, string> = {
+  load: 'Some Sidekick information may be out of date.',
+  remove: 'That Sidekick couldn’t be removed.',
+  recommend: 'That Sidekick couldn’t be recommended.',
+  unrecommend: 'That Sidekick recommendation couldn’t be removed.',
+};
+
 /**
  * The rail's **Sidekicks** section, or nothing.
  *
@@ -33,28 +42,32 @@ export interface SidekickRow {
  * still kept apart in the caller, because only one of them may ever be turned
  * into a claim about the room.
  *
- * An `error` sits *beside* the rows rather than replacing them. The rows it
- * would replace are ones that arrived: a detach that failed is no reason for
- * the Sidekicks it did not detach to disappear, and a failed read of one of
- * the two lists behind this section is no reason to drop the other. Alone —
- * nothing arrived — it takes the section's heading with it, because then the
- * reader is being told about this section rather than about a row in it.
+ * A failure sits *beside* the rows rather than replacing them. A failed removal
+ * is an action failure, while a failed read says only that the rows which did
+ * arrive may be incomplete. Alone — nothing arrived — only a read failure can
+ * take the section's heading with it, because then the reader is being told
+ * about this section rather than about a row in it.
+ *
+ * The state is a closed semantic union. A transport or provider message is
+ * diagnostic data, not product copy; accepting only the failed operation keeps
+ * arbitrary API responses out of the sidebar and leaves this shared
+ * presentation boundary responsible for the words a person sees.
  */
-export function SidekickSection({ items, error, onOpen, onMenuOpen }: {
+export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
   items?: SidekickRow[] | undefined;
-  error?: string | undefined;
+  failure?: SidekickSectionFailure | undefined;
   onOpen?: (id: string) => void; onMenuOpen?: () => void;
 }): React.JSX.Element | null {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
-    return error
+    return failure === 'load'
       ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-        <InlineError>{error}</InlineError>
+        <InlineError>Sidekicks couldn’t be loaded.</InlineError>
       </section>
       : null;
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-    {error && <InlineError>{error}</InlineError>}
+    {failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright

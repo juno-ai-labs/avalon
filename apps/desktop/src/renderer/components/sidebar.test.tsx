@@ -1164,7 +1164,8 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(dialog).toHaveTextContent('20 work streams'));
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(dialog).toHaveTextContent('One Queue chunk was not published.'));
+    await waitFor(() => expect(dialog).toHaveTextContent('The work streams couldn’t be updated. Try again.'));
+    expect(dialog).not.toHaveTextContent('One Queue chunk was not published.');
     const retry = within(dialog).getByRole('button', { name: 'Continue' });
     await waitFor(() => expect(retry).toBeEnabled());
     fireEvent.click(retry);
@@ -1563,7 +1564,7 @@ describe('Sidebar work-stream markers', () => {
       .getByRole('button', { name: 'Archive' }));
 
     const failure = await screen.findByRole('dialog', { name: 'Work stream could not be archived' });
-    expect(within(failure).getByText('The work stream could not be reached.')).toBeVisible();
+    expect(failure).not.toHaveTextContent('The work stream could not be reached.');
     // The copy line, not only the message: it is the sentence that tells the
     // reader the row survived, which is the whole reason this dialog exists.
     expect(within(failure).getByText('The work stream is still in the sidebar. Try again in a moment.'))
@@ -1880,7 +1881,7 @@ describe('private work streams', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Work stream visibility could not be changed' });
     expect(within(dialog).getByText('The work stream is still visible to the workspace. Try again in a moment.'))
       .toBeVisible();
-    expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
+    expect(dialog).not.toHaveTextContent('The work stream could not be reached.');
   });
 });
 
@@ -2948,7 +2949,8 @@ describe('pinned work streams', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
-    expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
+    expect(within(dialog).getByText('The work stream is still in the recent list. Try again in a moment.')).toBeVisible();
+    expect(dialog).not.toHaveTextContent('The work stream could not be reached.');
   });
 });
 

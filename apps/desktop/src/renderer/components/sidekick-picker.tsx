@@ -31,7 +31,14 @@ function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstr
   });
   if (!session) return null;
   return <SharedSidekickPicker options={directory.data} loading={directory.isPending} saving={attach.isPending}
-    error={(directory.error ?? attach.error)?.message} open={open} setOpen={setOpen}
-    onMenuOpen={(opened) => { if (opened) void directory.refetch(); }}
+    failure={directory.error ? 'load' : attach.error ? 'attach' : undefined} open={open} setOpen={setOpen}
+    onMenuOpen={(opened) => {
+      if (!opened) return;
+      // Reset only a settled attempt. Resetting while the request is live
+      // detaches this observer, makes `saving` false, and allows a duplicate
+      // attachment while the first request can still update the cache.
+      if (attach.isError) attach.reset();
+      void directory.refetch();
+    }}
     onAttach={(id) => attach.mutate(id)} onCreate={createSidekick ?? undefined} />;
 }

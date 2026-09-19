@@ -12,34 +12,39 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
 }): React.JSX.Element {
   const [emails, setEmails] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<'invalid_emails' | 'share' | null>(null);
   const operation = useRef<{ key: string; id: string } | null>(null);
   // Main is conversation 0: a workstream grant would also include inheriting children.
   const target: ScopeGrantTarget = { kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
     parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) };
-  const invite = useMutation({ mutationFn: async () => {
-    const parsedEmails = CreateScopeInvitationsSchema.shape.emails.safeParse(emails.split(/[\s,;]+/u).filter(Boolean));
-    if (!parsedEmails.success) throw new Error('Enter valid email addresses, separated by spaces, commas, or semicolons.');
-    const recipients = [...new Set(parsedEmails.data)].sort();
+  const invite = useMutation({ mutationFn: async (recipients: string[]) => {
     const targets = [target];
     const key = JSON.stringify({ recipients, targets });
     if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
     const result = await api.createScopeInvitations({ operationId: operation.current.id, parentId,
       emails: recipients, targets, completeWorkstream: false, expiresAt: null });
-    if (result.status !== 'created') throw new Error('Unable to share this conversation. Please try again.');
+    if (result.status !== 'created') throw new Error('scope invitation was not created');
     return result;
   }, onSuccess: (result) => {
     setNotice(`Invited ${result.invitations.map((item) => item.email).join(', ')}.`);
-    setEmails(''); operation.current = null;
-  } });
+    setEmails(''); setFailure(null); operation.current = null;
+  }, onError: () => { setFailure('share'); } });
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={invite.isPending}>
-    <form onSubmit={(event) => { event.preventDefault(); setNotice(null); invite.mutate(); }}>
+    <form onSubmit={(event) => {
+      event.preventDefault(); setNotice(null); setFailure(null);
+      const parsed = CreateScopeInvitationsSchema.shape.emails.safeParse(emails.split(/[\s,;]+/u).filter(Boolean));
+      if (!parsed.success) { setFailure('invalid_emails'); return; }
+      invite.mutate([...new Set(parsed.data)].sort());
+    }}>
       <label className="form-field">Email addresses<textarea aria-label="Email addresses" value={emails} disabled={invite.isPending}
         onChange={(event) => setEmails(event.target.value)} placeholder="person@example.com" rows={2} /></label>
       <p>Separate email addresses with spaces, commas, or semicolons.</p>
       <Button type="submit" className="button-primary" disabled={invite.isPending || !emails.trim()}>{invite.isPending ? 'Sharing…' : 'Share'}</Button>
     </form>
     {notice ? <p role="status">{notice}</p> : null}
-    {invite.error ? <InlineError>{invite.error.message}</InlineError> : null}
+    {failure ? <InlineError>{failure === 'invalid_emails'
+      ? 'Enter valid email addresses, separated by spaces, commas, or semicolons.'
+      : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
   </section>;
 }
 

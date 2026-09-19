@@ -93,6 +93,16 @@ describe('InspectorRail details', () => {
     });
   });
 
+  it.each([
+    ['watch', 'The resource watch couldn’t be updated.'],
+    ['detach', 'The resource couldn’t be archived.'],
+    ['refresh', 'The resource couldn’t be refreshed.'],
+    ['attach', 'The resource couldn’t be added.'],
+  ] as const)('owns stable copy for a %s failure', (failure, copy) => {
+    render(<Tooltip.Provider><InspectorRail failure={failure} workstream={workstream} /></Tooltip.Provider>);
+    expect(screen.getByText(copy)).toBeVisible();
+  });
+
   it('steps the stored width from the handle standing beside the rail', () => {
     // jsdom has no CSS layout; supply the geometry of the shared CSS probe,
     // not a second implementation of the responsive-width formula.
@@ -437,7 +447,7 @@ describe('InspectorRail details', () => {
     render(
       <Tooltip.Provider>
         <InspectorRail
-          resourceVersionsError="Rally could not load this history."
+          resourceVersionsFailed
           workstream={{ ...workstream, resources: [watched] }}
         />
       </Tooltip.Provider>,
@@ -448,7 +458,7 @@ describe('InspectorRail details', () => {
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
     expect(screen.getByRole('menu', { name: 'Versions' })).toBeVisible();
-    expect(screen.getByText('Rally could not load this history.')).toBeVisible();
+    expect(screen.getByText('Resource history couldn’t be loaded.')).toBeVisible();
   });
 
   it('says versions are loading rather than that there are none', () => {
@@ -662,7 +672,8 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByText('The work stream refused the unlink.')).toBeVisible();
+    expect(await screen.findByText('The resource couldn’t be archived.')).toBeVisible();
+    expect(screen.queryByText('The work stream refused the unlink.')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
     expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
   });
