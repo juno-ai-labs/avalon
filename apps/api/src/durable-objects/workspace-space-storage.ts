@@ -1734,6 +1734,23 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * Every Space this Organization has, archived ones included.
+   *
+   * For the retirement walk, which has to close an object rather than list a
+   * product surface: an archived Space is still a `SpaceDO` holding a hidden
+   * main conversation, and a graph that skipped it would report the
+   * Organization closed with one of its objects still open. Guarded like every
+   * other Space read, so an Organization the cutover never reached enumerates
+   * nothing rather than aborting the tombstone on a missing table.
+   */
+  allSpaceIds(): string[] {
+    if (!this.ready()) return [];
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      "SELECT space_id FROM workspace_space_directory ORDER BY space_id",
+    ).toArray().map((row) => row.space_id);
+  }
+
   /** The Organization's one General Space, or nothing if it has none yet. */
   generalSpaceId(): string | null {
     if (!this.ready()) return null;
