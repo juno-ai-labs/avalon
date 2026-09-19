@@ -6288,13 +6288,31 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       z.strictObject({ workspaceId: IdSchema }), input, "reopen_space_bootstrap",
     );
     this.assertWorkspace(request.workspaceId);
-    // True only when this took the Organization out of `complete`, which is the
-    // one transition a client can see: `spacesReady` goes false and the sidebar
-    // goes back to the Organization-opening state.
+    return { reopened: await this.reopenSpaceBootstrapWalk() };
+  }
+
+  /**
+   * Put this Organization back on the cutover's walk, and do the two things
+   * that have to follow it.
+   *
+   * The RPC above and the directory handoff's unplaced-Channel guard both need
+   * all three steps, and they are not independent: `reopenBootstrap` advancing
+   * the Space waterline is what makes the snapshot newer than the one a client
+   * holds, so a reopen that did not publish would leave every sidebar rendering
+   * a hierarchy the Organization no longer claims is complete, and one that did
+   * not arm would leave the walk it just scheduled waiting for an unrelated
+   * wake. A copy of this at the second call site is a copy that can lose one of
+   * them.
+   *
+   * The answer is whether this took the Organization out of `complete`, which
+   * is the one transition a client can see: `spacesReady` goes false and the
+   * sidebar goes back to the Organization-opening state.
+   */
+  private async reopenSpaceBootstrapWalk(): Promise<boolean> {
     const reopened = this.spaceStorage().reopenBootstrap();
     if (reopened) this.publishSpaceSnapshot();
     await this.armNextAlarm();
-    return { reopened };
+    return reopened;
   }
 
   /**
@@ -7483,6 +7501,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       || (archivalChanges.size > 0
         && this.spaceStorage().noteMemberArchivalChange([...archivalChanges]))) {
       this.publishSpaceSnapshot();
+    }
+    // The backstop for the hierarchy invariant, on the one event that can break
+    // it without anything noticing. Every non-deleted, non-system Channel
+    // belongs to at least one Space, and the creation paths and the cutover are
+    // what make that true — but a directory row is committed here, and a
+    // `complete` Organization is never walked again, so a Channel that reached
+    // this point unplaced would stay homeless while `spacesReady` went on
+    // saying the hierarchy is renderable. `reopenBootstrap` already names this
+    // event as one of its two reasons to exist; nothing called it on one.
+    //
+    // The question is the close's own predicate, narrowed to the Channels this
+    // batch committed, and it reads this object's SQLite and nothing else: no
+    // D1, no other object, so an ordinary projection pays one local query and a
+    // guard that fires pays a reopen it was going to need anyway.
+    const commonChannelIds = channelEnvelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_common" ? [envelope.parentId] : []
+    ));
+    if (commonChannelIds.length > 0
+      && this.spaceStorage().bootstrapStatus().ready
+      && this.spaceStorage().unplacedChannelExists(commonChannelIds)) {
+      await this.reopenSpaceBootstrapWalk();
     }
     await Promise.all([...watchReconciliations].map((workstreamId) => (
       this.reconcileWorkstreamResourceRegistrations({
