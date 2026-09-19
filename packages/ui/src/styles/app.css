@@ -6676,17 +6676,28 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* A substream is started inside the conversation it branches out of, so its
    launch surface is the block above, rendered into the work stream's own
    column. Only the two things a work stream's launcher has no equivalent of
-   are stated here: what the substream branches from, and the row that says so.
-
-   The composer sits where the conversation's composer sits, so the turns above
-   it are pushed to the bottom of the body rather than filling it from the top:
-   what is being branched from is the thing nearest the words about to be
-   written. */
+   are stated here: what the substream branches from, and the row that says so. */
 .substream-launch-column {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   min-height: 100%;
+}
+
+/* While composing, the turns above the composer are pushed to the bottom of the
+   body rather than filling it from the top: what is being branched from is the
+   thing nearest the words about to be written.
+
+   Only while composing. On submit this surface stops being a launcher and
+   starts being the substream: it draws the typed turn and the work timer the
+   created child carries on showing, and the created child draws them from the
+   top of its transcript like every other conversation. Stated bottom-aligned
+   through the launch, the optimistic turn sat just above the dock and jumped
+   the height of the pane at the swap — the one jump the whole hand-off exists
+   to remove. So the bottom alignment rides `:not(.is-launching)`, the same
+   split the dock and the header take, and the launching column states nothing:
+   it is `.transcript-column`'s own top-down flow, which is the destination. */
+.workstream-launch-screen:not(.is-launching) .substream-launch-column {
+  justify-content: flex-end;
 }
 
 /* The fade is the whole statement: these turns are where this came from, not

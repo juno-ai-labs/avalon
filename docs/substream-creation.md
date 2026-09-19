@@ -134,6 +134,15 @@ modal one. After submit there is nothing to cancel either, for the opposite
 reason: the operation has been claimed, so the control that leaves the surface
 is disabled rather than dropping a creation that would carry on without it.
 
+The turns above the composer sit at the *bottom* of the body while somebody is
+still typing, so that what is being branched from is the thing nearest the words
+about to be written — and only while somebody is still typing. On submit the
+column flows from the top like every conversation's does, because from that
+keystroke the surface is drawing what the created substream will draw. Bottom
+aligned through the launch, the typed turn sat just above the dock and jumped
+the height of the pane when the child arrived, which is the one jump this whole
+hand-off exists to remove.
+
 On submit the surface draws the typed turn and a work timer, and the substream
 is created behind them: `POST …/substreams/prepare` freezes and
 summarizes, then `POST …/substreams/confirm` carries the message. The response
@@ -541,6 +550,34 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-19 — The launching column flows from the top
+
+**What changed:** `.substream-launch-column` states no alignment of its own; the
+bottom alignment now rides `.workstream-launch-screen:not(.is-launching)`. While
+somebody is composing, the branch turns still sit against the composer. From the
+submit keystroke the column flows from the top, which is what the created
+substream's transcript does.
+
+**Why:** The optimistic turn is the created substream's turn — the whole point of
+drawing it is that nothing moves when the child arrives. Bottom-aligned, it was
+drawn just above the dock and then jumped most of the pane's height at the swap,
+so the hand-off announced itself exactly where it was supposed to be invisible.
+
+**Considered and rejected:** Bottom-aligning the settled transcript to match the
+launch surface instead — that is the destination's geometry, shared with every
+other conversation, and the launch surface is the one that has to agree with it.
+Also rejected: stating `justify-content` under `.is-launching`, which is the copy
+of the destination's geometry that `app.css.node.test.ts` exists to keep out of
+this surface; the split is written on the resting state, as the dock and the
+header already are.
+
+**Consequences:** A substream branched *from a message* still shows its faded
+branch turns through the launch, so its opening turn is offset by their height
+until the child replaces them. That is smaller than the jump this removed and
+the same in kind: whether the branch context should leave on the submit keystroke
+— as the banner above the composer already does — is a decision nobody has made
+yet.
 
 ### 2026-09-18 — Warm the reserved child during preparation
 
