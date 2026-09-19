@@ -661,7 +661,10 @@ and fail naming each field Daytona reports back differently, because an
 under-sized image passes every capability probe the acceptance gate runs and
 surfaces only as a work stream the kernel killed. A rejected candidate is
 deleted before the build throws, so a run that keeps failing does not leave one
-unusable snapshot per attempt under the organization's quota. Changing the size is therefore
+unusable snapshot per attempt under the organization's quota. That decision lives
+in `scripts/terminal-snapshot-acceptance.ts` rather than in the build script, so
+it is exercised against a stubbed delete the way the provider lifecycle helper
+beside it is. Changing the size is therefore
 a rebuild and an adoption merge like any other, existing sandboxes keep the size
 they were created at, and the number belongs in the checked-in manifest: the
 weekly job builds from the repository, so a size set as a GitHub variable is one
