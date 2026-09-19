@@ -189,6 +189,7 @@
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
+      { "name": "SPACE_DOS", "class_name": "SpaceDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
@@ -219,6 +220,13 @@
   // conversation objects, like WorkstreamDO, and its schema starts at what that
   // needs. Every automation that existed before v9 is gone with the class;
   // there were no users, only dogfood, and they are recreated by chatting.
+  // v11 adds SpaceDO, the Organization's grouping of Channels. It is the same
+  // code as WorkstreamDO under a different role, but a namespace is bound to a
+  // class name, so a second namespace needs a second class: without it a Space
+  // id and a work-stream id would address the same object whenever they
+  // collided. Its SQLite ledger is its own component `space_do`, starting at a
+  // single version that renders what the work-stream ledger currently ends at,
+  // because no Space object has ever existed and there is nothing to upgrade.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -233,7 +241,8 @@
     { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
     { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] },
     { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] },
-    { "tag": "v10", "renamed_classes": [{ "from": "AutomationDO", "to": "SidekickDO" }] }
+    { "tag": "v10", "renamed_classes": [{ "from": "AutomationDO", "to": "SidekickDO" }] },
+    { "tag": "v11", "new_sqlite_classes": ["SpaceDO"] }
   ],
   "queues": {
     "producers": [
