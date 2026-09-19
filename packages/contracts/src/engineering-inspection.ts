@@ -9,6 +9,7 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
+import { SpaceIdSchema } from "./spaces";
 
 export const InspectionSqlBindingSchema = deferredZodSchema(() => z.union([
   z.string(),
@@ -115,6 +116,25 @@ export const EngineeringArtifactSchema = deferredZodSchema(() => z.strictObject(
 }));
 export type EngineeringArtifact = z.infer<typeof EngineeringArtifactSchema>;
 
+/**
+ * One Space as its Organization holds it.
+ *
+ * Reported the way a Sidekick is, including an archived one: the object
+ * outlives the row a product surface renders, and an archived Space is a
+ * common inspection target.
+ */
+export const EngineeringSpaceSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  spaceId: SpaceIdSchema,
+  region: RegionSchema,
+  name: z.string(),
+  scope: z.string(),
+  status: z.string(),
+  systemRole: z.string().nullable(),
+  archivedAt: z.number().int().nonnegative().nullable(),
+}));
+export type EngineeringSpace = z.infer<typeof EngineeringSpaceSchema>;
+
 export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
@@ -147,6 +167,12 @@ export const SidekickInspectionInputSchema = deferredZodSchema(() => z.strictObj
 }));
 export type SidekickInspectionInput = z.infer<typeof SidekickInspectionInputSchema>;
 
+export const SpaceInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  spaceId: SpaceIdSchema,
+}));
+export type SpaceInspectionInput = z.infer<typeof SpaceInspectionInputSchema>;
+
 export const ArtifactInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   artifactId: ArtifactIdSchema,
@@ -177,6 +203,11 @@ export const EngineeringSidekickTargetSchema = deferredZodSchema(() => Engineeri
 }).strict());
 export type EngineeringSidekickTarget = z.infer<typeof EngineeringSidekickTargetSchema>;
 
+export const EngineeringSpaceTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  spaceId: SpaceIdSchema,
+}).strict());
+export type EngineeringSpaceTarget = z.infer<typeof EngineeringSpaceTargetSchema>;
+
 export const EngineeringArtifactTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
   artifactId: ArtifactIdSchema,
 }).strict());
@@ -205,6 +236,12 @@ export const SidekickSqlInspectionInputSchema = deferredZodSchema(() => Sidekick
   query: InspectionSqlRequestSchema,
 }).strict());
 export type SidekickSqlInspectionInput = z.infer<typeof SidekickSqlInspectionInputSchema>;
+
+export const SpaceSqlInspectionInputSchema = deferredZodSchema(() => SpaceInspectionInputSchema.unwrap().extend({
+  authorityGeneration: AuthorityGenerationSchema,
+  query: InspectionSqlRequestSchema,
+}).strict());
+export type SpaceSqlInspectionInput = z.infer<typeof SpaceSqlInspectionInputSchema>;
 
 export const ArtifactSqlInspectionInputSchema = deferredZodSchema(() => ArtifactInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
@@ -241,6 +278,13 @@ export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => looku
 })));
 export type EngineeringSidekickListLookup = z.infer<typeof EngineeringSidekickListLookupSchema>;
 
+export const EngineeringSpaceListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  items: z.array(EngineeringSpaceSchema),
+})));
+export type EngineeringSpaceListLookup = z.infer<typeof EngineeringSpaceListLookupSchema>;
+
 export const EngineeringArtifactListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
@@ -276,6 +320,11 @@ export type EngineeringSidekickTargetLookup = z.infer<
   typeof EngineeringSidekickTargetLookupSchema
 >;
 
+export const EngineeringSpaceTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringSpaceTargetSchema,
+));
+export type EngineeringSpaceTargetLookup = z.infer<typeof EngineeringSpaceTargetLookupSchema>;
+
 export const EngineeringArtifactTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringArtifactTargetSchema,
 ));
@@ -309,6 +358,7 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
   substreamId: SubstreamIdSchema.nullable(),
   sidekickId: AutomationIdSchema.optional(),
   artifactId: ArtifactIdSchema.optional(),
+  spaceId: SpaceIdSchema.optional(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
@@ -319,15 +369,18 @@ export interface EngineeringInspectionRpcBinding {
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
   listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
+  listSpaces(input: WorkspaceInspectionInput): Promise<EngineeringSpaceListLookup>;
   listArtifacts(input: WorkspaceInspectionInput): Promise<EngineeringArtifactListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
   resolveWorkstream(input: WorkstreamInspectionInput): Promise<EngineeringWorkstreamTargetLookup>;
   resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
   resolveSidekick(input: SidekickInspectionInput): Promise<EngineeringSidekickTargetLookup>;
+  resolveSpace(input: SpaceInspectionInput): Promise<EngineeringSpaceTargetLookup>;
   resolveArtifact(input: ArtifactInspectionInput): Promise<EngineeringArtifactTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runWorkstreamSql(input: WorkstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSidekickSql(input: SidekickSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runSpaceSql(input: SpaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
 }

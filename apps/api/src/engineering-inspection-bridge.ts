@@ -1,5 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asSpaceId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
@@ -17,6 +17,10 @@ import {
   ListEngineeringWorkspacesResultSchema,
   SidekickInspectionInputSchema,
   SidekickSqlInspectionInputSchema,
+  SpaceInspectionInputSchema,
+  SpaceSqlInspectionInputSchema,
+  EngineeringSpaceListLookupSchema,
+  EngineeringSpaceTargetLookupSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
   WorkspaceInspectionInputSchema,
@@ -28,6 +32,8 @@ import {
   type EngineeringArtifactTargetLookup,
   type EngineeringSidekickListLookup,
   type EngineeringSidekickTargetLookup,
+  type EngineeringSpaceListLookup,
+  type EngineeringSpaceTargetLookup,
   type EngineeringSqlLookup,
   type EngineeringSubstreamListLookup,
   type EngineeringSubstreamTargetLookup,
@@ -43,6 +49,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
 } from "./durable-objects/names";
 import {
@@ -113,6 +120,15 @@ async function workspaceStub(env: Env, workspaceId: string) {
   );
 }
 
+async function spaceStub(env: Env, workspaceId: string, spaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.SPACE_DOS,
+    workspaceId,
+    spaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(spaceId)),
+  );
+}
+
 async function workstreamStub(env: Env, route: InspectionWorkstreamRoute) {
   return durableObjectStubForWorkspace(
     env,
@@ -180,6 +196,53 @@ async function resolveInspectionSidekickRoute(
     bindings: [input.sidekickId, input.workspaceId],
   });
   return directory.rows.length === 0 ? null : route;
+}
+
+/**
+ * A Space is fenced by its workspace and then by its own identity row.
+ *
+ * A Sidekick is fenced on `automation_directory`, the workspace-held row that
+ * proves the object exists. Phase 1 of the Spaces work has no equivalent: the
+ * Space directory projection arrives with the WorkspaceDO migration that
+ * introduces it, so there is nothing in reach that can say a Space is real
+ * before the object is addressed.
+ *
+ * So the fence is the two things that do exist. The workspace route is the
+ * D1 anchor — the same `workstream_authority_routes`-backed resolver every
+ * other target starts from, which is what proves this region serves this
+ * Organization at all. Then the object's own `workstream_metadata` row has to
+ * name this workspace and this Space id; anything else answers `found: false`.
+ *
+ * What that costs is the thing the Sidekick fence exists to avoid: a miss has
+ * already named the object, and naming a Durable Object creates it. The
+ * consolation is that it creates it in `SPACE_DOS`, where an empty object is
+ * unreachable by any product path and confusable with nothing — as opposed to
+ * the Sidekick case, where a work-stream id would have materialized an empty
+ * SidekickDO in the namespace real Sidekicks live in. It still shows up in the
+ * migration tracker's `SpaceDO` count, which is the visible cost.
+ *
+ * // Phase 3: replace the identity read with `workspace_space_directory` in
+ * WorkspaceDO, the way `resolveInspectionSidekickRoute` reads
+ * `automation_directory`, and this window closes.
+ */
+async function resolveInspectionSpaceRoute(
+  env: Env,
+  input: { workspaceId: string; spaceId: string },
+  expectedGeneration?: number,
+): Promise<InspectionWorkspaceRoute | null> {
+  const route = await resolveInspectionWorkspaceRoute(
+    env,
+    input.workspaceId,
+    expectedGeneration,
+  );
+  if (!route) return null;
+  const space = await spaceStub(env, input.workspaceId, input.spaceId);
+  const identity = await space.runInspectionSql({
+    sql: `SELECT workstream_id FROM workstream_metadata
+           WHERE id = 1 AND workspace_id = ? AND workstream_id = ?`,
+    bindings: [input.workspaceId, input.spaceId],
+  });
+  return identity.rows.length === 0 ? null : route;
 }
 
 /**
@@ -360,6 +423,32 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  /**
+   * Every Space in a workspace.
+   *
+   * Phase 1 of the Spaces work answers with an empty list, and that answer is
+   * true rather than a placeholder: no product path creates a Space yet, so a
+   * workspace has none. It lists nothing because there is nothing, not because
+   * the projection this will read is missing.
+   *
+   * // Phase 3: read `workspace_space_directory` in WorkspaceDO, the way
+   * `listSidekicks` reads `automation_directory`.
+   */
+  async listSpaces(input: unknown): Promise<EngineeringSpaceListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSpaces");
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
+      return { found: false };
+    }
+    return EngineeringSpaceListLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        items: [],
+      },
+    });
+  }
+
   async listArtifacts(input: unknown): Promise<EngineeringArtifactListLookup> {
     const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listArtifacts");
     if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
@@ -450,6 +539,21 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
         sidekickId: request.sidekickId,
+        authorityGeneration: route.authority_generation,
+      },
+    });
+  }
+
+  async resolveSpace(input: unknown): Promise<EngineeringSpaceTargetLookup> {
+    const request = parseRpcInput(SpaceInspectionInputSchema, input, "resolveSpace");
+    const route = await resolveInspectionSpaceRoute(this.env, request);
+    if (!route) return { found: false };
+    return EngineeringSpaceTargetLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        spaceId: request.spaceId,
         authorityGeneration: route.authority_generation,
       },
     });
@@ -564,6 +668,27 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         sidekickId: request.sidekickId,
         result: await sidekick.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  async runSpaceSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(SpaceSqlInspectionInputSchema, input, "runSpaceSql");
+    if (!await resolveInspectionSpaceRoute(
+      this.env,
+      request,
+      request.authorityGeneration,
+    )) return { found: false };
+    const space = await spaceStub(this.env, request.workspaceId, request.spaceId);
+    return EngineeringSqlLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        spaceId: request.spaceId,
+        result: await space.runInspectionSql(request.query),
       },
     });
   }
