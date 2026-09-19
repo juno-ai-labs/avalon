@@ -40,14 +40,23 @@ class CallbackSession extends RpcTarget {
  */
 class ProviderSession extends RpcTarget {
   #sessionObserve;
+  #sessionObservations = 0;
 
   constructor(instrumentation) {
     super();
+    // Retained only to prove it is never supplied: a caller that puts request
+    // measurement back on the session instrumentation is the regression this
+    // whole change is against, and it would look like working code.
     this.#sessionObserve = instrumentation?.observeRequest?.dup();
   }
 
   [Symbol.dispose]() {
     this.#sessionObserve?.[Symbol.dispose]();
+  }
+
+  /** How many measurements a session-scoped observer received, if any. */
+  sessionObservations() {
+    return { installed: this.#sessionObserve !== undefined, delivered: this.#sessionObservations };
   }
 
   startSandbox(idOrName, options) {
@@ -70,7 +79,10 @@ class ProviderSession extends RpcTarget {
         bytes: 0,
       };
       await callbacks?.observeRequest?.(measurement);
-      await this.#sessionObserve?.(measurement);
+      if (this.#sessionObserve) {
+        this.#sessionObservations += 1;
+        await this.#sessionObserve(measurement);
+      }
     }
     return { ok: true, value: { id: idOrName, name: idOrName, state: "started" } };
   }
