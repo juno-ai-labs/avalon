@@ -165,6 +165,63 @@ describe("admitting a tool call's execution plan", () => {
       .toEqual([{ status: "ambiguous" }]);
   });
 
+  it("resumes an unsettled provider-keyed write instead of declaring it ambiguous", () => {
+    const { storage, sql } = open();
+    const write = plan({
+      mode: "write",
+      toolName: "publish_resource",
+      executionPlanJson: '{"mode":"write","idempotency":"provider_key"}',
+      providerIdempotencyKey: "workstream:w:substream:s:loop:turn:64:tool:0",
+    });
+    storage.admit(write);
+
+    expect(storage.admit(write)).toEqual({ state: "resume_write", effectIntentId: "effect-1" });
+    // Still live, and still holding the key the first attempt was admitted
+    // under. A receipt moved to `ambiguous` here is one nothing may re-enter,
+    // which is the defect: the provider dedupes on that key, so the second call
+    // reaches the first call's operation rather than a second one.
+    expect(sql.exec(`SELECT status, provider_idempotency_key FROM tool_effects`).toArray())
+      .toEqual([{
+        status: "executing",
+        provider_idempotency_key: "workstream:w:substream:s:loop:turn:64:tool:0",
+      }]);
+  });
+
+  it("keeps a record_before_execute write ambiguous, key or no key", () => {
+    const { storage, sql } = open();
+    // The same coordinate, the same plan, and a provider key present — so the
+    // only thing left deciding the outcome is the declared class. Without that
+    // clause this passes against `resume_write` being returned for every write.
+    const write = plan({
+      mode: "write",
+      toolName: "run_command",
+      executionPlanJson: '{"mode":"write","idempotency":"record_before_execute"}',
+      providerIdempotencyKey: "workstream:w:substream:s:loop:turn:64:tool:0",
+    });
+    storage.admit(write);
+
+    expect(storage.admit(write))
+      .toEqual({ state: "ambiguous_external_write", effectIntentId: "effect-1" });
+    expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
+      .toEqual([{ status: "ambiguous" }]);
+  });
+
+  it("refuses to resume a provider-keyed write under a different key", () => {
+    const { storage } = open();
+    const write = plan({
+      mode: "write",
+      toolName: "publish_resource",
+      executionPlanJson: '{"mode":"write","idempotency":"provider_key"}',
+      providerIdempotencyKey: "turn:64:tool:0",
+    });
+    storage.admit(write);
+
+    // A key the provider has not seen dedupes against nothing, so a call
+    // carrying one is a second write rather than a retry of the first.
+    expect(storage.admit({ ...write, providerIdempotencyKey: "turn:65:tool:0" }))
+      .toEqual({ state: "ambiguous_external_write", effectIntentId: "effect-1" });
+  });
+
   it("treats a reused coordinate with a different plan as ambiguous", () => {
     const { storage } = open();
     storage.admit(plan());

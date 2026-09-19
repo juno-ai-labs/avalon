@@ -3477,6 +3477,24 @@ export interface HarnessTool {
   validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
+  /**
+   * Whether this tool may be executed again over the receipt an interrupted
+   * attempt already started, rather than being reported as an unresolvable
+   * `ambiguous_external_write`.
+   *
+   * It is a claim about the executor, not about the tool being harmless: the
+   * host re-enters with the *same* `effectIntentId`, and a re-enterable
+   * executor's first act is to look up what that identity already did —
+   * `run_command` reattaches to its durable provider task, `publish_resource`
+   * finds the document its path identity already published and returns it
+   * untouched when the bytes match. A tool that would simply perform the write
+   * a second time must leave this unset, whatever its idempotency class says.
+   *
+   * Host-authored deliberately, and not part of `ToolDefinition`: that schema
+   * also parses tool declarations from remote MCP servers, and a server that
+   * could assert this would be asserting that Rally may repeat its writes.
+   */
+  reenterable?: boolean;
 }
 
 /** Frozen run identity passed to a deferred plugin while it becomes active. */
