@@ -228,6 +228,27 @@ describe('the Space dashboard', () => {
     expect(screen.getByRole('dialog', { name: 'Archive space?' })).toBeVisible();
   });
 
+  // One failure appears once. A single `error` string was rendered in the body
+  // and in all five modals at once, so a refused rename turned up inside the
+  // channel picker the moment it was opened.
+  it('given a refused rename, then the sentence stays with the name and out of the modals', async () => {
+    api.updateSpacePresentation.mockRejectedValueOnce(new ApiError('Revision 1 is stale', 409, 'space_revision_conflict'));
+    renderSpace();
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Hiring' }));
+    const field = screen.getByRole('textbox', { name: 'Space name' });
+    fireEvent.change(field, { target: { value: 'Recruiting' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+
+    const sentence = 'The space changed while this was being applied. Try again.';
+    expect(await screen.findByText(sentence)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add channel' }));
+    const picker = await screen.findByRole('dialog', { name: 'Add channels' });
+    expect(within(picker).queryByText(sentence)).not.toBeInTheDocument();
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
+  });
+
   it('removes a channel from this space without touching its other spaces', async () => {
     api.listSpaceChannels.mockResolvedValue({ items: ['00000000-0000-7000-8000-0000000000e1'], nextCursor: null });
     api.removeChannelFromSpace.mockResolvedValue(makeSpace({ channelCount: 0 }));
