@@ -45,8 +45,10 @@ export const RALLY_HEADERS = Object.freeze({
   OPERATION_ID: "x-rally-operation-id",
   /**
    * The parent a conversation object belongs to, on a Worker-to-object socket
-   * upgrade: `PARENT_KIND` is `workstream` or `automation`, `PARENT_ID` the
-   * parent's id. Internal headers only, never sent by a client, so the CORS
+   * upgrade: `PARENT_KIND` is a `ConversationParentKind`, `PARENT_ID` the
+   * parent's id. `space` never reaches here — the ticket route refuses one
+   * before it is signed — but the header carries the vocabulary rather than a
+   * subset of it, so the object parses what the contract defines. Internal headers only, never sent by a client, so the CORS
    * allowlist does not name them.
    */
   PARENT_ARCHIVED: "x-rally-parent-archived",
