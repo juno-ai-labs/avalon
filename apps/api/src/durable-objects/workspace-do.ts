@@ -601,6 +601,7 @@ import {
   WorkspaceSpacePresentationRequestSchema,
   WorkspaceSpaceReorderRequestSchema,
   WorkspaceSpaceRequestSchema,
+  WorkspaceSpaceIntentFailureRequestSchema,
   WorkspaceSpaceIntentReceiptRequestSchema,
   WorkspaceSpaceReserveRequestSchema,
   type SpaceDefaultQueueMessage,
@@ -630,6 +631,7 @@ import {
   type WorkspaceSpacePresentationRequest,
   type WorkspaceSpaceReorderRequest,
   type WorkspaceSpaceRequest,
+  type WorkspaceSpaceIntentFailureRequest,
   type WorkspaceSpaceIntentReceiptRequest,
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
@@ -5898,6 +5900,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.spaceStorage().settleIntent(
       request.operationId, request.receipt, request.settled, Date.now(), request.cursor,
     );
+    return { recorded: true };
+  }
+
+  /**
+   * Record why a resume did not finish; server-to-server, like the receipt.
+   *
+   * Same reasoning as `recordSpaceIntentReceipt`: the consumer runs long after
+   * the request that staged the intent is gone, so there is no membership to
+   * recheck, and refusing this would only cost the reason.
+   */
+  async recordSpaceIntentFailure(input: WorkspaceSpaceIntentFailureRequest): Promise<{ recorded: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceIntentFailureRequestSchema, input, "record_space_intent_failure",
+    );
+    this.assertWorkspace(request.workspaceId);
+    this.spaceStorage().recordIntentFailure(request.operationId, request.errorCode);
     return { recorded: true };
   }
 

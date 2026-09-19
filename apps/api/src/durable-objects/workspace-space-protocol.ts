@@ -489,3 +489,19 @@ export const WorkspaceSpaceIntentReceiptRequestSchema = SpaceActorSchema.extend(
   cursor: z.string().min(1).nullable().optional(),
 }).strict();
 export type WorkspaceSpaceIntentReceiptRequest = z.infer<typeof WorkspaceSpaceIntentReceiptRequestSchema>;
+
+/**
+ * Why a resume did not finish, recorded on the intent it was about.
+ *
+ * `errorCode` is the consumer's `diagnosticErrorCode`, not a literal this
+ * object writes — the same field and the same reason
+ * {@link SpaceDefaultTargetFailureRequestSchema} carries one. The alarm
+ * republishes an unsettled intent forever, so a resume that can never succeed
+ * is a log line every thirty minutes and a row that says the operation did not
+ * finish without saying what stopped it.
+ */
+export const WorkspaceSpaceIntentFailureRequestSchema = SpaceActorSchema.extend({
+  operationId: IdSchema,
+  errorCode: z.string().min(1).max(200),
+}).strict();
+export type WorkspaceSpaceIntentFailureRequest = z.infer<typeof WorkspaceSpaceIntentFailureRequestSchema>;
