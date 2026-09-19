@@ -314,6 +314,34 @@ everybody else pays for the bump is re-applying an unchanged directory the next
 time anything republishes to them — a comparison, not a redraw — which is the
 standing price of one waterline rather than one per person.
 
+**What takes an order row away.** Three things, and archive is deliberately not
+one of them:
+
+- A Channel **leaving a Space** deletes that Space's `space`-kind row for it, for
+  everybody, when the removal finalizes. The placement is the Organization's
+  fact, so once it is gone no sidebar draws that row under that Space and the
+  position describes nothing. A later write to the container would filter it out
+  anyway — `spaceIdsByChannel` answers only active memberships — but only for
+  the next person who happens to arrange that Space.
+- A **cancelled Space reservation** deletes both directions: the Space leaves
+  everybody's `organization` list, and the `space` container it was is deleted
+  whole.
+- **Archiving a Space or a Channel takes nothing.** `directory()` filters
+  `archived_at IS NULL`, so the row is already invisible, and a restore is meant
+  to put the Channel back where this person had it rather than at the top of a
+  recency list. The `space` filter is what makes that true: neither
+  `spaceIdsByChannel` nor `listableChannelIds` reads `archived_at`, so an
+  archived Channel survives the merge of the next write to that container.
+
+**Nothing prunes a `channel` container, because nothing deletes a Channel.** A
+Channel is archived, never removed: there is no delete path on
+`workspace_workstream_directory` outside migration 62's one-time automation
+sweep, and there is no foreign key to cascade from if there were. So a person's
+Breakout arrangements accumulate one container per Channel they have ever
+arranged Breakouts in, and are read whole onto every socket payload. That is a
+row-count with no bound, and the bound is the team's: it is in "Numbers handed to
+the team" above with what deciding it needs.
+
 **One client helper.** `orderByStoredIds` puts the stored ids first in stored
 order, then everything the arrangement never mentioned in the order the list
 already had, and drops a stored id the list is not carrying. It is also what
@@ -857,6 +885,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 | *(none)* — attempts before an unsettleable intent stops being republished | no ceiling | How long a staged operation that can never succeed keeps costing an alarm wake and a dead-letter message. | What an operator is expected to do about a `last_error_code` that never changes, weighed against a ceiling abandoning work nobody agreed to abandon. |
 | *(none)* — items in one person's order for one container | no bound | How many rows one `PUT /workspace/order` writes, and how much of the `ordering` field one container can take up on every socket payload this person receives. | What the largest list somebody would actually arrange looks like — an Organization's Spaces, a Space's Channels, a Channel's Breakouts — against what a payload can carry. |
+| *(none)* — containers one person may have arranged at once | no bound | The `ordering` field's whole size, which rides the connect payload of every session and every republication to it, and the rows one person keeps in `workspace_container_order` for the life of their membership. | What the oldest plausible account looks like — how many Spaces an Organization has, how many of its Channels one person arranges Breakouts in over a year — against what a payload can carry, and what dropping the least recently touched container would cost somebody who comes back to it. |
 
 Each is a lower bound rather than a budget, and each is a transcription rather
 than a measurement — the sections below say what each was transcribed from.
@@ -955,7 +984,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking, and reaching no session of anybody else. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it, for everybody. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
@@ -1356,9 +1385,17 @@ them all by nudging one row on another that had loaded fewer pages. What a
 future change has to respect is that the request says where the named ids go
 and nothing at all about the rest.
 
-A stored list has no length bound. Capping it would silently lose the tail of a
-list somebody actually arranged, which is worse than the row it prevents; the
-number, and what deciding it needs, is in "Numbers handed to the team" above.
+A stored list has no length bound, and neither has the number of containers one
+person may accumulate. Capping a list would silently lose the tail of one
+somebody actually arranged, which is worse than the row it prevents; both
+numbers, and what deciding them needs, are in "Numbers handed to the team"
+above. What is bounded is the part that can be: a `space` row goes when the
+placement does, and a cancelled reservation takes its container with it. Archive
+takes nothing on purpose — the row is already invisible through `directory()`,
+and a restore is supposed to bring the arrangement back rather than a recency
+list. A `channel` container has nothing to prune it, because nothing in the
+product deletes a Channel; if something ever does, that is the path this delete
+belongs on.
 
 The Space dashboard's paginated Channel list keeps its server order. Arranging a
 list whose later pages have not arrived is a different feature: the client can
