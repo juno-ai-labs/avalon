@@ -179,8 +179,11 @@ slides out. Both control groups center in the single-line row; multiline and
 attachment layouts keep them bottom-aligned. CSS transitions reverse in place on rapid state changes and are
 removed for reduced motion. A pending stop shows a spinner and remains hoverable for its tooltip
 but cannot submit another stop request. The capsule's rounded overflow clips
-the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
-the button's accessible name as a second screen-reader description.
+the moving button; tooltips portal outside it. That overflow is `clip` rather
+than `hidden`, because the parked button leaves the capsule's content
+permanently wider than its box, and only `hidden` would make that a scroll range
+nothing resets. `IconButton` tooltips do not duplicate the button's accessible
+name as a second screen-reader description.
 
 A pending stop is also said in words, because the button cannot say it. Stop is
 observed at the loop's next safe step boundary — the response in flight and
@@ -679,6 +682,53 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-19 — The capsule composer clips rather than hides
+
+**What changed:** The message capsule takes `overflow: clip` in place of
+`overflow: hidden`. Nothing else moved, and nothing paints differently: a
+control parked outside the rounded corner is cut at the same pixel by either.
+
+**Why:** `hidden` is a scroll container and `clip` is not, and two things inside
+this capsule are deliberately outside its box. Stop parks past the right edge so
+it can slide in, which leaves a scroll range standing at all times — 56px when
+this was measured on the running client — and `ComposerInput` translates the
+input shell by the leading column's width for 220ms whenever a draft flips to
+the wrapped layout, which adds that column's width to the range for the length
+of the animation. Nothing in the renderer reads or resets the capsule's scroll
+position, so a capsule scrolled once stayed scrolled: the report this came from
+was a draft sitting permanently to the left of its own field, first characters
+and model pill alike — the pill is outside the translated shell, which is what
+identified the capsule's own scroll offset rather than a stuck animation. A clipped box has no scroll position to strand,
+whatever scrolled it.
+
+**Considered and rejected:** Resetting `scrollLeft` when the flip animation
+finishes. It is a second mechanism that has to stay correct as the animation
+changes, it only covers the window it was written for, and it leaves the
+standing range behind Stop scrollable at every other moment. Also rejected:
+keeping the parked control inside the box and revealing it by width alone — the
+slide through the clipped corner is the treatment, and the clip is what it
+slides through.
+
+**Consequences:** The capsule can never hold a horizontal scroll offset, which
+is what the parked-control treatment assumed all along. A future control that
+needs a scrollbar inside the composer cannot get one by restoring `hidden`: the
+field is the scroller and states its own gutter. Changing the value to `visible`
+is not a no-op either — the parked Stop would then be drawn outside the capsule.
+
+An engine that cannot parse `clip` is the gentler case, and the reason the base
+`.workstream-composer` rule deliberately keeps `overflow: hidden`: the
+declaration is dropped at parse time and the cascade falls back to that rule, so
+such an engine gets the old behavior, bug included, rather than `visible` with
+Stop outside the box. That rule is also not an untreated instance of this bug —
+it dresses the toolbar layout, which has no parked control and no flip translate
+to put anything outside its box. Give that layout a parked accessory and this
+decision has to be made there too.
+
+`app.css.node.test.ts` holds the invariant rather than the declaration: no rule
+whose subject is the capsule may settle any scrolling `overflow`, so a later
+`@container` or theme rule restating `hidden`, or a longhand `overflow-x` after
+the shorthand, fails the same way the original would have.
 
 ### 2026-09-18 — Conversation controls own failure language
 
