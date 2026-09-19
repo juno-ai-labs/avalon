@@ -198,14 +198,49 @@ describe("applying a Space access source", () => {
       message: expect.stringContaining("Hiring"),
     } satisfies Partial<ApiError> & { message: unknown });
 
-    // Nothing was seated, so the confirmation attributes nobody — and the
-    // source is withdrawn through the same retraction the product path uses,
-    // rather than through an unwind of its own.
+    // Nothing was seated, and the application recorded no source, so there is
+    // nothing to withdraw: the Channel is exactly as it was. The confirmation
+    // is what commits provenance, which is why a failure before it needs no
+    // unwind at all.
     expect(calls).toEqual([
       "object:apply",
       `canonical:add(${READER}:space)`,
-      "object:confirm(none)",
+    ]);
+  });
+
+  it("given a seating that fails after one reader, when it rolls back, then that reader is attributed and withdrawn", async () => {
+    const calls: string[] = [];
+    let added = 0;
+    stubCanonicalOperations(calls);
+    vi.spyOn(WorkstreamObjectClient.prototype, "addParticipant").mockImplementation(async (userId, opts) => {
+      calls.push(`canonical:add(${userId}${opts?.spaceSourceId ? ":space" : ""})`);
+      if (++added > 1) throw new ApiError(409, "workstream_audience_restricted_content", "Retained content");
+      return {} as never;
+    });
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        apply: { ok: true, plan: { widenScope: false, seatUserIds: [READER, OTHER] } },
+        retract: { ok: true, plan: { narrowScope: false, seatUserIds: [], removeUserIds: [READER] } },
+      }),
+      auth,
+    );
+
+    await expect(service.applySpaceSource(CHANNEL, source)).rejects.toMatchObject({
+      code: "space_membership_content_fence",
+    } satisfies Partial<ApiError>);
+
+    // What did get seated is committed as this source's — the successful path
+    // would have committed it too — and then withdrawn through the retraction
+    // the product path uses, so a reader another Space supplies survives.
+    expect(calls).toEqual([
+      "object:apply",
+      `canonical:add(${READER}:space)`,
+      `canonical:add(${OTHER}:space)`,
+      `object:confirm(${READER})`,
       "object:retract",
+      `canonical:remove(${READER}:space)`,
+      `queue:revoke(${READER})`,
     ]);
   });
 
