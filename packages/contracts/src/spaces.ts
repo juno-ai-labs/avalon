@@ -128,6 +128,39 @@ export const SpaceParticipantSchema = z.strictObject({
 });
 export type SpaceParticipant = z.infer<typeof SpaceParticipantSchema>;
 
+/**
+ * Why *this* viewer can see this Space — the one field every surface decides
+ * from.
+ *
+ * Three ways, and they are not equivalent:
+ *
+ * - `participant` — they are one of the Space's own participants.
+ * - `organization` — the Space is Organization-wide, so every active member
+ *   reaches it.
+ * - `through_channel` — they reach it only because they can read a Channel
+ *   placed in it. The Space itself is participants-only and they are not a
+ *   participant, or it is archived and they are neither.
+ *
+ * The third is the one that changes what a surface may draw. A Space's icon,
+ * colour and name are disclosed to whoever can see a Channel inside it, so the
+ * Channel can be drawn under the Space it actually lives in rather than in a
+ * flat list of homeless rows; **nothing else about the Space is**. The summary
+ * such a viewer is handed carries no participants and no defaults, its
+ * `channelCount` counts only the Channels that viewer can see, and every Space
+ * write is refused them by name. One field rather than a second summary
+ * schema: a second shape would be a second thing every reader has to branch
+ * on, and the fields that are withheld are withheld by being empty — which is
+ * a state each of them already has.
+ *
+ * The strongest relationship wins, so a participant of an Organization-wide
+ * Space reads `participant`. Only `through_channel` is load-bearing today; the
+ * other two are told apart because "you are in this Space" is a fact about
+ * this person that "everyone is" does not imply, and a reader that conflated
+ * them could not get it back.
+ */
+export const SpaceReachSchema = z.enum(["participant", "organization", "through_channel"]);
+export type SpaceReach = z.infer<typeof SpaceReachSchema>;
+
 export const SpaceSummarySchema = z.strictObject({
   id: SpaceIdSchema,
   name: z.string().trim().min(1),
@@ -149,6 +182,23 @@ export const SpaceSummarySchema = z.strictObject({
    * fences that this one does not.
    */
   revision: z.number().int().positive(),
+  /**
+   * Why this viewer can see this Space; see {@link SpaceReachSchema}.
+   *
+   * The one viewer-dependent field on this shape, and deliberately so. Every
+   * other field here is the Organization's fact about the Space, which is why
+   * the projection that builds it is otherwise the same for everybody — but
+   * *which* Spaces a person is handed is now three questions rather than two,
+   * and the third admits a viewer who may see the Space's mark and nothing
+   * else. A surface that had to re-derive that from `scope` and `participants`
+   * would get it wrong the moment `participants` is withheld, which for this
+   * viewer it always is.
+   */
+  reach: SpaceReachSchema,
+  /**
+   * The Space's own participants — empty for a `through_channel` viewer, who
+   * is told the Space exists and nothing about who is in it.
+   */
   participants: z.array(SpaceParticipantSchema),
   /**
    * Channels a surface can show: a listable active membership whose Channel is
@@ -166,9 +216,20 @@ export const SpaceSummarySchema = z.strictObject({
    * them: their membership rows survive archival so an unarchive returns them
    * to the Space, but no list renders them, so counting them claimed members no
    * screen could produce.
+   *
+   * The Organization's count for a `participant` or `organization` viewer, and
+   * **this viewer's** for a `through_channel` one. Those two readings differ on
+   * purpose: for a member of the Space the count is what keeps an expansion
+   * holding no rows from claiming the Space is empty, and being short of it is
+   * not proof anything is missing. For somebody who reaches the Space through
+   * one Channel it would be the size of a participants-only Space — which is
+   * exactly the disclosure this field used to be kept off a Channel row to
+   * avoid.
    */
   channelCount: z.number().int().nonnegative(),
+  /** Empty for a `through_channel` viewer: a Space's defaults are not theirs to see. */
   defaultResourceIds: z.array(z.string().uuid()).default([]),
+  /** Empty for a `through_channel` viewer, with {@link SpaceSummarySchema.shape.defaultResourceIds}. */
   defaultSidekickIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
