@@ -812,6 +812,54 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [second] });
   });
 
+  /**
+   * The order row is about the placement, so it leaves with the placement — and
+   * for everybody, because the placement was the Organization's fact rather
+   * than the remover's. Otherwise it outlives the thing it describes for
+   * everybody who does not happen to arrange that Space again.
+   */
+  it("given an arranged Space, when a Channel is removed from it, then nobody's order still names it", async () => {
+    const spaceId = await reserve("Company", "workspace");
+    const second = await reserve("Recruiting", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    for (const channelId of [CHANNEL_A, CHANNEL_B]) {
+      await place(spaceId, channelId);
+      await place(second, channelId);
+    }
+    for (const userId of [OWNER, MEMBER]) {
+      await workspace().reorderContainer({
+        workspaceId: WORKSPACE_ID,
+        userId,
+        order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+      });
+    }
+
+    const plan = await workspace().prepareSpaceMembershipRemoval({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      workstreamId: CHANNEL_B,
+      remainingAudience: { scope: "workspace", participantUserIds: [] },
+    });
+    if (!plan.ok) throw new Error(plan.code);
+    await expect(workspace().finalizeSpaceMembershipRemoval({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      workstreamId: CHANNEL_B,
+      spaceRevision: plan.space.revision,
+      membershipGeneration: plan.membershipGeneration,
+    })).resolves.toMatchObject({ ok: true });
+
+    // The remover's, and the member's who never touched it.
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId)).toEqual([CHANNEL_A]);
+    expect(storedItemIds(await personalOrder(MEMBER), "space", spaceId)).toEqual([CHANNEL_A]);
+    // And only that Space's. The Channel is still in the other one, where the
+    // same person's arrangement of it is untouched.
+    expect(storedItemIds(await personalOrder(OWNER), "space", second)).toBeNull();
+  });
+
   it("given a Space holding a sole-member Channel, when it is archived, then it is refused", async () => {
     const spaceId = await reserve("Company");
     const second = await reserve("Recruiting");
