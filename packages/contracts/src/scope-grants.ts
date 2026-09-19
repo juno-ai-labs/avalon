@@ -124,8 +124,9 @@ export const AcceptScopeInvitationSchema = z.strictObject({
  * fragment format those emails used before, kept usable while links sent under
  * it are still in inboxes; nothing mints it any more.
  */
+export const ScopeInvitationLinkCredentialSchema = z.strictObject({ link: z.string().min(1) });
 export const ScopeInvitationCredentialSchema = z.union([
-  z.strictObject({ link: z.string().min(1) }),
+  ScopeInvitationLinkCredentialSchema,
   AcceptScopeInvitationSchema.omit({ userId: true }),
 ]);
 export type ScopeInvitationCredential = z.infer<typeof ScopeInvitationCredentialSchema>;

@@ -3,8 +3,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { asWorkspaceId } from "@rally/contracts";
 import { sha256Hex } from "@rally/db";
-import { defineLinkPayload, issueLinkPayload, openLinkPayload } from "@rally/db/link-payloads";
+import { defineLinkPayload, issueLinkPayload, openLinkPayload, purgeExpiredLinkPayloads } from "@rally/db/link-payloads";
 import { issueScopeInvitationLink, openScopeInvitationCredential, scopeInvitationLinkUrl } from "../src/services/scope-invitation-link";
+import { diagnosticErrorCode } from "../src/observability/logger";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -88,13 +89,35 @@ it("names the field when a payload no longer matches the shape its prefix promis
   // The row exists, so this deployment wrote it: a deploy that stopped
   // honouring every link of this kind, not one more unreadable token.
   await expect(openScopeInvitationCredential(env, { link: token }))
-    .rejects.toThrow("link_payload_drifted:inv:invitationId:invalid_type");
+    .rejects.toThrow("link_payload_drift_invalid:inv:invitationId:invalid_type");
 
   // A payload that is no longer JSON is the same kind of drift, and says so
   // rather than surfacing a parse error the route reports as an internal one.
   db.prepare("UPDATE link_payloads SET payload = ?").run("{not json");
   await expect(openScopeInvitationCredential(env, { link: token }))
-    .rejects.toThrow("link_payload_drifted:inv:-root-:invalid_json");
+    .rejects.toThrow("link_payload_drift_invalid:inv:-root-:invalid_json");
+
+  // And the code has to survive the boundary that reports it. `_invalid:` is
+  // what `isDiagnosticCode` matches; anything else reaches an operator as the
+  // caller's generic fallback, which is the one thing this code exists not to
+  // be.
+  const thrown = await openScopeInvitationCredential(env, { link: token }).catch((error: unknown) => error);
+  expect(diagnosticErrorCode(thrown, "internal_error")).toBe("link_payload_drift_invalid:inv:-root-:invalid_json");
+});
+
+it("sweeps an expired row on the schedule, not only on the next write", async () => {
+  const env = bindings();
+  const store = sqliteD1(db);
+  await issueScopeInvitationLink(env, target, Date.now() + 600_000);
+  const kept = await issueScopeInvitationLink(env, target, null);
+  db.prepare("UPDATE link_payloads SET expires_at = ? WHERE expires_at IS NOT NULL")
+    .run(new Date(Date.now() - 1_000).toISOString());
+
+  // A table nobody is minting into is swept by nothing otherwise, and an
+  // expired link should stop resolving whether or not another was issued since.
+  await purgeExpiredLinkPayloads(store);
+  expect(rows().map((row) => row.expires_at)).toEqual([null]);
+  expect(await openScopeInvitationCredential(env, { link: kept })).toEqual({ ...target, token: kept });
 });
 
 it("passes an addressed credential through for links sent before tokens", async () => {
