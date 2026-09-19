@@ -350,12 +350,14 @@ email-name reservations use
 the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
 regional fallback registry.
 
-Email guest sign-in remains disabled until `EMAIL_LOGIN_POLICY_JSON` and the exact
-HTTPS `BROWSER_APP_ORIGIN` are configured alongside signing/encryption keys and
-the transactional sender. Choose the OTP/expiry/attempt and issuance/resend abuse
-policy before production enablement; see [email sign-in](email-login.md) and
-[browser sessions](browser-sessions.md). Sharing validates origin/keys before any
-participant-authority handoff, so incomplete configuration cannot migrate a room.
+Production email guest sign-in is configured through checked-in Global vars:
+`BROWSER_APP_ORIGIN=https://app.rallywith.ai` and `EMAIL_LOGIN_POLICY_JSON`.
+Do not duplicate these as Worker secrets. The policy is six digits, ten-minute
+expiry and five failed redemption attempts. The team explicitly chose to launch
+without issuance limits; see [email sign-in](email-login.md). Existing signing,
+encryption and transactional email credentials remain required. Both API and
+browser deployments must succeed before invitation recipients can sign in.
+Sharing validates origin/keys before participant-authority handoff.
 
 `RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 

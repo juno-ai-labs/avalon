@@ -1,6 +1,8 @@
 import "../../../tests/isolated-region";
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { configuredEmailLoginPolicy } from '../src/services/email-login-service';
+import { createTestEnv } from './helpers/cloudflare-test';
 
 /**
  * The deployed shape of the Rally/Avalon dual serving, asserted against the
@@ -55,6 +57,24 @@ describe('dual-domain deployment', () => {
     ]));
   });
 
+  it('routes the configured browser origin and admits its WebSocket upgrades', () => {
+    const vars = config('wrangler.global.jsonc').vars ?? {};
+    const origin = vars['BROWSER_APP_ORIGIN']!;
+    expect(new URL(origin).protocol).toBe('https:');
+    expect(new URL(origin).origin).toBe(origin);
+    expect(origins('wrangler.global.jsonc')).toContain(origin);
+    expect(config('../browser/wrangler.jsonc').routes).toContainEqual({
+      pattern: new URL(origin).hostname, custom_domain: true,
+    });
+  });
+
+  it('accepts the deployed email sign-in policy', () => {
+    const vars = config('wrangler.global.jsonc').vars ?? {};
+    expect(configuredEmailLoginPolicy(createTestEnv({ ...vars, SESSION_SIGNING_KEY: "test-signing", OAUTH_STATE_ENCRYPTION_KEY: "test-encryption" }))).toEqual({
+      otpDigits: 6, ttlSeconds: 600, maxFailedAttempts: 5,
+    });
+  });
+
   it('keeps every Avalon API and ingress hostname routed alongside its Rally host', () => {
     expect(patterns('wrangler.global.jsonc')).toEqual(expect.arrayContaining([
       'api.rallywith.ai', 'github.rallywith.ai', 'linear.rallywith.ai',
@@ -72,7 +92,7 @@ describe('dual-domain deployment', () => {
     // registrations — which serving both domains would hide rather than surface.
     const vars = config(fileName).vars ?? {};
     for (const name of [
-      'PUBLIC_API_BASE_URL', 'PUBLIC_WEB_BASE_URL',
+      'PUBLIC_API_BASE_URL', 'PUBLIC_WEB_BASE_URL', 'BROWSER_APP_ORIGIN',
       'GITHUB_INGRESS_BASE_URL', 'LINEAR_INGRESS_BASE_URL',
       'NOTION_INGRESS_BASE_URL', 'SLACK_INGRESS_BASE_URL',
       'RESEND_FROM_EMAIL', 'RESEND_NOTIFICATION_FROM_EMAIL',
