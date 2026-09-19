@@ -881,8 +881,22 @@ export class WorkstreamService {
     // who is not a participant. So the write publishes it, in the same
     // request, exactly as `removeParticipant` does — and only once the
     // canonical update took, because until then nothing has narrowed.
-    if (input.scope === "personal" && recorded.previousScope === "workspace") {
-      await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id);
+    //
+    // Named rather than thrown, and rather than gated. The Space paths that
+    // narrow have a `space_intents` row behind them and can fail the step so
+    // the alarm republishes it; this one has nothing durable to retry from, and
+    // it did not before either — narrowing a Channel to personal published no
+    // revocation at all until this branch existed, so a send that does not
+    // leave is exactly the pre-existing gap rather than a regression this
+    // introduced. Building a durable gate for it is a change of its own, and it
+    // is recorded as an open gap in `docs/access-revocation.md` and
+    // `docs/spaces.md` rather than half-built here.
+    if (input.scope === "personal" && recorded.previousScope === "workspace"
+      && !await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id)) {
+      logWarn(this.env, "channel_narrowing_publish_unannounced", {
+        workstream_id: id,
+        workspace_id: this.auth.workspaceId,
+      });
     }
     return result;
   }

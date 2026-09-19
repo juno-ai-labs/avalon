@@ -268,8 +268,33 @@ room would go on seeing an evicted reader listed as present.
   access, and nothing will report it.
 - **Publishing never fails the request that wrote the fact.** The removal
   committed; failing the response would tell the operator it did not. A producer
-  that *can* still retry — the expiry sweep, which owns its own schedule — reads
-  the returned flag and leaves the row for the next run instead.
+  that *can* still retry — the expiry sweep, which owns its own schedule, and a
+  Space retraction, which has a `space_intents` row behind it — reads the
+  returned flag and leaves the work for the next run instead. **Every producer
+  reads the flag**; one that cannot retry names the refusal in a log rather than
+  discarding it, because a discarded `false` is a retraction recorded as
+  delivered when nothing was sent.
+
+## Known gaps
+
+### A narrowing published from the Channel's own scope change has no durable gate
+
+`WorkstreamService.update` publishes `workstream_audience_narrowed` when a
+Channel's own scope goes from `workspace` to `personal`, and nothing durable
+stands behind that send: a refusal is logged
+`channel_narrowing_publish_unannounced` and the Organization's non-participant
+readers keep whatever sockets they have open until they reconnect.
+
+This is a gap rather than a regression. Before the Spaces branch that path
+published *nothing at all*, so the announcement is strictly new and the missing
+gate is the part that was never built. The other narrowing — a Space's
+retraction — does have one: it is reached from an operation with a
+`space_intents` row, so a refused send fails the step, leaves the intent
+unsettled, and the WorkspaceDO alarm republishes the whole operation.
+
+Closing it means giving the direct narrowing a durable intent of its own, which
+is a change with a table behind it rather than a line in this one; it is named
+here so the next person to narrow something does not have to rediscover it.
 
 ## Boundary
 
