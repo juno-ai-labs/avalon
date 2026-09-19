@@ -771,8 +771,19 @@ readers keep their open sockets until they reconnect.
 
 ## Testing
 
+**Each suite below proves one layer, and only that layer: the WorkspaceDO
+suites enter at an RPC, `space-service.test.ts` enters at the service with the
+objects around it doubled, and `space-routes.test.ts` is the only one that
+enters where a person does.** That gap is not academic — it is where both
+defects of 2026-09-19 lived, and each of them passed every suite above it: a
+request body's scope is parsed by a route nothing else drives, and a Space's
+hidden conversation refuses from a real object in a way no double reproduces.
+A behaviour that a route, a real session or a cold Durable Object could break
+belongs in the route suite as well as wherever its authority is proved.
+
 | Suite | What it proves |
 | --- | --- |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
@@ -794,6 +805,7 @@ readers keep their open sockets until they reconnect.
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
 pnpm --filter @rally/api exec vitest run test/space-service.test.ts
 pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-routes.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
@@ -1098,8 +1110,12 @@ is now the same answer as one that returns `null`, `space_conversation_unreachab
 because in both the question was never asked.
 
 Found by staging a real window rather than by a suite, which is itself the
-finding: every Space suite enters below the route, or doubles the object that
-refuses. The layer that was missing is added in the change beside this one.
+finding. `apps/api/test-workers/space-routes.test.ts` is the layer that was
+missing: the `/spaces` routes driven with a real session against real objects,
+with the Space's conversation evicted first. Five of its six cases failed before
+this change. The testing section above now says which layer each Space suite
+proves, so the next author does not add the seventh case to a suite that cannot
+see the route.
 
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 
