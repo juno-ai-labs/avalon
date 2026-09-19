@@ -1,3 +1,5 @@
+import type { UserId } from "@rally/contracts";
+
 import type { WorkstreamReaderAudience } from "./audience-containment";
 
 /**
@@ -13,29 +15,42 @@ import type { WorkstreamReaderAudience } from "./audience-containment";
  * passed in, not by adding a branch.
  *
  * Everything in this module is pure, and it validates nothing: its inputs have
- * already crossed a schema at the RPC boundary, and the user-id type travels
- * through so a branded caller gets branded answers back. The provenance that
- * says *which* sources currently reach a Channel is WorkstreamDO's
+ * already crossed a schema at the RPC boundary, and every user id it handles is
+ * a {@link UserId} in and out.
+ *
+ * There is one audience shape here, {@link AudienceSource}, and it is closed
+ * under the composition below: the union of the sources that reach a Channel is
+ * itself an audience, and can be handed straight back in as somebody's
+ * `direct`. What a Channel's readers *currently are* is not that — it is an
+ * observation of the main conversation, it says `workspace` with no roster, and
+ * it arrives here as the `WorkstreamReaderAudience` that conversation reports.
+ * Those are the two, and they are different on purpose.
+ *
+ * The provenance that says *which* sources currently
+ * reach a Channel is WorkstreamDO's
  * (`durable-objects/workstream-access-storage.ts`), and applying what these
  * functions plan is the Channel's canonical scope and participant operations' —
  * which is where the retained-content containment preflight runs. This is only
  * the arithmetic between the two.
  */
 
-/** One audience, as a source states it. */
-export interface AudienceSource<TUser extends string = string> {
+/**
+ * One audience: who it admits, and who it lists.
+ *
+ * `workspace` admits the Organization and its roster is not consulted — a
+ * `workspace` audience with participants listed is normal, because a Space
+ * keeps its members whether or not its scope currently makes them the reason
+ * anybody can read.
+ */
+export interface AudienceSource {
   scope: "personal" | "workspace";
-  participantUserIds: readonly TUser[];
+  participantUserIds: readonly UserId[];
 }
 
 /** An audience supplied by something outside the Channel, under its own id. */
-export interface NamedAudienceSource<TUser extends string = string> extends AudienceSource<TUser> {
+export interface NamedAudienceSource extends AudienceSource {
   sourceId: string;
 }
-
-export type ChannelAudience<TUser extends string = string> =
-  | { scope: "workspace" }
-  | { scope: "personal"; userIds: TUser[] };
 
 /**
  * Who may read the Channel, given its direct source and every named source
@@ -47,16 +62,16 @@ export type ChannelAudience<TUser extends string = string> =
  * another supplies — that is what makes a Space's audience safe to change
  * without auditing every other Space a Channel belongs to.
  */
-export function effectiveChannelAudience<TUser extends string>(input: {
-  direct: AudienceSource<TUser>;
-  sources: readonly NamedAudienceSource<TUser>[];
-}): ChannelAudience<TUser> {
+export function effectiveChannelAudience(input: {
+  direct: AudienceSource;
+  sources: readonly NamedAudienceSource[];
+}): AudienceSource {
   if (input.direct.scope === "workspace" || input.sources.some((source) => source.scope === "workspace")) {
-    return { scope: "workspace" };
+    return { scope: "workspace", participantUserIds: [] };
   }
   return {
     scope: "personal",
-    userIds: [...new Set([
+    participantUserIds: [...new Set([
       ...input.direct.participantUserIds,
       ...input.sources.flatMap((source) => [...source.participantUserIds]),
     ])],
@@ -64,11 +79,11 @@ export function effectiveChannelAudience<TUser extends string>(input: {
 }
 
 /** What applying one source asks the Channel's canonical operations to do. */
-export interface AudienceSourceApplication<TUser extends string = string> {
+export interface AudienceSourceApplication {
   /** Whether the Channel has to become Organization-wide. */
   widenScope: boolean;
   /** Readers this source adds who cannot already read the Channel. */
-  seatUserIds: TUser[];
+  seatUserIds: UserId[];
 }
 
 /**
@@ -85,13 +100,13 @@ export interface AudienceSourceApplication<TUser extends string = string> {
  * Channel that is already `workspace` admit every member, so a participant row
  * would add no access and would have to be withdrawn later as though it had.
  */
-export function audienceSourceApplicationPlan<TUser extends string>(input: {
+export function audienceSourceApplicationPlan(input: {
   current: WorkstreamReaderAudience;
-  source: AudienceSource<TUser>;
-}): AudienceSourceApplication<TUser> {
+  source: AudienceSource;
+}): AudienceSourceApplication {
   const widenScope = input.source.scope === "workspace" && input.current.scope !== "workspace";
   if (widenScope || input.current.scope === "workspace") return { widenScope, seatUserIds: [] };
-  const readers = new Set<string>(input.current.userIds);
+  const readers = new Set(input.current.userIds);
   return {
     widenScope: false,
     seatUserIds: [...new Set(input.source.participantUserIds)].filter((userId) => !readers.has(userId)),
@@ -99,7 +114,7 @@ export function audienceSourceApplicationPlan<TUser extends string>(input: {
 }
 
 /** What withdrawing one source asks the Channel's canonical operations to do. */
-export interface AudienceSourceRetraction<TUser extends string = string> {
+export interface AudienceSourceRetraction {
   /** Whether the Channel stops being Organization-wide. */
   narrowScope: boolean;
   /**
@@ -121,9 +136,9 @@ export interface AudienceSourceRetraction<TUser extends string = string> {
    * exactly what "sources compose without one narrowing another" rules out;
    * the way to take that reader out is to take them out of the Space.
    */
-  seatUserIds: TUser[];
+  seatUserIds: UserId[];
   /** Readers only the departing source supplied. */
-  removeUserIds: TUser[];
+  removeUserIds: UserId[];
 }
 
 /**
@@ -138,27 +153,27 @@ export interface AudienceSourceRetraction<TUser extends string = string> {
  * direct source or another source still supplies stays, and the scope narrows
  * only when nothing left is Organization-wide.
  */
-export function audienceSourceRetractionPlan<TUser extends string>(input: {
-  direct: AudienceSource<TUser>;
-  remainingSources: readonly NamedAudienceSource<TUser>[];
+export function audienceSourceRetractionPlan(input: {
+  direct: AudienceSource;
+  remainingSources: readonly NamedAudienceSource[];
   currentReaders: WorkstreamReaderAudience;
-  suppliedByDeparting: readonly TUser[];
-}): AudienceSourceRetraction<TUser> {
+  suppliedByDeparting: readonly UserId[];
+}): AudienceSourceRetraction {
   const remaining = effectiveChannelAudience({ direct: input.direct, sources: input.remainingSources });
   if (remaining.scope === "workspace") {
     return { narrowScope: false, seatUserIds: [], removeUserIds: [] };
   }
-  const retained = new Set<string>(remaining.userIds);
+  const retained = new Set(remaining.participantUserIds);
   // Nothing is provably seated while the Channel is Organization-wide: the
   // reader audience reports the scope and no roster, so a surviving source's
   // participants are re-seated rather than assumed. The canonical add is
   // idempotent, which is what makes re-seating cheap enough to be the rule.
   const seated = input.currentReaders.scope === "workspace"
     ? new Set<string>()
-    : new Set<string>(input.currentReaders.userIds);
+    : new Set(input.currentReaders.userIds);
   return {
     narrowScope: input.currentReaders.scope === "workspace",
-    seatUserIds: remaining.userIds.filter((userId) => !seated.has(userId)),
+    seatUserIds: remaining.participantUserIds.filter((userId) => !seated.has(userId)),
     removeUserIds: [...new Set(input.suppliedByDeparting)].filter((userId) => !retained.has(userId)),
   };
 }

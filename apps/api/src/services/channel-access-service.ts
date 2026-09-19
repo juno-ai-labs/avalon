@@ -210,7 +210,7 @@ export class ChannelAccessService {
     const sources = await this.readSources(workstreamId);
     // The direct source as it will be *after* the narrowing, which is the
     // whole question: who is left once the Channel stops admitting everybody.
-    const audience = effectiveChannelAudience<UserId>({
+    const audience = effectiveChannelAudience({
       direct: { scope: "personal", participantUserIds: sources.direct.participantUserIds },
       sources: sources.spaces.map((space) => ({
         sourceId: space.spaceId, scope: space.scope, participantUserIds: space.participantUserIds,
@@ -220,7 +220,7 @@ export class ChannelAccessService {
     const client = this.client(workstreamId);
     const seated = new Set<string>((await client.get()).participants.map((participant) => participant.user.id));
     const newlySeated: UserId[] = [];
-    for (const userId of audience.userIds) {
+    for (const userId of audience.participantUserIds) {
       if (seated.has(userId)) continue;
       // Attributed to the Space that lists them, which is what keeps the grant
       // out of the shared scope-grant directory and what lets that Space's

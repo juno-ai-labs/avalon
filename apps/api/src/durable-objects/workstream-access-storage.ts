@@ -70,7 +70,7 @@ export const AudienceScopeSchema = z.enum(["personal", "workspace"]);
 export type AudienceScope = z.infer<typeof AudienceScopeSchema>;
 
 /** One Space source as this object holds it, with the fence it was applied on. */
-export interface StoredAccessSource extends NamedAudienceSource<UserId> {
+export interface StoredAccessSource extends NamedAudienceSource {
   scope: AudienceScope;
   spaceRevision: number;
   membershipGeneration: number;
