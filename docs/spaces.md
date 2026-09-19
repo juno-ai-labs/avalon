@@ -706,6 +706,26 @@ a Channel and the breakout that produced its activity share a timestamp to the
 millisecond, so a cursor carrying only the timestamp would repeat or skip the
 rows on either side of it. `SPACE_CHANNEL_PAGE_SIZE` still bounds the page.
 
+**Each arm takes its own page and the union merges two of them.** The cursor
+and the `LIMIT` are inside each arm, before the `UNION ALL`. Within an arm
+`kind` is constant, so the three-part cursor collapses to a range over that
+arm's own `(last_activity_at, id)`, and the arm's `ORDER BY` is exactly the
+restriction of the page's order to it — which is what makes merging the two
+arms' heads the globally first page. Without that the whole live set of the
+Space was materialised and sorted on every request, including for page five.
+
+**What one page costs, and what it does not.** The planner drives both arms
+from `space_channel_memberships(space_id, state, workstream_id)`, so one page
+is one pass over the Space's *active membership set*, with a primary-key lookup
+into the Channel directory and into the viewer row per member, plus the
+breakouts hanging off those Channels. **General's membership is the whole
+Organization**, so for General that pass is O(Channels) — on every dashboard
+open, on every **Load more**, and on every refetch a nudge causes. What the
+restructure removed is the sort and the materialisation: those are now bounded
+by the page. Removing the pass itself needs an index that orders one Space's
+members by activity, which does not exist; adding one is a decision for
+somebody with Organization sizes in hand, not a guess to make here.
+
 **A breakout is visible only through its parent.** The Channel's own visibility
 predicate is applied to the breakout arm too — the same
 `scope = 'workspace' OR is_participant` test against the same Channel row — and
