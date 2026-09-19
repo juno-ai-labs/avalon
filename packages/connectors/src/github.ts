@@ -544,7 +544,7 @@ const ISSUE_DETAIL_ROW: FieldProjection = [...ISSUE_ROW, "body", "milestone.titl
 
 // The fields the list deliberately omits because they answer "is this ready to
 // merge" rather than "which pull request": GitHub computes `mergeable` and
-// `mergeable_state` per read, and the five counts are the shape of the change.
+// `mergeable_state` per read, and the counts below are the shape of the change.
 const PULL_REQUEST_DETAIL_ROW: FieldProjection = [
   ...PULL_REQUEST_ROW,
   "body", "milestone.title",
@@ -2273,7 +2273,7 @@ function boundGitHubRow(item: unknown, row: FieldProjection): unknown {
   // put an undeclared value in a list whose contract is that every item has the
   // declared shape. GitHub does not do this; if it ever does, saying so beats
   // emitting one row the model cannot read among twenty-nine it can.
-  if (!isRecord(item)) throw new ConnectorError("provider_error", "GitHub returned a list item that is not an object");
+  if (!isRecord(item)) throw new ConnectorError("provider_error", "GitHub returned a value that is not an object");
   return boundGitHubValue(projectFields(item, row));
 }
 
