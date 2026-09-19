@@ -1618,6 +1618,36 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
   });
 
+  // A system Channel is not a product Channel: the subsystem that writes it
+  // decides both who reads it and where it lives, so neither control is raised.
+  it('given a system channel, when the row menu opens, then no space control is offered', async () => {
+    const hiring = space();
+    const digest: WorkstreamSummary = {
+      ...workstream('menu-system-spaces', 'Digest · Adam', 'completed'),
+      systemKind: 'digest',
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[general(), hiring]}
+            workspace={workspace}
+            workstreams={[digest]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Manage access' })).not.toBeInTheDocument();
+  });
+
   it('adds a channel to the space its row was dropped on', () => {
     const onAddChannelToSpace = vi.fn(async () => undefined);
     const hiring = space();
