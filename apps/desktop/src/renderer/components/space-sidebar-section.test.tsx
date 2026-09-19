@@ -42,6 +42,7 @@ const general = space('00000000-0000-7000-8000-0000000000f0', 'General', {
   systemRole: 'general',
 });
 const hiring = space('00000000-0000-7000-8000-0000000000f2', 'Hiring');
+const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000fa';
 
 function channel(id: string, title: string, lastActivityAt: string, ...spaceIds: string[]): WorkstreamSummary {
   return { id, title, lastActivityAt, spaceIds } as WorkstreamSummary;
@@ -63,12 +64,14 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           onRetry={() => undefined}
+          ordering={[]}
           outOfDate={false}
           ready
           renderWorkstream={(workstream) => (
             <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
           )}
           spaces={[hiring]}
+          workspaceId={WORKSPACE_ID}
           workstreams={[]}
           {...props}
         />
@@ -98,12 +101,14 @@ function CreateFlowHarness({
         onReorder={async () => undefined}
         onRestore={async () => undefined}
         onRetry={() => undefined}
+        ordering={[]}
         outOfDate={false}
         ready
         renderWorkstream={(workstream) => (
           <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
         )}
         spaces={spaces}
+        workspaceId={WORKSPACE_ID}
         workstreams={[]}
       />
       <Location />
@@ -167,12 +172,14 @@ describe('the Spaces sidebar section', () => {
             onReorder={async () => undefined}
             onRestore={async () => undefined}
             onRetry={() => undefined}
+            ordering={[]}
             outOfDate={false}
             ready
             renderWorkstream={(workstream) => (
               <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
             )}
             spaces={[hiring]}
+            workspaceId={WORKSPACE_ID}
             workstreams={[placement]}
           />
         </MemoryRouter>
@@ -279,7 +286,34 @@ describe('the Spaces sidebar section', () => {
 
     fireEvent.keyDown(screen.getByRole('link', { name: /Second/u }), { altKey: true, key: 'ArrowUp' });
 
-    await waitFor(() => expect(onReorder).toHaveBeenCalledWith([second.id, first.id]));
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
+      container: { kind: 'organization', id: WORKSPACE_ID },
+      itemIds: [second.id, first.id],
+    }));
+  });
+
+  // The pointer's half of the same gesture. The keyboard test below it moves
+  // one row by one step; this one is what a reader actually does, and it is the
+  // one that can be fooled into comparing the arrangement it just built with
+  // itself and concluding nothing moved.
+  it('given two spaces, when one is dragged above the other, then the new order is saved', async () => {
+    const onReorder = vi.fn(async () => undefined);
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'First');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
+    renderSection({ spaces: [first, second], onReorder });
+
+    // jsdom implements no `DataTransfer`; `types` is the field the Space row
+    // reads, to tell a Channel's drag passing through it from its own.
+    const dataTransfer = { effectAllowed: '', setData: () => undefined, types: [] as string[] };
+    const rows = screen.getAllByRole('link').map((link) => link.closest('.space-sidebar-item')!);
+    fireEvent.dragStart(rows[1]!, { dataTransfer });
+    fireEvent.dragEnter(rows[0]!, { dataTransfer });
+    fireEvent.dragEnd(rows[1]!, { dataTransfer });
+
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
+      container: { kind: 'organization', id: WORKSPACE_ID },
+      itemIds: [second.id, first.id],
+    }));
   });
 
   it('given fixed server order, when saving a reorder fails, then the section explains why the row snapped back', async () => {

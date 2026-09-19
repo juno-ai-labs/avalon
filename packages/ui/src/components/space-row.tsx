@@ -147,7 +147,15 @@ export function SpacePlacementList({ children, spaceId }: {
   spaceId: string;
 }): React.JSX.Element {
   return (
-    <div className="space-sidebar-workstreams" data-motion-scope={`space:${spaceId}`}>
+    <div
+      className="space-sidebar-workstreams"
+      // The rows inside are the slots a drag within this list is measured
+      // against. Marked rather than named by class, because the pinned list is
+      // the other one arranged the same way and neither should have to know
+      // the other's markup.
+      data-reorder-list=""
+      data-motion-scope={`space:${spaceId}`}
+    >
       {children}
     </div>
   );

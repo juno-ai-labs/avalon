@@ -1,11 +1,15 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyContainerOrder,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
 import type { SpaceSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
+
+const SPACE_ID = '00000000-0000-7000-8000-0000000000a1';
+const CHANNEL_ID = '00000000-0000-7000-8000-0000000000a2';
 
 function automation(id: string): AutomationSummary {
   return {
@@ -56,10 +60,15 @@ describe('applyVersionedSidebarList', () => {
       inactive: { waterline: 7, items: [] },
     } satisfies SpaceSnapshot;
 
-    expect(applyVersionedSpaceSnapshot(queryClient, newer, true)).toBe(true);
-    expect(applyVersionedSpaceSnapshot(queryClient, older, true)).toBe(false);
+    const arranged = [{ container: { kind: 'space' as const, id: SPACE_ID }, itemIds: [CHANNEL_ID] }];
+
+    expect(applyVersionedSpaceSnapshot(queryClient, newer, arranged, true)).toBe(true);
+    expect(applyVersionedSpaceSnapshot(queryClient, older, [], true)).toBe(false);
     expect(queryClient.getQueryData(['spaces'])).toEqual(newer.active);
     expect(queryClient.getQueryData(['spaces-inactive'])).toEqual(newer.inactive);
+    // The ordering rides the same waterline: a late payload that lost the
+    // arrangement must not take it off the screen either.
+    expect(queryClient.getQueryData(['personal-order'])).toEqual(arranged);
   });
 
   // `spacesReady` has no ledger of its own: a write can be the write that
@@ -76,8 +85,42 @@ describe('applyVersionedSidebarList', () => {
       inactive: { waterline: 7, items: [] },
     } satisfies SpaceSnapshot;
 
-    applyVersionedSpaceSnapshot(queryClient, ready, true);
-    expect(applyVersionedSpaceSnapshot(queryClient, opening, false)).toBe(false);
+    applyVersionedSpaceSnapshot(queryClient, ready, [], true);
+    expect(applyVersionedSpaceSnapshot(queryClient, opening, [], false)).toBe(false);
     expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
+  });
+
+  // The write's own answer goes in without a waterline, so the arrangement a
+  // drag committed is on screen in the frame between the response and the
+  // republication that carries it.
+  it('applies one container order without moving the ledger the snapshot is judged by', () => {
+    const queryClient = new QueryClient();
+    const snapshot = {
+      active: { waterline: 4, items: [] },
+      inactive: { waterline: 4, items: [] },
+    } satisfies SpaceSnapshot;
+    applyVersionedSpaceSnapshot(queryClient, snapshot, [], true);
+
+    applyContainerOrder(queryClient, {
+      container: { kind: 'space', id: SPACE_ID },
+      itemIds: [CHANNEL_ID],
+    });
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID] },
+    ]);
+
+    // One entry per container: a second write for the same one replaces it
+    // rather than leaving two answers to the same question.
+    applyContainerOrder(queryClient, { container: { kind: 'space', id: SPACE_ID }, itemIds: [] });
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
+    ]);
+
+    // And the ledger is untouched, so the republication that follows still
+    // applies over it.
+    expect(applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 5, items: [] },
+      inactive: { waterline: 5, items: [] },
+    }, [], true)).toBe(true);
   });
 });

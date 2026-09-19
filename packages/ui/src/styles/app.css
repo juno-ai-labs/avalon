@@ -1322,6 +1322,16 @@ pre {
 .sidebar-context-target.is-draggable { cursor: grab; }
 .sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
 .sidebar-context-target.is-dragging .sidebar-row { background: var(--av-sys-color-surface-subtle); }
+/* The Breakout rail's rows are arranged by hand too, and say so the same way
+   the sidebar's do: the same cursor, the same lift. The row is the button
+   itself here rather than a wrapper around a link, so the surface the drag
+   lifts is the row. */
+.workstream-conversation-row.is-draggable { cursor: grab; }
+.workstream-conversation-row.is-dragging {
+  cursor: grabbing;
+  opacity: 0.45;
+  background: var(--av-sys-color-surface-subtle);
+}
 
 .sidebar-row {
   --sidebar-row-background: var(--av-cmp-sidebar-background-solid);

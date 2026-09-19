@@ -56,12 +56,12 @@ import {
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ChannelAccessSchema as WireChannelAccessSchema,
   SpaceChannelPageSchema as WireSpaceChannelPageSchema,
-  SpaceDirectorySchema as WireSpaceDirectorySchema,
+  ContainerOrderSchema as WireContainerOrderSchema,
   SpaceSummarySchema as WireSpaceSummarySchema,
   type ChannelAccess,
+  type ContainerOrder,
   type CreateSpaceRequest,
   type SpaceDefaultKind,
-  type SpaceDirectory,
   type SpaceSummary,
   type UpdateSpacePresentationRequest,
   type SpaceScope,
@@ -1258,11 +1258,21 @@ export class RallyApi {
     });
   }
 
-  reorderSpaces(spaceIds: string[]): Promise<SpaceDirectory> {
-    return this.request('/spaces/order', {
+  /**
+   * One container's order for the signed-in person: the Organization's Spaces,
+   * one Space's Channels, or one Channel's Breakouts.
+   *
+   * At the workspace level rather than under `/spaces`, because two of the
+   * three containers are not Spaces. The answer is what the authority actually
+   * stored — a request may name an item that container does not hold — and the
+   * lists themselves arrive on the workspace socket, which this write
+   * republishes to every session this person has open.
+   */
+  reorderContainer(order: ContainerOrder): Promise<ContainerOrder> {
+    return this.request('/workspace/order', {
       method: 'PUT',
-      body: { spaceIds },
-      schema: WireSpaceDirectorySchema,
+      body: order,
+      schema: WireContainerOrderSchema,
     });
   }
 

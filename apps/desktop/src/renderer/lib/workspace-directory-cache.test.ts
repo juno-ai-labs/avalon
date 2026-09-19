@@ -51,6 +51,7 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
     automations: [automation],
     spaces: { waterline: 3, items: [] },
     inactiveSpaces: { waterline: 3, items: [] },
+    ordering: [],
     ...overrides,
   };
 }

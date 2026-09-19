@@ -6,16 +6,17 @@ import { NewWorkstreamMenu } from "./new-workstream-menu";
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { CreateSpaceRequest, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import type { ContainerOrder, CreateSpaceRequest, PersonalOrder, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
+import { compareWorkstreamRecency, formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
+import { moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
@@ -111,7 +112,16 @@ interface SidebarProps {
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
-  onReorderSpaces?: (spaceIds: string[]) => Promise<void>;
+  /**
+   * Every list this person has arranged by hand, and the one way to change one.
+   *
+   * One prop pair for three containers — the Organization's Spaces, a Space's
+   * Channels, a Channel's Breakouts — because they are one mechanism. The pins
+   * beside them keep their own: `workspace_workstream_pins` is a different
+   * table with a different meaning, and folding it in is a separate change.
+   */
+  ordering?: PersonalOrder;
+  onReorderContainer?: (order: ContainerOrder) => Promise<void>;
   onRestoreSpace?: (spaceId: string) => Promise<void>;
   onSignOut: () => void;
 }
@@ -468,15 +478,30 @@ function NewSidekickTile({ target }: { target: string }): React.JSX.Element {
  * by activity, where a manual order would be overwritten by the next
  * message — from being draggable at all.
  */
-interface PinnedRowDrag {
+/**
+ * A row that can be dragged into a different place in the list it is in.
+ *
+ * Two lists use it — the pinned Channels and one Space's placements — and they
+ * are the same gesture over different rows, so it is one interface and one
+ * row. The list itself is marked `data-reorder-list`, which is how the row
+ * finds the slots it is being measured against without knowing whose list it
+ * is in.
+ */
+export interface WorkstreamRowDrag {
   dragging: boolean;
   /** `cancelled` is a drag backed out of rather than dropped on the list. */
   onDragEnd: (cancelled: boolean) => void;
-  /** The pinned work stream whose slot the pointer is over. */
+  /** The work stream whose slot the pointer is over. */
   onDragOver: (workstreamId: string) => void;
   onDragStart: (workstream: WorkstreamSummary) => void;
   /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
   onMove: (workstream: WorkstreamSummary, direction: -1 | 1) => void;
+  /**
+   * A release over this list. True when the list took it, which stops the
+   * event reaching whatever is above — a Space row, whose meaning for the same
+   * drop is "put this Channel here" rather than "put it in this position".
+   */
+  onDrop?: () => boolean;
   position: string;
 }
 
@@ -559,7 +584,7 @@ function WorkstreamRow({
   spaces,
 }: {
   debugEnabled: boolean;
-  drag?: PinnedRowDrag;
+  drag?: WorkstreamRowDrag;
   workspace: Pick<Workspace, 'id' | 'region'>;
   workstream: WorkstreamSummary;
   pinPending: boolean;
@@ -709,9 +734,9 @@ function WorkstreamRow({
               // for the row that belongs to it, and the reorder would send it
               // straight back. Where rows have no layout — jsdom — the row
               // the event reached is the slot.
-              const section = event.currentTarget.closest('.pinned-section');
+              const list = event.currentTarget.closest('[data-reorder-list]');
               const slot = layoutRowAt(
-                section?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? [],
+                list?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? [],
                 event.clientY,
               );
               drag.onDragOver(slot?.dataset.workstreamId ?? workstream.id);
@@ -729,7 +754,17 @@ function WorkstreamRow({
               event.dataTransfer.setData('application/x-rally-workstream-id', workstream.id);
               drag?.onDragStart(workstream);
             }}
-          onDrop={drag ? (event) => event.preventDefault() : undefined}
+          onDrop={drag
+            ? (event) => {
+              event.preventDefault();
+              // Only when this list actually took the release. A Channel
+              // dragged out of one Space and dropped on another passes over
+              // rows that are not in its list, and those must let the drop
+              // through to the Space underneath — which is the placement the
+              // reader meant.
+              if (drag.onDrop?.()) event.stopPropagation();
+            }
+            : undefined}
           onContextMenu={closePreview}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) schedulePreviewClose();
@@ -980,18 +1015,11 @@ export function orderPinnedWorkstreams(
     // fell back to arrival order would be the one place it was not true.
     .sort((left, right) =>
       (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
-  if (dragOrder === null) return pinned;
-  const byId = new Map(pinned.map((workstream) => [workstream.id, workstream]));
-  const dragged = dragOrder.flatMap((id) => byId.get(id) ?? []);
-  const seen = new Set(dragged.map((workstream) => workstream.id));
-  return [...dragged, ...pinned.filter((workstream) => !seen.has(workstream.id))];
-}
-
-/** `ids` with `id` lifted out and reinserted at `index`. */
-function moveWithin(ids: string[], id: string, index: number): string[] {
-  const without = ids.filter((candidate) => candidate !== id);
-  const bounded = Math.max(0, Math.min(index, without.length));
-  return [...without.slice(0, bounded), id, ...without.slice(bounded)];
+  // The same arrangement rule every other hand-ordered list in the app is
+  // drawn by, with the drag standing in for the stored order: ids it names
+  // first, then everything it never saw, and an id that is no longer pinned —
+  // unpinned in another window mid-drag — dropped rather than drawn as a gap.
+  return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
 }
 
 type SidebarMenuFailure = 'archive' | 'add_to_space' | 'pin' | 'unpin' | 'reorder_pinned';
@@ -1047,7 +1075,8 @@ export function Sidebar({
   },
   onAddChannelToSpace = async () => undefined,
   onRemoveChannelFromSpace = async () => undefined,
-  onReorderSpaces = async () => undefined,
+  ordering = [],
+  onReorderContainer = async () => undefined,
   onRestoreSpace = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
@@ -1226,8 +1255,36 @@ export function Sidebar({
     () => visibleWorkstreams.filter((workstream) => workstream.pinPosition === null),
     [visibleWorkstreams],
   );
+  // Whether this session has the hierarchy at all. A host that hands over no
+  // directory is the guest shell, where Space discovery is deferred — see
+  // `spaces` above — and that shell keeps the flat, time-grouped list this
+  // section has always drawn. Every other session reads its Channels under the
+  // Space each one lives in.
+  const spacesEnabled = spaces !== undefined;
+  const visibleSpaceIds = useMemo(() => new Set<string>((spaces ?? []).map((space) => space.id)), [spaces]);
+  /**
+   * Channels this reader can open that none of their visible Spaces holds.
+   *
+   * Every Channel is in at least one Space, but not every Space is one this
+   * reader can see: a Channel whose only placements are in somebody else's
+   * personal Space is readable and, without this, would be in the sidebar
+   * nowhere at all. **Manage access** already draws such a placement as a Space
+   * the viewer cannot see; this is the same fact in the navigation.
+   *
+   * Pinned Channels are left out, exactly as the list this replaces left them
+   * out: the section above already has them, and a row in both would take its
+   * order from whichever the reader saw last.
+   */
+  const unplacedWorkstreams = useMemo(() => (spacesEnabled
+    ? unpinnedWorkstreams
+      .filter((workstream) => !workstream.spaceIds.some((id) => visibleSpaceIds.has(id)))
+      .sort(compareWorkstreamRecency)
+    : []), [spacesEnabled, unpinnedWorkstreams, visibleSpaceIds]);
   const [groupedAtMs, setGroupedAtMs] = useState(() => Date.now());
   useEffect(() => {
+    // Only the guest shell groups by time, so only the guest shell needs a
+    // timer that fires when a row crosses a boundary.
+    if (spacesEnabled) return;
     const now = new Date();
     const next = nextRecencyBoundary([
       ...unpinnedWorkstreams.map((workstream) => ({
@@ -1239,8 +1296,9 @@ export function Sidebar({
       Math.max(1, next - now.getTime() + 1),
     );
     return () => window.clearTimeout(timer);
-  }, [groupedAtMs, unpinnedWorkstreams]);
+  }, [groupedAtMs, spacesEnabled, unpinnedWorkstreams]);
   const groups = useMemo(() => {
+    if (spacesEnabled) return [];
     const groupedAt = new Date(groupedAtMs);
     return groupActivityItems<RecentSidebarItem>([
       ...unpinnedWorkstreams.map((workstream) => ({
@@ -1250,7 +1308,7 @@ export function Sidebar({
         workstream,
       })),
     ], groupedAt);
-  }, [groupedAtMs, unpinnedWorkstreams]);
+  }, [groupedAtMs, spacesEnabled, unpinnedWorkstreams]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -1437,7 +1495,7 @@ export function Sidebar({
     }
   };
 
-  const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): PinnedRowDrag => ({
+  const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): WorkstreamRowDrag => ({
     dragging: draggingWorkstreamId.current === workstream.id && dragOrder !== null,
     position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}.`,
     onDragStart: (target) => {
@@ -1477,6 +1535,9 @@ export function Sidebar({
       if (from < 0 || to < 0 || to >= order.length) return;
       void commitPinnedOrder(moveWithin(order, target.id, to));
     },
+    // Nothing above this list wants a release inside it; saying so is what
+    // keeps that true if something ever sits above it.
+    onDrop: () => true,
   });
 
   const addToSpace = (workstream: WorkstreamSummary, spaceId: string): void => {
@@ -1502,10 +1563,22 @@ export function Sidebar({
     onTogglePin: (target: WorkstreamSummary, pin: boolean) => void togglePin(target, pin),
   };
 
-  const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
+  /**
+   * One Channel row, wherever the sidebar draws it.
+   *
+   * `drag` is the list's, not the row's: the same Channel is a fixed row in the
+   * recent list, a draggable one under the Space that holds it, and a
+   * draggable one in the pinned section, and which it is depends on the
+   * section asking for it.
+   */
+  const renderWorkstream = (
+    workstream: WorkstreamSummary,
+    drag?: WorkstreamRowDrag,
+  ): React.JSX.Element => (
     <WorkstreamRow
       {...workstreamRowActions}
       debugEnabled={debugEnabled}
+      {...(drag ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
       spaces={placementSpaces}
       workspace={workspace}
@@ -1795,13 +1868,15 @@ export function Sidebar({
               loading={loading === true}
               onAddChannel={onAddChannelToSpace}
               onCreate={onCreateSpace}
-              onReorder={onReorderSpaces}
+              onReorder={onReorderContainer}
               onRestore={onRestoreSpace}
               onRetry={onRetrySpaces}
+              ordering={ordering}
               outOfDate={spacesOutOfDate}
               ready={spacesReady}
               renderWorkstream={renderWorkstream}
               spaces={spaces}
+              workspaceId={workspace.id}
               workstreams={visibleWorkstreams}
             />
           )}
@@ -1820,6 +1895,9 @@ export function Sidebar({
               aria-describedby={PINNED_DRAG_HINT_ID}
               aria-labelledby="pinned-heading"
               className="sidebar-section pinned-section"
+              // The rows inside are the slots this list's drag is measured
+              // against; the placements under a Space carry the same mark.
+              data-reorder-list=""
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
@@ -1855,7 +1933,26 @@ export function Sidebar({
             </section>
           )}
 
-          <section aria-label="Channels" className="sidebar-section workstreams-section">
+          {/*
+            Below the Spaces, and the whole of what is left of the flat list.
+
+            For a member this is **Other channels**: the Channels whose only
+            placements are Spaces this reader cannot see. The time-grouped
+            recency list is gone for them — every Channel is in a Space, so the
+            hierarchy above says where everything lives, and a second list of
+            the same rows ordered by time was the same sidebar twice. The guest
+            shell has no hierarchy to say it with and keeps that list exactly as
+            it was.
+
+            Absent, rather than an empty heading, when a member has nothing
+            unplaced — which is the ordinary state, and the state the product
+            is trying to be in.
+          */}
+          {(!spacesEnabled || loading || loadingMoreWorkstreams || unplacedWorkstreams.length > 0) && (
+          <section
+            aria-label={spacesEnabled ? 'Other channels' : 'Channels'}
+            className="sidebar-section workstreams-section"
+          >
             {/* The one announcement for the whole wait, and the only one: the
                 spaces and automations above load from the same answer, so a
                 live region in either of those sections would say the same thing
@@ -1872,6 +1969,26 @@ export function Sidebar({
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
               </>
+            ) : spacesEnabled ? (
+              unplacedWorkstreams.length > 0 && (
+                <>
+                  {/* Held with the rows under it, like every other heading
+                      here: a section travels with its list rather than being
+                      the thing seen to leave. See `useListMotion`. */}
+                  <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:unplaced">
+                    <h2>Other channels</h2>
+                  </div>
+                  {/* No group headings and no batch menu: the reason the
+                      recency list had them — a wall of rows nobody had
+                      arranged — is what the hierarchy above now answers, and
+                      this list is the exception rather than the sidebar. */}
+                  <div className="sidebar-list">
+                    {unplacedWorkstreams.map((workstream) => (
+                      <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
+                    ))}
+                  </div>
+                </>
+              )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only
               // holds when nothing is pinned either; with everything pinned the
@@ -1949,6 +2066,7 @@ export function Sidebar({
             )}
 
           </section>
+          )}
         </nav>
 
         {/*
