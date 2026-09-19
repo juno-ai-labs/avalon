@@ -451,7 +451,8 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls. |
-| `apps/api/test-workers/space-object.test.ts` | The role's differences, and that a Space's directory effect lands in the Space directory rather than the Channel one. |
+| `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
+| `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — and that a rejected send leaves its rows pending. |
@@ -466,6 +467,8 @@ pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
 pnpm --filter @rally/api exec vitest run test/space-service.test.ts
 pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
 pnpm --filter @rally/contracts test -- spaces.test.ts
 ```
 
@@ -473,7 +476,17 @@ The workerd fixture uses its own workspace id literal and `beforeEach(reset)`,
 so object storage is clean per case while object *names* are still shared across
 files. Its `workspace_members` fixture declares `access_class` deliberately:
 without the column the suite would prove the membership check and not the guest
-one.
+one — and, since the workspace socket reads the relationship at accept time,
+every fixture in `test-workers/` that opens one declares it too.
+
+Two cases in `space-authority.test.ts` reach outside WorkspaceDO on purpose,
+because the property is not WorkspaceDO's alone. The archive fan-out drives a
+real `WorkstreamDO` so "the source is gone from each member Channel" is read
+from the Channel rather than inferred from a membership row, and the
+schema-57 case pins the object the way `meeting-notes-retirement.test.ts` holds
+one — an unfinished external cleanup, the ledger at 57 — then connects a socket,
+because a guarded read that answers empty and an unguarded one that throws look
+identical until something asks.
 
 The service tests double the object stubs rather than the namespaces, and they
 are not where a fence is proved. A fence is a property of real storage; what the
