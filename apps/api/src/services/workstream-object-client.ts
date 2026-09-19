@@ -181,6 +181,25 @@ export class WorkstreamObjectClient {
   ) {}
 
   /**
+   * One of a parent's conversations, addressed as whatever that parent is.
+   *
+   * For a caller that has already resolved the kind: the conversation routes
+   * resolve it to authorize the viewer, and a Sidekick's run conversation
+   * belongs to the Sidekick. The plain constructor means a Channel, which is
+   * what every other caller has.
+   */
+  static forParent(
+    env: Env,
+    auth: AuthContext,
+    parentKind: ConversationParentKind,
+    parentId: string,
+    substreamId = "0",
+    traced = false,
+  ): WorkstreamObjectClient {
+    return new WorkstreamObjectClient(env, auth, parentId, substreamId, traced, parentKind);
+  }
+
+  /**
    * A Space's hidden main conversation, addressed as a Space.
    *
    * The Space authority reaches this object for the Space's participants,
@@ -189,7 +208,7 @@ export class WorkstreamObjectClient {
    * caller's request refuse when the id turns out to name a Space.
    */
   static forSpace(env: Env, auth: AuthContext, spaceId: string): WorkstreamObjectClient {
-    return new WorkstreamObjectClient(env, auth, spaceId, "0", false, "space");
+    return WorkstreamObjectClient.forParent(env, auth, "space", spaceId);
   }
 
   private async request(body: ProductOperationPayload): Promise<unknown> {

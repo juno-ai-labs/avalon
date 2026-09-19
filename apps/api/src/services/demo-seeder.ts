@@ -758,9 +758,12 @@ async function settleSeededSidekickRun(
   options: { deadlineAt?: number },
 ): Promise<DemoSeedReceipt> {
   const { action } = progress;
-  const conversation = new WorkstreamObjectClient(
+  // A Sidekick's run conversation, addressed as the Sidekick's: the parent is
+  // an automation, and a product request that said `workstream` is refused.
+  const conversation = WorkstreamObjectClient.forParent(
     env,
     actorAuth(session, action),
+    "automation",
     progress.sidekickId,
     progress.sidekickRunId,
   );
