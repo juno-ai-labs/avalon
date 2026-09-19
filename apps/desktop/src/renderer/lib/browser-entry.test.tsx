@@ -212,3 +212,26 @@ it('does not publish an old account workspace list after focus restores another 
   expect(screen.queryByRole('link', { name: /Shared team/ })).toBeNull();
   expect(screen.getByRole('link', { name: /Other account workspace/ })).toBeInTheDocument();
 });
+
+it('fills the invited mailbox into the sign-in form and accepts by the opaque token alone', async () => {
+  // Token-shaped, not token-like: a high-entropy fixture trips the secret scan.
+  const sealed = `inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`;
+  history.replaceState(null, '', `/invite#${sealed}`);
+  const bodies = new Map<string, unknown>();
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (init?.body) bodies.set(path!, JSON.parse(String(init.body)));
+    if (path === '/invitation') return Response.json({ email: 'invited@example.test' });
+    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: new Date(Date.now() + 600_000).toISOString() }, { status: 202 });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  // The recipient never typed this: the page asked the deployment what the
+  // token was addressed to, before any session exists.
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('invited@example.test'));
+  expect(bodies.get('/invitation')).toEqual({ link: sealed });
+  expect(location.hash).toBe('');
+  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  await waitFor(() => expect(bodies.get('/email/start')).toMatchObject({ email: 'invited@example.test' }));
+});

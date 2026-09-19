@@ -3,12 +3,14 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
 import { WorkspaceIdSchema } from "@rally/contracts";
+import { ScopeInvitationLinkCredentialSchema, ScopeInvitationPreviewSchema } from "@rally/contracts/scope-grants";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { zValidator } from "../middleware/validation";
 import { AuthService, issueAccessToken } from "../services/auth-service";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
+import { UNAVAILABLE_INVITATION, describeScopeInvitation } from "../services/scope-invitation-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 
@@ -66,6 +68,23 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const cookie = await service.register(session);
     writeCookie(c,cookie.credential,cookie.expiresAt);
     return c.json(BrowserSessionSchema.parse(cookie.session));
+  });
+  // Before any session exists: an invitation link no longer says who it was
+  // addressed to, and the sign-in form below it has to. Holding the link is the
+  // whole of the authority, exactly as it is for accepting with it, and what it
+  // releases is one mailbox — never the workspace or work stream behind it.
+  //
+  // The opaque token only, though acceptance still takes the addressed body. On
+  // that branch nothing is looked up: the caller's own identifiers reach a
+  // Durable Object stub, which would let anyone with no session at all
+  // instantiate one per workspace and parent id they can name, and turn a
+  // missing work stream into a 500 where every other answer here is one 403.
+  // Links minted in the addressed format never carried a mailbox to fill in,
+  // so refusing them here regresses nothing.
+  routes.post("/invitation",authBodyLimit,zValidator("json",ScopeInvitationLinkCredentialSchema),async (c) => {
+    const description = await describeScopeInvitation(c.env,c.req.valid("json"));
+    if (!description) throw new ApiError(403,"scope_invitation_unavailable",UNAVAILABLE_INVITATION);
+    return c.json(ScopeInvitationPreviewSchema.parse(description));
   });
   routes.get("/session",async (c) => {
     const service = new BrowserSessionService(c.env);
