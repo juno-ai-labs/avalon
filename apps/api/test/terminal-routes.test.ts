@@ -75,6 +75,17 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
     AVALON_REGION: "global",
     TERMINAL_REGION_CAPABILITY: "unsupported",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    // The settings preview asks each work stream's parent which conversations
+    // own a sandbox. This fixture seeds one, the main conversation's.
+    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        childTerminalDeadlines: async (input: { parentId: string }) => ({
+          items: objectStores.has(input.parentId)
+            ? [{ substreamId: "0", nextTerminalActionAt: "2026-08-13T00:00:00.000Z" }]
+            : [],
+        }),
+      },
+    }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
         // A real WorkspaceDO decides the network policy, so the route test

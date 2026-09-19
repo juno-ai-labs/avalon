@@ -56,6 +56,14 @@ const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
 const EXPIRE_DAYS = 30;
 
+/**
+ * How long a running sandbox may go without a tool call before the lifecycle
+ * sweep stops it. The same window `idle_expires_at` is derived from; exported
+ * because the sweep reads activity from `last_command_at` too, now that a
+ * lease is held per call and a busy run holds nothing between calls.
+ */
+export const TERMINAL_WARM_STOP_MS = WARM_STOP_MINUTES * 60_000;
+
 export interface TerminalClock {
   now(): Date;
 }
@@ -223,6 +231,100 @@ export class TerminalSandboxCoordinator {
       : this.scope.runSubstreamId;
   }
 
+  /**
+   * What a sandbox generation is frozen to: the principal the run acts as and
+   * the repository it may use. A row whose fingerprint differs is another
+   * caller's bytes, whichever way the difference runs.
+   */
+  private authorityFingerprint(
+    context: HarnessToolContext,
+    repositoryAuthority: RepositoryAuthorityRow | null,
+  ): Promise<string> {
+    return sha256(JSON.stringify({
+      principal: executionPrincipalKey(context.executionPrincipal),
+      repository: repositoryAuthority ?? "scratch",
+    }));
+  }
+
+  /**
+   * Take the operation lease for one tool call on a sandbox this run already
+   * made ready.
+   *
+   * `acquire` returns holding the lease so its transitions are exclusive, and
+   * every tool call releases the lease when it ends, so the next call takes
+   * it again here rather than repeating the provider reads readiness paid
+   * for. The answer is `stale` when the row no longer describes the sandbox
+   * the caller was handed — another run replaced the generation, the sweep
+   * stopped it, or the policy moved it — and the caller then runs readiness
+   * again, which re-claims by the same run id and transitions under the lease
+   * this call may already hold. A lease someone else holds is `sandbox_busy`,
+   * as in `acquire`.
+   */
+  async claimForOperation(
+    context: HarnessToolContext,
+    sandbox: AcquiredTerminalSandbox,
+  ): Promise<"held" | "stale"> {
+    if (context.signal.aborted) {
+      throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before it took the workspace lease.");
+    }
+    const row = await this.terminal(context).sandbox();
+    if (!row || row.generation !== sandbox.generation) return "stale";
+    const claimed = await this.claimOperation(context, row, this.clock.now().getTime());
+    return claimed.lifecycleState === "running"
+      && claimed.sandboxId === sandbox.providerSandboxId
+      && claimed.appliedNetworkRevision === sandbox.networkRevision
+      ? "held"
+      : "stale";
+  }
+
+  /** Give the lease back; a no-op when this run does not hold it. */
+  async release(context: HarnessToolContext): Promise<void> {
+    await this.terminal(context).releaseOperation({
+      runId: context.harnessRunId,
+      now: this.clock.now().getTime(),
+    });
+  }
+
+  /**
+   * The sandbox as a read may use it without taking the lease, or `null`
+   * when a read has to go through `acquire` after all.
+   *
+   * A read changes nothing, so it needs no exclusivity; it needs the sandbox
+   * to be running and to be *this caller's*: the authority fingerprint is
+   * checked here exactly as `acquire` checks it, because a read of another
+   * principal's files is the exposure that fingerprint exists to prevent.
+   * Whether the provider still has it running is read from the last
+   * observation rather than asked of Daytona on every read; a stale answer
+   * costs one failed read and a retry through readiness.
+   */
+  async peekRunning(context: HarnessToolContext): Promise<AcquiredTerminalSandbox | null> {
+    if (this.emergencyDisabled || context.signal.aborted) return null;
+    const terminal = this.terminal(context);
+    const [row, observation, repositoryAuthority] = await Promise.all([
+      terminal.sandbox(),
+      terminal.providerObservation(),
+      this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
+    ]);
+    if (!row?.sandboxId || row.lifecycleState !== "running") return null;
+    if (row.authorityFingerprint !== await this.authorityFingerprint(context, repositoryAuthority)) return null;
+    if (
+      observation
+      && observation.generation === row.generation
+      && observation.sandboxId === row.sandboxId
+      && observation.state !== null
+      && observation.state !== "running"
+    ) return null;
+    return {
+      providerSandboxId: row.sandboxId,
+      stableName: requireStableName(row),
+      generation: row.generation,
+      state: "running",
+      authorityFingerprint: row.authorityFingerprint,
+      networkRevision: row.appliedNetworkRevision,
+      operationLeaseExpiresAt: row.operationLeaseExpiresAt ?? this.clock.now().getTime(),
+    };
+  }
+
   async claimMutation(context: HarnessToolContext): Promise<TerminalSandboxMutationLease> {
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
@@ -300,10 +402,7 @@ export class TerminalSandboxCoordinator {
           : "Ask a workspace owner to save and verify the Terminal network policy." },
       );
     }
-    const authorityFingerprint = await sha256(JSON.stringify({
-      principal: executionPrincipalKey(context.executionPrincipal),
-      repository: repositoryAuthority ?? "scratch",
-    }));
+    const authorityFingerprint = await this.authorityFingerprint(context, repositoryAuthority);
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.terminal(context).sandbox();
     if (!row) {
@@ -475,8 +574,8 @@ export class TerminalSandboxCoordinator {
     if (!claimed) {
       throw new TerminalToolError(
         "sandbox_busy",
-        "Another agent run is changing this Terminal workspace. Wait for that run to finish, then retry the tool; do not repeat any earlier command.",
-        { retryAfterMs: 5_000, reason: "Wait for the current agent run to release the Terminal workspace, then retry." },
+        "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
+        { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
       );
     }
     return claimed;

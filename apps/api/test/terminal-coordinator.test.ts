@@ -594,7 +594,7 @@ describe("Terminal sandbox coordinator", () => {
         code: "sandbox_busy",
         details: {
           retryAfterMs: 5_000,
-          reason: "Wait for the current agent run to release the Terminal workspace, then retry.",
+          reason: "Retry in a few seconds; the workspace is released after each tool call.",
         },
       });
     expect(provider.createSandbox).toHaveBeenCalledOnce();

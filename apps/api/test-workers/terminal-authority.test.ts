@@ -933,6 +933,116 @@ describe("Terminal authority on real workerd", () => {
       expect(stale.value).toBeNull();
     });
 
+    it("keeps a released lease while the holder's own command is unsettled, and frees it once settled", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-held",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-held",
+        providerTaskName: "held-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 5_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+
+      // The call that lost the command ends and releases; the lease stays
+      // with the run, because the task is what a successor recovers from.
+      const kept = await terminal(stub, "releaseOperation", { runId: RUN_A, now: 2_000 });
+      expect(kept.value).toBe(false);
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({ operationRunId: RUN_A });
+      // Another run cannot take it: the unsettled task is not its own.
+      const contender = await terminal(stub, "claimOperation", {
+        runId: RUN_B, generation: 1, leaseExpiresAt: 9_000_000, now: 2_000,
+      });
+      expect(contender.value).toBeNull();
+
+      // The task settles; the next release clears the lease.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE terminal_tasks SET state = 'completed', completed_at = 3_000 WHERE task_id = ?`, TASK_A);
+      });
+      const freed = await terminal(stub, "releaseOperation", { runId: RUN_A, now: 3_000 });
+      expect(freed.value).toBe(true);
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({
+        operationRunId: null, operationRunSubstreamId: null, operationLeaseExpiresAt: null,
+      });
+      // And the same release, repeated, clears nothing: it is fenced on the holder.
+      expect((await terminal(stub, "releaseOperation", { runId: RUN_A, now: 3_500 })).value).toBe(false);
+    });
+
+    it("lets the run that owns an unsettled command reattach past it when nobody holds the lease", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+        seedRunRow(state, RUN_B, "admitted");
+        seedEffect(state, EFFECT_A, RUN_A);
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-reattach",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_000,
+      });
+      await terminal(stub, "insertTask", {
+        taskId: TASK_A,
+        runId: RUN_A,
+        effectIntentId: EFFECT_A,
+        sandboxGeneration: 1,
+        sandboxId: "daytona-reattach",
+        providerTaskName: "reattach-command",
+        commandSha256: "command-hash",
+        commandDeadlineAt: 5_000,
+        startedAt: 1_000,
+        now: 1_000,
+      });
+      // A policy transition dropped the lease while the command was retained.
+      await terminal(stub, "settlePolicyTransition", {
+        lifecycleState: "running",
+        failureCode: null,
+        clearSandboxId: false,
+        clearOperationLease: true,
+        appliedNetworkRevision: null,
+        generation: 1,
+        sandboxId: "daytona-reattach",
+        now: 2_000,
+      });
+      expect((await terminal(stub, "sandbox")).value).toMatchObject({ operationRunId: null });
+
+      const other = await terminal(stub, "claimOperation", {
+        runId: RUN_B, generation: 1, leaseExpiresAt: 9_000_000, now: 2_500,
+      });
+      expect(other.value).toBeNull();
+      const owner = await terminal(stub, "claimOperation", {
+        runId: RUN_A, generation: 1, leaseExpiresAt: 9_000_000, now: 2_500,
+      });
+      expect(owner.value).toMatchObject({ operationRunId: RUN_A, lastCommandAt: 2_500 });
+    });
+
     it("reclaims a lease whose holder is no longer running", async () => {
       const stub = agent();
       await boot(stub);

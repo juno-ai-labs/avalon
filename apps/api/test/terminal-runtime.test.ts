@@ -432,22 +432,61 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runUtilityCommand).toHaveBeenCalledTimes(64);
   });
 
-  it("reacquires after the cached operation lease expires", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
-      const clock = { now: () => new Date(Date.now()) };
-      const { coordinator, runtime } = fixture(clock);
-      const acquire = vi.spyOn(coordinator, "acquire");
+  it("releases the lease after each call and re-runs readiness when the row moved on", async () => {
+    const { coordinator, runtime, objectStore, provider, sandboxState } = fixture();
+    const acquire = vi.spyOn(coordinator, "acquire");
+    const bytes = new TextEncoder().encode("first\n");
 
-      await runtime.readFile(context, "src/file.txt");
-      vi.setSystemTime(new Date("2026-08-13T12:17:00.000Z"));
-      await runtime.readFile({ ...context, toolCallId: "call-runtime-after-lease" }, "src/file.txt");
+    await runtime.writeFile(context, "src/file.txt", bytes);
+    // Nothing is held between two calls of one run: the lease is the call's.
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: null });
+    await runtime.writeFile({ ...context, toolCallId: "call-runtime-second" }, "src/file.txt", bytes);
+    expect(acquire).toHaveBeenCalledOnce();
 
-      expect(acquire).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    // The sweep stopped the sandbox while this run held nothing. The cached
+    // handle is not trusted past the row: the claim sees a stopped sandbox
+    // and readiness starts it again under the lease this call now holds.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET lifecycle_state = 'stopped', idle_expires_at = NULL WHERE id = 1");
+    sandboxState.current = "stopped";
+    await runtime.writeFile({ ...context, toolCallId: "call-runtime-after-stop" }, "src/file.txt", bytes);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "running", operation_run_id: null });
+  });
+
+  it("reads without the lease while another run holds it, and writes wait", async () => {
+    const { objectStore, provider, runtime } = fixture();
+    seedWorkstreamRun(objectStore, { id: R2, status: "running",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    const other = { ...context, harnessRunId: R2, toolCallId: "call-other-run" };
+    let finishWrite!: () => void;
+    // Hold the other run's write open at the provider so its lease is held
+    // for the whole of this test's middle.
+    vi.mocked(provider.writeFile).mockImplementationOnce(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    const held = runtime.writeFile(other, "src/other.txt", new TextEncoder().encode("held\n"));
+    await vi.waitFor(() => expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: R2 }));
+
+    await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
+    await expect(runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n")))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: R2 });
+
+    finishWrite();
+    await expect(held).resolves.toEqual({ created: true, previousLines: 0 });
+    await expect(runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n")))
+      .resolves.toEqual({ created: false, previousLines: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: null });
   });
 
   it("cleans an uploaded write temp file after a provider request failure", async () => {
@@ -566,24 +605,30 @@ describe("Daytona Terminal runtime", () => {
       harnessRunId: R2,
       toolCallId: "call-submission-successor",
     };
-    await expect(runtime.readFile(
+    // A write: a read takes no lease and would neither wait nor recover.
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    await expect(runtime.writeFile(
       linkedContext,
       "src/file.txt",
+      linkedBytes,
     )).rejects.toMatchObject({ code: "sandbox_busy" });
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     acquisitionObserved.mockClear();
 
     clockNow = submitting.command_deadline_at + 1;
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       linkedContext,
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      linkedBytes,
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.getSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime-2", "/workspace/src/file.txt");
+    expect(provider.writeFile).toHaveBeenCalledWith(
+      "sandbox-runtime-2", expect.stringContaining("/workspace/.rally/tmp/"), linkedBytes, expect.anything(),
+    );
     expect(acquisitionObserved).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ action: "start", localFilesRetained: false }),
@@ -885,47 +930,52 @@ describe("Daytona Terminal runtime", () => {
       })
     ));
 
-    const firstLinkedRead = runtime.readFile(linkedContext, "src/file.txt");
-    let linkedReadSettled = false;
-    void firstLinkedRead.then(
-      () => { linkedReadSettled = true; },
-      () => { linkedReadSettled = true; },
+    // Writes, because a read takes no lease: it would neither wait for the
+    // retained command nor recover it.
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    const firstLinkedWrite = runtime.writeFile(linkedContext, "src/file.txt", linkedBytes);
+    let linkedWriteSettled = false;
+    void firstLinkedWrite.then(
+      () => { linkedWriteSettled = true; },
+      () => { linkedWriteSettled = true; },
     );
     await vi.waitFor(() => expect(provider.stopSandbox).toHaveBeenCalledOnce());
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R3, toolCallId: "call-linked-contender" },
       "src/file.txt",
+      linkedBytes,
     )).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(linkedReadSettled).toBe(false);
+    expect(linkedWriteSettled).toBe(false);
     expect(provider.startSandbox).not.toHaveBeenCalled();
-    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.writeFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "running" });
     finishStop();
-    await expect(firstLinkedRead).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(firstLinkedWrite).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.stopSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-runtime",
       expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
-    expect(provider.readFile).toHaveBeenCalledTimes(2);
+    expect(provider.writeFile).toHaveBeenCalledOnce();
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0]!);
     expect(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(provider.readFile).mock.invocationCallOrder[0]!);
+      .toBeLessThan(vi.mocked(provider.writeFile).mock.invocationCallOrder[0]!);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state, termination_reason FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "cancelled", termination_reason: "cancelled" });
+    // The linked run's call is over, and the recovered lease went back with it.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ operation_run_id: R2 });
+    )).toEqual({ operation_run_id: null });
   });
 
   it("keeps a linked run fenced when provider stop is not confirmed", async () => {
@@ -944,16 +994,19 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
+      new TextEncoder().encode("linked\n"),
     )).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.writeFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "running" });
+    // The failed call released nothing: a run with its own command still
+    // unsettled keeps the lease, which is what a successor recovers from.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
@@ -991,9 +1044,10 @@ describe("Daytona Terminal runtime", () => {
         id: "sandbox-runtime", name: "sandbox-runtime", state: "archived", domainAllowList: [],
       });
     }
+    const linkedBytes = new TextEncoder().encode("linked\n");
     if (providerState === "absent") {
-      await expect(runtime.readFile(
-        { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" }, "src/file.txt",
+      await expect(runtime.writeFile(
+        { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" }, "src/file.txt", linkedBytes,
       )).rejects.toMatchObject({ code: "sandbox_busy" });
       expect(provider.deleteSandbox).not.toHaveBeenCalled();
       expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -1005,17 +1059,21 @@ describe("Daytona Terminal runtime", () => {
     }
     const expectedId = "sandbox-runtime";
     const expectedGeneration = 1;
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" },
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      linkedBytes,
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledTimes(expectedGeneration);
-    expect(provider.readFile).toHaveBeenCalledWith(expectedId, "/workspace/src/file.txt");
+    expect(provider.writeFile).toHaveBeenCalledWith(
+      expectedId, expect.stringContaining("/workspace/.rally/tmp/"), linkedBytes, expect.anything(),
+    );
+    // Recovered, used, and released: the call is over.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT generation, sandbox_id, operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: R2 });
+    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: null });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -1061,7 +1119,8 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     const linked = { ...context, harnessRunId: R2, toolCallId: "call-abort-successor" };
-    await expect(runtime.readFile(linked, "src/file.txt"))
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    await expect(runtime.writeFile(linked, "src/file.txt", linkedBytes))
       .rejects.toMatchObject({ code: "sandbox_busy" });
     expect(workstreamObjectGet(
       objectStore,
@@ -1069,8 +1128,8 @@ describe("Daytona Terminal runtime", () => {
       I,
     )).toEqual({ state: "running" });
 
-    await expect(runtime.readFile(linked, "src/file.txt"))
-      .resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(runtime.writeFile(linked, "src/file.txt", linkedBytes))
+      .resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-runtime",
@@ -1111,10 +1170,13 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
-    await expect(runtime.readFile(
+    // A write: it is what recovers the retained command. A read would take
+    // no lease and leave the command as it found it.
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      new TextEncoder().encode("linked\n"),
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     finishProvider({ exitCode: 7, stdout: "x".repeat(150_000), stderr: "late-error\n" });
     await expect(late).resolves.toMatchObject({
       state: "failed",
@@ -1402,7 +1464,12 @@ describe("Daytona Terminal runtime", () => {
     const acquiring = new Promise<never>((_resolve, reject) => {
       rejectAcquire = () => reject(new TerminalToolError("repository_access_revoked", "Repository access was revoked."));
     });
-    const coordinator = { acquire: vi.fn(() => acquiring) } satisfies Pick<TerminalSandboxCoordinator, "acquire">;
+    const coordinator = {
+      acquire: vi.fn(() => acquiring),
+      claimForOperation: vi.fn(async () => "held" as const),
+      release: vi.fn(async () => undefined),
+      peekRunning: vi.fn(async () => null),
+    } satisfies Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning">;
     const checkedOut: TerminalCheckoutRepositoryOutput = {
       repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
       baseRef: "main", baseSha: "a".repeat(40), headRef: "rally/workstream", remoteAccess: "read_only",

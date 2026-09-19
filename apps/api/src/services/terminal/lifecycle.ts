@@ -13,6 +13,7 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import { observeTerminalSandbox, deleteTerminalSandbox, stopTerminalSandbox, type TerminalSandboxProvider } from "./provider-contract";
+import { TERMINAL_WARM_STOP_MS } from "./coordinator";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
@@ -127,6 +128,16 @@ export async function reconcileDueTerminalSandbox(
       return { transition: "deferred" };
     }
   }
+
+  // A running sandbox whose last tool call is inside the warm window is in
+  // use, whatever `idle_expires_at` says: the lease is held per call, so a
+  // busy run holds nothing between two of its calls, and the claim's
+  // `last_command_at` stamp is what stands in for the holder it used to be.
+  if (
+    row.lifecycleState === "running"
+    && row.lastCommandAt !== null
+    && row.lastCommandAt + TERMINAL_WARM_STOP_MS > now.getTime()
+  ) return { transition: "deferred" };
 
   if (await terminal.hasLiveTask(row.generation, now.getTime())) return { transition: "deferred" };
 
