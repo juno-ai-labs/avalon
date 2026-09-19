@@ -1,5 +1,5 @@
 import { ACCESS_PAGE_SIZE, DownloadGrantExpirySchema, type AccessRequestListItem, type DownloadGrantListItem } from '@rally/contracts/private-access';
-import type { D1DatabaseLike } from './index';
+import { sha256Hex, type D1DatabaseLike } from './index';
 
 export async function listAccessRequests(db: D1DatabaseLike, query = '', before?: string): Promise<AccessRequestListItem[]> {
   const result = await db.prepare(`SELECT id, email, created_at AS createdAt,
@@ -60,9 +60,8 @@ export async function admitDownloadStart(db: D1DatabaseLike, token: string, limi
 
 export type DownloadGrantSource = 'manual' | 'access_invitation' | 'workspace_invitation';
 
-export async function hashDownloadToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+export function hashDownloadToken(token: string): Promise<string> {
+  return sha256Hex(token);
 }
 
 /** Shared issuer for Ace and email producers. Attribution never changes bearer authority. */

@@ -21,6 +21,12 @@ export interface D1DatabaseLike {
   batch<T = unknown>(statements: D1PreparedStatementLike[]): Promise<D1ResultLike<T>[]>;
 }
 
+/** The stored form of every bearer token in this package: a dump lists what exists, never what works. */
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export type ParticipationReason = "explicit" | "message" | "elicitation" | "action";
 
 

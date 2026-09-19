@@ -573,6 +573,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.4
     devDependencies:
       '@cloudflare/workers-types':
         specifier: latest

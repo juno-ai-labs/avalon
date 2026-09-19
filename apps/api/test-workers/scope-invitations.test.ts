@@ -4,15 +4,19 @@ import { createApp } from "../src/app";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
 import { decryptString } from "../src/lib/crypto";
+import { openScopeInvitationCredential } from "../src/services/scope-invitation-link";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { workstreamDOName } from "../src/durable-objects/names";
+import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000092");
@@ -25,7 +29,8 @@ const room = (id = parentId) => env.WORKSTREAM_DOS.getByName(workstreamDOName("g
 const invitation = (targets: ScopeGrantTarget[] = [child]) => ({ operationId: crypto.randomUUID(), workspaceId, parentId,
   actorUserId: actorId, emails: ["guest@example.test"], targets, expiresAt: null });
 
-async function tokenFor(id: string, parent = parentId): Promise<string> {
+/** The URL the recipient receives, read out of the durable encrypted body the sender delivers. */
+async function deliveredLink(id: string, parent = parentId): Promise<URL> {
   const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
     new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
   const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
@@ -33,7 +38,23 @@ async function tokenFor(id: string, parent = parentId): Promise<string> {
     env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string };
   const link = delivery.text.split("\n").find((line) => line.startsWith("https://app.test/invite"));
   if (!link) throw new Error("invitation link missing");
-  return new URLSearchParams(new URL(link).hash.slice(1)).get("token")!;
+  return new URL(link);
+}
+
+const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
+
+async function deliveredParts(id: string, parent = parentId): Promise<{ text: string; html?: string }> {
+  const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
+    new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
+  const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
+  return JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
+    env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string; html?: string };
+}
+
+async function tokenFor(id: string, parent = parentId): Promise<string> {
+  const address = await openScopeInvitationCredential(env, await credentialFor(id, parent));
+  if (!address) throw new Error("invitation credential unreadable");
+  return address.token;
 }
 
 async function create(targets: ScopeGrantTarget[] = [child]) {
@@ -46,20 +67,21 @@ async function create(targets: ScopeGrantTarget[] = [child]) {
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
-    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
-    env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(workspaceId),
+    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
+    env.DB.prepare("INSERT INTO workspaces (id, name) VALUES (?, 'Shared workspace')").bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT,user_id TEXT,access_class TEXT,
       role TEXT,status TEXT,incarnation TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
       revision INTEGER NOT NULL DEFAULT 1, joined_at TEXT, last_seen_at TEXT, PRIMARY KEY(workspace_id,user_id))`),
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status,incarnation) VALUES (?,?,'member','owner','active','actor-membership')")
       .bind(workspaceId, actorId),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, analytics_person_id TEXT, name TEXT, email TEXT)"),
-    env.DB.prepare("INSERT INTO users (id) VALUES (?), (?)").bind(actorId, recipientId),
+    env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Adam Owner'), (?, NULL)").bind(actorId, recipientId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT,
       region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
     env.DB.prepare("INSERT INTO sessions VALUES ('recipient-session', ?, NULL, 'global', NULL, NULL, '2099-01-01T00:00:00.000Z')").bind(recipientId),
     env.DB.prepare("CREATE TABLE user_verified_emails (email TEXT PRIMARY KEY, user_id TEXT)") ,
+    env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
   await room().authority({ workspaceId, parentId });
@@ -148,8 +170,15 @@ it("commits all target grants with acceptance, or retries after rolling every gr
 
 it("does not use an invitation after the sharer's membership is replaced", async () => {
   const request = await create();
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
+    .toMatchObject({ status: "ready" });
   await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId).run();
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "sharing_required" });
+  // The preview goes with it. It answers what acceptance would answer, or it is
+  // a mailbox oracle: a name for an invitation nobody can accept any more, and
+  // one the holder could not have learned by accepting.
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
 });
 
 async function bearer(userId: typeof actorId, sessionId: string, workspace: typeof workspaceId | null) {
@@ -177,6 +206,258 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
 });
 
+it("names the field when an invitation is asked to expire past the end of time", async () => {
+  const app = createApp();
+  const headers = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
+  // Past the largest instant a `Date` can hold and still a safe integer, which
+  // is the whole band `z.number().int()` lets through: `expiresAt` reached
+  // `new Date(value).toISOString()` in the link store and came back as a bare
+  // `RangeError: Invalid time value`, naming neither the field nor the caller's
+  // value. Anything larger was already refused for not being an integer, which
+  // is why the ceiling has to be the `Date` range rather than that one.
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const response = await app.request("/sharing", { method: "POST", headers, body: JSON.stringify({
+      operationId: crypto.randomUUID(), parentId, emails: ["guest@example.test"], targets: [child],
+      expiresAt: 9_000_000_000_000_000 }) }, { ...env, LOG_LEVEL: "warn" as const });
+    // A rejection, not a 500, and the diagnostic names the field rather than
+    // carrying one run's `RangeError` message.
+    expect(response.status).toBe(400);
+    expect(warn.mock.calls.map(([entry]) => entry as { validation_issues?: unknown }).flatMap((entry) =>
+      Array.isArray(entry?.validation_issues) ? entry.validation_issues : []))
+      .toContainEqual(expect.objectContaining({ path: "expiresAt" }));
+  } finally {
+    warn.mockRestore();
+  }
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>()).toMatchObject({ n: 0 });
+});
+
+it("emails one opaque credential, fills in the mailbox it was sent to, and accepts by that credential alone", async () => {
+  const created = await room().createScopeInvitations(invitation());
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const invitationId = created.invitations[0]!.id;
+  const link = await deliveredLink(invitationId);
+  const credential = { link: link.hash.slice(1) };
+  // Nothing a recipient can read out of the link says which deployment,
+  // workspace, work stream or invitation it addresses: one typed prefix and
+  // 256 bits, with everything it stands for in this region's own row.
+  expect(link.pathname).toBe("/invite");
+  expect(link.search).toBe("");
+  expect(credential.link).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
+  expect(link.toString()).toHaveLength(`${new URL("/invite", link).toString()}#inv_`.length + 43);
+  // The token is the credential, so the link carries it; what it must not carry
+  // is anything that says what the credential addresses.
+  expect(credential.link).toBe(await tokenFor(invitationId));
+  for (const routing of [workspaceId, parentId, invitationId, "region", "global"]) {
+    expect(link.toString()).not.toContain(routing);
+  }
+  // The row holds the digest of the token in the email, never the token, and
+  // no second secret beside the address: a dump of this table cannot be
+  // replayed through the addressed request body that is still accepted.
+  const stored = await env.DB.prepare("SELECT type, payload FROM link_payloads").first<{ type: string; payload: string }>();
+  expect(stored?.type).toBe("inv");
+  expect(JSON.parse(stored!.payload)).toEqual({ workspaceId, parentId, invitationId });
+  expect(stored!.payload).not.toContain(credential.link.slice(4));
+  expect(await env.DB.prepare("SELECT 1 FROM link_payloads WHERE token_hash = ?").bind(credential.link).first()).toBeNull();
+  expect(await room().acceptScopeInvitation({ workspaceId, parentId, invitationId,
+    userId: recipientId, ...JSON.parse(stored!.payload), token: "whatever a dump gives you" }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
+
+  const app = createApp();
+  const origin = { origin: "https://app.test", "content-type": "application/json" };
+  const preview = async (body: unknown) => app.request("/browser/invitation",
+    { method: "POST", headers: origin, body: JSON.stringify(body) }, env);
+  // No session: the sign-in form has to fill this in before there is one.
+  const filled = await preview(credential);
+  expect(filled.status, await filled.clone().text()).toBe(200);
+  expect(await filled.json()).toEqual({ email: "guest@example.test" });
+  const edited = `${credential.link.slice(0, -1)}${credential.link.endsWith("A") ? "B" : "A"}`;
+  expect((await preview({ link: edited })).status).toBe(403);
+  // The addressed body is refused here, though acceptance still takes it. On
+  // that branch nothing is looked up, so the caller's own identifiers would
+  // reach a Durable Object stub with no session behind the request at all —
+  // and a link minted in that format never carried a mailbox to prefill.
+  const addressed = { workspaceId, parentId, invitationId, token: await tokenFor(invitationId) };
+  expect((await preview(addressed)).status).toBe(400);
+  expect((await preview({ ...addressed, parentId: crypto.randomUUID() })).status).toBe(400);
+
+  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
+  const acceptance = await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify(credential) }, env);
+  expect(acceptance.status, await acceptance.clone().text()).toBe(200);
+  expect(await acceptance.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+  expect((await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify({ link: edited }) }, env)).status).toBe(403);
+});
+
+/**
+ * A real conversation object with a real transcript in it, so a preview reads
+ * one rather than failing. Every other test in this file leaves these objects
+ * unprovisioned, which is what makes the preview absent there.
+ */
+async function seedConversation(substreamId: string, turns: Array<{ text: string; messageType?: "text" | "system" }>) {
+  await seedOpenWorkstreamAuthority(env.DB);
+  const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    conversationObjectName("global", workspaceId, parentId, asSubstreamId(substreamId))));
+  await boot(stub);
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    // The fixture's root always calls itself Main; a child object has to say
+    // which substream it is, or the port refuses the read as a misroute.
+    state.storage.sql.exec("UPDATE substream_agent_identity SET external_substream_id = ? WHERE id = 1", substreamId);
+    let sequence = 0;
+    for (const turn of turns) {
+      sequence += 1;
+      await seedParticipantMessage(state, {
+        id: `00000000-0000-7000-8000-${substreamId.slice(-4)}${String(sequence).padStart(8, "0")}`,
+        sequence, text: turn.text, authorType: "human", messageType: turn.messageType ?? "text",
+      });
+    }
+  });
+}
+
+it("quotes the conversation being offered and nothing beside it", async () => {
+  await seedConversation("0", [{ text: "Main transcript, not shared here." }]);
+  await seedConversation(childId, [
+    { text: "A system notice, which is not conversation.", messageType: "system" },
+    { text: "Child transcript, which is what was offered." },
+  ]);
+
+  const offered = await room().createScopeInvitations(invitation([child]));
+  if (offered.status !== "created") throw new Error(JSON.stringify(offered));
+  const { text } = await deliveredParts(offered.invitations[0]!.id);
+  // The whole point of a scoped invitation: an offer of one conversation must
+  // not put a sibling's or the parent's work into an unauthenticated mailbox.
+  expect(text).toContain("Child transcript, which is what was offered.");
+  expect(text).not.toContain("Main transcript");
+  // And only what people said. Tool output and system notices are not
+  // conversation and never leave the product this way.
+  expect(text).not.toContain("A system notice");
+
+  const whole = await room().createScopeInvitations(invitation([main]));
+  if (whole.status !== "created") throw new Error(JSON.stringify(whole));
+  const mainParts = await deliveredParts(whole.invitations[0]!.id);
+  expect(mainParts.text).toContain("Main transcript, not shared here.");
+  expect(mainParts.text).not.toContain("Child transcript");
+});
+
+it("names the sender and the workspace, and still sends when the conversation cannot be previewed", async () => {
+  const created = await room().createScopeInvitations(invitation());
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const { text, html } = await deliveredParts(created.invitations[0]!.id);
+  expect(text.split("\n")[0]).toBe("Adam Owner invited you to Shared workspace on Rally.");
+  expect(text).toContain("Sign in with guest@example.test and accept:");
+  expect(text).toContain((await deliveredLink(created.invitations[0]!.id)).toString());
+  expect(text).toContain("This invitation does not grant access until you sign in and accept it.");
+  expect(text.trimEnd().endsWith("work it through together.")).toBe(true);
+  // This work stream's conversation object was never provisioned, so the
+  // preview cannot be read. An invitation is not a preview: it goes anyway,
+  // with nothing quoted.
+  expect(text).not.toContain(">");
+  // Both parts are composed once and stored together, so a delivery retry
+  // sends the message that was composed rather than one rendered again later.
+  expect(html).toContain("Adam Owner");
+  expect(html).toContain("Shared workspace");
+  expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
+});
+
+it("takes back the links it minted for a creation it did not record", async () => {
+  const rows = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>())!.n;
+  const operationId = crypto.randomUUID();
+  const two = { ...invitation(), operationId, emails: ["guest@example.test", "second@example.test"] };
+  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
+  expect(await rows()).toBe(2);
+
+  // A replay of the same operation reports the first attempt's invitations, so
+  // the links it minted on the way there address nothing. Nothing else can
+  // reach them: the row is keyed by a digest of a token only this call held.
+  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
+  expect(await rows()).toBe(2);
+
+  // Same for a creation nobody was allowed to make. The invitation is refused
+  // before it is recorded, and its rows go with it.
+  expect(await room().createScopeInvitations({ ...invitation(), actorUserId: recipientId }))
+    .toMatchObject({ status: "denied", reason: "sharing_required" });
+  expect(await rows()).toBe(2);
+});
+
+/** A warning is written in the object's isolate, so the collector and the level it needs live there too. */
+type WarnCaptureScope = typeof globalThis & { __rallyWarnLog?: unknown[]; __rallyWarnOriginal?: typeof console.warn };
+
+it("names which authority refused when a preview cannot be read", async () => {
+  // Both inside the object: `logStructuredEvent` writes to the console of the
+  // isolate it runs in rather than the runner's, and this Worker's test config
+  // sets `LOG_LEVEL` to `error`, which drops the warning before it is written.
+  // A spy taken outside, or taken without the level, records nothing and lets
+  // the assertion below pass vacuously.
+  await runInDurableObject(room(), (instance) => {
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "LOG_LEVEL" ? "warn" : Reflect.get(current, property, receiver),
+    });
+    const scope = globalThis as WarnCaptureScope;
+    scope.__rallyWarnLog = [];
+    scope.__rallyWarnOriginal = console.warn;
+    console.warn = (entry: unknown) => { scope.__rallyWarnLog!.push(entry); };
+  });
+  try {
+    // This work stream's conversation object was never provisioned, so it
+    // refuses the read and the port throws. Every port failure is one class, so
+    // `error_name` is the constant "ObjectPortError" whatever went wrong; only
+    // the code says that this object did not recognize the identity it was
+    // asked about, rather than the protocol having drifted or the stub being
+    // misrouted. Nothing here can fail an invitation, which makes this entry
+    // the only evidence that the preview stopped rendering at all.
+    expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "created" });
+    const entries = await runInDurableObject(room(), () =>
+      structuredClone((globalThis as WarnCaptureScope).__rallyWarnLog ?? [])) as Record<string, unknown>[];
+    expect(entries.find((entry) => entry.event === "scope_invitation_preview_failed"))
+      .toMatchObject({ error_name: "ObjectPortError", error_code: "workstream_message_identity_mismatch" });
+  } finally {
+    await runInDurableObject(room(), () => {
+      const scope = globalThis as WarnCaptureScope;
+      if (scope.__rallyWarnOriginal) console.warn = scope.__rallyWarnOriginal;
+    });
+  }
+});
+
+it("stops describing an invitation past its deadline, accepted or not", async () => {
+  const soon = Date.now() + 60_000;
+  const created = await room().createScopeInvitations({ ...invitation(), expiresAt: soon });
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const invitationId = created.invitations[0]!.id;
+  const token = await tokenFor(invitationId);
+  const request = { workspaceId, parentId, invitationId, userId: recipientId, token };
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
+    .toMatchObject({ status: "ready", email: "guest@example.test" });
+  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
+
+  // An accepted invitation stays replayable past its deadline, so that someone
+  // who already holds the grant can retry an interrupted acceptance. Releasing
+  // the mailbox is a disclosure rather than idempotence, and ends at the
+  // deadline either way.
+  await runInDurableObject(room(), (_instance, state) => {
+    // The deadline lives in the stored summary, so age it there.
+    const stored = state.storage.sql.exec<{ summary_json: string }>("SELECT summary_json FROM scope_invitations WHERE id = ?", invitationId).one();
+    state.storage.sql.exec("UPDATE scope_invitations SET summary_json = ? WHERE id = ?",
+      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), invitationId);
+  });
+  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
+});
+
+it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {
+  const request = await create();
+  const credential = await credentialFor(request.invitationId);
+  const app = createApp();
+  const preview = () => app.request("/browser/invitation", { method: "POST",
+    headers: { origin: "https://app.test", "content-type": "application/json" }, body: JSON.stringify(credential) }, env);
+  expect((await preview()).status).toBe(200);
+  expect(await room().revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+    invitationId: request.invitationId, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+  expect((await preview()).status).toBe(403);
+});
+
 it("preserves a full member's administrative role when accepting a scope share", async () => {
   await env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status) VALUES (?,?,'member','admin','active')")
     .bind(workspaceId, recipientId).run();
@@ -191,7 +472,7 @@ it("preserves browser sessions and independent shares across a second workstream
   const at = new Date().toISOString();
   // Real D1 browser-session columns and the production incarnation binding.
   await env.DB.batch([
-    ...["name TEXT", "slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
+    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
       env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
     ...["avatar_url TEXT", "timezone TEXT", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER"].map((column) =>
       env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
