@@ -39,6 +39,8 @@ from canonical reads and preserves the existing Main-label boundary.
 
 The Space components follow the same split, one step further. A `SpaceRow` draws
 the geometry, the accordion, the hover-revealed plus and the motion keys, and
+requires both the drag handlers and the new-Channel action — a host that cannot
+place a Channel or start one in a Space has no business drawing the row — and
 takes the host's own navigation element as a slot — routing is a host decision
 under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
 treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*

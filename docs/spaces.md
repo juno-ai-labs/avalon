@@ -182,9 +182,18 @@ member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 ### The desktop surfaces
 
 The sidebar's **Spaces** section sits where Projects were and is drawn in every
-shell, the conversation-only one included: every Channel belongs to at least one
-Space, so a sidebar without it cannot say where anything lives. General is in the
-directory like any other Space and the section has no case for it.
+shell the host hands a directory to, the conversation-only one included: every
+Channel belongs to at least one Space, so a sidebar without it cannot say where
+anything lives. General is in the directory like any other Space and the section
+has no case for it.
+
+A guest is handed none. Guest access to Spaces is deferred, every Space RPC
+refuses a guest, and design decision 9 makes that the host's call rather than
+something the components infer from a refusal — so `spacesEnabledForSession`
+decides it once in the shell and the sidebar draws no heading, no **New space**,
+no **Add to space** and no draggable row. Absent is not empty: an empty
+directory is an Organization whose first Space has not been made yet, and it
+still gets all four.
 
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
@@ -194,25 +203,49 @@ twice, with one unread state, one running state and one destination. That is why
 the Organization's fact about the Channel, not the reader's, and WorkspaceDO
 republishes the row after every membership settlement.
 
-A Space's own count, not this device's page of the directory, is the authority on
-how many Channels it holds. The sidebar holds one page of the Organization, so an
-expanded Space lists what it has and says how many more the dashboard would show.
+The sidebar holds one page of the Organization's Channels, so an expanded Space
+lists the placements this device has and says nothing about the rest. It does
+not print the Space's `channelCount`: that total is not viewer-scoped, so a
+number drawn from it would count Channels the reader may not read. The count is
+still what keeps an expansion holding no rows from claiming the Space is empty.
 
 **Manage access** replaces **Make private**, because a row cannot say whether a
 Channel is private: its readers are the union of its own scope and every active
 Space that holds it. The dialog reads `GET /workstreams/:id/access` and renders
 the Channel's own provenance and the Organization's memberships as one union —
 they agree in the steady state and disagree exactly while an operation is in
-flight, which is the thing it exists to show. Its copy table is exhaustive over
-the closed `SpaceErrorCode`, so every refusal names what has to change first.
+flight, which is the thing it exists to show.
+
+The dialog offers **Make private** only while no Space source is
+Organization-wide. The server refuses that narrowing with
+`channel_scope_locked_by_space` in exactly that state, and the sources saying so
+are the ones on screen; the sentence beside the missing control names the Space
+to change first. The refusal copy stays for the race where a Space widened after
+the read answered.
+
+Every Space refusal on every one of these surfaces goes through one copy table,
+`lib/space-failure-copy.ts`, exhaustive over the closed `SpaceErrorCode` plus an
+`unavailable` fallback, so a refusal names what has to change first rather than
+printing the diagnostic a Worker wrote for a log. A surface that knows what was
+being attempted supplies its own sentence for a refusal that carried no code —
+"Spaces couldn't be reordered" also accounts for the row that snapped back.
+
+Each dashboard action reports into its own slot, so a refused rename stays with
+the name instead of appearing inside every modal that is opened afterwards.
 
 While `spacesReady` is false the sidebar section and the dashboard show the
 Organization-opening card *instead of* the hierarchy, and the **New space**
 control is not drawn: a Space directory missing General, or a Channel with no
 Space, is not a state any surface may render, and creation is refused with
-`space_bootstrap_pending` anyway. The flag is optional on the wire and read as
-ready when absent, so a client talking to a server without the cutover is not
-permanently opening.
+`space_bootstrap_pending` anyway. The Channel rows are handed no Space list
+while it is false for the same reason, which is what takes **Add to space** and
+the drag with it. The flag is optional on the wire and read as ready when
+absent, so a client talking to a server without the cutover is not permanently
+opening.
+
+A Channel row is draggable exactly while a pinned reorder or a placement is
+possible; a system Channel offers neither Space control, because the subsystem
+that writes it decides both its audience and its home.
 
 ## Invariants
 
@@ -334,9 +367,10 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — and that a rejected send leaves its rows pending. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas and the appearance registry. |
-| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, and the Organization-opening state. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, and General's protections. |
-| `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, and each actionable refusal. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
+| `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. |
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
@@ -449,6 +483,9 @@ signal for default delivery and intent resumption.
 cache slice are replaced by the **Spaces** section, the `/spaces/:spaceId`
 dashboard, **Add to space**, **Manage access**, and a local cache slice at
 version 3. `spaceIds` joins the common half of `workspace_workstream_state`.
+Every Space refusal on every surface goes through one copy table; the shell
+decides once whether a session has Space navigation at all, and hands the
+sidebar no directory when it does not.
 
 **Why:** A Channel's readers are now the union of its own scope and every active
 Space that holds it, so **Make private** could no longer describe what it did.
@@ -458,6 +495,14 @@ that its own scope calls personal. `spaceIds` had to be common state for the
 same reason it is WorkspaceDO's to publish: a placement is the Organization's
 fact about a Channel, and on the viewer half it would have been re-read per
 socket for no gain and missed by every other reader.
+
+The client also stopped offering what the server must refuse. **Make private**
+is withheld while an Organization-wide Space holds the Channel — the state the
+server answers with `channel_scope_locked_by_space`, from sources the dialog is
+already holding — and **Add to space**, the drag and the whole section are
+withheld wherever there is nothing to place into: a guest session, an
+Organization still opening, a system Channel. Drawing a control that can only
+fail teaches a reader that Rally's controls are suggestions.
 
 **Considered and rejected:** Keeping a direct **Make public to organization** on
 the row beside a new **Manage access**. It reads as the smaller change and it is
@@ -473,9 +518,12 @@ creation contract carries one.
 has no `spaceIds`, so a Channel started from a Space is not yet placed in it;
 that is Phase 4's. `GET /spaces/:id/channels` answers with bare ids, so the
 dashboard can name only the Channels already in this device's page of the
-directory and counts the rest. A version 2 local-cache row is dropped rather
-than migrated: it holds Channel rows written before `spaceIds` existed, and a
-Channel in no Space is a state no surface may render.
+directory and says nothing about the rest — `channelCount` is not viewer-scoped
+and cannot stand in for them. The archive refusal carries no list either, so the
+confirmation says a sole-member Channel has to move first without naming it
+until the server adds `channelIds` to its details. A version 2 local-cache row
+is dropped rather than migrated: it holds Channel rows written before `spaceIds`
+existed, and a Channel in no Space is a state no surface may render.
 
 ### 2026-09-19 — WorkspaceDO becomes the Space authority, and a Space reaches a Channel only through the Channel's own operations
 
