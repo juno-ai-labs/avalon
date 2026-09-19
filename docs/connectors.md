@@ -556,6 +556,33 @@ requests ends its list early. Parameter descriptions are principle 13 in
 [`agent-tools.md`](agent-tools.md), and
 `apps/api/test/tool-schema-descriptions.test.ts` holds them.
 
+**Inside that envelope, every row is declared rather than passed through.** Each
+list names the fields it carries in a `FieldProjection` beside the tool, applied
+by `projectFields` before the adapter's character, array and depth clamps see
+it. GitHub's objects are not rows: a pull request embeds `head.repo` and
+`base.repo`, two complete repository records with about thirty URL templates
+each, and a workflow run embeds `repository` and `head_repository` the same way,
+which measured 24.5 KB and 21.3 KB per row against roughly 400 bytes of answer.
+Note that no count-based bound was near its limit while that was true — a row is
+wide, not long — which is why the fix is a declaration rather than a smaller
+page. Rows keep GitHub's own field spelling (`html_url`, `head.ref`) while the
+envelope around them keeps this adapter's; each tool description says what its
+row holds and names the `get` that returns the rest, because a model reads an
+absent field as an empty one. The contract and the four rules that decide what a
+row may drop are principle 8 in [`agent-tools.md`](agent-tools.md).
+
+Three rows carry a field that looks like an obvious cut and is not.
+`pull_requests.list_files` keeps `patch`, which is the answer the caller came
+for, under its own 12,000-character budget. `checks.list_for_ref` keeps
+`output.text`, the widest field on any row here, because this plugin has no
+check-run get, no annotations tool and no job-log tool, and `details_url` is the
+reporting app's own page rather than anything this connector can fetch — without
+it a run can say a check failed and not say why. `repositories.list` keeps
+`name` and `owner.login` beside `full_name`, because those are the two
+parameters every other tool in the plugin takes. Every string is bounded with a
+visible marker, so a cut is legible to the model instead of arriving later as a
+wrong answer.
+
 The GitHub plugin prompt treats metadata and code evidence as different things.
 When a repository is not named, the model searches the authorized set and
 chooses the best match from the request, work-stream context, pinned status,
@@ -1294,6 +1321,38 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-19 — GitHub list rows are declared, not passed through
+
+**What changed:** Every GitHub list tool now returns a declared set of fields
+rather than the object GitHub sent, via `projectFields` in
+`packages/connectors/src/provider-utils.ts`. The envelope, the paging, and the
+`appliedFilters` echo are unchanged. `truncateTextWithMarker` replaces the silent
+string cuts `boundGitHubValue` was making by discarding `truncateText`'s
+`truncated` flag.
+
+**Why:** A substream measurement found five GitHub list calls holding 5.1 MB of
+the 5.2 MB of model-facing payload it stored, at 24.5 KB per pull request and
+21.3 KB per workflow run. Nothing was unbounded: `perPage`, the character clamp,
+the array and depth clamps were all inside their limits, because every one of
+them bounds a row's length and the problem was its width.
+
+**Considered and rejected:** A smaller `perPage`, which leaves the bytes per
+useful fact unchanged and buys the same waste in more round trips. A byte
+ceiling on the result, which truncates the useful tail of a page to keep its
+useless head, and whose number is the team's rather than an implementer's per
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
+Dropping `checks.list_for_ref`'s `output.text` on width grounds, which review
+caught: it is the only failure diagnostic this plugin can read.
+
+**What a future change has to respect:** A row that drops an identifier another
+tool documents as copied from it is a broken tool, not a smaller one, and a row
+that drops a field with no other read path takes a capability with it. The
+adapter's repository access policy resolves GitHub's numeric repository id
+against the raw response before projection, so removing `id` from the
+model-facing row does not touch immutable-id authorization.
+
+PR [#842](https://github.com/juno-ai-labs/avalon/pull/842).
 
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
 
