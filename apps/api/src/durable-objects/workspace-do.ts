@@ -5927,17 +5927,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** Every Channel a Space holds, archived ones included; server-to-server. */
+  /** One page of the Channels a Space holds, archived ones included; server-to-server. */
   async listSpaceMembers(input: WorkspaceSpaceMembersRequest): Promise<WorkspaceSpaceMembersResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembersRequestSchema, input, "list_space_members");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
     if (refusal) return { ok: false, code: refusal };
-    const members = this.spaceStorage().members(request.userId, request.spaceId, request.reach);
-    return WorkspaceSpaceMembersResultSchema.parse(members === false
+    const page = this.spaceStorage().members(
+      request.userId, request.spaceId, request.reach, request.cursor,
+    );
+    return WorkspaceSpaceMembersResultSchema.parse(page === false
       ? { ok: false, code: "space_not_found" }
-      : { ok: true, members });
+      : { ok: true, members: page.members, nextCursor: page.nextCursor });
   }
 
   /** The active Spaces one Channel currently sits in. */
@@ -6032,7 +6034,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       WorkspaceSpaceIntentReceiptRequestSchema, input, "record_space_intent_receipt",
     );
     this.assertWorkspace(request.workspaceId);
-    this.spaceStorage().settleIntent(request.operationId, request.receipt, request.settled);
+    this.spaceStorage().settleIntent(
+      request.operationId, request.receipt, request.settled, Date.now(), request.cursor,
+    );
     return { recorded: true };
   }
 

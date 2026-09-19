@@ -276,8 +276,7 @@ export class SpaceService {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
     }
-    const members = await this.memberChannels(spaceId);
-    await this.preflightContainment(members.map((member) => member.workstreamId), input);
+    await this.preflightContainment(spaceId, input);
 
     const operationId = uuidV7();
     const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
@@ -296,31 +295,36 @@ export class SpaceService {
     for (const userId of removed) await spaceClient.removeParticipant(userId);
 
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const { workstreamId, membershipGeneration } of members) {
-      // The Space, re-read each time round. Every step below is a cross-object
-      // await, so a later audience change can accept and overtake this one part
-      // way through the walk; carrying on would leave the Channels behind it on
-      // a roster nobody asked for. Abandoning here is safe because the newer
-      // change walks every member itself.
-      if ((await this.summary(spaceId)).revision !== updated.revision) {
-        await this.recordReceipt(operationId, "audience_superseded", true);
-        return this.summary(spaceId);
-      }
-      // The revision travels with the retraction as well as the application:
-      // the retraction deletes the row the application's fence reads, so
-      // without it an older convergence would be refused by nothing.
-      await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), updated.revision);
-      await access.applySpaceSource(workstreamId, {
-        spaceId,
-        scope: input.scope,
-        participantUserIds: [...requested].map(asUserId),
-        spaceRevision: updated.revision,
-        membershipGeneration,
-        operationId: uuidV7(),
-      });
-      await this.recordReceipt(operationId, `audience:${workstreamId}`, false);
-    }
-    await this.recordReceipt(operationId, "audience_settled", true);
+    const walk = await this.walkMembers({
+      spaceId,
+      operationId,
+      pageReceipt: "audience_page",
+      cursor: null,
+      step: async ({ workstreamId, membershipGeneration }) => {
+        // The Space, re-read each time round. Every step below is a
+        // cross-object await, so a later audience change can accept and
+        // overtake this one part way through the walk; carrying on would leave
+        // the Channels behind it on a roster nobody asked for. Abandoning here
+        // is safe because the newer change walks every member itself.
+        if ((await this.summary(spaceId)).revision !== updated.revision) return "abandon";
+        // The revision travels with the retraction as well as the application:
+        // the retraction deletes the row the application's fence reads, so
+        // without it an older convergence would be refused by nothing.
+        await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), updated.revision);
+        await access.applySpaceSource(workstreamId, {
+          spaceId,
+          scope: input.scope,
+          participantUserIds: [...requested].map(asUserId),
+          spaceRevision: updated.revision,
+          membershipGeneration,
+          operationId: uuidV7(),
+        });
+        return "continue";
+      },
+    });
+    await this.recordReceipt(
+      operationId, walk === "abandoned" ? "audience_superseded" : "audience_settled", true,
+    );
     return this.summary(spaceId);
   }
 
@@ -428,9 +432,17 @@ export class SpaceService {
       operationId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const { workstreamId } of await this.memberChannels(spaceId, "reaching")) {
-      await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
-    }
+    await this.walkMembers({
+      spaceId,
+      operationId,
+      pageReceipt: "archive_page",
+      reach: "reaching",
+      cursor: null,
+      step: async ({ workstreamId }) => {
+        await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
+        return "continue";
+      },
+    });
     return this.settled(await workspace.finalizeSpaceArchive({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
@@ -457,16 +469,23 @@ export class SpaceService {
     // The memberships the restore just put back, each at the generation that
     // restore advanced it to — read after it, so the fence every application
     // carries is the row's own rather than a constant.
-    for (const { workstreamId, membershipGeneration } of await this.memberChannels(spaceId)) {
-      await access.applySpaceSource(workstreamId, {
-        spaceId,
-        scope: restored.scope,
-        participantUserIds: restored.participants.map((participant) => participant.userId),
-        spaceRevision: restored.revision,
-        membershipGeneration,
-        operationId: uuidV7(),
-      });
-    }
+    await this.walkMembers({
+      spaceId,
+      operationId: null,
+      pageReceipt: "restore_page",
+      cursor: null,
+      step: async ({ workstreamId, membershipGeneration }) => {
+        await access.applySpaceSource(workstreamId, {
+          spaceId,
+          scope: restored.scope,
+          participantUserIds: restored.participants.map((participant) => participant.userId),
+          spaceRevision: restored.revision,
+          membershipGeneration,
+          operationId: uuidV7(),
+        });
+        return "continue";
+      },
+    });
     return this.summary(spaceId);
   }
 
@@ -540,7 +559,7 @@ export class SpaceService {
   }
 
   /**
-   * Every Channel the Space holds, archived ones included.
+   * One page of the Channels the Space holds, archived ones included.
    *
    * `reach` is the difference between the Channels a surface would call members
    * and the Channels this Space's access source is still on. A retraction
@@ -548,18 +567,72 @@ export class SpaceService {
    * flips a membership out of `active` — so an archive that asked for the
    * default set would walk nothing.
    */
-  async memberChannels(
+  async memberPage(
     spaceId: SpaceId,
     reach: SpaceMembershipReach = "active",
-  ): Promise<SpaceMember[]> {
+    cursor: string | null = null,
+  ): Promise<{ members: SpaceMember[]; nextCursor: string | null }> {
     const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       reach,
+      cursor,
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
-    return result.members;
+    return { members: result.members, nextCursor: result.nextCursor };
+  }
+
+  /**
+   * Carry one staged operation to every member Channel, a page at a time.
+   *
+   * The one walk an audience change, an archive and a restore all take, and the
+   * one the resume takes for them — which is the point of it being a function
+   * rather than a loop written out three times. A request and its resume that
+   * walked differently are two implementations of the same convergence, and the
+   * resume is the one nobody watches.
+   *
+   * Paged, and the page is recorded on the intent before the next one starts.
+   * Each member Channel costs a retraction and an application — several
+   * cross-object awaits each — so an unbounded walk is not a slow invocation
+   * but one that runs out of subrequests, and before this the resume re-read
+   * the whole member list and started again at the first Channel: every
+   * redelivery redoing the same prefix and dying in the same place. A Space
+   * under the ceiling still completes inside the request, exactly as it did.
+   * Past it the invocation fails, the intent stays unsettled with its cursor,
+   * and the alarm's resume continues from the page it names.
+   *
+   * The last page writes no cursor. The caller settles the intent immediately
+   * after, and a settle that does not land leaves the cursor at the start of
+   * that page — so the resume redoes one page rather than the whole walk.
+   */
+  private async walkMembers(input: {
+    spaceId: SpaceId;
+    /**
+     * The intent whose cursor this walk advances.
+     *
+     * `null` for a walk with no intent behind it, which today is `restore`
+     * alone — it stages nothing, so there is nowhere to record a page and its
+     * walk has to finish inside the invocation that started it.
+     */
+    operationId: string | null;
+    pageReceipt: string;
+    reach?: SpaceMembershipReach;
+    cursor: string | null;
+    step: (member: SpaceMember) => Promise<"continue" | "abandon">;
+  }): Promise<"walked" | "abandoned"> {
+    let cursor = input.cursor;
+    for (;;) {
+      const page = await this.memberPage(input.spaceId, input.reach ?? "active", cursor);
+      for (const member of page.members) {
+        if (await input.step(member) === "abandon") return "abandoned";
+      }
+      if (page.nextCursor === null) return "walked";
+      cursor = page.nextCursor;
+      if (input.operationId !== null) {
+        await this.recordReceipt(input.operationId, input.pageReceipt, false, cursor);
+      }
+    }
   }
 
   /**
@@ -583,6 +656,7 @@ export class SpaceService {
     workstreamId: WorkstreamId | null;
     spaceRevision: number;
     membershipGeneration: number | null;
+    cursor: string | null;
   }): Promise<void> {
     const workspace = await this.workspace();
     // Settling an intent is what takes it out of the alarm's claim, so giving
@@ -653,17 +727,26 @@ export class SpaceService {
           current_revision: space.revision,
         });
       }
-      for (const { workstreamId, membershipGeneration } of await this.memberChannels(intent.spaceId)) {
-        await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
-        await access.applySpaceSource(workstreamId, {
-          spaceId: intent.spaceId,
-          scope: space.scope,
-          participantUserIds: space.participants.map((participant) => participant.userId),
-          spaceRevision: space.revision,
-          membershipGeneration,
-          operationId: uuidV7(),
-        });
-      }
+      // From the page the request got to, not from the first Channel: the same
+      // walk the request takes, continued rather than restarted.
+      await this.walkMembers({
+        spaceId: intent.spaceId,
+        operationId: intent.operationId,
+        pageReceipt: "audience_page",
+        cursor: intent.cursor,
+        step: async ({ workstreamId, membershipGeneration }) => {
+          await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
+          await access.applySpaceSource(workstreamId, {
+            spaceId: intent.spaceId,
+            scope: space.scope,
+            participantUserIds: space.participants.map((participant) => participant.userId),
+            spaceRevision: space.revision,
+            membershipGeneration,
+            operationId: uuidV7(),
+          });
+          return "continue";
+        },
+      });
       await this.recordReceipt(
         intent.operationId,
         superseded ? "audience_superseded" : "audience_settled",
@@ -676,9 +759,17 @@ export class SpaceService {
       // this intent already flipped every membership to `removing`, so the
       // active set is empty and the Channels whose source is still live are
       // exactly the ones this read names.
-      for (const { workstreamId } of await this.memberChannels(intent.spaceId, "reaching")) {
-        await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
-      }
+      await this.walkMembers({
+        spaceId: intent.spaceId,
+        operationId: intent.operationId,
+        pageReceipt: "archive_page",
+        reach: "reaching",
+        cursor: intent.cursor,
+        step: async ({ workstreamId }) => {
+          await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
+          return "continue";
+        },
+      });
       await workspace.finalizeSpaceArchive({
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         userId: asUserId(this.auth.userId),
@@ -693,13 +784,19 @@ export class SpaceService {
     await abandon(`unsupported_${intent.kind}`);
   }
 
-  private async recordReceipt(operationId: string, receipt: string, settled: boolean): Promise<void> {
+  private async recordReceipt(
+    operationId: string,
+    receipt: string,
+    settled: boolean,
+    cursor?: string | null,
+  ): Promise<void> {
     await (await this.workspace()).recordSpaceIntentReceipt({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       operationId,
       receipt,
       settled,
+      ...(cursor === undefined ? {} : { cursor }),
     });
   }
 
@@ -712,22 +809,33 @@ export class SpaceService {
    * that changes the audience; this exists because those operations run one
    * Channel at a time and the first failure would leave the earlier Channels
    * already wider.
+   *
+   * It reads pages but carries no cursor, and that is not the oversight it
+   * looks like. There is no intent yet — this runs in front of the write that
+   * stages one — and there is nothing to resume: the pass writes nothing, so a
+   * failure part way through refuses the request and the next attempt asks
+   * every Channel again.
    */
   private async preflightContainment(
-    members: readonly WorkstreamId[],
+    spaceId: SpaceId,
     audience: UpdateSpaceAudienceRequest,
   ): Promise<void> {
     const proposed = audience.scope === "workspace"
       ? { scope: "workspace" as const }
       : { scope: "personal" as const, userIds: [...audience.participantUserIds] };
-    for (const workstreamId of members) {
-      const contains = await (await this.conversationStub(workstreamId)).previewAudienceContainment({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        workstreamId,
-        audience: proposed,
-      });
-      if (contains === false) throw spaceRefusal("space_membership_content_fence", "");
-    }
+    let cursor: string | null = null;
+    do {
+      const page = await this.memberPage(spaceId, "active", cursor);
+      for (const { workstreamId } of page.members) {
+        const contains = await (await this.conversationStub(workstreamId)).previewAudienceContainment({
+          workspaceId: asWorkspaceId(this.auth.workspaceId),
+          workstreamId,
+          audience: proposed,
+        });
+        if (contains === false) throw spaceRefusal("space_membership_content_fence", "");
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
   }
 
   private async assertResourceAudience(space: SpaceSummary, resourceId: string): Promise<void> {

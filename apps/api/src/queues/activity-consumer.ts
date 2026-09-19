@@ -626,6 +626,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
         workstreamId: intent.workstreamId,
         spaceRevision: intent.spaceRevision,
         membershipGeneration: intent.membershipGeneration,
+        cursor: intent.cursor,
       });
       message.ack();
     } catch (error) {
