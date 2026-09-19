@@ -33,6 +33,7 @@ import {
   conversationEffectHash,
   type ParentEffect,
   type SpaceId,
+  type UserId,
   type WorkstreamId,
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
@@ -48,6 +49,9 @@ import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ba00");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000ba01");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ba02";
+/** The second member: the one a resume can find degraded rather than absent. */
+const MEMBER = asUserId("00000000-0000-7000-8000-00000000ba03");
+const MEMBER_SESSION_ID = "00000000-0000-7000-8000-00000000ba04";
 
 const AUTH: AuthContext = {
   sessionId: SESSION_ID,
@@ -112,10 +116,17 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'owner', 'member')`)
       .bind(WORKSPACE_ID, OWNER),
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
+      .bind(WORKSPACE_ID, MEMBER),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, OWNER, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(MEMBER_SESSION_ID, MEMBER, WORKSPACE_ID),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
@@ -163,11 +174,11 @@ async function publishChannel(workstreamId: WorkstreamId): Promise<void> {
   });
 }
 
-async function reserve(name: string): Promise<SpaceId> {
+async function reserve(name: string, scope: "workspace" | "personal" = "workspace"): Promise<SpaceId> {
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId: OWNER,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
   return asSpaceId(result.space.id);
@@ -226,11 +237,15 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
 }
 
 /** Apply and confirm one Space's source, the two calls the service makes. */
-async function seatSpaceSource(workstreamId: WorkstreamId, spaceId: SpaceId): Promise<void> {
+async function seatSpaceSource(
+  workstreamId: WorkstreamId,
+  spaceId: SpaceId,
+  audience: { scope: "workspace" | "personal"; participantUserIds: UserId[] } =
+    { scope: "workspace", participantUserIds: [OWNER] },
+): Promise<void> {
   const address = { workspaceId: WORKSPACE_ID, parentId: workstreamId };
   const source = {
-    scope: "workspace" as const,
-    participantUserIds: [OWNER],
+    ...audience,
     spaceRevision: 1,
     membershipGeneration: 1,
     channel: observedChannel,
@@ -262,6 +277,20 @@ async function operationCounts(workstreamIds: readonly WorkstreamId[]): Promise<
     )));
   }
   return counts;
+}
+
+/**
+ * One Space's source on a member Channel, readers included.
+ *
+ * `spaceSourceIds` answers which Spaces are seated; this answers *who they
+ * seat*, which is the half a retract-then-apply can empty while leaving the
+ * source itself in place.
+ */
+async function spaceSource(workstreamId: WorkstreamId, spaceId: SpaceId) {
+  const sources = await memberChannel(workstreamId).readAccessSources({
+    workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
+  });
+  return sources.spaces.find((source) => source.spaceId === spaceId);
 }
 
 async function spaceSourceIds(workstreamId: WorkstreamId): Promise<string[]> {
@@ -451,5 +480,102 @@ describe("a Space fan-out over more members than one page", () => {
     });
     expect(row.rows[0]).toMatchObject({ state: "pending" });
     expect((row.rows[0] as { last_error_code: string | null }).last_error_code).toBeTruthy();
+  }, 60_000);
+
+  it("given a requester who has lost their reach, when the intent resumes, then it refuses by name and every member keeps its readers", async () => {
+    const spaceId = await reserve("Side work", "personal");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(spaceId, channel);
+    await openMemberChannel(channel);
+
+    // Both people are participants, and both are seated on the member Channel
+    // by the Space. That roster is what the resume below would otherwise
+    // withdraw.
+    const joined = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!joined.ok) throw new Error(joined.code);
+    await seatSpaceSource(channel, spaceId, {
+      scope: "personal", participantUserIds: [OWNER, MEMBER],
+    });
+
+    // The second member stages an audience change of their own, as a
+    // participant may, and its walk never reaches the Channel.
+    const operationId = crypto.randomUUID();
+    const staged = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      spaceId,
+      operationId,
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!staged.ok) throw new Error(staged.code);
+
+    // Then they are taken out of the Space. They still reach it — the Channel
+    // in it is Organization-wide and they can read it — so the read the resume
+    // makes no longer refuses them: it answers `through_channel`, whose
+    // participant list is empty by design.
+    const narrowed = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+    if (!narrowed.ok) throw new Error(narrowed.code);
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId,
+    })).resolves.toMatchObject({ ok: true, space: { reach: "through_channel", participants: [] } });
+
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      attempts: 1,
+      body: {
+        type: "space_intent_resume",
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        operationId,
+        kind: "audience",
+        spaceId,
+        workstreamId: null,
+        spaceRevision: staged.space.revision,
+        membershipGeneration: null,
+        cursor: null,
+        requestedByUserId: MEMBER,
+      },
+    }]);
+    await consumeActivityQueue(batch, env);
+
+    // The readers the Space supplies are exactly the ones it supplied before.
+    // The walk this resume would have taken retracts the source and re-applies
+    // it from the requester's own view of the Space, which for this requester
+    // names nobody — so the Channel would keep the source and lose everyone
+    // seated through it, and the operation would report success.
+    expect(await spaceSource(channel, spaceId)).toMatchObject({
+      scope: "personal",
+      participantUserIds: [OWNER, MEMBER],
+    });
+
+    // Terminal, and said on the row: the intent is settled with the reason, so
+    // the alarm has nothing left to republish and the queue has nothing to
+    // retry.
+    const row = await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code, receipts_json FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    });
+    expect(row.rows[0]).toMatchObject({
+      state: "settled",
+      last_error_code: "requester_reach_lost",
+    });
+    expect(String((row.rows[0] as { receipts_json: string }).receipts_json))
+      .toContain("requester_reach_lost");
+    const outcome = await getQueueResult(batch, createExecutionContext());
+    expect(outcome.retryMessages).toHaveLength(0);
   }, 60_000);
 });

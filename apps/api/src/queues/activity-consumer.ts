@@ -619,7 +619,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       principal: "connector",
     };
     try {
-      await new SpaceService(env, auth).resumeIntent({
+      const resumed = await new SpaceService(env, auth).resumeIntent({
         operationId: intent.operationId,
         kind: intent.kind,
         spaceId: intent.spaceId,
@@ -628,6 +628,21 @@ async function consumeOne(message: Message<unknown>, env: Env,
         membershipGeneration: intent.membershipGeneration,
         cursor: intent.cursor,
       });
+      // An intent that settled without doing its work is the one outcome
+      // nothing else would say out loud: the row reads `settled`, the queue is
+      // clear, and the operation the person asked for never reached its member
+      // Channels. Named here rather than inside the service because this is
+      // where the failing resume is already logged, and a reader comparing the
+      // two lines should not have to know which layer wrote which.
+      if (resumed.outcome === "abandoned") {
+        logWarn(env, "space_intent_resume_abandoned", {
+          workspace_id: intent.workspaceId,
+          space_id: intent.spaceId,
+          operation_id: intent.operationId,
+          kind: intent.kind,
+          reason: resumed.reason,
+        });
+      }
       message.ack();
     } catch (error) {
       if (isRetirementRefusal(error)) {

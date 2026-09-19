@@ -2419,10 +2419,13 @@ export class WorkspaceSpaceStorage {
    * finish without saying what stopped it.
    *
    * It does not settle anything and does not touch the retry gate. A resume
-   * that fails is still a resume to retry; the one condition that ends an
-   * intent without success is the requester no longer being an active member,
-   * which the consumer settles by name — the same shape as the default
-   * target's one named non-retryable condition, and the only one either has.
+   * that fails is still a resume to retry. Two conditions end an intent
+   * without success instead, and neither is retryable because no later
+   * delivery gives the requester back what they lost: they are no longer an
+   * active member of the Organization, which the consumer settles by name, and
+   * they no longer have an editable reach into the Space, which
+   * `SpaceService.resumeIntent` settles by name — writing the code here first,
+   * because this statement only matches a row that is still unsettled.
    */
   recordIntentFailure(operationId: string, errorCode: string, now = Date.now()): void {
     if (!this.ready()) return;
