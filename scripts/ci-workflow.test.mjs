@@ -163,7 +163,14 @@ test('the secret scan covers what this pull request adds, and nothing else', asy
   const start = workflow.indexOf('\n  secrets:');
 
   assert.notEqual(start, -1, 'CI must define the secrets job');
-  const secretsJob = workflow.slice(start);
+  // Bounded at both ends, like the `verify` test above. `secrets` is the last
+  // job today, and an unbounded slice would quietly re-aim two of these guards
+  // at whatever gets appended after it: a second `gitleaks detect` would fail
+  // the count for the wrong reason, and a `fetch-depth: 0` in the new job would
+  // satisfy the assertion below even after this checkout lost it.
+  const body = workflow.indexOf('\n', start + 1) + 1;
+  const nextJob = workflow.slice(body).search(/^ {2}\S/mu);
+  const secretsJob = nextJob === -1 ? workflow.slice(start) : workflow.slice(start, body + nextJob);
 
   assert.match(secretsJob, /^ {10}fetch-depth: 0$/mu);
   assert.match(secretsJob, /^ {10}BASE_REF: \$\{\{ github\.base_ref \}\}$/mu);
@@ -180,7 +187,9 @@ test('the secret scan covers what this pull request adds, and nothing else', asy
     'an unresolvable range must fail the job rather than pass it silently',
   );
   assert.equal(
-    secretsJob.match(/gitleaks" detect/gu).length,
+    // `match` with /g returns null rather than [], so the message below is what
+    // a removed invocation reports instead of a TypeError.
+    (secretsJob.match(/gitleaks" detect/gu) ?? []).length,
     1,
     'CI must keep a single Gitleaks invocation, so the range cannot be bypassed by a second one',
   );
