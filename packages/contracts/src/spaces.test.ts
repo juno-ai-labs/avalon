@@ -38,6 +38,7 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
     status: "active",
     systemRole: null,
     revision: 1,
+    reach: "participant",
     participants: [{ userId: USER_ID }],
     channelCount: 0,
     createdAt: "2026-09-19T00:00:00.000Z",
@@ -112,6 +113,21 @@ describe("space contracts", () => {
     const parsed = SpaceSummarySchema.parse(summary());
     expect(parsed.defaultResourceIds).toEqual([]);
     expect(parsed.defaultSidekickIds).toEqual([]);
+  });
+
+  it("given the Space summary, when its reach is parsed, then only the three relationships pass", () => {
+    for (const reach of ["participant", "organization", "through_channel"]) {
+      expect(SpaceSummarySchema.safeParse(summary({ reach })).success).toBe(true);
+    }
+    // Closed, because it is what every surface decides from: a value a reader
+    // does not know would be read as one it does, and the one it would be read
+    // as is the permissive one.
+    expect(SpaceSummarySchema.safeParse(summary({ reach: "guest" })).success).toBe(false);
+    // Required rather than defaulted. A default here is a server that forgot
+    // to say, answered with the relationship that draws every control.
+    const withoutReach = summary();
+    delete withoutReach["reach"];
+    expect(SpaceSummarySchema.safeParse(withoutReach).success).toBe(false);
   });
 
   it("given one Space authority snapshot, when active and inactive waterlines differ, then it is rejected", () => {
