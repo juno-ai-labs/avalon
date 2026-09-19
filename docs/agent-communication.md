@@ -117,6 +117,13 @@ consequence is that the transcript records only two of a worker's endings, which
 is why the feed has no general "finished" row. Changing it means accepting a
 model-visible message per completed run.
 
+`AGENT_HANDOFF_TOOL_NAMES` includes the pre-rename spellings
+(`agents_send_message`, `agents_reply`, `agents_start_agent`). It is matched
+against stored `tool_effects` rows, which keep the name they were written
+under, so a run spanning the rename would otherwise settle as having handed off
+nothing and its owner would be told a worker that did reply finished without
+replying.
+
 In the feed, a delivered message is machinery rather than a note to the room:
 `AGENT_MESSAGE_CONTENT_KIND`, `agentMessageNotice` and the wire-name lists (all
 in `packages/contracts/src/agent-communication.ts`, which is also where the API
