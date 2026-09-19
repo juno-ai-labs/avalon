@@ -735,9 +735,17 @@ export class SpaceService {
     return parsed;
   }
 
-  /** The Space's hidden main conversation: its participants and resources. */
+  /**
+   * The Space's hidden main conversation: its participants and resources.
+   *
+   * Addressed as a Space rather than as a Channel, which is what makes every
+   * *other* route into this object refuse: a product request that says
+   * `workstream` about an id the object knows is a Space is answered as not
+   * found, so a Space id on `/workstreams/:id` cannot archive General or make
+   * it personal behind the Space authority's back.
+   */
   private spaceConversation(spaceId: SpaceId): WorkstreamObjectClient {
-    return new WorkstreamObjectClient(this.env, this.auth, spaceId);
+    return WorkstreamObjectClient.forSpace(this.env, this.auth, spaceId);
   }
 
   private conversationStub(workstreamId: string) {
