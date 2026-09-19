@@ -708,9 +708,15 @@ describe('work-stream launch surface geometry', () => {
   // The header is the exception, and the only one. A grid track sized `auto`
   // cannot be animated, so the launching header states its own height as the
   // endpoint the animation grows to — which has to be the destination's row.
-  it('grows its header to exactly the work-stream header row', () => {
+  //
+  // The destination's row is the one that *applies*, not the one underneath it:
+  // every conversation renders `.grokbot-workstream-header`, whose `:has()` rule
+  // overrides the base row. Asserted against the base row, this test held at 55px
+  // while the screen it hands over to went to 44, and the 11px showed up as the
+  // optimistic turn stepping upward when the created conversation arrived.
+  it('grows its header to exactly the header row of the screen it becomes', () => {
     const launching = rule('.workstream-launch-screen.is-launching > .launch-header');
-    const destinationRows = rule('.workstream-screen');
+    const destinationRows = rule('.workstream-screen:has(> .grokbot-workstream-header)');
 
     // `rule()` returns null for a selector that is not in the file, and
     // `toContain` on null fails as "expected null to include …" — which names
@@ -719,8 +725,8 @@ describe('work-stream launch surface geometry', () => {
     // rule's contents below says first that the rule is there.
     expect(launching).not.toBeNull();
     expect(destinationRows).not.toBeNull();
-    expect(launching).toContain('height: 55px;');
-    expect(destinationRows).toContain('grid-template-rows: 55px minmax(0, 1fr) auto;');
+    expect(launching).toContain('height: 44px;');
+    expect(destinationRows).toContain('grid-template-rows: 44px minmax(0, 1fr) auto;');
   });
 
   // Everything else is inherited, so the launching state must state none of it.
@@ -763,6 +769,31 @@ describe('work-stream launch surface geometry', () => {
     // The unconditional rule is what both states take, so any alignment in it
     // is one the launching state cannot shed.
     expect(column).not.toContain('justify-content:');
+  });
+
+  /**
+   * The branch turns leave on the submit keystroke, and the block is one turn
+   * tall or five. A `max-height` ceiling would be a number nobody can justify
+   * and the wrong duration for the short case; a grid row eased from `1fr` to
+   * `0fr` closes whatever is in it. jsdom computes no layout, so the rule is
+   * what a component test cannot hold onto.
+   */
+  it('collapses the branch turns on a grid row rather than a guessed height', () => {
+    const slot = rule('.substream-branch-context-slot');
+    const leaving = rule('.workstream-launch-screen.is-launching .substream-branch-context-slot');
+    const clip = rule('.substream-branch-context-slot > *');
+
+    expect(slot).not.toBeNull();
+    expect(leaving).not.toBeNull();
+    expect(clip).not.toBeNull();
+    expect(slot).toContain('grid-template-rows: 1fr;');
+    expect(slot).toContain('transition: grid-template-rows');
+    expect(leaving).toContain('grid-template-rows: 0fr;');
+    expect(slot).not.toContain('max-height');
+    expect(leaving).not.toContain('max-height');
+    // Without this the row closes and the turns inside it keep drawing past it.
+    expect(clip).toContain('min-height: 0;');
+    expect(clip).toContain('overflow: hidden;');
   });
 
 });
@@ -1308,10 +1339,15 @@ describe('feed spacing is a step of the scale', () => {
    * outside `.virtual-message-row`, where the row rhythm cannot reach them
    * and the base rules now give a row no margin. Review found their rows
    * stacked flush; these are the gaps they state for themselves.
+   *
+   * The branch block and the opening turn are the one pair with no gap
+   * between them, because they are never both settled: the opening turn
+   * exists only while launching, and by then the block above it is closing.
    */
   it('spaces the launch surfaces\' rows, which sit outside the feed wrapper', () => {
     expect(rule('.substream-branch-context > * + *,\n.launch-arrival + .launch-arrival')).toContain('margin-top: var(--av-sys-space-block-gap);');
-    expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+    expect(rule('.substream-branch-context > .message-block + .message-block')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+    expect(preludes().filter((prelude) => /\.substream-branch-context(-slot)?\s*\+\s*\.launch-arrival/u.test(prelude))).toEqual([]);
   });
 
   /**

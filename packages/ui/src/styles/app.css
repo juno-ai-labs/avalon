@@ -6567,8 +6567,17 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* Collapsed rather than absent: a header that mounted at the swap would push
    the transcript down by its own height on the frame it arrived. Only the
    collapsed values are stated here — while launching the border and padding are
-   `.workstream-header`'s own. */
+   `.workstream-header`'s own.
+
+   `min-height` is the exception, and it has to be: this element borrows
+   `.workstream-header` for its dressing, and that rule's `min-height: 48px`
+   outranks a stated `height` in both directions. It held the collapsed header
+   open at 48px, so the launcher reserved a header's worth of empty pane it was
+   supposed to have none of, and it pinned the launching header at 48 where the
+   row it hands over to is 44. Released here rather than dropping the shared
+   class, which is also where the padding and the border come from. */
 .workstream-launch-screen > .launch-header {
+  min-height: 0;
   overflow: hidden;
   transition: height 220ms cubic-bezier(.32, .72, 0, 1);
 }
@@ -6582,10 +6591,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 /* The single launching value this block states, and it is the animation's
    endpoint rather than a style: a grid track sized `auto` cannot be animated,
-   so the header's own height is what grows. It has to equal the
-   `.workstream-screen` header row, and `app.css.node.test.ts` asserts that it does. */
+   so the header's own height is what grows. It has to equal the header row of
+   the screen this becomes, which is the one `.grokbot-workstream-header` sizes
+   — every conversation renders that header. It was 55px, the base row's height,
+   for as long as the newer header has been 44px, and those 11px were the last
+   thing still moving at the swap. `app.css.node.test.ts` now asserts this
+   against the row that applies rather than the row underneath it. */
 .workstream-launch-screen.is-launching > .launch-header {
-  height: 55px;
+  height: 44px;
 }
 
 /* Both layers share one grid cell, so the home content can fade out over the
@@ -6614,12 +6627,15 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
    the row rhythm does not reach them and the base rules give a row no margin
    of its own; they state the same two gaps here. A turn after a turn (the
-   provenance turns, and the opening turn after them) takes the turn gap; a
-   row after the opening turn (the work timer) takes the turn-to-event gap. */
+   provenance turns) takes the turn gap; a row after the opening turn (the work
+   timer) takes the turn-to-event gap.
+
+   Nothing is stated between the branch turns and the opening turn: the opening
+   turn exists only while launching, and by then the block above it is on its
+   way out, so a gap to it would be a gap to nothing that never eased away. */
 .substream-branch-context > * + *,
 .launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
-.substream-branch-context > .message-block + .message-block,
-.substream-branch-context + .launch-arrival { margin-top: var(--av-sys-space-stack-gap); }
+.substream-branch-context > .message-block + .message-block { margin-top: var(--av-sys-space-stack-gap); }
 
 @keyframes launch-arrival {
   from { opacity: 0; transform: translateY(7px); }
@@ -6716,6 +6732,30 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   mask-image: linear-gradient(to bottom, transparent 0, currentColor 72%);
   opacity: .72;
   pointer-events: none;
+}
+
+/* What a substream branches from is part of composing it, not part of the
+   substream, so it leaves on the keystroke that submits — the same exit the
+   banner above the composer makes, and for the same reason: from that keystroke
+   this surface is drawing what the created child will draw, and the child draws
+   its opening turn against the top of an empty transcript.
+
+   A grid row eased from `1fr` to `0fr` rather than a `max-height`, because this
+   block is one turn tall or five and a ceiling tall enough for five would be a
+   number nobody here can justify — and the wrong duration for one. The row's
+   own child does the clipping, so the turns inside keep their height while the
+   row that holds them closes. */
+.substream-branch-context-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms cubic-bezier(.32, .72, 0, 1), opacity 140ms ease;
+}
+
+.substream-branch-context-slot > * { min-height: 0; overflow: hidden; }
+
+.workstream-launch-screen.is-launching .substream-branch-context-slot {
+  grid-template-rows: 0fr;
+  opacity: 0;
 }
 
 /* Says what pressing enter will do, and offers the one way out that is not

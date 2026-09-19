@@ -105,7 +105,10 @@ What sits above that composer is the difference between the two entry points:
   faded out upward under a gradient mask and inert to the pointer. They say what
   is being branched out of. They are not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
-  those turns are the only part of it anybody is shown.
+  those turns are the only part of it anybody is shown. They are also part of
+  composing rather than part of the substream, so they leave on the keystroke
+  that submits: the block closes over 220ms and goes `inert` on the way, which
+  is the same exit the row above the composer makes.
 - **From the sidebar** — nothing, exactly as the work-stream launcher's body is
   empty. A substream started there branches from wherever the conversation has
   reached, so there is no particular moment to be looking at.
@@ -142,6 +145,10 @@ keystroke the surface is drawing what the created substream will draw. Bottom
 aligned through the launch, the typed turn sat just above the dock and jumped
 the height of the pane when the child arrived, which is the one jump this whole
 hand-off exists to remove.
+
+Nothing else moves at the swap either, and that is now measured rather than
+asserted: with the branch turns gone and the header grown to the row the created
+conversation uses, the typed turn is drawn at the same pixel on both sides of it.
 
 On submit the surface draws the typed turn and a work timer, and the substream
 is created behind them: `POST …/substreams/prepare` freezes and
@@ -551,33 +558,43 @@ substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
 
-### 2026-09-19 — The launching column flows from the top
+### 2026-09-19 — The launch surface draws the substream, from the keystroke
 
-**What changed:** `.substream-launch-column` states no alignment of its own; the
-bottom alignment now rides `.workstream-launch-screen:not(.is-launching)`. While
-somebody is composing, the branch turns still sit against the composer. From the
-submit keystroke the column flows from the top, which is what the created
-substream's transcript does.
+**What changed:** Two things the surface kept through the launch now belong to
+composing alone. `.substream-launch-column` states no alignment of its own — the
+bottom alignment rides `.workstream-launch-screen:not(.is-launching)` — and the
+branch turns sit in a slot that closes on submit, a grid row eased from `1fr` to
+`0fr`, marked `inert` as it goes. From that keystroke the column holds what the
+created substream holds, in the order and the place it will hold it.
 
 **Why:** The optimistic turn is the created substream's turn — the whole point of
 drawing it is that nothing moves when the child arrives. Bottom-aligned, it was
-drawn just above the dock and then jumped most of the pane's height at the swap,
-so the hand-off announced itself exactly where it was supposed to be invisible.
+drawn just above the dock and jumped most of the pane's height at the swap; with
+the branch turns still above it, it then jumped their height as well. The
+hand-off was announcing itself exactly where it was supposed to be invisible.
+With the header's endpoint corrected in
+[`workstream-creation.md`](workstream-creation.md), the turn is now drawn at the
+same pixel on both sides of the swap.
 
 **Considered and rejected:** Bottom-aligning the settled transcript to match the
-launch surface instead — that is the destination's geometry, shared with every
-other conversation, and the launch surface is the one that has to agree with it.
-Also rejected: stating `justify-content` under `.is-launching`, which is the copy
-of the destination's geometry that `app.css.node.test.ts` exists to keep out of
-this surface; the split is written on the resting state, as the dock and the
-header already are.
+launch surface — that is the destination's geometry, shared with every other
+conversation, and the launch surface is the one that has to agree with it.
+Stating `justify-content` under `.is-launching`, which is the copy of the
+destination's geometry that `app.css.node.test.ts` exists to keep out of this
+surface. Unmounting the branch turns on submit, which drops them on the frame
+the collapse was meant to animate. And a `max-height` ceiling for the collapse:
+the block is one turn tall or five, so a ceiling tall enough for five is a
+number nobody here can justify and the wrong duration for one —
+[`docs/adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
+is the rule it would have broken.
 
-**Consequences:** A substream branched *from a message* still shows its faded
-branch turns through the launch, so its opening turn is offset by their height
-until the child replaces them. That is smaller than the jump this removed and
-the same in kind: whether the branch context should leave on the submit keystroke
-— as the banner above the composer already does — is a decision nobody has made
-yet.
+**Consequences:** The branch turns are still in the DOM through the launch, so
+what they say stays visible for as long as it is true and no longer. `inert`
+carries the accessibility half of that, since a collapsed subtree left in the
+tree would still offer a branch point a reader can no longer see. Anything added
+to this column from here — a notice, a picker, a second context block — has to
+decide which side of the keystroke it lives on, because the surface after it is
+not a launcher any more.
 
 ### 2026-09-18 — Warm the reserved child during preparation
 
