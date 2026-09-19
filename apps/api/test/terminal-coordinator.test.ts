@@ -1213,6 +1213,41 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledTimes(2);
   });
 
+  it("lets a background agent settle a command that outran its lease", async () => {
+    const { objectStore } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID, "0");
+    const claimedAt = Date.parse("2026-08-13T12:00:00.000Z");
+    const deadlines = {
+      idleExpiresAt: claimedAt + 5 * 60_000, archiveDueAt: claimedAt + 60 * 60_000, expireDueAt: claimedAt + 30 * 24 * 60 * 60_000,
+    };
+    // The worker's run is in its own object; here it is known only by its lease.
+    await terminal.reserveFirstGeneration({
+      stableName: "owner-sandbox", authorityFingerprint: "authority", networkRevision: 1,
+      runId: workerRun, runSubstreamId: worker,
+      operationLeaseExpiresAt: claimedAt + TERMINAL_OPERATION_LEASE_MS, ...deadlines, now: claimedAt,
+    });
+    await terminal.attachProviderSandbox({ generation: 1, sandboxId: "sandbox-1", lifecycleState: "running", ...deadlines, now: claimedAt });
+    await expect(terminal.insertTask({
+      taskId: "task-long", runId: workerRun, runSubstreamId: worker, effectIntentId: "effect-long",
+      sandboxGeneration: 1, sandboxId: "sandbox-1", providerTaskName: "avalon-task-effect-long",
+      commandSha256: "command", commandDeadlineAt: claimedAt + 17 * 60_000, startedAt: claimedAt, now: claimedAt,
+    })).resolves.toBe(true);
+
+    // Seventeen minutes on the lease is past its deadline, and the command
+    // has just finished. The run that submitted it is the one that settles it.
+    const finishedAt = claimedAt + 17 * 60_000;
+    await expect(terminal.settleTask({
+      effectIntentId: "effect-long", runId: workerRun, sandboxGeneration: 1, sandboxId: "sandbox-1",
+      state: "completed", exitCode: 0, terminationReason: "exited",
+      stdoutHead: "", stdoutTail: "", stderrHead: "", stderrTail: "", stdoutBytes: 0, stderrBytes: 0,
+      completedAt: finishedAt, now: finishedAt,
+    })).resolves.toBe(true);
+    expect(workstreamObjectGet(objectStore, "SELECT state FROM terminal_tasks WHERE task_id = 'task-long'"))
+      .toEqual({ state: "completed" });
+  });
+
   it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const worker = "00000000-0000-4000-8000-000000000088";
