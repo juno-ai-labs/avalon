@@ -3283,6 +3283,26 @@ describe('the sidebar without a recency list', () => {
   });
 
   /**
+   * The state the removed list was the only thing describing.
+   *
+   * A member of a brand-new Organization sees Spaces, General, and "No
+   * channels" under it — and then, without this line, nothing: a sidebar that
+   * has stopped talking rather than one that is empty.
+   */
+  it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
+    renderSidebar({ spaces: [space()], workstreams: [] });
+
+    expect(screen.getByText('No channels yet')).toBeVisible();
+  });
+
+  it('given a member with a channel, when the sidebar is drawn, then it does not claim to be empty', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+  });
+
+  /**
    * The one-time cutover, with the desktop open.
    *
    * The Spaces section draws its opening card *instead of* the rows until the
