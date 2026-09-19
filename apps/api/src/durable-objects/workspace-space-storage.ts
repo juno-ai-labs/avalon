@@ -836,7 +836,8 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Every active Space each of these Channels sits in.
+   * Every active Space each of these Channels sits in, as this viewer may see
+   * them.
    *
    * One fan-in read rather than one per row: a directory page is up to 250
    * Channels and each may be in several Spaces, and asking per row would put
@@ -844,8 +845,13 @@ export class WorkspaceSpaceStorage {
    * its caller because it is a Space read, and every Space read goes through
    * {@link WorkspaceSpaceStorage.ready} — this one used to be the hole, reading
    * the Space tables straight out of the sidebar payload.
+   *
+   * Shaped for the viewer, because the ids ride a *Channel* that several people
+   * can read: a Channel in somebody's personal Space would otherwise put that
+   * Space's id, and its count, on every reader's row — the existence of a
+   * private Space and how many Channels are in it, to people who cannot see it.
    */
-  spaceIdsByChannel(workstreamIds: readonly string[]): Map<string, string[]> {
+  spaceIdsByChannel(userId: string, workstreamIds: readonly string[]): Map<string, string[]> {
     const byWorkstream = new Map<string, string[]>();
     if (!this.ready()) return byWorkstream;
     for (const chunk of boundParameterChunks(workstreamIds)) {
@@ -856,9 +862,14 @@ export class WorkspaceSpaceStorage {
         `SELECT membership.workstream_id, membership.space_id
            FROM space_channel_memberships membership
            JOIN workspace_space_directory space ON space.space_id = membership.space_id
+           LEFT JOIN workspace_space_viewers viewer
+             ON viewer.space_id = space.space_id
+            AND viewer.user_id = ? AND viewer.is_participant = 1
           WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY membership.workstream_id, membership.space_id`,
+        userId,
         ...chunk,
       ).toArray()) {
         const existing = byWorkstream.get(row.workstream_id);
@@ -869,18 +880,9 @@ export class WorkspaceSpaceStorage {
     return byWorkstream;
   }
 
-  /** The active Spaces a Channel is in, whether or not the reader can see them. */
-  channelSpaceIds(workstreamId: string): string[] {
-    if (!this.ready()) return [];
-    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT membership.space_id
-         FROM space_channel_memberships membership
-         JOIN workspace_space_directory space ON space.space_id = membership.space_id
-        WHERE membership.workstream_id = ? AND membership.state = 'active'
-          AND space.archived_at IS NULL
-        ORDER BY membership.space_id`,
-      workstreamId,
-    ).toArray().map((row) => row.space_id);
+  /** The active Spaces a Channel is in, as this viewer may see them. */
+  channelSpaceIds(userId: string, workstreamId: string): string[] {
+    return this.spaceIdsByChannel(userId, [workstreamId]).get(workstreamId) ?? [];
   }
 
   prepareMembership(

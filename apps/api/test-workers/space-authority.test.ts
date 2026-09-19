@@ -506,6 +506,32 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
+  it("given a Channel in a personal Space, when another member reads it, then that Space is not named", async () => {
+    const personal = await reserve("Side work", "personal");
+    const organization = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(personal, CHANNEL_A);
+    await place(organization, CHANNEL_A);
+
+    // The ids ride a *Channel*, which several people read. A personal Space's
+    // id on somebody else's row is the existence of a private Space — and,
+    // through `channelCount`, how much is in it — leaking to a reader who
+    // cannot see it.
+    await expect(workspace().channelSpaces({
+      workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
+    })).resolves.toEqual({ spaceIds: [personal, organization].sort() });
+    await expect(workspace().channelSpaces({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, workstreamId: CHANNEL_A,
+    })).resolves.toEqual({ spaceIds: [organization] });
+
+    // And on the directory row itself, which is where a client reads them.
+    const { socket, sidebar } = await connectViewer(MEMBER, "cf14");
+    expect(sidebar.workstreams.items).toMatchObject([
+      { id: CHANNEL_A, spaceIds: [organization] },
+    ]);
+    socket.close();
+  });
+
   it("given a Channel already in a Space, when it is added again, then the add succeeds", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
