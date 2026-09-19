@@ -155,7 +155,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const channelIds = (channelPages.data?.pages ?? []).flatMap((page) => page.items as string[]);
   const placed = channelIds
     .flatMap((id) => (workstreams.data ?? []).find((workstream) => workstream.id === id) ?? []);
-  const unresolved = channelIds.length - placed.length;
   const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
   const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
   const resourcesById = new Map((resources.data?.items ?? []).map((resource) => [resource.id, resource]));
@@ -281,10 +280,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                     removeDisabled={!editable || saving}
                   />
                 ))}
-                {/* The page is a list of ids; a Channel this device has not
-                    loaded a summary for cannot be named, and inventing a row
-                    for it would be a row nobody could open. */}
-                {unresolved > 0 && <p className="space-dashboard-muted">{unresolved} more channel{unresolved === 1 ? '' : 's'} in this space aren’t loaded on this device yet.</p>}
               </div>}
           {channelPages.hasNextPage && (
             <p className="space-dashboard-muted">

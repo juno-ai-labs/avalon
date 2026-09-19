@@ -309,16 +309,16 @@ describe('the Spaces sidebar section', () => {
     expect(links.map((link) => link.textContent)).toEqual(['Newer', 'Older']);
   });
 
-  // The sidebar holds one page of the Organization's Channels; the Space's own
-  // count is the authority on how many it has. An expansion that listed only
-  // what this device happens to hold would read as a smaller Space.
+  // The sidebar holds one page of the Organization's Channels, so an expansion
+  // can list fewer than the Space has. It says nothing rather than claiming the
+  // Space is empty; the count is not viewer-scoped, so it cannot say a number.
   it('given a member outside the loaded sidebar page, when the space expands, then it does not claim to be empty', () => {
     renderSection({ spaces: [space(hiring.id, 'Hiring', { channelCount: 1 })], workstreams: [] });
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
 
-    expect(screen.getByText('1 channel; open this space to see all')).toBeVisible();
     expect(screen.queryByText('No channels')).not.toBeInTheDocument();
+    expect(screen.queryByText(/open this space to see all/u)).not.toBeInTheDocument();
   });
 
   it('given a dragged channel, when it is dropped on a space, then membership is requested', async () => {
