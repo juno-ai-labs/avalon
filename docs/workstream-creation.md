@@ -45,10 +45,12 @@ and composer dock:
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
-  expands to 44px around a title skeleton, the body holds a transcript, and the
+  is 44px around a title skeleton, the body holds a transcript, and the
   participant row collapses. 44px because that is the row the conversation this
   becomes actually uses: `.grokbot-workstream-header`, which every conversation
-  renders, takes the screen's header track down from the base 55px.
+  renders, takes the screen's header track down from the base 55px. The header
+  takes that height on the frame the class lands rather than growing into it;
+  only the collapse back, which the failure path takes, is eased.
 
 The launching state deliberately declares no geometry of its own. Because its
 root carries `workstream-screen`, it inherits that screen's dock padding and
@@ -192,9 +194,15 @@ than whichever rejection landed first.
   styling `.is-launching` directly — will drift from `.workstream-screen` and
   reintroduce a visible jump at the navigation, which no component test can see.
   The header's height is the single exception, because a grid track sized `auto`
-  cannot be animated: it names the destination's row as a number, and the test
-  that holds it there has to read the row that *applies* to the destination
-  rather than the one underneath it.
+  cannot take a number from the screen it becomes: the header names the
+  destination's row itself, and the test that holds it there has to read the row
+  that *applies* to the destination rather than the one underneath it.
+- **Nothing the optimistic turn's position depends on may be eased into place.**
+  The surface does not decide when the swap happens — creation can finish in one
+  round trip — so a transition the turn's geometry rides is a jump whose size is
+  whatever was left of it. Motion is for things the turn does not sit on: the
+  dock's participant row, which is below the transcript, and the turn's own 7px
+  arrival.
 - **`launching` is set in the same commit as the request, and cleared on
   failure.** An optimistic turn stands for a work stream that does not exist; it
   cannot remain on screen next to an error explaining why it never will.
@@ -396,31 +404,42 @@ see
 
 ## Changelog
 
-### 2026-09-19 — The launching header grows to the row that actually applies
+### 2026-09-19 — The launching header is the destination's row, immediately
 
 **What changed:** The launching header's height is 44px, the row
 `.grokbot-workstream-header` gives the conversation screen, rather than 55px,
-the base row underneath it. `.workstream-launch-screen > .launch-header` also
-releases the `min-height: 48px` it inherits from the `.workstream-header` class
-it borrows its dressing from.
+the base row underneath it, and it takes that height on the frame `is-launching`
+lands rather than growing into it over 220ms — the transition now rides
+`:not(.is-launching)`, so only the collapse back is eased.
+`.workstream-launch-screen > .launch-header` also releases the `min-height: 48px`
+it inherits from the `.workstream-header` class it borrows its dressing from.
 
 **Why:** The endpoint had been the base row since before the newer header
 existed, and `min-height` outranked both stated heights anyway — so the header
 never collapsed while composing (the launcher reserved a header's worth of empty
-pane) and sat at 48px while launching against a destination of 44. Those pixels
-were what was left moving at the swap once the optimistic turn was drawn in the
-right place.
+pane) and sat at 48px while launching against a destination of 44. Releasing the
+`min-height` made the growth real for the first time, and review caught what that
+exposed: the surface does not decide when the swap happens. `prepare` returns an
+already-prepared receipt without doing any work, so a retry can finish inside
+220ms, and a header caught half-grown hands its transcript to a 44px row. A
+transition the optimistic turn's position rides is a jump whose size is whatever
+was left of it.
 
-**Considered and rejected:** Dropping the shared `.workstream-header` class from
-the launch header, which is also where its padding and border come from; and
-sizing the launching header from the destination at runtime, which is a
-measurement to keep in sync in place of a number the test already pins.
+**Considered and rejected:** Gating the hand-off on `transitionend` — it makes
+navigation wait on motion that a reduced-motion setting removes entirely and an
+interrupted transition never finishes. Dropping the shared `.workstream-header`
+class, which is also where the header's padding and border come from. And sizing
+the launching header from the destination at runtime, a measurement to keep in
+sync in place of a number the test already pins.
 
-**Consequences:** `app.css.node.test.ts` now asserts the endpoint against
-`.workstream-screen:has(> .grokbot-workstream-header)`. A screen that renders a
-different header, or a header restyled to a different row, will fail there
-rather than showing up as a step at the swap — which is what the old assertion,
-pointed at the base row, allowed for two header generations.
+**Consequences:** `app.css.node.test.ts` asserts the endpoint against
+`.workstream-screen:has(> .grokbot-workstream-header)`, and asserts that the
+shared rule — the one both states take — declares no transition at all. A screen
+that renders a different header, or a header restyled to a different row, fails
+there rather than showing up as a step at the swap, which is what the old
+assertion, pointed at the base row, allowed for two header generations. The
+launcher's header now appears rather than opening; what motion the hand-off has
+left is the dock's participant row and the transcript's own arrival.
 
 ### 2026-09-17 — Keep grant handoff off ordinary creation
 
