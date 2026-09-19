@@ -744,6 +744,27 @@ describe('work-stream launch surface geometry', () => {
     }
   });
 
+  /**
+   * The substream launcher's column is the one place the surface is allowed to
+   * differ from its destination, and only while somebody is still typing: the
+   * branch turns are bottom-aligned so that what is being branched from sits
+   * nearest the words about to be written. Once `is-launching` lands, the
+   * optimistic turn is what the created substream will draw, and the created
+   * substream draws from the top — bottom-aligned through the launch, it sat
+   * above the dock and jumped a pane's height at the swap.
+   */
+  it('bottom-aligns the substream branch turns only while they are being composed', () => {
+    const column = rule('.substream-launch-column');
+    const composing = rule('.workstream-launch-screen:not(.is-launching) .substream-launch-column');
+
+    expect(column).not.toBeNull();
+    expect(composing).not.toBeNull();
+    expect(composing).toContain('justify-content: flex-end;');
+    // The unconditional rule is what both states take, so any alignment in it
+    // is one the launching state cannot shed.
+    expect(column).not.toContain('justify-content:');
+  });
+
 });
 
 describe('GrokBot sidebar header geometry', () => {
