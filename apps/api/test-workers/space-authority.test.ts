@@ -96,6 +96,17 @@ async function establishWorkspace(): Promise<void> {
       (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(`space-session-${OWNER}`, OWNER, WORKSPACE_ID),
+    // A guest and an ordinary member both hold a socket in these tests: the
+    // guest is what the Space payload has to be empty for, and the member is
+    // what makes that emptiness a decision rather than an empty Organization.
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`space-session-${GUEST}`, GUEST, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`space-session-${MEMBER}`, MEMBER, WORKSPACE_ID),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
@@ -820,6 +831,43 @@ describe("WorkspaceDO space authority", () => {
       userId: OWNER,
       space: { name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
     })).resolves.toMatchObject({ ok: false, code: "space_bootstrap_pending" });
+  });
+
+  it("given a guest's socket, when Spaces exist, then its payload carries none of them", async () => {
+    await reserve("Company", "workspace");
+    const { socket, sidebar } = await connectViewer(GUEST, "cf12");
+
+    // Every Space RPC refuses a guest, and this is the other door into the same
+    // state: the connect payload is a push, so a guest who never calls an RPC
+    // would still have been handed every Organization-wide Space.
+    expect(sidebar.spaces).toEqual({
+      active: { waterline: 0, items: [] },
+      inactive: { waterline: 0, items: [] },
+    });
+    // True rather than the Organization's real answer: a guest is not waiting
+    // on the cutover, and `false` would leave their client in the
+    // Organization-opening state for good.
+    expect(sidebar.spacesReady).toBe(true);
+
+    // And on the republication every Space write sends, which is the path a
+    // guest holds open rather than asks for.
+    const snapshot = nextSpaceSnapshot(socket);
+    await workspace().reorderSpaces({
+      workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [] },
+    });
+    const event = await snapshot;
+    expect(event.spaces.active.items).toEqual([]);
+    expect(event.spaces.inactive.items).toEqual([]);
+
+    // A member on the same Organization sees it, so the emptiness above is the
+    // relationship rather than an Organization with no Spaces.
+    const member = await connectViewer(MEMBER, "cf13");
+    expect(member.sidebar).toMatchObject({
+      spaces: { active: { items: [{ name: "Company" }] } },
+      spacesReady: false,
+    });
+    socket.close();
+    member.socket.close();
   });
 
   it("given the bootstrap row, when it is read, then it reports the phase and General", async () => {

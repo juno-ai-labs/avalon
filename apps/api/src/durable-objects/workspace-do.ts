@@ -986,6 +986,22 @@ const SocketIdentitySchema = z.object({
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
 interface WorkspaceSocketAttachment extends SocketIdentity {
+  /**
+   * The relationship this socket was admitted under.
+   *
+   * Pinned at accept time because nothing re-asks on the way out: an open
+   * socket is closed by the access-revocation queue rather than by a publisher
+   * querying D1 again (`docs/access-revocation.md`). It decides one thing here
+   * — whether this socket is told about Spaces at all — and a guest is not,
+   * because a guest holds explicit Channel and Breakout grants and no
+   * Organization-wide discovery, so every Organization-wide Space would
+   * otherwise arrive in their sidebar.
+   *
+   * Optional so a socket attached before this field existed keeps working
+   * across a deploy; absent is read as `member`, which is what every such
+   * socket was.
+   */
+  accessClass?: "member" | "guest";
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
@@ -3560,6 +3576,10 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       presenceRevision: z.number().int().nonnegative().default(0),
       applicationState: z.enum(["foreground", "background"]).default("background"),
       foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
+      // Defaulted for the same reason, and to the reading that changes nothing
+      // for a socket that predates it: `member` is what every attachment
+      // written before Spaces existed meant.
+      accessClass: z.enum(["member", "guest"]).default("member"),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -3899,6 +3919,16 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
  */
 interface WorkspaceAuthRoleRow {
   role: AuthContext["role"];
+  /**
+   * Which relationship this person holds, read here because the socket has to
+   * remember it: a guest is excluded from Spaces by the PRD's non-goal 3, and
+   * the snapshot publisher deliberately asks nobody anything on the way out
+   * (`docs/access-revocation.md`). The answer therefore has to be taken on the
+   * way in and carried on the attachment.
+   *
+   * Absent on the development path, which selects only the role.
+   */
+  access_class?: "member" | "guest" | null;
   analytics_workspace_id?: string | null;
 }
 
@@ -10449,6 +10479,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
     const attachment: WorkspaceSocketAttachment = {
       ...identity.data,
+      accessClass: auth.accessClass ?? "member",
       connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
@@ -11044,8 +11075,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         waterline: 0, items: [], nextCursor: null,
       },
       projects: this.projectSnapshot(attachment.userId),
-      spaces: this.spaceSnapshot(attachment.userId),
-      spacesReady: this.spaceStorage().bootstrapStatus().ready,
+      ...this.spacesFor(attachment),
     });
   }
 
@@ -11147,7 +11177,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private publishSpaceSnapshot(): void {
     const occurredAt = new Date().toISOString();
-    const spacesReady = this.spaceStorage().bootstrapStatus().ready;
     // An open workspace socket is the authorization. Access revocation closes
     // it through the one shared revocation path; do not add a D1 read here.
     for (const socket of this.state.getWebSockets()) {
@@ -11157,8 +11186,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
           type: "workspace_space_snapshot",
           occurredAt,
-          spaces: this.spaceSnapshot(attachment.userId),
-          spacesReady,
+          ...this.spacesFor(attachment),
         })));
       } catch {
         // Reconnect receives this same snapshot in the subscribe payload.
@@ -11166,10 +11194,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
   }
 
-  private spaceSnapshot(userId: string): SpaceSnapshot {
+  /**
+   * The Space half of what one socket is told, connect payload and snapshot
+   * alike.
+   *
+   * A guest is told nothing: the PRD's non-goal 3 defers guest access to
+   * Spaces, and a guest holds explicit Channel and Breakout grants with no
+   * Organization-wide discovery — so sending them the directory would put every
+   * Organization-wide Space in their sidebar, which is the leak the Space RPCs
+   * already refuse and this is the other door into the same state.
+   *
+   * `spacesReady` is true for them rather than the Organization's real answer,
+   * because the cutover is not a state a guest is waiting on: reporting false
+   * would leave their client in the Organization-opening state indefinitely.
+   * It is also the one place the answer differs by *viewer* rather than by
+   * Organization, which is why it is computed here beside the directories
+   * instead of at each call site.
+   */
+  private spacesFor(attachment: WorkspaceSocketAttachment): {
+    spaces: SpaceSnapshot;
+    spacesReady: boolean;
+  } {
+    if (attachment.accessClass === "guest") {
+      return {
+        spaces: { active: { waterline: 0, items: [] }, inactive: { waterline: 0, items: [] } },
+        spacesReady: true,
+      };
+    }
+    const spaces = this.spaceStorage();
     return {
-      active: this.spaceStorage().list(userId),
-      inactive: this.spaceStorage().listInactive(userId),
+      spaces: { active: spaces.list(attachment.userId), inactive: spaces.listInactive(attachment.userId) },
+      spacesReady: spaces.bootstrapStatus().ready,
     };
   }
 
@@ -11427,7 +11482,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && this.env.RALLY_DEV_AUTH === "true"
       && identity.sessionId === "development"
       ? await this.env.DB.prepare(
-        `SELECT member.role
+        `SELECT member.role, member.access_class
            FROM workspace_members member
            JOIN workspaces workspace ON workspace.id = member.workspace_id
           WHERE member.workspace_id = ? AND member.user_id = ?
@@ -11440,7 +11495,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // up: a command socket authorizes itself on every frame anyway, and
         // `workspaces` is already joined. The person surrogate is not fetched
         // here — see `docs/performance-tracing.md` for where it comes from.
-        `SELECT member.role, workspace.analytics_workspace_id
+        `SELECT member.role, member.access_class, workspace.analytics_workspace_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -11465,6 +11520,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId: identity.workspaceId,
       region: this.env.AVALON_REGION,
       role: role.role,
+      // Read as `member` when absent rather than as `guest`: the column is
+      // `NOT NULL DEFAULT 'member'` in D1 and is left out only by the
+      // development query above, so the other reading would hide every Space
+      // from a developer's own sidebar.
+      accessClass: role.access_class ?? "member",
       analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     } : null;
   }
