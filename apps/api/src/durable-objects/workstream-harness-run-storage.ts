@@ -23,12 +23,12 @@
  * vocabulary; the published spelling is the port's caller's business.
  */
 
-import { pendingBindToolBatch } from "@rally/agent-harness";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   type PreparedConversationTurn,
   type PreparedParticipantMessage,
   WorkstreamTranscriptStorage,
+  UnsettledToolBatchError,
 } from "./workstream-transcript-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
@@ -1517,22 +1517,8 @@ export class WorkstreamHarnessRunStorage {
       receipt.loop_cycle_ordinal,
     ));
     if (activeReservation) throw new Error("substream_loop_has_unmaterialized_turn");
-    const projection = this.transcript.readBindProjection(fence.loopId);
-    const pendingTools = projection ? pendingBindToolBatch(projection) : null;
-    if (pendingTools) {
-      const placeholders = pendingTools.calls.map(() => "?").join(", ");
-      const elicitationCount = pendingTools.calls.length === 0
-        ? 0
-        : Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-          `SELECT COUNT(*) AS count FROM elicitation_requests
-            WHERE status IN ('pending', 'answered')
-              AND tool_call_id IN (${placeholders})`,
-          ...pendingTools.calls.map((call) => call.receiptToolCallId),
-        ).one().count);
-      if (elicitationCount !== pendingTools.calls.length) {
-        throw new Error("substream_loop_has_unsettled_tool_batch");
-      }
-    }
+    const withheld = this.transcript.unsettledToolBatchBlockingRelease(fence.loopId);
+    if (withheld) throw new UnsettledToolBatchError(withheld);
     const closed = first(this.sql.exec<{ loop_id: string } & Record<string, SqlStorageValue>>(
       `UPDATE substream_loops
           SET status = 'idle', active_execution_id = NULL,
