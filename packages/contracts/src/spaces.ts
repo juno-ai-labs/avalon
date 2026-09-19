@@ -372,7 +372,7 @@ export type ChannelAccessSources = z.infer<typeof ChannelAccessSourcesSchema>;
  *
  * Closed, and closed for the reason `docs/naming-a-schema-failure.md` gives: a
  * refusal that reaches a log, an operator, or the far side of an RPC hop has to
- * name what it rejected. A generic `space_error` would make the eight distinct
+ * name what it rejected. A generic `space_error` would make the nine distinct
  * remediations below indistinguishable in a log line.
  */
 export const SpaceErrorCodeSchema = z.enum([
