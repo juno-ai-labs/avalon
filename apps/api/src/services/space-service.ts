@@ -460,10 +460,14 @@ export class SpaceService {
    * and the plan is a delta against what it is now.
    */
   async restore(spaceId: SpaceId): Promise<SpaceSummary> {
+    // One id, minted here and carried to both halves, exactly as an archive's
+    // is: the restore stages an intent and the walk below settles it.
+    const operationId = uuidV7();
     const restored = this.settled(await (await this.workspace()).restoreSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
+      operationId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
     // The memberships the restore just put back, each at the generation that
@@ -471,7 +475,7 @@ export class SpaceService {
     // carries is the row's own rather than a constant.
     await this.walkMembers({
       spaceId,
-      operationId: null,
+      operationId,
       pageReceipt: "restore_page",
       cursor: null,
       step: async ({ workstreamId, membershipGeneration }) => {
@@ -486,6 +490,7 @@ export class SpaceService {
         return "continue";
       },
     });
+    await this.recordReceipt(operationId, "restored", true);
     return this.summary(spaceId);
   }
 
@@ -608,14 +613,8 @@ export class SpaceService {
    */
   private async walkMembers(input: {
     spaceId: SpaceId;
-    /**
-     * The intent whose cursor this walk advances.
-     *
-     * `null` for a walk with no intent behind it, which today is `restore`
-     * alone — it stages nothing, so there is nowhere to record a page and its
-     * walk has to finish inside the invocation that started it.
-     */
-    operationId: string | null;
+    /** The intent whose cursor this walk advances. */
+    operationId: string;
     pageReceipt: string;
     reach?: SpaceMembershipReach;
     cursor: string | null;
@@ -629,9 +628,7 @@ export class SpaceService {
       }
       if (page.nextCursor === null) return "walked";
       cursor = page.nextCursor;
-      if (input.operationId !== null) {
-        await this.recordReceipt(input.operationId, input.pageReceipt, false, cursor);
-      }
+      await this.recordReceipt(input.operationId, input.pageReceipt, false, cursor);
     }
   }
 
@@ -778,9 +775,34 @@ export class SpaceService {
       });
       return;
     }
-    // `restore`, `default` and `bootstrap` stage no intent in this phase. An
-    // intent of one of those kinds is a message from a release that does, so it
-    // is abandoned by name rather than silently acknowledged.
+    if (intent.kind === "restore") {
+      // The audience walk minus the retraction. The archive is what took this
+      // Space's source off every member Channel, so there is nothing to
+      // withdraw; what is left half-done is the re-application, and it is an
+      // idempotent delta on a Channel that already has it.
+      await this.walkMembers({
+        spaceId: intent.spaceId,
+        operationId: intent.operationId,
+        pageReceipt: "restore_page",
+        cursor: intent.cursor,
+        step: async ({ workstreamId, membershipGeneration }) => {
+          await access.applySpaceSource(workstreamId, {
+            spaceId: intent.spaceId,
+            scope: space.scope,
+            participantUserIds: space.participants.map((participant) => participant.userId),
+            spaceRevision: space.revision,
+            membershipGeneration,
+            operationId: uuidV7(),
+          });
+          return "continue";
+        },
+      });
+      await this.recordReceipt(intent.operationId, "restored", true);
+      return;
+    }
+    // `default` and `bootstrap` stage no intent in this phase. An intent of one
+    // of those kinds is a message from a release that does, so it is abandoned
+    // by name rather than silently acknowledged.
     await abandon(`unsupported_${intent.kind}`);
   }
 
