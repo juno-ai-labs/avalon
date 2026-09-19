@@ -17,6 +17,9 @@
     "RALLY_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
+    "BROWSER_APP_ORIGIN": "https://app.rallywith.ai",
+    // Team-selected production sign-in policy: 6 digits, 10 minutes, 5 failures.
+    "EMAIL_LOGIN_POLICY_JSON": "{\"otpDigits\":6,\"ttlSeconds\":600,\"maxFailedAttempts\":5}",
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
     "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
@@ -35,7 +38,7 @@
     // there is nothing whose absence could gate it. Anything but "true" leaves
     // the type out of the connector catalog and refuses creation here.
     "FIREFLIES_CONNECTOR_ENABLED": "true",
-    "ALLOWED_ORIGINS": "app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
+    "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.6-flash",

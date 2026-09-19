@@ -1,0 +1,69 @@
+name: Deploy Rally browser
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/browser/**"
+      # The browser imports the desktop collaboration surface and its theme.
+      - "apps/desktop/**"
+      - "packages/**"
+      - "config/regions.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/deploy-browser.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-browser
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Reuse the existing web deployment environment and Cloudflare credentials.
+    environment: site-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Require Cloudflare deployment credentials
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test browser transport and assets
+        run: pnpm --filter @rally/browser test
+      - name: Deploy browser app and custom domain
+        run: pnpm --filter @rally/browser run deploy
+      - name: Verify public entry routes
+        run: |
+          set -euo pipefail
+          for path in / /invite /login/email; do
+            curl --fail --silent --show-error "https://app.rallywith.ai${path}" -o /tmp/rally-browser-entry.html
+            grep -q 'type="module"' /tmp/rally-browser-entry.html
+          done
