@@ -131,15 +131,16 @@ const SANDBOX_COLUMNS = `lifecycle_state, stable_name, sandbox_id, generation,
   final_diff_resource_id, failure_code, created_at, updated_at`;
 
 /**
- * The lease holder's liveness, as one SQL predicate over `terminal_workspace`
- * aliased `workspace`.
+ * Whether the lease holder is still running, as this object can tell.
  *
- * A holder that ran in this object is live while its run row has not yielded.
- * A holder that ran in another conversation has no row here, so its lease
- * deadline is the only liveness this transaction can read: the holder's own
- * acquisition cache re-claims before the deadline passes, and the coordinator
- * confirms a yielded foreign holder at that holder's conversation before it
- * takes the lease over. The `?` is the caller's `now`.
+ * A holder that ran here is live while its `runs` row says so, whatever the
+ * lease's deadline. A holder from another conversation has no row here, so
+ * it is live while its lease is, and also while a command of its own on this
+ * generation is unsettled: a command may run longer than the lease, and the
+ * run that submitted it is the one that settles it, which it could not do
+ * once the deadline had passed. The takeover fences read the unsettled task
+ * for themselves, and a dead foreign holder's task is recovered through the
+ * yielded-holder path, which asks that conversation rather than this predicate.
  */
 const HOLDER_IS_LIVE = `(
   CASE WHEN workspace.operation_run_substream_id IS NULL
@@ -148,7 +149,15 @@ const HOLDER_IS_LIVE = `(
        WHERE holder.run_id = workspace.operation_run_id
          AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
     )
-    ELSE workspace.operation_lease_expires_at > ?
+    ELSE (
+      workspace.operation_lease_expires_at > ?
+      OR EXISTS (
+        SELECT 1 FROM terminal_tasks own
+         WHERE own.sandbox_generation = workspace.generation
+           AND own.run_id = workspace.operation_run_id
+           AND own.state IN ('submitting', 'running')
+      )
+    )
   END
 )`;
 
