@@ -485,6 +485,13 @@ export function truncateTextWithMarker(value: string, maxChars: number): string 
  * `"state"` keeps a top-level field. `"head.ref"` keeps a nested one and
  * rebuilds the record around it, so several paths sharing a prefix merge into
  * one object. `"labels[].name"` keeps one field of every element of an array.
+ *
+ * A path ends at the field it keeps, and that field is kept whole. `"labels"`
+ * and `"labels[]"` therefore mean the same thing — keep the array as the
+ * provider sent it — rather than "keep the array, projected to nothing", which
+ * is what the second spelling looks like it should mean. Write the element
+ * field you want (`"labels[].name"`); a trailing `[]` with nothing after it
+ * declares the whole value, undeclared members and all.
  */
 export type FieldProjection = readonly string[];
 

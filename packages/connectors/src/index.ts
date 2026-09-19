@@ -31,9 +31,12 @@ import { instrumentConnectorAdapter, instrumentConnectorFetch } from "./observab
 export {
   isProviderCredentialRejection,
   isRevokedGrantError,
+  projectFields,
   providerJson,
   refreshExpiringCredentials,
+  truncateTextWithMarker,
   withProviderReauthorization,
+  type FieldProjection,
 } from "./provider-utils";
 export {
   CUSTOM_MCP_CONNECTOR_TYPE,

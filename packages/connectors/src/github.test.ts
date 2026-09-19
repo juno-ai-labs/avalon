@@ -1260,6 +1260,7 @@ describe("GitHub connector", () => {
       labels: [{ id: 2, name: "bug", color: "d73a4a", description: "Something is broken" }],
       assignees: [{ login: "octocat", id: 1, type: "User" }],
       requested_reviewers: [{ login: "hubot", id: 3, type: "User" }],
+      requested_teams: [{ id: 9, slug: "platform", name: "Platform", privacy: "closed", members_url: "https://api.github.com/x{/member}" }],
       html_url: "https://github.com/acme/widget/pull/670",
       body: "The body belongs to pull_requests.get.",
       _links: { self: { href: "https://api.github.com/repos/acme/widget/pulls/670" } },
@@ -1297,10 +1298,15 @@ describe("GitHub connector", () => {
       merged_at: null,
       user: { login: "octocat" },
       head: { ref: "feature", sha: "9fceb02" },
-      base: { ref: "main" },
+      // `base.sha` as well as `base.ref`: the branch name is a moving target,
+      // and the sha is what contents.get takes to read a file as it stood
+      // before this pull request.
+      base: { ref: "main", sha: "abc1234" },
       labels: [{ name: "bug" }],
       assignees: [{ login: "octocat" }],
+      // A pull request awaiting a team review is not awaiting nobody.
       requested_reviewers: [{ login: "hubot" }],
+      requested_teams: [{ slug: "platform" }],
       html_url: "https://github.com/acme/widget/pull/670",
     }]);
   });
@@ -1401,6 +1407,22 @@ describe("GitHub connector", () => {
       author: { login: "octocat" },
       html_url: "https://github.com/acme/widget/commit/9fceb02",
     }]);
+  });
+
+  it("refuses a list item that is not an object rather than passing it through", async () => {
+    // The envelope's contract is that every item has the declared shape. A
+    // primitive forwarded unchanged would be an undeclared value sitting in a
+    // list that says otherwise, and the model has no way to notice.
+    const fetcher: FetchLike = async () => jsonResponse(["not-an-object"]);
+
+    await expect(githubAdapter(fetcher).executeTool("pull_requests.list", {
+      owner: "acme",
+      repo: "widget",
+    }, {
+      connection: personalConnection([GitHubCapabilities.pullRequestsRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "provider_error" });
   });
 
   it("keeps a failed check's diagnostics, which nothing else in this plugin can read", async () => {
