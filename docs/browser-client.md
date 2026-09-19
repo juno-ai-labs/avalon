@@ -13,7 +13,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
-| `apps/browser/src/invitation.ts` | Validated invitation fragments and exact canonical scope destinations. |
+| `apps/browser/src/invitation.ts` | Sealed and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
@@ -68,15 +68,32 @@ link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
 An invitation fragment is validated and removed from history, with the secret
-kept only in document memory. The entry tells the recipient to use the invited
-mailbox. If a magic link signs in a different tab, focusing the invitation tab
-restores the new cookie session without losing its invitation. Explicit acceptance
-posts to the identity-only sharing endpoint; server authority still checks the
-verified recipient, invitation and current sharer. Failure retains the invitation
-for retry or switching accounts. Success activates the addressed workspace and
-opens the exact canonical destination immediately for a single accepted scope;
-invitations with several scopes show their destination links. A child-only destination
-points directly to that child, not through Main. No GET or focus event accepts.
+kept only in document memory. Current links are one sealed credential and
+nothing else, so the whole fragment is that credential; a fragment spelling out
+parameters is the addressed format that predates sealing, and only that one
+names a region. A sealed link is opened against the deployment serving the page,
+which is the only one this host forwards to.
+
+Before any session exists the client posts the credential to the unauthenticated
+`/invitation` browser route and fills the invited address into the email field,
+which the recipient can still change. The link no longer says who it was sent
+to, and telling someone to "sign in with the address that received this" while
+showing an empty box is asking them to guess which of their mailboxes it was.
+Holding the link is the same authority acceptance checks, and the reply carries
+that one mailbox — never the workspace or work stream behind it. A link that
+cannot be opened, or an invitation since revoked or expired, fills nothing and
+says the invitation is unavailable. The entry tells the recipient to use the
+invited mailbox. If a magic link signs in a different tab, focusing the
+invitation tab restores the new cookie session without losing its invitation.
+Explicit acceptance posts the same credential to the identity-only sharing
+endpoint, which opens it into an address server-side; server authority still
+checks the verified recipient, invitation and current sharer. Failure retains
+the invitation for retry or switching accounts. Success activates the workspace
+its accepted targets name — the first thing the recipient's own link could tell
+them — and opens the exact canonical destination immediately for a single
+accepted scope; invitations with several scopes show their destination links. A
+child-only destination points directly to that child, not through Main. No GET
+or focus event accepts.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the
@@ -361,6 +378,28 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-19 — Fill in the mailbox a sealed invitation was sent to
+
+**What changed:** Invitation fragments are one opaque credential, and the entry
+asks the unauthenticated `/invitation` route for the invited address before
+anyone signs in, filling it into the email field.
+
+**Why:** The page asks the recipient to sign in with the address that received
+the invitation, and the link stopped saying which address that was. An empty box
+under that sentence asks someone with several mailboxes to guess, and a wrong
+guess only fails after a round trip through a sign-in email.
+
+**Considered and rejected:** Leaving the address in the link would have kept the
+workspace and work stream identifiers there with it, which is what
+[scoped invitations](scope-invitations.md) removed. Filling the field after
+sign-in would be too late to be of use.
+
+**Consequences:** The field stays editable, so a recipient can still sign in as
+someone else and receive the ordinary verified-mailbox refusal. A link this
+deployment cannot open fills nothing and reports the invitation as unavailable;
+a transport failure says so separately, because it is not evidence about the
+link.
 
 ### 2026-09-18 — Enable the production browser origin
 

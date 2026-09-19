@@ -6,7 +6,8 @@ import { SharedWorkstreamRequestSchema, SharedWorkstreamSchema } from "@rally/co
 import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
 import { SCOPE_INVITATION_SCHEMA_STATEMENTS, SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import { CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
-  ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
+  DescribeScopeInvitationSchema, ScopeInvitationDescriptionSchema,
+  ScopeInvitationResultSchema, type ScopeInvitationDescription, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import { parseRpcInput } from "../lib/rpc-input";
 import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
@@ -1392,6 +1393,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const result = await this.scopeInvitations().accept(request);
     await this.armNextAlarm();
     return ScopeInvitationResultSchema.parse(result);
+  }
+
+  async describeScopeInvitation(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
+    await this.initialized;
+    const request = parseRpcInput(DescribeScopeInvitationSchema, input, "describe_scope_invitation");
+    this.assertParent(request.workspaceId, request.parentId);
+    return ScopeInvitationDescriptionSchema.parse(await this.scopeInvitations().describe(request));
   }
 
   async revokeScopeInvitation(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {
