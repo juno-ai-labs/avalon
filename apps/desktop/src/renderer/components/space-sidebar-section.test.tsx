@@ -27,6 +27,7 @@ function space(
     status: 'active',
     systemRole: null,
     revision: 1,
+    reach: 'participant',
     participants: [{ userId: '00000000-0000-7000-8000-0000000000f1' }],
     channelCount: 0,
     defaultResourceIds: [],
@@ -458,6 +459,56 @@ describe('the Spaces sidebar section', () => {
     });
 
     await waitFor(() => expect(onAddChannel).toHaveBeenCalledWith(hiring.id, workstreamId));
+  });
+
+  /**
+   * A Space this reader reaches only because they can read a Channel in it.
+   *
+   * It is an ordinary row — mark, name, expansion, placements — because its
+   * whole reason to exist is to give that Channel somewhere to be drawn. What
+   * it must not carry is a control, because every write on it is refused by
+   * name, and a control that can only fail teaches a reader that Rally's
+   * controls are suggestions.
+   */
+  it('given a space reached through a channel, then its row carries no plus and takes no drop', async () => {
+    const onAddChannel = vi.fn(async () => undefined);
+    const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', {
+      reach: 'through_channel',
+      participants: [],
+      channelCount: 1,
+    });
+    const placement = channel('00000000-0000-7000-8000-0000000000e4', 'Shared work', '2026-08-27T10:00:00.000Z', reached.id);
+    renderSection({ onAddChannel, spaces: [hiring, reached], workstreams: [placement] });
+
+    expect(screen.getByRole('link', { name: /Theirs/u })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New channel in Hiring' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New channel in Theirs' })).not.toBeInTheDocument();
+
+    fireEvent.drop(screen.getByRole('link', { name: /Theirs/u }).closest('.space-sidebar-item')!, {
+      dataTransfer: {
+        getData: (type: string) => type === 'application/x-rally-workstream-id'
+          ? '00000000-0000-7000-8000-0000000000e5'
+          : '',
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole('link', { name: /Theirs/u })).toBeVisible());
+    expect(onAddChannel).not.toHaveBeenCalled();
+  });
+
+  it('given a space reached through a channel, when it is expanded, then its placements are drawn', async () => {
+    const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', {
+      reach: 'through_channel',
+      participants: [],
+      channelCount: 1,
+    });
+    const placement = channel('00000000-0000-7000-8000-0000000000e4', 'Shared work', '2026-08-27T10:00:00.000Z', reached.id);
+    renderSection({ spaces: [reached], workstreams: [placement] });
+
+    // The point of the disclosure: the Channel is drawn under the Space it
+    // actually lives in, rather than in a flat list of rows with no home.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Theirs' }));
+    expect(screen.getByRole('link', { name: 'Shared work' })).toBeInTheDocument();
   });
 
   // The Channel's row sits inside the Space's own drag item, so its drag start

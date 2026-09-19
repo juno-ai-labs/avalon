@@ -60,6 +60,15 @@ const OWNER_AUTH: AuthContext = {
   role: "owner",
 };
 
+/** The second member, for the reads and the refusals that are about somebody else. */
+const MEMBER_AUTH: AuthContext = {
+  sessionId: MEMBER_SESSION,
+  userId: MEMBER,
+  workspaceId: WORKSPACE_ID,
+  region: "global",
+  role: "member",
+};
+
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
 }
@@ -356,8 +365,26 @@ describe("PATCH /spaces/:id/audience", () => {
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "personal" });
     expect(await channelSpaceSources(workstreamId))
       .toContainEqual(expect.objectContaining({ spaceId: created.id, scope: "personal" }));
-    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
-      .not.toContain(created.id);
+    // The member keeps the Space's mark and name, because they can still read
+    // the Channel placed in it and that Channel has to be drawn somewhere. What
+    // they lose is everything the narrowing was about: they are no longer one
+    // of its participants, the roster is withheld, and every write on it is now
+    // refused them.
+    expect((await spaceDirectories(MEMBER)).active.items).toContainEqual(
+      expect.objectContaining({
+        id: created.id,
+        scope: "personal",
+        reach: "through_channel",
+        participants: [],
+      }),
+    );
+    expect(await request(
+      `/spaces/${created.id}`,
+      MEMBER_AUTH,
+      { name: "Not yours", iconKey: "star", colorKey: "red" },
+      "PATCH",
+    )).toMatchObject({ status: 403, body: { error: { code: "space_access_denied" } } });
+    expect(await spaceDirectoryRow(created.id)).toMatchObject({ title: "Hiring" });
   });
 
   it("names the Space's own authority when its conversation cannot answer", async () => {

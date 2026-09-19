@@ -57,6 +57,7 @@ function makeSpace(overrides: Record<string, unknown> = {}): SpaceSummary {
     status: 'active',
     systemRole: null,
     revision: 1,
+    reach: 'participant',
     participants: [{ userId: member.id }],
     channelCount: 0,
     defaultResourceIds: [],
@@ -316,6 +317,46 @@ describe('the Space dashboard', () => {
     expect(screen.queryByRole('combobox', { name: 'Space audience' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'General' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Change icon and color for General' })).toBeInTheDocument();
+  });
+
+  /**
+   * A Space this reader reaches only because they can read a Channel in it.
+   *
+   * The whole screen is the header and the conversation list. Everything else
+   * on it is the Space's own — who is in it, who it is for, whether it lives,
+   * what it hands down — and none of that is theirs to see or to change; the
+   * summary they are handed carries no participants and no defaults at all, so
+   * the sections would be two empty lists under two controls that can only
+   * fail.
+   */
+  it('given a space reached through a channel, then it is the header and the list and nothing else', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
+    renderSpace(makeSpace({
+      name: 'Side work',
+      reach: 'through_channel',
+      participants: [],
+      channelCount: 1,
+      defaultResourceIds: [],
+      defaultSidekickIds: [],
+    }));
+
+    // The header and the list, which is what the disclosure is for.
+    expect(await screen.findByRole('link', { name: /Ship the launch/u })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Side work' })).toBeInTheDocument();
+
+    expect(screen.queryByRole('button', { name: 'Archive space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Space audience' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Manage participants' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add channel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New channel in Side work' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Resources' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).not.toBeInTheDocument();
+    // The rename is an interaction rather than a control, so its absence is
+    // the field never opening rather than a button that is not drawn.
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Side work' }));
+    expect(screen.queryByRole('textbox', { name: 'Space name' })).not.toBeInTheDocument();
   });
 
   // The server's sentence is a diagnostic written for a log, in the

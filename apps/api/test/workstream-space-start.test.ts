@@ -37,6 +37,7 @@ function space(overrides: Partial<{
     status: "active",
     systemRole: overrides.systemRole ?? null,
     revision: 1,
+    reach: "participant" as const,
     participants: (overrides.participantUserIds ?? [creatorId, participantId])
       .map((userId) => ({ userId })),
     channelCount: 0,

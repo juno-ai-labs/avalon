@@ -110,17 +110,23 @@ describe('organization directory cache', () => {
   });
 
   /**
-   * The whole reason this slice is not at version 4.
+   * The claim that kept the arrangement off the version.
    *
-   * The arrangement was added to the directory row without bumping the version,
-   * on the argument that a row written without the key still reads: absorbing
-   * the absence costs one launch drawn in the natural order, and bumping would
-   * cost every person a cold, empty sidebar to avoid it. Written at the slice's
-   * own version, so it is `parseCachedDirectory` being asked rather than the
-   * version gate in front of it.
+   * The arrangement was added to the directory row without bumping, on the
+   * argument that a row written without the key still reads: absorbing the
+   * absence costs one launch drawn in the natural order, and bumping would
+   * cost every person a cold, empty sidebar to avoid it. The slice has since
+   * gone to 4 for a field `parse` genuinely *cannot* absorb — a Space's reach
+   * — which does not retire this: the rule is per key, and the next person to
+   * add one has to say which of the two it is.
+   *
+   * Written at the slice's own version, so it is `parseCachedDirectory` being
+   * asked rather than the version gate in front of it. An older version never
+   * reaches `parse` at all, so a test that used one would pass on the gate and
+   * prove nothing about the shape.
    */
   it('hydrates a directory row written before the ordering existed', async () => {
-    const raw = defineLocalCacheSlice<unknown>({ kind: 'directory', version: 3, parse: (value) => value });
+    const raw = defineLocalCacheSlice<unknown>({ kind: 'directory', version: 4, parse: (value) => value });
     const { workstreams, automations, spaces, inactiveSpaces } = directory();
     await raw.write(scope, DIRECTORY_CACHE_KEY, { workstreams, automations, spaces, inactiveSpaces });
     const queryClient = new QueryClient();

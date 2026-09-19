@@ -28,6 +28,7 @@ const space = SpaceSummarySchema.parse({
   status: 'active',
   systemRole: null,
   revision: 1,
+  reach: 'participant',
   participants: [],
   channelCount: 0,
   defaultResourceIds: [],
