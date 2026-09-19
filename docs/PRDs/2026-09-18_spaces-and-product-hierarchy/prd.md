@@ -685,7 +685,8 @@ the Space's *own* hidden conversation, which still has no surface; what the
 dashboard now lists is member Channels' breakouts. Section 5's product
 hierarchy is unchanged. The `GET /spaces/:id/channels` response in section 7
 gains `kind` and, for a breakout, its parent Channel, its substream id and the
-parent's title; `SpaceSummary` gains `conversationWaterline`. Nothing in the
+parent's title; the dashboard is refetched on a `space_conversations_changed`
+socket nudge and on reconnect, with nothing durable behind it. Nothing in the
 agreed goals or non-goals moves. Guest access to Spaces stays deferred, so a
 guest sees none of this.
 

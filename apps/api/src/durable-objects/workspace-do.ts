@@ -78,6 +78,7 @@ import {
   workstreamParticipantPreview,
   WorkspaceIdSchema,
   WorkspaceAttentionSchema,
+  WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
@@ -641,7 +642,6 @@ import {
 } from "./workspace-space-protocol";
 import {
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
-  SPACE_CONVERSATION_WATERLINE_STATEMENTS,
   WorkspaceSpaceStorage,
 } from "./workspace-space-storage";
 import {
@@ -3544,11 +3544,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [...PROJECT_RETIREMENT_STATEMENTS],
 }, {
   version: 63,
-  description: "breakout directory projections and the space conversation waterline",
-  statements: [
-    ...WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
-    ...SPACE_CONVERSATION_WATERLINE_STATEMENTS,
-  ],
+  description: "breakout directory projections",
+  statements: [...WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3990,6 +3987,27 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
 }
 
 // Binding 1 is always the viewer user ID; the access join reuses it as ?1.
+/**
+ * Two `workstreamId` → user-id maps as one, mutating neither.
+ *
+ * A Channel and one of its breakouts can both move for the same person inside
+ * one Queue batch, and what that person is owed is one nudge rather than two.
+ */
+function mergeViewerChanges(
+  first: ReadonlyMap<string, ReadonlySet<string>>,
+  second: ReadonlyMap<string, ReadonlySet<string>>,
+): Map<string, Set<string>> {
+  const merged = new Map<string, Set<string>>();
+  for (const source of [first, second]) {
+    for (const [workstreamId, users] of source) {
+      const existing = merged.get(workstreamId) ?? new Set<string>();
+      for (const userId of users) existing.add(userId);
+      merged.set(workstreamId, existing);
+    }
+  }
+  return merged;
+}
+
 const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.authority_generation, directory.waterline AS common_waterline,
     directory.source_event_id AS common_event_id, directory.title,
@@ -6248,6 +6266,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       true,
     );
     this.publishSpaceSnapshot();
+    // A settled membership changes which conversations this Space's dashboard
+    // is about, so the readers of that page are nudged the same way a message
+    // in one of them nudges them. One mechanism, not a second for memberships.
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     await this.publishWorkstreamState(request.workstreamId);
     // Unconditionally, not only when this settlement staged a default of its
     // own. The matching `prepareSpaceMembership` armed a wake
@@ -6321,6 +6343,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       true,
     );
     this.publishSpaceSnapshot();
+    // A settled membership changes which conversations this Space's dashboard
+    // is about, so the readers of that page are nudged the same way a message
+    // in one of them nudges them. One mechanism, not a second for memberships.
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     await this.publishWorkstreamState(request.workstreamId);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
@@ -6367,6 +6393,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     storage.settleIntent(request.operationId, "archived", true);
     this.publishSpaceSnapshot();
+    // An archive takes every member Channel off this Space's dashboard and a
+    // restore puts the ones it withdrew back. Both are page changes for every
+    // reader still holding the page.
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -6407,6 +6437,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
     });
     this.publishSpaceSnapshot();
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
@@ -7765,15 +7796,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     let spaceDirectoryChanged = false;
-    let conversationWaterlineMoved = false;
+    // A breakout's move is a Space dashboard's move and nothing else's. It is
+    // kept apart from `commonChanges` and `viewerChanges` because those two
+    // also drive `publishWorkstreamState`, the Terminal schedule and the watch
+    // reconciliation, none of which a breakout has or wants.
+    const breakoutChanges = new Set<string>();
+    const breakoutViewerChanges = new Map<string, Set<string>>();
     for (const envelope of spaceEnvelopes) {
       spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
         || spaceDirectoryChanged;
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of breakoutEnvelopes) {
-      conversationWaterlineMoved = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)
-        || conversationWaterlineMoved;
+      if (this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)) {
+        if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
+        else if (envelope.effect.kind === "directory_user") {
+          const users = breakoutViewerChanges.get(envelope.parentId) ?? new Set<string>();
+          users.add(envelope.effect.userId);
+          breakoutViewerChanges.set(envelope.parentId, users);
+        }
+      }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of channelEnvelopes) {
@@ -7844,30 +7886,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Sending to a socket cannot throw — it is caught per socket — so nothing
     // here can fail the batch.
     //
-    // The dashboard's list is the second reason to republish here, and a much
-    // more frequent one. It is ordered by activity and filtered by each
-    // conversation's state for the reader, so a member conversation's shared
-    // row moving *is* the page moving — every message in every member Channel.
-    // That is the cost the list buys: the alternative is pushing the page
-    // itself down the socket, which would put one member Channel's traffic on
-    // every reader of every Space that holds it.
     const spaceStorage = this.spaceStorage();
-    if (commonChanges.size > 0) {
-      conversationWaterlineMoved = spaceStorage.noteConversationChange([...commonChanges])
-        || conversationWaterlineMoved;
-    }
-    for (const [workstreamId, users] of viewerChanges) {
-      for (const userId of users) {
-        conversationWaterlineMoved = spaceStorage
-          .noteConversationViewerChange([workstreamId], userId) || conversationWaterlineMoved;
-      }
-    }
     if (spaceDirectoryChanged
-      || conversationWaterlineMoved
       || (archivalChanges.size > 0
         && spaceStorage.noteMemberArchivalChange([...archivalChanges]))) {
       this.publishSpaceSnapshot();
     }
+    // The Space dashboard's list is ordered by activity and filtered by each
+    // conversation's state for the reader, so a member conversation's row
+    // moving *is* that page moving — on every message in every member Channel
+    // and every breakout of one. That is far too frequent for the Space
+    // snapshot, which rebuilds both directories per socket; it goes out as a
+    // nudge of its own, carrying nothing but the Spaces to read again.
+    this.publishSpaceConversationsChanged({
+      channelIds: [...commonChanges, ...breakoutChanges],
+      viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
+    });
     // The backstop for the hierarchy invariant, on the one event that can break
     // it without anything noticing. Every non-deleted, non-system Channel
     // belongs to at least one Space, and the creation paths and the cutover are
@@ -10804,8 +10838,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * a second thing to expire and a second way for the two to disagree about
    * whether a message had been seen.
    *
-   * Returns whether this viewer's page could have changed, which is what
-   * decides whether the Space snapshot is republished.
+   * Returns whether the row moved, which is what decides whether the sockets
+   * that can see this breakout's parent Channel are nudged. Nothing durable is
+   * written outside the receipt's own transaction — there is no durable
+   * dashboard signal at all.
    */
   private applyBreakoutDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
@@ -10824,19 +10860,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       const now = Date.now();
       const breakouts = this.breakoutStorage();
-      const spaces = this.spaceStorage();
       let moved = false;
       if (envelope.effect.kind === "directory_common") {
         // Shared: a breakout's title, state and activity reorder or remove the
         // row on every reader's page at once.
-        moved = breakouts.applyCommon(envelope, now)
-          && spaces.noteConversationChange([envelope.parentId], now);
+        moved = breakouts.applyCommon(envelope, now);
       } else if (envelope.effect.kind === "directory_user") {
-        // Personal: one person's unread, mention or first open, which is the
-        // half of the signal only they refetch on.
-        const userId = envelope.effect.userId;
-        moved = breakouts.applyViewer(envelope, activeUsers.has(userId), now)
-          && spaces.noteConversationViewerChange([envelope.parentId], userId, now);
+        // Personal: one person's unread, mention or first open, which only
+        // they are nudged about.
+        moved = breakouts.applyViewer(envelope, activeUsers.has(envelope.effect.userId), now);
       }
       insertWorkstreamEffectReceipt(
         this.state.storage,
@@ -11439,6 +11471,76 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * them is that work times the Organization — for a snapshot identical to the
    * one every other person already holds.
    */
+  /**
+   * Tell each socket which of its Space dashboards to read again.
+   *
+   * **Nothing durable stands behind this, deliberately.** The dashboard's page
+   * is re-read on mount, on socket reconnect and on this event, so a nudge
+   * lost to a closing socket costs one stale view until the next change or the
+   * next reconnect. What it replaced is why: a per-(Space, person) counter
+   * written on every message in the Organization, carried on the Space
+   * snapshot — a write on the hottest path this object has, a full per-socket
+   * rebuild of both Space directories to deliver it, and discarded by every
+   * client anyway because the snapshot's own waterline had not moved.
+   * `docs/spaces.md` records the trade and what would reverse it.
+   *
+   * **Addressed, not broadcast.** A socket hears about a Channel only if its
+   * viewer can list that Channel, and about a Space only if its viewer can see
+   * that Space. A personal Space's id on somebody else's socket is the
+   * existence of that Space leaking through a shared Channel, and a Channel's
+   * id never leaves this method at all — only the Spaces it is placed in do.
+   *
+   * Two local reads per socket and no write.
+   */
+  private publishSpaceConversationsChanged(moved: {
+    /** Channels whose shared row moved: everyone who can list them. */
+    readonly channelIds?: readonly string[];
+    /** Channels whose row moved for named people only. */
+    readonly viewerChannelIds?: ReadonlyMap<string, ReadonlySet<string>>;
+    /** Spaces whose own membership moved: everyone who can see them. */
+    readonly spaceIds?: readonly string[];
+  }): void {
+    const sharedChannelIds = moved.channelIds ?? [];
+    const viewerChannelIds = moved.viewerChannelIds ?? new Map<string, ReadonlySet<string>>();
+    const namedSpaceIds = moved.spaceIds ?? [];
+    if (sharedChannelIds.length === 0 && viewerChannelIds.size === 0 && namedSpaceIds.length === 0) return;
+    const occurredAt = new Date().toISOString();
+    const spaces = this.spaceStorage();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      // A guest is handed no Space state at all — `spacesFor` says why — and a
+      // nudge naming a Space is Space state.
+      if (attachment.accessClass === "guest") continue;
+      const channelIds = [...new Set([
+        ...sharedChannelIds,
+        ...[...viewerChannelIds].flatMap(([workstreamId, users]) => (
+          users.has(attachment.userId) ? [workstreamId] : []
+        )),
+      ])];
+      const spaceIds = new Set(spaces.visibleSpaceIdsAmong(attachment.userId, namedSpaceIds));
+      if (channelIds.length > 0) {
+        for (const ids of spaces.spaceIdsByChannel(
+          attachment.userId,
+          spaces.listableChannelIds(attachment.userId, channelIds),
+        ).values()) {
+          for (const spaceId of ids) spaceIds.add(spaceId);
+        }
+      }
+      if (spaceIds.size === 0) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceSpaceConversationsEventSchema.parse({
+          type: "space_conversations_changed",
+          occurredAt,
+          spaceIds: [...spaceIds].sort(),
+        })));
+      } catch {
+        // Hibernation owns close cleanup, and a reconnect re-reads the page.
+        // That is the whole reason this event carries no state to lose.
+      }
+    }
+  }
+
   private publishSpaceSnapshot(onlyUserId?: string): void {
     const occurredAt = new Date().toISOString();
     // An open workspace socket is the authorization. Access revocation closes

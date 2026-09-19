@@ -20,7 +20,7 @@
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -30,6 +30,8 @@ import {
   asWorkstreamId,
   conversationNeedsViewer,
   HarnessStatusSchema,
+  WorkspaceSocketSyncEventSchema,
+  WorkspaceSpaceConversationsEventSchema,
   type HarnessStatus,
   type SpaceId,
   type UserId,
@@ -86,6 +88,13 @@ async function establishWorkspace(): Promise<void> {
       role TEXT, access_class TEXT NOT NULL DEFAULT 'member',
       last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
+    // The dashboard nudge is a socket message and nothing else, so this suite
+    // opens real workspace sockets — which authenticate against this table.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+      workspace_incarnation TEXT DEFAULT 'existing-member',
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+    )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,
@@ -102,6 +111,14 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`dashboard-session-${OWNER}`, OWNER, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`dashboard-session-${MEMBER}`, MEMBER, WORKSPACE_ID),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
@@ -308,10 +325,52 @@ async function page(spaceId: SpaceId, userId: UserId, cursor: string | null = nu
   return result.page;
 }
 
-async function conversationWaterline(spaceId: SpaceId, userId: UserId): Promise<number> {
-  const result = await workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId, spaceId });
-  if (!result.ok) throw new Error(`spaceSummary refused: ${result.code}`);
-  return result.space.conversationWaterline;
+let ticketSequence = 0;
+
+/**
+ * A subscribed workspace socket, with every dashboard nudge it is sent
+ * recorded in arrival order.
+ *
+ * The socket is the whole point: the signal this suite is about is *only* a
+ * socket message — nothing durable is written for it — so a test that read it
+ * back through an RPC would be asserting on a thing that does not exist. This
+ * is the production delivery path, opened the way `space-authority.test.ts`
+ * opens one.
+ */
+async function connectViewer(userId: UserId): Promise<{ nudges: string[][] }> {
+  ticketSequence += 1;
+  const response = await workspace().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `dashboard-session-${userId}`,
+      "x-rally-socket-ticket-id":
+        `00000000-0000-7000-8000-${String(ticketSequence).padStart(12, "0")}`,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+  }
+  const socket = response.webSocket;
+  socket.accept();
+  const nudges: string[][] = [];
+  const subscribed = new Promise<void>((resolve) => {
+    socket.addEventListener("message", (event) => {
+      const data = JSON.parse(String(event.data)) as unknown;
+      const nudge = WorkspaceSpaceConversationsEventSchema.safeParse(data);
+      if (nudge.success) {
+        nudges.push([...nudge.data.spaceIds]);
+        return;
+      }
+      if (WorkspaceSocketSyncEventSchema.safeParse(data).success) resolve();
+    });
+  });
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  await subscribed;
+  return { nudges };
 }
 
 function inspect(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
@@ -370,15 +429,13 @@ describe("space dashboard conversation page", () => {
     expect(await consumeEffectBodies(env, queued)).toEqual({ acked: 1, retried: 0 });
 
     const after = await breakoutRows();
-    const waterline = await conversationWaterline(spaceId, OWNER);
 
     // At-least-once is the Queue's whole contract, so this is the ordinary
     // case. It must be acknowledged — a message that fails here is retried
-    // until it reaches the dead-letter queue — and it must not be counted
-    // twice, because the count is what tells a client its page is stale.
+    // until it reaches the dead-letter queue — and it must leave the row
+    // exactly as the first delivery did.
     expect(await consumeEffectBodies(env, queued)).toEqual({ acked: 1, retried: 0 });
     expect(await breakoutRows()).toEqual(after);
-    expect(await conversationWaterline(spaceId, OWNER)).toBe(waterline);
   });
 
   it("given a Channel this viewer cannot see, when they read the page, then its breakout is absent too", async () => {
@@ -609,33 +666,144 @@ describe("space dashboard conversation page", () => {
     expect(checked).toBe(HarnessStatusSchema.options.length * 8);
   });
 
-  it("given a member breakout's activity, when it moves, then the refresh signal moves and an outsider's does not", async () => {
-    const spaceId = await reserve("Hiring");
-    const otherSpaceId = await reserve("Marketing");
-    await openChannelObject(CHANNEL_A);
-    await openChannelObject(CHANNEL_B);
-    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
-    await publishChannel(CHANNEL_B, [channelCommonEffect("Outside"), viewerEffect(OWNER)]);
-    await place(spaceId, CHANNEL_A);
-    await place(otherSpaceId, CHANNEL_B);
+  /**
+   * The dashboard nudge, on the only path it exists on.
+   *
+   * There is no counter to read back and no row to inspect: the whole signal
+   * is one message on one socket, sent to the people who can see the
+   * conversation that moved. Every assertion below is therefore on what a
+   * subscribed socket was handed.
+   *
+   * "Did not arrive" is fenced rather than waited out. Each such case makes a
+   * change that *must* be nudged after the one that must not, and asserts the
+   * recorder holds only the second — so the test fails on a nudge that is late
+   * as well as on one that should never have been sent, and never on a timer.
+   */
+  describe("the dashboard nudge", () => {
+    it("given a message in a member Channel, when it is projected, then its readers are told which Space to read again", async () => {
+      const spaceId = await reserve("Hiring");
+      await openChannelObject(CHANNEL_A);
+      await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+      await place(spaceId, CHANNEL_A);
+      const owner = await connectViewer(OWNER);
 
-    const before = await conversationWaterline(spaceId, OWNER);
-    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
-      breakoutCommonEffect("Pricing"),
-    ]);
-    const afterBreakout = await conversationWaterline(spaceId, OWNER);
-    expect(afterBreakout).toBeGreaterThan(before);
+      await publishChannel(
+        CHANNEL_A,
+        [channelCommonEffect("Roadmap", { lastActivityAt: "2026-09-19T13:00:00.000Z" })],
+        2,
+      );
 
-    // A Channel in another Space moves nothing here. The signal is per Space
-    // as well as per person, so a busy Organization does not refetch every
-    // dashboard on every message.
-    await publishChannel(
-      CHANNEL_B,
-      [channelCommonEffect("Outside", { lastActivityAt: "2026-09-19T13:00:00.000Z" })],
-      2,
-    );
-    expect(await conversationWaterline(spaceId, OWNER)).toBe(afterBreakout);
-    expect(await conversationWaterline(otherSpaceId, OWNER)).toBeGreaterThan(0);
+      await vi.waitFor(() => expect(owner.nudges).toEqual([[spaceId]]));
+    });
+
+    it("given a breakout's own activity, when it is forwarded, then the nudge still arrives", async () => {
+      const spaceId = await reserve("Hiring");
+      await openChannelObject(CHANNEL_A);
+      await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+      await place(spaceId, CHANNEL_A);
+      const owner = await connectViewer(OWNER);
+
+      // The case the Channel's own state push cannot cover: a breakout does
+      // not change its Channel's directory row, so nothing else on this socket
+      // moves. Without a signal of its own the row would sit stale until the
+      // reader navigated away and back.
+      await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [breakoutCommonEffect("Pricing")]);
+
+      await vi.waitFor(() => expect(owner.nudges).toEqual([[spaceId]]));
+    });
+
+    it("given one person's read state moving, when it is projected, then only that person is told", async () => {
+      const spaceId = await reserve("Hiring");
+      await openChannelObject(CHANNEL_A);
+      await publishChannel(CHANNEL_A, [
+        channelCommonEffect("Roadmap"), viewerEffect(OWNER), viewerEffect(MEMBER),
+      ]);
+      await place(spaceId, CHANNEL_A);
+      const owner = await connectViewer(OWNER);
+      const member = await connectViewer(MEMBER);
+
+      // One person opening a conversation takes the row off their list and
+      // nobody else's, so a shared signal here would refetch every member's
+      // dashboard on every read anybody made.
+      await publishChannel(CHANNEL_A, [viewerEffect(MEMBER, { seenAttentionOrdinal: 4 })], 2);
+      // The fence: a shared change everybody is owed, made second.
+      await publishChannel(
+        CHANNEL_A,
+        [channelCommonEffect("Roadmap", { lastActivityAt: "2026-09-19T13:00:00.000Z" })],
+        3,
+      );
+
+      await vi.waitFor(() => expect(owner.nudges).toEqual([[spaceId]]));
+      expect(member.nudges).toEqual([[spaceId], [spaceId]]);
+    });
+
+    it("given a Channel this viewer cannot see, when it moves, then they are told nothing about its Space", async () => {
+      const spaceId = await reserve("Hiring");
+      await openChannelObject(PRIVATE_CHANNEL);
+      await openChannelObject(CHANNEL_A);
+      await publishChannel(PRIVATE_CHANNEL, [
+        channelCommonEffect("Private Channel", { scope: "personal" }), viewerEffect(OWNER),
+      ]);
+      await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+      await place(spaceId, PRIVATE_CHANNEL);
+      await place(spaceId, CHANNEL_A);
+      const member = await connectViewer(MEMBER);
+
+      // The member can read the Space and is in none of the private Channel's
+      // audience. Naming the Space here is harmless on its own — but the
+      // refetch it would cause is one per message in a Channel they cannot
+      // read, on every member of an Organization-wide Space.
+      await publishChannel(
+        PRIVATE_CHANNEL,
+        [channelCommonEffect("Private Channel", {
+          scope: "personal", lastActivityAt: "2026-09-19T13:00:00.000Z",
+        })],
+        2,
+      );
+      await publishChannel(
+        CHANNEL_A,
+        [channelCommonEffect("Roadmap", { lastActivityAt: "2026-09-19T14:00:00.000Z" })],
+        2,
+      );
+
+      await vi.waitFor(() => expect(member.nudges).toEqual([[spaceId]]));
+    });
+
+    it("given a membership settling, when it is finalized, then the Space's readers are told", async () => {
+      const spaceId = await reserve("Hiring");
+      await openChannelObject(CHANNEL_A);
+      await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+      const owner = await connectViewer(OWNER);
+
+      // A membership change is the one dashboard change that is not a
+      // projection, and it used to have a mechanism of its own (`channelCount`
+      // moving on the Space snapshot). One nudge covers both.
+      await place(spaceId, CHANNEL_A);
+
+      await vi.waitFor(() => expect(owner.nudges.at(-1)).toEqual([spaceId]));
+    });
+
+    it("given a Channel in another Space, when it moves, then this Space is not named", async () => {
+      const spaceId = await reserve("Hiring");
+      const otherSpaceId = await reserve("Marketing");
+      await openChannelObject(CHANNEL_A);
+      await openChannelObject(CHANNEL_B);
+      await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+      await publishChannel(CHANNEL_B, [channelCommonEffect("Outside"), viewerEffect(OWNER)]);
+      await place(spaceId, CHANNEL_A);
+      await place(otherSpaceId, CHANNEL_B);
+      const owner = await connectViewer(OWNER);
+
+      await publishChannel(
+        CHANNEL_B,
+        [channelCommonEffect("Outside", { lastActivityAt: "2026-09-19T13:00:00.000Z" })],
+        2,
+      );
+
+      // The nudge is addressed per Space as well as per person: a busy Channel
+      // in Marketing must not refetch Hiring's dashboard.
+      await vi.waitFor(() => expect(owner.nudges).toEqual([[otherSpaceId]]));
+    });
   });
 
   it("given a background-agent conversation, when it projects, then nothing is forwarded for it", async () => {

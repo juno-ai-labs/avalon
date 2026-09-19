@@ -191,8 +191,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   // statement names.
   "space_bootstrap",
   "space_channel_memberships",
-  "space_conversation_state",
-  "space_conversation_viewer_state",
   "space_default_publications",
   "space_default_targets",
   "space_defaults",
