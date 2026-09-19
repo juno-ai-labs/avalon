@@ -20,8 +20,16 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 
 ## How it works
 
-Every grant mutation invokes the parent's existing projection writer within its
-SQLite transaction, including invitation acceptance. The same durable outbox owns
+Every *direct* grant mutation invokes the parent's existing projection writer
+within its SQLite transaction, including invitation acceptance. A grant a Space
+seats does not: it carries `scope_grants.source_kind = 'space'` and the writer
+is suppressed for it, because that reader discovers the Channel through the
+Organization's Space directory instead. See
+[authorization](authorization.md#space-derived-access) for why — General holds
+every Channel in the Organization, so publishing one row per Space-derived
+reader per Channel would size this index at the Organization times its
+Channels. Direct provenance wins where both apply, so a Channel a person also
+holds directly stays published. The same durable outbox owns
 versioning, retries and WorkspaceDO delivery; there is no intermediate delivery alarm.
 Migration 17 drains pending legacy delivery rows into that outbox transactionally,
 then removes their old alarm. The empty legacy table remains for schema compatibility.
@@ -45,6 +53,10 @@ so clients do not offer a child restore while its parent is archived.
   Queue lag must never extend access after revocation.
 - The generic WorkspaceDO SQL API rejects this table. Only the typed projection
   and candidate RPCs own its lifecycle.
+- The index is complete for direct grants and deliberately incomplete for
+  Space-derived ones. An absent candidate row is not absent access, and nothing
+  may treat it as a negative answer — it narrows a search, and the owner's
+  admission is what decides.
 
 ## Boundary
 

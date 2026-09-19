@@ -1341,6 +1341,8 @@ misrouted product statement now fails because the table or column is absent.
 - **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same; a child of an automation, or any substream other than `0`, additionally accepts the parent's forwarded viewer decision, because its own participant row is narrower than what the parent admits. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
+- **A Channel's readers are the union of one direct source and every Space source that still reaches it, and a source can only widen.** `lib/channel-audience.ts` is the only place that union is derived, and it is written over `sourceId` rather than over Spaces, so a second kind of source composes by being passed in. `workspace` anywhere makes the whole audience Organization-wide; otherwise the readers are the union of every source's participants, and nothing lets one source remove a reader another supplies. Withdrawing a source therefore removes only the readers *that source seated* who no remaining source still supplies, and narrows the scope only when nothing left is Organization-wide. A retraction that recomputed the audience instead of reading the provenance would take out somebody who was added directly or named in a message and happens to appear on the departing Space's roster.
+- **This object records why somebody may read; it never admits them.** Admission is `resolveScopeAccess` over the grant ledger, or the main conversation's scope and participant rows on a Channel that has never been shared. The RPCs in `workstream-access-protocol.ts` return a *plan*, and applying it goes back through the Channel's canonical scope and participant operations — which is where `assertRetainedContentContains` and the retained-content triggers run. A second writer beside them would be a second place an audience could widen without the fence.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1550,6 +1552,10 @@ remain bounded and exclude the supplemented rows.
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
 | `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`, `scope_grant_directory`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
+| `workstream_direct_audience` | Singleton, migration 18: the Channel's audience *on its own account*, as `personal` or `workspace`. Backfilled from `workstream_metadata.scope`, which stops being able to answer this the moment a Space widens the Channel — after that the metadata scope is the *effective* audience. `updated_at = 0` marks a row nothing has observed: an object created after migration 18 runs it in its constructor, before `reserveChild("0")` writes any metadata, so the backfill is a guess there and the first Space source replaces it with the reader audience the caller passes in. |
+| `workstream_space_access_sources` | One row per Space that currently reaches this Channel, with its scope, its participants, and the `space_revision` and `membership_generation` it was applied on. The fences are re-read inside the commit, so a staged application that lost a race cannot overwrite the newer one. |
+| `workstream_space_supplied_readers` | Which readers a Space *seated*, which is narrower than which it lists: somebody already here keeps whatever put them here. `ON DELETE CASCADE` from the source, so "a source that no longer exists stops granting" is true of the provenance as well as of the audience. |
+| `workstream_access_operations` | One receipt table for every access operation, in the shape `scope_grant_operations` uses: the identity is the operation id, the fence is the exact request, and a replay returns the first attempt's answer without reapplying it. A differing request under the same id throws `workstream_access_operation_conflict`. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
 projection. No SQL crosses object databases; the child's envelope arrives by
@@ -1826,6 +1832,56 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+### 2026-09-19 — Space-derived access is provenance here, applied through the Channel's own operations
+
+**What changed:** Migration 18 adds `workstream_direct_audience`,
+`workstream_space_access_sources`, `workstream_space_supplied_readers` and
+`workstream_access_operations`, and gives `scope_grants` a `source_kind` and
+`source_id` that existing rows backfill into as `direct`. Six RPCs read, record
+and withdraw those sources and return the audience delta each implies;
+`lib/channel-audience.ts` is the one function that derives the union.
+`ChannelAccessService` applies every delta through the Channel's canonical
+`update`, `addParticipant` and `removeParticipant`, and `PATCH /workstreams/:id`
+and `POST /:id/participants` moved onto `WorkstreamService` so a direct scope
+change and a direct add are recorded as the Channel's own.
+
+**Why:** A Space grants its participants access to every Channel in it, and that
+access has to be withdrawable without touching access the Channel holds
+directly or gets from another Space. `workstream_metadata.scope` cannot carry
+that: once a Space has made a Channel Organization-wide it is the *effective*
+audience, and nothing is left saying what the Channel would be on its own. So
+this object became the provenance authority — which source reaches the Channel,
+and which readers each one seated — while the audience itself stays where it
+already was.
+
+**Considered and rejected:** Recording Space sources in the scope-grant ledger
+alone, which is what design decision 4 of the PRD first described. That ledger
+only becomes the admission authority for a Channel after its first share; every
+other Channel is still admitted from its main conversation's scope and
+participant rows, so a Space would have granted nothing on most Channels. Also
+rejected: having this object write the audience itself. The retained-content
+containment preflight and its SQL triggers live on the canonical operations, and
+a second writer would have been the second place an audience could widen without
+them — so the RPCs plan and the service applies.
+
+The grant a Space seats carries `spaceSourceId` on the mutation, threaded from
+the object client through the conversation, rather than being inferred here.
+Nothing downstream can tell the two apart, and the difference decides one thing:
+a Space-derived grant is not published to the shared scope-grant directory. A
+reader finds the Channel through the Space, and a directory row per reader per
+Channel would make General's fan-out the size of the Organization times its
+Channels. Direct provenance is sticky and wins, so a Space cannot turn a grant
+the Channel holds directly into one its departure deactivates.
+
+**What a future change has to respect:** The union is derived in one place and
+applied through the canonical operations; a path that writes an audience
+directly is a path with no containment fence. A retraction reads the provenance,
+never a recomputed audience, or it withdraws readers no Space ever supplied. And
+a retraction that narrows the scope has to *seat* the readers a surviving source
+supplies before it narrows: a source applied while the Channel was
+Organization-wide seated nobody, so its readers exist only as its roster until
+the audience stops being Organization-wide.
+
 ### 2026-09-19 — A Space is this class under an immutable role, not a subclass with overrides
 
 **What changed:** `WorkstreamDO`'s constructor takes a
