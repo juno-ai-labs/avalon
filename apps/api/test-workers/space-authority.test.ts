@@ -500,6 +500,28 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
+  it("given a Channel already in a Space, when it is added again, then the add succeeds", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await place(spaceId, CHANNEL_A);
+
+    // Adding a Channel a Space already holds is the ordinary shape of a retry,
+    // and of two people dragging the same Channel onto the same Space.
+    // `prepareSpaceMembership` answers it with the generation the membership
+    // already has rather than staging a new one, so the settlement has nothing
+    // to activate — and answering that as "not found" turned an idempotent add
+    // into a 404.
+    await place(spaceId, CHANNEL_A);
+
+    await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: true, space: { channelCount: 1 } });
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT state, generation FROM space_channel_memberships
+             WHERE space_id = ? AND workstream_id = ?`,
+      bindings: [spaceId, CHANNEL_A],
+    })).toMatchObject({ rows: [{ state: "active", generation: 1 }] });
+  });
+
   it("given a Channel in one Space, when that membership is removed, then it is refused as final", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
