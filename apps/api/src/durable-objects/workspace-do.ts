@@ -5899,21 +5899,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
     const storage = this.spaceStorage();
-    const existing = storage.generalSpaceId();
-    if (existing !== null) {
-      const space = storage.readable(request.userId, existing);
-      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
-      storage.noteGeneralSpace(existing);
-      return { ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space }), created: false };
-    }
-    const space = storage.reserve({
+    const general = storage.ensureGeneral({
       workspaceId: request.workspaceId,
       userId: request.userId,
       space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
-    }, uuidV7(), "general");
-    storage.noteGeneralSpace(space.id);
-    this.publishSpaceSnapshot();
-    return { ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space }), created: true };
+    }, uuidV7());
+    // A General that already existed is still subject to this viewer's read —
+    // which for an Organization-wide Space is every active member, and is the
+    // answer rather than an assumption.
+    if (!general.created && storage.readable(request.userId, general.space.id) === false) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    }
+    storage.noteGeneralSpace(general.space.id);
+    if (general.created) this.publishSpaceSnapshot();
+    return {
+      ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space: general.space }),
+      created: general.created,
+    };
   }
 
   async listSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {

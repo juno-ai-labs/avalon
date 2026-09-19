@@ -438,6 +438,35 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * The Organization's one General Space, reserved once.
+   *
+   * The unique partial index on `system_role` is the decision, and it is the
+   * *only* decision: there is deliberately no read of `generalSpaceId()` in
+   * front of the insert. A check-then-write is what this shape is trying not to
+   * be — the read and the write are two statements, every caller that reaches
+   * here is a retry of some other caller, and the loser of that race has to be
+   * answered with the Space the winner made rather than with a bare
+   * `UNIQUE constraint failed` across an RPC hop.
+   *
+   * The re-read happens outside the failed transaction because the statement
+   * that aborted took its transaction with it. A failure the index did not
+   * cause has no winner to find, and is rethrown as itself.
+   */
+  ensureGeneral(
+    request: WorkspaceSpaceReserveRequest,
+    spaceId: string,
+    now = Date.now(),
+  ): { space: SpaceSummary; created: boolean } {
+    try {
+      return { space: this.reserve(request, spaceId, "general", now), created: true };
+    } catch (error) {
+      const winner = this.generalSpaceId();
+      if (winner === null) throw error;
+      return { space: this.space(winner), created: false };
+    }
+  }
+
   /** Undo a reservation whose Space object could not be provisioned. */
   cancelReservation(spaceId: string, now = Date.now()): boolean {
     if (!this.ready()) return false;
