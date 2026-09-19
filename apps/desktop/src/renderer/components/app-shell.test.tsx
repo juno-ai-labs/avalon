@@ -1,7 +1,7 @@
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { SpaceSummarySchema } from '@rally/contracts';
+import { SpaceSummarySchema, type ClientSession } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
@@ -10,6 +10,7 @@ import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   invitationAccountMismatch,
+  spacesEnabledForSession,
   upsertSpaceDirectory,
   windowControlsShellClass,
   batchArchiveSkipIds,
@@ -80,6 +81,35 @@ describe('invitationAccountMismatch', () => {
       'This invitation is for invited@example.com. Sign in with that account to continue.',
     );
     expect(invitationAccountMismatch('Invited@example.com', 'invited@example.com')).toBeNull();
+  });
+});
+
+describe('spacesEnabledForSession', () => {
+  const session: ClientSession = {
+    expiresAt: '2026-09-20T00:00:00.000Z',
+    apiBaseUrl: 'https://api.rally.test',
+    user: { id: '00000000-0000-7000-8000-0000000000a1', email: 'adam@example.com', name: 'Morgan Ellis' },
+    workspace: {
+      id: '00000000-0000-7000-8000-0000000000b1',
+      name: 'Rally Studio',
+      region: 'global',
+      role: 'member',
+    },
+  };
+
+  // Guest access to Spaces is deferred: every Space RPC refuses a guest, so the
+  // shell omits the navigation rather than drawing controls that only fail.
+  it('omits spaces for a guest, and keeps them for a member however the wire says so', () => {
+    expect(spacesEnabledForSession({
+      ...session,
+      workspace: { ...session.workspace!, accessClass: 'guest', role: null },
+    })).toBe(false);
+    expect(spacesEnabledForSession({
+      ...session,
+      workspace: { ...session.workspace!, accessClass: 'member' },
+    })).toBe(true);
+    // An absent `accessClass` is the legacy full-member representation.
+    expect(spacesEnabledForSession(session)).toBe(true);
   });
 });
 

@@ -735,6 +735,7 @@ describe('Sidebar channel markers', () => {
             automations={[]}
             loading
             onSignOut={vi.fn()}
+            spaces={[]}
             workspace={workspace}
             workstreams={[]}
           />
@@ -761,6 +762,7 @@ describe('Sidebar channel markers', () => {
             automations={[]}
             loading={false}
             onSignOut={vi.fn()}
+            spaces={[]}
             workspace={workspace}
             workstreams={[workstream('00000000-0000-4000-8000-000000000030', 'Launch brief', 'running')]}
           />
@@ -1707,6 +1709,38 @@ describe('Sidebar channel markers', () => {
   // The section is showing its opening card and no rows, so there is nothing to
   // drop a Channel on and nothing to add it to — the server refuses either with
   // `space_bootstrap_pending`.
+  // The guest shell is handed no directory at all: guest access to Spaces is
+  // deferred, and the host decides that rather than the sidebar inferring it
+  // from controls that would only be refused.
+  it('given no space directory, then the sidebar draws no space navigation', async () => {
+    const target = workstream('guest-shell', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            conversationOnly
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('heading', { name: 'Spaces' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.queryByText('No spaces yet')).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
+      .not.toHaveAttribute('draggable', 'true');
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+  });
+
   it('shows the organization-opening state instead of a half-built hierarchy', async () => {
     const target = workstream('opening-state', 'Quarterly planning', 'completed');
     render(

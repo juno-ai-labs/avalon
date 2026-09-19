@@ -1,4 +1,4 @@
-import type { CreateSpaceRequest, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import type { ClientSession, CreateSpaceRequest, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -181,6 +181,21 @@ export function applyPinnedWorkstreamsIfCurrent(
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
 
+/**
+ * Whether this session may see the Organization's Spaces at all.
+ *
+ * Guest access to Spaces is deferred — PRD non-goal 3: a guest holds explicit
+ * Channel and Breakout grants and no Organization-wide discovery, and every
+ * Space RPC refuses one. Design decision 9 makes that the host's decision
+ * rather than something the shared components infer from a missing control, so
+ * it is taken once here and the sidebar is handed no directory to draw.
+ *
+ * An absent `accessClass` is the legacy full-member wire representation.
+ */
+export function spacesEnabledForSession(session: ClientSession | null): boolean {
+  return session?.workspace?.accessClass !== 'guest';
+}
+
 export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
   return useQuery<T[]>({
     queryKey,
@@ -288,6 +303,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
   const spacesReady = useSpacesReady();
+  const spacesEnabled = spacesEnabledForSession(session);
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -528,7 +544,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // has no list yet — which also keeps the skeletons up rather than
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
-        spaces={spaces.data?.items ?? []}
+        // Undefined rather than empty for a guest: an empty directory is an
+        // Organization with no Spaces yet, which still has a Spaces section
+        // and a **New space**. No directory at all is a shell with no Space
+        // navigation, which is what a guest gets.
+        spaces={spacesEnabled ? spaces.data?.items ?? [] : undefined}
         inactiveSpaces={inactiveSpaces.data?.items ?? []}
         spacesReady={spacesReady}
         // The rows on screen are the last ones the socket delivered and the
