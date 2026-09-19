@@ -23,11 +23,13 @@ export interface SidekickRow {
   onRecommend?: (() => void) | undefined;
 }
 
-export type SidekickSectionFailure = 'load' | 'remove';
+export type SidekickSectionFailure = 'load' | 'remove' | 'recommend' | 'unrecommend';
 
 const sidekickSectionFailureCopy: Record<SidekickSectionFailure, string> = {
   load: 'Some Sidekick information may be out of date.',
   remove: 'That Sidekick couldn’t be removed.',
+  recommend: 'That Sidekick couldn’t be recommended.',
+  unrecommend: 'That Sidekick recommendation couldn’t be removed.',
 };
 
 /**

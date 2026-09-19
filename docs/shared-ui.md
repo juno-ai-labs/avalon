@@ -82,9 +82,10 @@ component test runner is needed for the same implementations.
 
 ### 2026-09-18 — Sidebar failures carry state, not response copy
 
-**What changed:** Sidebar, project, work-stream action, Sidekick picker, and
-inspector/resource rail boundaries accept booleans or semantic failure states
-and render Rally-owned copy instead of accepting arbitrary error messages.
+**What changed:** Sidebar, project, work-stream action, shared conversation
+header, Sidekick picker, and inspector/resource rail boundaries accept booleans
+or semantic failure states and render Rally-owned copy instead of accepting
+arbitrary error messages.
 
 **Why:** A production API-version mismatch returned its router's diagnostic
 sentence directly under **Sidekicks**. Sidebar chrome is product presentation;

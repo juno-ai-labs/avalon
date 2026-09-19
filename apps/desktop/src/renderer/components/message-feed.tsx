@@ -46,7 +46,7 @@ interface MessageFeedProps {
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
-  acceptDraftFailed?: boolean | undefined;
+  acceptDraftFailureFor?: string | null;
   /** Opts this conversation feed into interactive connector tool cards. */
   connectorConnectionCards?: boolean;
   /**
@@ -172,7 +172,7 @@ export function MessageFeed({
   onStartSubstream,
   onAcceptDraft,
   acceptingDraftFor,
-  acceptDraftFailed,
+  acceptDraftFailureFor,
   connectorConnectionCards = false,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
@@ -253,7 +253,7 @@ export function MessageFeed({
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
-          acceptDraftFailed={acceptDraftFailed}
+          acceptDraftFailureFor={acceptDraftFailureFor ?? null}
           connectorConnectionCards={connectorConnectionCards}
           connectedConnectorSelections={connectedConnectorSelections}
           onConnectorConnected={markConnectorConnected}

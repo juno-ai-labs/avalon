@@ -683,8 +683,10 @@ activation event without losing the warning; later clears replace that retained 
 ### 2026-09-18 — Conversation controls own failure language
 
 **What changed:** Transcript paging, message sending, participant changes,
-resource attachment, and Sidekick-draft acceptance now map rejected operations
-to stable Rally copy before rendering. The participant and resource dialogs
+resource attachment, title renaming, conversation sharing, elicitation replies,
+and Sidekick-draft acceptance now map rejected operations to stable Rally copy
+before rendering. A failed draft acceptance is keyed to its automation id, so
+other proposal cards remain healthy. The participant and resource dialogs
 accept closed failure states rather than exception strings. Persisted run
 failure records remain the explicit exception: their notice intentionally shows
 the stored support message beside its code and request id.

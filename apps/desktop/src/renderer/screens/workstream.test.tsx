@@ -443,8 +443,9 @@ describe('WorkstreamHeader inline rename', () => {
   });
 
   it('refuses an empty name and keeps the editor open when the rename fails', async () => {
+    const diagnostic = 'router rename failure: shard=title-4';
     const onRename = vi.fn(async () => {
-      throw new Error('The work stream could not be renamed.');
+      throw new Error(diagnostic);
     });
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
@@ -456,7 +457,8 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.change(input, { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('The work stream could not be renamed.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That work stream couldn’t be renamed. Try again.');
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Launch planning');
   });
 
@@ -684,7 +686,8 @@ describe('WorkstreamHeader inline rename', () => {
     const input = screen.getByRole('textbox', { name: 'Work stream name' });
     fireEvent.change(input, { target: { value: 'Rejected name' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('The request is invalid.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That work stream couldn’t be renamed. Try again.');
+    expect(screen.queryByText('The request is invalid.')).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: 'Corrected name' } });
 

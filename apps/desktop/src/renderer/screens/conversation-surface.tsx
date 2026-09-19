@@ -2126,7 +2126,9 @@ export function ConversationSurface({
   // surface passes only failure presence to shared presentation, which owns
   // the stable Rally copy.
   const sidekickFailure: SidekickSectionFailure | undefined = removeSidekick.error
-    ? 'remove'
+    ? removeSidekick.variables?.recommendation
+      ? removeSidekick.variables.attached ? 'recommend' : 'unrecommend'
+      : 'remove'
     : (readOwnedSidekickDetails && ownedSidekicks.error)
       || attachedSidekicks.error
       || recommendedSidekicks.error
@@ -2333,7 +2335,9 @@ export function ConversationSurface({
               acceptingDraftFor={acceptProposedAutomation.isPending
                 ? acceptProposedAutomation.variables ?? null
                 : null}
-              acceptDraftFailed={Boolean(acceptProposedAutomation.error)}
+              acceptDraftFailureFor={acceptProposedAutomation.error
+                ? acceptProposedAutomation.variables ?? null
+                : null}
               virtualizer={transcriptVirtualizer}
             />
           )}
