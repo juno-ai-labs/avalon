@@ -30,8 +30,11 @@ import {
 } from "@rally/contracts/conversation-effects";
 import type { ScopeGrantMutation, ScopeGrantMutationResult } from "@rally/contracts/scope-grants";
 
-import { spaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+
+import { spaceDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { consumeEffectBodies } from "./helpers/conversation-effects";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ce01");
@@ -154,6 +157,27 @@ const ACTIVITY_EFFECT: ConversationEffect = {
   targets: [],
 };
 
+const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
+
+/** The same directory effect a Space publishes, addressed at the workspace. */
+function spaceDirectoryEnvelope() {
+  return ParentEffectEnvelopeSchema.parse({
+    kind: "parent_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "space",
+    parentId: SPACE_ID,
+    generation: 1,
+    messageId: crypto.randomUUID(),
+    partitionKey: "common",
+    sourceVersion: 1,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(DIRECTORY_EFFECT),
+    effect: DIRECTORY_EFFECT,
+  });
+}
+
 beforeEach(async () => {
   await reset();
 });
@@ -274,6 +298,33 @@ describe("a Space's Durable Object", () => {
       substreamId: "0",
       envelopes: [childEffect("workstream", SPACE_ID, DIRECTORY_EFFECT, 1)],
     }))).rejects.toThrow(/workstream_effect_parent_kind_mismatch/u);
+  });
+
+  it("leaves its directory effect on the Queue rather than storing it as a Channel", async () => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE workspaces(id TEXT PRIMARY KEY, region TEXT, abandoned_at TEXT)"),
+      env.DB.prepare("INSERT INTO workspaces(id, region) VALUES (?, 'global')").bind(WORKSPACE_ID),
+    ]);
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    // Named, and refused ahead of the schema parse. The schema would reject it
+    // too, but as a `ZodError` that reaches the Queue consumer across an RPC
+    // hop as a bare `Error` with no issues and no field — which is the shape
+    // `docs/naming-a-schema-failure.md` exists to stop.
+    await expect(runInDurableObject(workspace(), (instance) =>
+      instance.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [spaceDirectoryEnvelope()],
+      }))).rejects.toThrow(/space_directory_not_ready/u);
+
+    // And the delivery is retried rather than acknowledged, so the effect waits
+    // on the Queue for the release that can apply it instead of being lost.
+    expect(await consumeEffectBodies(env, [spaceDirectoryEnvelope()]))
+      .toEqual({ acked: 0, retried: 1 });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT workstream_id FROM workspace_workstream_directory",
+      bindings: [],
+    })).toMatchObject({ rows: [] });
   });
 
   it("answers as retired once its workspace is closed, through the inherited gate", async () => {
