@@ -338,10 +338,12 @@ popover is open. It is decoration in the accessibility tree: the pill's own
 the source and where it opens. Everything a favicon cannot answer for degrades
 to the asterisk, in one direction: a resource or a person has no host, a host
 has no icon, the request has not landed yet, or the surface has no API to ask.
-The pill's tinted plate goes with the asterisk rather than following the icon —
-it exists to make a glyph findable, and an icon that brings its own colour and
-edges reads as two objects behind one. The hover tint stays, because the click
-has to remain discoverable.
+The plate the asterisk sits on — tint, border, pill radius, raise and hover —
+stays exactly as it is and the icon sits inside it, because a sentence citing a
+web page and an internal document cites both the same way and a marker that
+changed shape by target would read as two mechanisms. The icon is sized to the
+box that is already there rather than the other way round, so the two markers
+are identical in height and within a pixel and a half in width.
 
 **While a turn streams, a reference whose definition has not arrived wears the
 pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
@@ -808,8 +810,9 @@ The traps, both of which have bitten:
 ### 2026-09-19 — A web source's footnote marker is the site's favicon
 
 **What changed:** A lifted footnote whose target is an HTTP(S) URL draws that
-host's favicon as its inline marker instead of the asterisk, through the same
-authenticated endpoint and cache the link decoration already uses. The fetch,
+host's favicon as its inline marker in place of the asterisk, through the same
+authenticated endpoint and cache the link decoration already uses. It keeps the
+asterisk pill's plate and sits inside it. The fetch,
 the mount-scoped lifetime and the object-URL revocation moved out of
 `workstream-blocks.tsx` into `lib/host-favicon.tsx`, which both callers now
 share; `favicon-api.tsx` stays what it was, the context that narrows the session
@@ -824,21 +827,26 @@ the same host — so the marker could carry it without a new request path, a new
 cache, or any renderer egress. Two positions drawing one host's icon two ways
 was the thing to avoid, which is what the shared hook now prevents.
 
-**Considered and rejected:** Keeping the asterisk's tinted plate behind the
-icon, which read as a second object at this size; sharing a decorated `<img>`
-component rather than the hook, which cannot serve both positions because the
-absent case is empty space in front of a link and a glyph in a marker; and
-letting a still fetch icons, which would print whatever had arrived by the
-moment the card was photographed.
+**Considered and rejected:** Dropping the plate and letting the icon sit bare on
+the line, which was built and looked at first — it reads as a cleaner mark on
+its own, and as a different mechanism the moment a paragraph cites a web page
+and a document in the same sentence, which is the common case. Also: sharing a
+decorated `<img>` component rather than the hook, which cannot serve both
+positions because the absent case is empty space in front of a link and a glyph
+in a marker; and letting a still fetch icons, which would print whatever had
+arrived by the moment the card was photographed.
 
 **Consequences:** The icon is decoration only — the source still reaches
 assistive technology through the pill's `aria-label` and its popover, both
-unchanged. The marker's box is sized in `line-height: 0` and qualified as
-`.markdown-body .citation-pill-favicon img`: the block-image rule further down
-that stylesheet carries `margin: var(--space-4) 0`, which on an icon inside a
-sentence grows the line box of every line in the paragraph, and an unqualified
-rule loses to it on source order. A future surface that wants a host's icon
-takes the hook rather than reimplementing the lifetime.
+unchanged. The icon rule is qualified as
+`.markdown-body .citation-pill-favicon img` and sets `margin: 0`: the
+block-image rule further down that stylesheet carries `margin: var(--space-4) 0`,
+which on an icon inside a sentence grows the line box of every line in the
+paragraph, and an unqualified rule ties it on specificity and loses on source
+order. Sizing the icon under one em of the pill's own reduced type is what keeps
+it inside the existing line box; a larger one would resize the plate and part
+the two markers. A future surface that wants a host's icon takes the hook rather
+than reimplementing the lifetime.
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 

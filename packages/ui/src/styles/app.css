@@ -3639,28 +3639,29 @@ pre {
 .citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-text-default) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
 .citation-pill { cursor: pointer; }
 .citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); }
-/* A web source wears the site's own favicon instead of the asterisk. At one
-   character an asterisk can only say "a source is here"; the icon says which
-   site before anyone has hovered, and it is the mark this app already draws in
-   front of a link, so the two readings of one destination agree.
+/* A web source's marker is the site's own favicon in place of the asterisk. At
+   one character an asterisk can only say "a source is here"; the icon says
+   which site before anyone has hovered, and it is the mark this app already
+   draws in front of a link, so the two readings of one destination agree.
 
-   It does not keep the asterisk pill's plate. That plate is built around a
-   glyph — a tint to find it by, and a 0.32em raise that lifts a low-sitting
-   asterisk to where a marker belongs. An icon needs neither: it carries its own
-   colour and its own edges, a tint behind it reads as a second object, and it
-   belongs on the baseline where the link icon sits. The hover tint is the one
-   part kept, because a marker this quiet still has to show it can be clicked.
+   Everything around the glyph stays the asterisk pill's — the tint, the border,
+   the pill radius, the raise, the hover — because a sentence citing a web page
+   and an internal document cites both the same way, and a marker that changed
+   shape by target would read as two mechanisms. So this sets no box of its own:
+   it sizes the icon to sit inside the box that is already there, just under one
+   em of the pill's own reduced type, which stays within the line box the plate
+   is built from and therefore does not resize it. The horizontal padding is
+   trimmed because a square needs less room around it than an asterisk, whose
+   glyph is narrower than the type it is set in; the two plates end up within a
+   pixel and a half of each other's width, and identical in height.
 
-   Two rules here are load-bearing rather than decorative. `line-height: 0`
-   keeps the button exactly as tall as the icon, and the `.markdown-body`
-   qualifier is what beats the block-image rule further down this file, whose
-   `margin: var(--space-4) 0` otherwise puts 18px above and below an icon
-   sitting inside a sentence — which does not merely misplace the marker, it
-   grows the line box of every line in the paragraph. `.markdown-link-favicon`
-   is qualified for the same reason. */
-.citation-pill-favicon { background: transparent; border-color: transparent; font-size: inherit; line-height: 0; padding: 1px; vertical-align: -0.08em; }
-.citation-pill-favicon:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent); }
-.markdown-body .citation-pill-favicon img { border-radius: 2px; display: block; height: 0.85em; margin: 0; max-width: none; object-fit: contain; width: 0.85em; }
+   `margin: 0` and the `.markdown-body` qualifier are load-bearing: the
+   block-image rule further down this file carries `margin: var(--space-4) 0`,
+   which on an icon inside a sentence grows the line box of every line in the
+   paragraph, and an unqualified rule ties it on specificity and loses on source
+   order. `.markdown-link-favicon` is qualified for the same reason. */
+.citation-pill-favicon { padding: 0 0.22em; }
+.markdown-body .citation-pill-favicon img { border-radius: 2px; display: inline-block; height: 0.95em; margin: 0; max-width: none; object-fit: contain; vertical-align: -0.13em; width: 0.95em; }
 /* Pending and resolved pills share geometry so resolution does not shift
    the sentence. An invisible asterisk gives the shimmer its exact glyph width
    in the active font, without estimating a digit width. The background paints
