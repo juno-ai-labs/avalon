@@ -1716,6 +1716,13 @@ export function WorkspaceSettingsScreen({
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
+                      // Ashby's personal sign-in has a prerequisite the OAuth redirect cannot
+                      // report: an org that has not opted into Ashby MCP fails provider-side with
+                      // nothing naming the cause. The card is one sentence, so the prerequisite
+                      // rides the button's own tooltip rather than a second paragraph.
+                      const personalConnectPrerequisite = provider.provider === 'ashby'
+                        ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
+                        : undefined;
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -1747,9 +1754,6 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
-                          {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
-                          {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}.</p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1776,7 +1780,7 @@ export function WorkspaceSettingsScreen({
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
-                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
+                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectPrerequisite ? ` ${personalConnectPrerequisite}` : ''}${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : PERSONAL_CONNECT_LABEL}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
