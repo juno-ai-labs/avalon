@@ -42,6 +42,11 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   space_revision_conflict: 'The space changed while this was being applied. Try again.',
   space_bootstrap_pending: 'Rally is still opening this organization. Try again in a moment.',
   space_conversation_unreachable: 'One of the channels couldn’t be reached to check whether the new audience may read it. Try again in a moment.',
+  // Its own sentence rather than `unavailable`'s, because the two are not the
+  // same news: `unavailable` is "we don't know what happened", and this is the
+  // space's own authority saying nothing — nothing about the request, the
+  // organization or the channels needs changing before a retry.
+  space_authority_unreachable: 'That space couldn’t be reached to make the change. Try again in a moment.',
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
 };
 

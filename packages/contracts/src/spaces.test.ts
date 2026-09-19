@@ -144,7 +144,7 @@ describe("space contracts", () => {
     }).success).toBe(false);
   });
 
-  it("given the refusal vocabulary, when a code is read, then it is one of the eleven the authority can produce", () => {
+  it("given the refusal vocabulary, when a code is read, then it is one of the twelve the authority can produce", () => {
     // Two narrowings that read alike and are not: `space_audience_incompatible`
     // is a *membership* removal that would strand a reader with no Space left
     // to discover the Channel through, and `channel_scope_locked_by_space` is
@@ -163,6 +163,7 @@ describe("space contracts", () => {
       "space_revision_conflict",
       "space_bootstrap_pending",
       "space_conversation_unreachable",
+      "space_authority_unreachable",
     ]);
     expect(SpaceErrorCodeSchema.safeParse("space_error").success).toBe(false);
   });

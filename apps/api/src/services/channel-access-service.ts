@@ -635,5 +635,11 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
     case "space_conversation_unreachable":
       return new ApiError(409, code,
         `“${channelTitle}” could not be asked whether this audience may read it`);
+    case "space_authority_unreachable":
+      // Written about the Channel, like every sentence in this table. The
+      // Space's own authority is what did not answer, and the reader is being
+      // told why the Channel in front of them did not change.
+      return new ApiError(503, code,
+        `The Space that reaches “${channelTitle}” could not be reached; try again`);
   }
 }

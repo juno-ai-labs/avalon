@@ -418,9 +418,11 @@ describe("SpaceService creation", () => {
       batch: async () => { throw new Error("d1_unavailable"); },
     });
 
+    // Named rather than propagated: the D1 message is a diagnostic for a log,
+    // and `internal_error` is what the caller used to be handed instead.
     await expect(new SpaceService(env, auth()).create({
       name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
-    })).rejects.toThrow(/d1_unavailable/u);
+    })).rejects.toMatchObject({ status: 503, code: "space_authority_unreachable" });
 
     // A reservation left behind would be a Space in every member's sidebar that
     // answers nothing, because the object it names was never opened.
