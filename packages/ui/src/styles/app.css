@@ -6574,14 +6574,20 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* Collapsed rather than absent: a header that mounted at the swap would push
    the transcript down by its own height on the frame it arrived.
 
-   `min-height` is the exception, and it has to be: this element borrows
-   `.workstream-header` for its dressing, and that rule's `min-height: 48px`
-   outranks a stated `height` in both directions. It held the collapsed header
-   open at 48px, so the launcher reserved a header's worth of empty pane it was
-   supposed to have none of, and it pinned the launching header at 48 where the
-   row it hands over to is 44. Released here rather than dropping the shared
-   class, which is also where the padding and the border come from. */
+   Two of the things this element borrows from `.workstream-header` have to be
+   given back, and both are stated here because neither state wants them. Its
+   `min-height: 48px` outranks a stated `height` in both directions: it held the
+   collapsed header open at 48px, so the launcher reserved a header's worth of
+   empty pane it was supposed to have none of, and it pinned the launching
+   header at 48 where the row it hands over to is 44. Its `border-bottom` is a
+   hairline the destination does not draw — `.grokbot-workstream-header` states
+   `border-bottom: 0` — so a header left with it blinks a rule off at the swap;
+   the width is zeroed rather than the shorthand so the colour stays a token's
+   to name. Released here rather than dropping the shared class, which is also
+   where the padding comes from. The new-chat launcher restates its own border
+   for the recipient bar, at a specificity that still wins. */
 .workstream-launch-screen > .launch-header {
+  border-bottom-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -6597,7 +6603,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    Launching → composing is the failure path, where nothing is racing the
    transition and the header has somewhere to collapse back to. */
 .workstream-launch-screen:not(.is-launching) > .launch-header {
-  border-bottom-width: 0;
   height: 0;
   padding-bottom: 0;
   padding-top: 0;
