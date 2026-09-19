@@ -125,6 +125,7 @@ describe('Sidekick recommendation picker', () => {
 
   it('keeps mutation diagnostics out of the picker when attachment fails', async () => {
     const diagnostic = 'provider mutation failed: durable object 9a2';
+    const laterLoadDiagnostic = 'router failed while refreshing Sidekick options';
     api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: true, items: [
       { id: 'helper', name: 'Guide', description: '', available: true, attached: false },
     ] });
@@ -138,6 +139,13 @@ describe('Sidekick recommendation picker', () => {
 
     expect(await screen.findByText('That Sidekick couldn’t be added.')).toBeVisible();
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+    api.getSidekickRecommendationOptions.mockRejectedValueOnce(new Error(laterLoadDiagnostic));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByText('Sidekick options couldn’t be loaded.')).toBeVisible();
+    expect(screen.queryByText('That Sidekick couldn’t be added.')).not.toBeInTheDocument();
+    expect(screen.queryByText(laterLoadDiagnostic)).not.toBeInTheDocument();
   });
 
   it('opens the existing new-Sidekick composer from the dropdown', async () => {

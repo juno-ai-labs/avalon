@@ -226,6 +226,24 @@ advances their durable retry gates, and then sends one Queue batch. A rejected
 send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
+### 2026-09-18 — Project sidebar failures carry operations, not response text
+
+**What changed:** The project sidebar represents reorder and work-stream
+assignment failures as a closed union whose exhaustive copy table owns the
+visible sentence.
+
+**Why:** Project actions share persistent navigation with unrelated requests;
+rendering an exception there can make a server diagnostic look like project
+content long after the rejected action.
+
+**Considered and rejected:** Keeping strings in mutation catch blocks. That
+leaves every caller able to pass arbitrary provider or transport text and makes
+new project actions choose copy without an exhaustive check.
+
+**Consequences:** Project mutations retain their diagnostics below the renderer,
+while adding another visible failure requires adding its authored copy to the
+same exhaustive table.
+
 ### 2026-09-10 — Add to project leaves the work-stream context menu
 
 **What changed:** The sidebar work-stream right-click menu no longer offers the

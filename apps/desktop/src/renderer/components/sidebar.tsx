@@ -2158,7 +2158,7 @@ export function Sidebar({
         open={Boolean(menuFailure)}
         title={menuFailure ? sidebarMenuFailureCopy[menuFailure].title : 'That could not be updated'}
       >
-        {menuFailure && <InlineError>{sidebarMenuFailureCopy[menuFailure].copy}</InlineError>}
+        {menuFailure && <p className="modal-copy">{sidebarMenuFailureCopy[menuFailure].copy}</p>}
       </Modal>
     </>
   );

@@ -94,11 +94,10 @@ transport and provider wording is neither stable nor suitable for a person.
 would still make new failures user-facing by default. Hiding failures entirely
 would make a partially stale rail look authoritative.
 
-**Consequences:** Hosts tell presentation only which operation failed. A scoped
-lint rule prevents rail production modules from reading `.message`, and
-adversarial tests prove server diagnostics stay absent. New sidebar and rail
-modules join the guard by filename and must likewise own their user-facing
-failure language.
+**Consequences:** Hosts tell presentation only which operation failed. The
+repository presentation boundary owns the lint mechanism and file registry;
+shared sidebar and rail modules consume only these semantic contracts and own
+their user-facing failure language.
 
 ### 2026-09-17 — Share desktop presentation with the lite browser
 

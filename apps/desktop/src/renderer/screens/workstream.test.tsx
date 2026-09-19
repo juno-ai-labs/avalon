@@ -1126,7 +1126,7 @@ describe('AddParticipantDialog', () => {
       <Tooltip.Provider>
         <AddParticipantDialog
           current={[]}
-          error="A participant is not an active workspace member"
+          failure="add"
           members={[member('member-1', 'Adam', 'active')]}
           onAdd={vi.fn()}
           onRemove={vi.fn()}
@@ -1137,7 +1137,7 @@ describe('AddParticipantDialog', () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByText('A participant is not an active workspace member')).toBeTruthy();
+    expect(screen.getByText('That participant couldn’t be added.')).toBeTruthy();
     // The list stays usable: the refusal is about one attempt, not the dialog.
     expect(screen.getByRole('button', { name: /Adam/u })).toBeTruthy();
   });
@@ -1254,6 +1254,33 @@ describe('AddParticipantDialog', () => {
 });
 
 describe('AddResourceDialog', () => {
+  it.each([
+    ['load', 'Resources couldn’t be loaded.'],
+    ['attach', 'That resource couldn’t be added.'],
+  ] as const)('owns stable copy for a %s failure', (failure, copy) => {
+    render(
+      <Tooltip.Provider>
+        <AddResourceDialog
+          current={[]}
+          failure={failure}
+          fetching={false}
+          hasMore={false}
+          loading={false}
+          onAttach={vi.fn()}
+          onLoadMore={vi.fn()}
+          onOpenChange={vi.fn()}
+          onSearchChange={vi.fn()}
+          onUpload={vi.fn()}
+          open
+          pending={false}
+          resources={[]}
+          search=""
+        />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByText(copy)).toBeVisible();
+  });
+
   it('searches and attaches discovered connector resources while retaining upload fallback', () => {
     const resource: WorkstreamResource = {
       id: 'resource-1',
