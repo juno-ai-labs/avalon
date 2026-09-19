@@ -70,7 +70,7 @@ import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -92,7 +92,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
-import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStoppedIndicator, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -364,45 +364,48 @@ export function conversationShowsStoppingRow(
 }
 
 /**
- * Whether the conversation still ends in the stop somebody asked for.
+ * What the dock says about a stop: the run whose stop this session watched
+ * settle, and whether a stop it watched being asked for is still pending.
  *
- * The notice describes the tail of the conversation, not the run row it is
- * read off, and read off the run alone it outlived the moment it explains.
- * `latestHarnessRun` only moves when a *new run* exists, and a member turn
- * the addressing classifier reads as conversation between people starts none
- * (`agent-harness.md`), so in a room with two people in it the notice stayed
- * under every later message — where it reads as Rally having stopped on the
- * message that person just sent, which is the one reading the classifier's
- * deliberate silence leaves them with.
+ * The acknowledgement is temporary chrome. It answers a button press, for the
+ * people who were in the room when it landed, and nothing durable records it:
+ * opening the conversation later shows the transcript and no notice at all.
+ * That is why this reads a transition the client observed rather than the run
+ * row. `latestHarnessRun.status` is permanent, and read on its own it outlived
+ * every reason to say anything — it only moves when a *new run* exists, and a
+ * member turn the addressing classifier reads as conversation between people
+ * starts none (`agent-harness.md`), so in a room with two people in it the
+ * notice sat under every later message, reading as Rally having stopped on the
+ * message that person had just sent.
  *
- * Any member's turn clears it, not only the stopper's: the notice is the
- * conversation's state rather than one reader's, and it is stale for
- * everybody once somebody has spoken past it.
+ * `stopPending` is the arming signal: this session pressed Stop, or saw the
+ * room's pending stop, while the run was still going. It has to *survive* that
+ * window, which is the whole subtlety here — between the request and the
+ * settlement the run still reads `running`, so an arming that cleared itself
+ * as soon as it found nothing to acknowledge would throw away the only record
+ * that this reader asked. It clears when the run settles, whatever it settles
+ * as, because by then it has either been acknowledged or has nothing to say.
  *
- * Anchored on the settlement, not on the run's start. A colleague typing
- * while a run is going has not seen the stop yet, and their turn must not
- * take the acknowledgement away from the person who pressed the button a
- * moment later. Settlement writes `completed_at` for every terminal status,
- * so the fallbacks only cover a row that reached `stopped` without one.
+ * Holding the run's id rather than a bare flag is what ends the notice: the
+ * next run carries a different one, so nothing has to remember to clear it.
  */
-export function conversationShowsRunStoppedNotice(
-  run: Pick<HarnessRunMetadata, 'status' | 'startedAt' | 'completedAt' | 'createdAt'> | null | undefined,
-  messages: readonly Pick<Message, 'authorType' | 'createdAt'>[],
-): boolean {
-  if (run?.status !== 'stopped') return false;
-  const stoppedAt = Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt);
-  if (Number.isNaN(stoppedAt)) return true;
-  // Backwards, and stopping at the stop: the turns that can answer this are
-  // the ones after it, and the transcript above them runs to the whole
-  // conversation. An optimistic turn carries the sender's own clock, so a
-  // client running behind the room keeps the notice for the one frame before
-  // the accepted copy arrives with the room's timestamp.
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (Date.parse(message.createdAt) <= stoppedAt) return true;
-    if (message.authorType === 'human') return false;
-  }
-  return true;
+export interface StopAcknowledgement {
+  runId: string | null;
+  stopPending: boolean;
+}
+
+export const NO_STOP_ACKNOWLEDGEMENT: StopAcknowledgement = { runId: null, stopPending: false };
+
+export function nextStopAcknowledgement(
+  current: StopAcknowledgement,
+  watchingStopRequest: boolean,
+  run: Pick<HarnessRunMetadata, 'id' | 'status'> | null | undefined,
+): StopAcknowledgement {
+  const armed = watchingStopRequest || current.stopPending;
+  if (!run) return NO_STOP_ACKNOWLEDGEMENT;
+  const settled = run.status === 'completed' || run.status === 'failed' || run.status === 'stopped';
+  const runId = run.status === 'stopped' && (armed || current.runId === run.id) ? run.id : null;
+  return { runId, stopPending: settled ? false : armed };
 }
 
 /**
@@ -977,6 +980,9 @@ export function ConversationSurface({
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
+  // Declared up here because sending clears it, and the composer's send is
+  // defined long before the two effects below that maintain it.
+  const [stopAcknowledgement, setStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const [otherHistoryError, setOtherHistoryError] = useState<string | undefined>();
@@ -2040,6 +2046,11 @@ export function ConversationSurface({
     const attachmentLease = await attachmentDraft.leaseReady();
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
+    // Saying the next thing answers the button press more completely than the
+    // row does, whether or not this turn starts a run of its own — and a turn
+    // the addressing classifier reads as human-only starts none, so waiting
+    // for the run to change would leave the row up indefinitely.
+    setStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
       const latestTranscript = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         transcriptQueryKey,
@@ -2232,6 +2243,22 @@ export function ConversationSurface({
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 
+  // Above the route gate because these are hooks, and the gate returns.
+  const showsStoppingRow = routedDetail !== undefined
+    && conversationShowsStoppingRow(routedDetail.harnessStatus, routedDetail.stopRequested);
+  const latestRun = routedDetail?.latestHarnessRun;
+  // The screen stays mounted across a route change, so the next conversation
+  // would otherwise open holding this one's acknowledgement.
+  useEffect(() => {
+    setStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
+  }, [id, substreamId]);
+  useEffect(() => {
+    setStopAcknowledgement((current) => {
+      const next = nextStopAcknowledgement(current, showsStoppingRow, latestRun);
+      return next.runId === current.runId && next.stopPending === current.stopPending ? current : next;
+    });
+  }, [latestRun, showsStoppingRow]);
+
   if (!payloadBelongsToRoute || !routedDetail) {
     if (
       socketConnection.state === 'reconnecting'
@@ -2264,10 +2291,6 @@ export function ConversationSurface({
   const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
     orderedTranscript.data,
     detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
-  );
-  const showsStoppingRow = conversationShowsStoppingRow(
-    detail.harnessStatus,
-    detail.stopRequested,
   );
   const activityRow = conversationActivityRow({
     status: detail.harnessStatus,
@@ -2572,9 +2595,6 @@ export function ConversationSurface({
               retrying={retry.isPending}
             />
           )}
-          {conversationShowsRunStoppedNotice(detail.latestHarnessRun, visibleTranscript) && (
-            <RunStoppedNotice />
-          )}
         </div>
       </div>
 
@@ -2585,6 +2605,7 @@ export function ConversationSurface({
               than as something the field is sitting on. The stack is a grid
               with its own gap, so it needs no spacing of its own. */}
           {showsStoppingRow && <RunStoppingIndicator />}
+          {!showsStoppingRow && stopAcknowledgement.runId !== null && <RunStoppedIndicator />}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the channel…'}
