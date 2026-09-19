@@ -211,7 +211,10 @@ first, the row carries its placement whichever path publishes it. The Channel's
 own record of *which* Space reaches it is written after the reservation — the
 Channel's authority asserts a parent identity the reservation is what writes —
 and before `initialize`, because which Space reaches a Channel is true of it
-whether or not anybody ever opened it.
+whether or not anybody ever opened it. `initialize` and the parent's directory
+flush then run concurrently: they address two different objects, the flush reads
+only the reservation's own outbox rows, and the settlement above is what keeps a
+`joining` placement from reaching the directory — not the order of these two.
 
 A failure before the settlement cancels every staged membership: a `joining` row
 no list shows and no alarm finishes is a placement that would never become one.
@@ -456,8 +459,10 @@ named Spaces through `resolveSpaceWorkstreamStart` rather than taken from the
 request; a requested participant outside every named Space's roster is refused
 with `space_audience_incompatible`. The staged memberships now settle **before**
 the main conversation is reserved, and the Channel's Space sources are recorded
-between the reservation and `initialize`. `apps/api/test-workers/space-creation.test.ts`
-covers both halves on real workerd.
+between the reservation and `initialize`. `initialize` and the directory flush
+run beside each other, as they always have.
+`apps/api/test-workers/space-creation.test.ts` covers both halves on real
+workerd.
 
 **Why:** Every Space invariant is written about every Channel in the
 Organization, and a Channel that could be created outside one made all of them
@@ -475,6 +480,17 @@ alarm, which delivers the deferred provisional directory row itself if it wins
 the race. The new workerd case saw exactly that — a failed creation's Channel
 listed with `scope: "workspace"` and `spaceIds: []`.
 
+The first attempt at that fix moved the directory flush *behind* `initialize`,
+because the flush was publishing the Channel while its placements were still
+`joining` — a Channel in no Space, which is a state no surface may render. Then
+the settlement moved ahead of `reserveChild`, which is what this entry is
+about, and the placements became `active` before either call starts. The
+serialization outlived its reason by one commit and cost a round trip on every
+creation for nothing, so the two run beside each other again as they did before
+this branch: they address different objects, and what the flush reads is the
+reservation's own outbox rows at source version one, which `reserveChild` wrote
+and `initialize` never touches.
+
 **Considered and rejected:** Placing the Channel with a follow-up call after the
 create returns. The PRD requires a named Space to be established with the
 Channel or the creation to fail without publishing one, and a second call is
@@ -484,7 +500,11 @@ correctness depend on a Space fact it has no reason to know, and left the same
 race for anything else that drains a parent outbox.
 
 **Consequences:** A future change must keep the settlement ahead of
-`reserveChild`. The residue swapped with the order: a failure after the
+`reserveChild`, and that — rather than the order of `initialize` and the flush —
+is what keeps a `joining` placement off the directory. Anything that moves the
+settlement later has to re-serialize the pair, and should say so here rather
+than leave the next reader to rediscover which constraint the serialization was
+for. The residue swapped with the order: a failure after the
 settlement now leaves an active membership for a Channel whose conversation may
 never open, which the retry under the same create key reuses, and which the
 cutover's walk skips — it reads what is already placed off the membership row
