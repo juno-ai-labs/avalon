@@ -796,8 +796,8 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('given a project launcher, when a channel is created, then the project is sent to the authorization gate', async () => {
-    const projectId = '00000000-0000-7000-8000-0000000000a7';
+  it('given a space launcher, when a channel is created, then the space is sent to the authorization gate', async () => {
+    const spaceIds = ['00000000-0000-7000-8000-0000000000a7'];
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
       turnId: messageId,
@@ -806,9 +806,26 @@ describe('Rally API wire adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
-    await api.createWorkstream({ openingMessage: 'Start', participantIds: [], projectId });
+    await api.createWorkstream({ openingMessage: 'Start', participantIds: [], spaceIds });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ projectId });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ spaceIds });
+  });
+
+  it('given the top-level composer, when a channel is created, then it names no space and the server places it', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      workstream: detail,
+      turnId: messageId,
+      harnessRunId: null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.createWorkstream({ openingMessage: 'Start', participantIds: [] });
+
+    // Absent rather than empty: every Channel has a home, and a creation that
+    // names no Space is placed in General by the server rather than by asking
+    // the person at the composer to choose one.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty('spaceIds');
   });
 
   it('encodes an opening mention with the normal message resolver and seats its identity', async () => {
