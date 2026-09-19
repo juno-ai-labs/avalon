@@ -185,7 +185,7 @@ describe('WorkstreamComposer over a remembered conversation', () => {
       </Tooltip.Provider>,
     );
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'Half a thought' } });
     const send = screen.getByRole('button', { name: 'Send message, available once Rally connects' });
     expect(send).toBeDisabled();
@@ -294,7 +294,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     }));
     renderComposer(onSend);
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'Send this now' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
@@ -307,7 +307,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const onSend = vi.fn(() => new Promise<void>(() => undefined));
     renderComposer(onSend, true);
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'First queued message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     fireEvent.change(composer, { target: { value: 'Second queued message' } });
@@ -323,7 +323,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     renderComposer(onSend, false, vi.fn(), { ...workstream, harnessStatus: 'running' });
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'After this run' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'steer'));
@@ -335,7 +335,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     });
     renderComposer(onSend);
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'Please retry me' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
@@ -349,7 +349,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     }));
     renderComposer(onSend);
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'First message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     fireEvent.change(composer, { target: { value: 'New draft' } });
@@ -361,14 +361,14 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('does not repeat participant controls above the in-workstream composer', () => {
     renderComposer();
 
-    expect(screen.queryByLabelText('Work-stream participants')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Channel participants')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
   it('filters functional slash commands and opens participant mentions from the keyboard', async () => {
     renderComposer();
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: '/part' } });
 
     const commands = screen.getByRole('listbox', { name: 'Composer commands' });
@@ -386,7 +386,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('does not let a composition-committing Enter run the slash command it is displaying', async () => {
     renderComposer();
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: '/part' } });
 
     const commands = screen.getByRole('listbox', { name: 'Composer commands' });
@@ -411,7 +411,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('does not let a composition-committing Tab run the slash command it is displaying', async () => {
     renderComposer();
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: '/part' } });
     expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
 
@@ -432,7 +432,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('keeps the command list open when Escape is cancelling an IME candidate', () => {
     renderComposer();
 
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: '/part' } });
     expect(screen.getByRole('listbox', { name: 'Composer commands' })).toBeVisible();
 
@@ -450,7 +450,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });
 
-    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+    fireEvent.change(screen.getByLabelText('Message the channel'), {
       target: { value: 'Please ask @Bob Builder and @Cara Chen to review.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -458,7 +458,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(await screen.findByRole('heading', { name: 'Add participants?' })).toBeVisible();
     expect(screen.getByText('bob@example.com')).toBeVisible();
     expect(screen.getByText('cara@example.com')).toBeVisible();
-    expect(screen.getByText(/If you do not add them, they will not be able to see the mentions or this work stream/u))
+    expect(screen.getByText(/If you do not add them, they will not be able to see the mentions or this channel/u))
       .toBeVisible();
     expect(onSend).not.toHaveBeenCalled();
 
@@ -470,15 +470,15 @@ describe('WorkstreamComposer mention confirmation', () => {
       ['user-2', 'user-3'],
       undefined,
     ));
-    expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+    expect(screen.getByLabelText('Message the channel')).toHaveValue('');
   });
 
   it.each(['send button', 'Enter'] as const)(
-    'warns before a nonparticipant mention in a personal work stream is submitted with %s',
+    'warns before a nonparticipant mention in a personal channel is submitted with %s',
     async (gesture) => {
       const onSend = vi.fn(async () => undefined);
       renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });
-      const composer = screen.getByLabelText('Message the work stream');
+      const composer = screen.getByLabelText('Message the channel');
       fireEvent.change(composer, { target: { value: 'Please ask @Bob Builder.' } });
 
       if (gesture === 'Enter') fireEvent.keyDown(composer, { key: 'Enter' });
@@ -486,7 +486,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
       expect(await screen.findByRole('heading', { name: 'Add participant?' })).toBeVisible();
       expect(screen.getByText(
-        /If you do not add them, they will not be able to see the mention or this work stream/u,
+        /If you do not add them, they will not be able to see the mention or this channel/u,
       )).toBeVisible();
       expect(onSend).not.toHaveBeenCalled();
 
@@ -500,10 +500,10 @@ describe('WorkstreamComposer mention confirmation', () => {
     },
   );
 
-  it('does not block a workspace-visible work stream on participant status', async () => {
+  it('does not block an organization-visible channel on participant status', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
-    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+    fireEvent.change(screen.getByLabelText('Message the channel'), {
       target: { value: 'Please ask @Bob Builder.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -526,7 +526,7 @@ describe('WorkstreamComposer mention confirmation', () => {
       [creator, shortBob, bob],
     );
 
-    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+    fireEvent.change(screen.getByLabelText('Message the channel'), {
       target: { value: 'Please ask @Bob Builder.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -538,7 +538,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('opens mentions by typing at the caret without a dedicated mention button', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, {
       target: { value: 'ask @ about the release', selectionStart: 5, selectionEnd: 5 },
@@ -550,7 +550,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('keeps Escape from travelling on when it dismissed something here', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
@@ -565,7 +565,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('inserts one space when the line already continues after the caret', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, {
       target: { value: 'ask @Bo about the release', selectionStart: 7, selectionEnd: 7 },
@@ -582,7 +582,7 @@ describe('WorkstreamComposer mention confirmation', () => {
       { ...bob, status: 'invited' },
       { ...cara, status: 'suspended' },
     ]);
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
 
@@ -609,7 +609,7 @@ describe('WorkstreamComposer mention confirmation', () => {
       }],
     };
     renderComposer(undefined, false, undefined, connected);
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
 
@@ -624,7 +624,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Person');
     expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
     expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
-    expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
+    expect(screen.queryByText('Organization connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
     // connection typed into it by hand stays plain text too.
@@ -636,7 +636,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
 
@@ -659,7 +659,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('inserts Rally from the mention picker without forging a person identity', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
     fireEvent.click(await screen.findByRole('option', { name: /Rally .* Bot/u }));
@@ -671,7 +671,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
@@ -687,7 +687,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('returns the highlight to the top when the typed query drops the highlighted candidate', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
@@ -709,7 +709,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('opens the mention list at the top again after it has been dismissed', async () => {
     renderComposer();
-    const composer = screen.getByLabelText('Message the work stream');
+    const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
@@ -730,7 +730,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
 
-    fireEvent.change(screen.getByLabelText('Message the work stream'), { target: { value: '@Adam looks good.' } });
+    fireEvent.change(screen.getByLabelText('Message the channel'), { target: { value: '@Adam looks good.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
@@ -741,7 +741,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('highlights mentioned resources behind the draft without altering it', () => {
     renderComposer();
-    const textarea = screen.getByLabelText('Message the work stream');
+    const textarea = screen.getByLabelText('Message the channel');
 
     fireEvent.change(textarea, { target: { value: 'ask @Bob Builder about @nobody' } });
 
@@ -757,7 +757,7 @@ describe('WorkstreamComposer mention confirmation', () => {
   it('attaches an image pasted into the composer without disturbing the draft', () => {
     const onAttach = vi.fn();
     renderComposer(undefined, false, onAttach);
-    const textarea = screen.getByLabelText('Message the work stream');
+    const textarea = screen.getByLabelText('Message the channel');
     fireEvent.change(textarea, { target: { value: 'The crash looks like this:' } });
 
     fireEvent.paste(textarea, {
@@ -776,7 +776,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
   it('hands the draft back to the textarea while an IME composition is open', () => {
     renderComposer();
-    const textarea = screen.getByLabelText('Message the work stream');
+    const textarea = screen.getByLabelText('Message the channel');
     const composer = document.querySelector('.workstream-composer');
     expect(composer).toHaveClass('is-highlighting');
     expect(composer).not.toHaveClass('is-composing');
@@ -790,9 +790,9 @@ describe('WorkstreamComposer mention confirmation', () => {
 });
 
 describe('WorkstreamComposer draft caching', () => {
-  it('brings a half-written message and its mention back to the same work stream', async () => {
+  it('brings a half-written message and its mention back to the same channel', async () => {
     renderComposer();
-    const textarea = screen.getByLabelText('Message the work stream');
+    const textarea = screen.getByLabelText('Message the channel');
     fireEvent.change(textarea, { target: { value: 'Ask @Bob' } });
     fireEvent.click(await screen.findByRole('option', { name: /Bob Builder/u }));
     await waitFor(() => expect(textarea).toHaveValue('Ask @Bob Builder '));
@@ -800,13 +800,13 @@ describe('WorkstreamComposer draft caching', () => {
 
     renderComposer();
 
-    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toHaveValue('Ask @Bob Builder '));
+    await waitFor(() => expect(screen.getByLabelText('Message the channel')).toHaveValue('Ask @Bob Builder '));
   });
 
   it('forgets the draft once the message is sent', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);
-    const textarea = screen.getByLabelText('Message the work stream');
+    const textarea = screen.getByLabelText('Message the channel');
     fireEvent.change(textarea, { target: { value: 'Ship it' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
@@ -816,7 +816,7 @@ describe('WorkstreamComposer draft caching', () => {
 
     renderComposer();
 
-    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toHaveValue(''));
+    await waitFor(() => expect(screen.getByLabelText('Message the channel')).toHaveValue(''));
   });
 });
 
@@ -826,7 +826,7 @@ describe('WorkstreamComposer model control', () => {
       kind: 'settled', model: 'deepseek/deepseek-v4-pro', pinned: true,
     });
 
-    await screen.findByLabelText('Message the work stream');
+    await screen.findByLabelText('Message the channel');
     expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
   });
 

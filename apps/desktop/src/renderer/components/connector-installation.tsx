@@ -24,7 +24,7 @@ const installationEventLabels: Record<string, string> = {
 const eventLabel = (event: string) => installationEventLabels[event] ?? event;
 
 const installationStatus: Record<ConnectorInstallation['state'], { title: string; description: string }> = {
-  setting_up: { title: 'Setting up', description: 'Rally is connecting your workspace events.' },
+  setting_up: { title: 'Setting up', description: 'Rally is connecting your organization events.' },
   current: { title: 'Connected', description: 'Your event subscriptions are connected.' },
   updating: { title: 'Updating', description: 'Rally is updating your event subscriptions.' },
   action_required: { title: 'Needs attention', description: 'Some events may not reach Rally. Test the connection, or get help if the issue continues.' },
@@ -71,17 +71,17 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
     },
     onError: () => recovery.mutate(),
   });
-  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for workspace"
+  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for organization"
     description="One shared connection receives your Ashby organization's recruiting events automatically. Personal Ashby sign-in does not create webhooks."
-    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !connectorApiKeyAcceptable('ashby', apiKey) || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
+    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !connectorApiKeyAcceptable('ashby', apiKey) || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for organization'}</Button></>}>
     {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
-    <p>The button below opens the page that issues the key. Create one with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions, then paste it here — never in a work stream. The key stays encrypted in this workspace's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
+    <p>The button below opens the page that issues the key. Create one with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions, then paste it here — never in a channel. The key stays encrypted in this organization's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
     <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Rally manages event subscriptions automatically; choose the events you want to act on when creating automations.</p>
     <ConnectorApiKeyIssuingLink provider="ashby" variant="button" />
-    <ConnectorApiKeyField autoFocus disabled={!online || setup.isPending} inputLabel="Ashby workspace API key" label={<SettingLabel setting={settings.ashbyKey} />} onChange={setApiKey} provider="ashby" value={apiKey} />
-    <p>Workspace events do not provide recruiting query or update tools. Connect your account separately for personal tools.</p>
+    <ConnectorApiKeyField autoFocus disabled={!online || setup.isPending} inputLabel="Ashby organization API key" label={<SettingLabel setting={settings.ashbyKey} />} onChange={setApiKey} provider="ashby" value={apiKey} />
+    <p>Organization events do not provide recruiting query or update tools. Connect your account separately for personal tools.</p>
     {setup.error && <InlineError>{setup.error.message}</InlineError>}
-    {recovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+    {recovery.isPending && <p role="status">Checking for an existing organization installation…</p>}
     {recovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={!online || recovery.isPending} onClick={() => recovery.mutate()}>Find existing installation</Button></>}
   </Modal>;
 }
@@ -138,7 +138,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
   const reconcilableRegistrations = installation?.registrations.filter((registration) => !registration.providerId && ['unknown', 'action_required', 'dispatched'].includes(registration.state)) ?? [];
   const active = installation && installation.state !== 'cleanup_pending' && installation.state !== 'disconnected';
   const needsHelp = installation && ['action_required', 'failed', 'cleanup_pending'].includes(installation.state);
-  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Workspace events" description="Rally manages event subscriptions for this connection."
+  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Organization events" description="Rally manages event subscriptions for this connection."
     footer={<Button onClick={onClose}>Close</Button>}>
     {!online && <InlineError>Connection management is unavailable while offline. Saved status may be out of date.</InlineError>}
     {query.isPending && <p>Loading connection…</p>}
@@ -149,7 +149,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
         old body was one column of equally spaced lines, and "Test checks
         access…" sat as close to Get help below it as to Test above. */}
     {query.data && !installation && <div className="installation-panel">
-      <section className="installation-status"><p>Test this connection to check that workspace events can reach Rally.</p></section>
+      <section className="installation-status"><p>Test this connection to check that organization events can reach Rally.</p></section>
       {connectionEnabled && <section className="installation-actions">
         <div className="installation-action"><Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button><p>Checks access and attempts to repair event delivery.</p></div>
       </section>}
@@ -183,10 +183,10 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
       {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}
       {change.error && <InlineError>{change.error.message}</InlineError>}
       <section className="installation-advanced">
-        <div className="installation-action"><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button><p>Technical details and recovery tools for workspace administrators and support.</p></div>
+        <div className="installation-action"><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button><p>Technical details and recovery tools for organization administrators and support.</p></div>
       {advanced && <section aria-label="Advanced connection settings">
         <Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>
-        {active && isConnectorApiKeyProvider(installation.provider) && <details><summary>Replace workspace API key</summary>
+        {active && isConnectorApiKeyProvider(installation.provider) && <details><summary>Replace organization API key</summary>
           <p>Use a key from the same provider organization with webhook management access. Existing subscriptions and signing keys are preserved. Unknown provider outcomes still require inspection.</p>
           <ConnectorApiKeyIssuingLink provider={installation.provider} />
           <ConnectorApiKeyField disabled={!online || replaceKey.isPending} inputLabel="New API key" label="New API key" onChange={setReplacementKey} provider={installation.provider} value={replacementKey} />

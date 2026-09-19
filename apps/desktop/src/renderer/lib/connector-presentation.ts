@@ -131,7 +131,7 @@ export function connectorPresentation(
   const renderedName = displayName?.replace(/^@/u, '');
   return {
     name: renderedName || entry?.name || connectorType,
-    description: entry?.description ?? 'Workspace connector.',
+    description: entry?.description ?? 'Organization connector.',
     mark: connectorBrandMark(connectorType, renderedName),
   };
 }
@@ -199,5 +199,5 @@ export function connectorStatusLabel(status: ConnectorScopeStatus): string {
 }
 
 export function connectorScopeLabel(scope: 'you' | 'workspace'): string {
-  return scope === 'you' ? 'Personal' : 'Workspace';
+  return scope === 'you' ? 'Personal' : 'Organization';
 }

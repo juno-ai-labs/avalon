@@ -56,7 +56,7 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
 }
 
 describe('openWorkstreamId', () => {
-  it('names the work stream the route has open', () => {
+  it('names the channel the route has open', () => {
     expect(openWorkstreamId(`/workstreams/${workstreamId}`)).toBe(workstreamId);
   });
 

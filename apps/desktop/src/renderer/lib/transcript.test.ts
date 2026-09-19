@@ -434,14 +434,14 @@ describe('canonical transcript and transient overlay composition', () => {
     const second = canonicalText('canonical-2', 2, base.createdAt);
 
     expect(() => composeTranscript([second, first], []))
-      .toThrow('Rally received an invalid transcript order. Reopen this work stream.');
+      .toThrow('Rally received an invalid transcript order. Reopen this channel.');
   });
 
   it('refuses a canonical row with no durable transcript position', () => {
     const unpositioned = createTextMessage({ ...base, id: 'unpositioned', text: 'Ambiguous' });
 
     expect(() => composeTranscript([unpositioned], []))
-      .toThrow('Rally received an invalid transcript order. Reopen this work stream.');
+      .toThrow('Rally received an invalid transcript order. Reopen this channel.');
   });
 
   it('preserves overlay and message identity when a reveal tick changes nothing', () => {
@@ -609,7 +609,7 @@ describe('ordered turn rendering', () => {
       clientMessageId: 'client-opening',
       authorType: 'human',
       author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC' },
-      text: 'Start this work stream',
+      text: 'Start this channel',
       deliveryState: 'sending',
       realtimeOrder: { anchorSequenceNumber: 1, eventSequence: 1, placement: 'at_anchor' },
     });
@@ -740,7 +740,7 @@ describe('ordered turn rendering', () => {
     expect(() => composeTranscript(messages, [])).not.toThrow();
   });
 
-  it('retains the immutable posting identity after the member leaves the work stream', () => {
+  it('retains the immutable posting identity after the member leaves the channel', () => {
     const snapshot: WorkstreamTranscriptSnapshot = {
       snapshotId: 'snapshot-identity', snapshotThrough: 1, eventSequence: 1,
       snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
@@ -3218,7 +3218,7 @@ describe('composer queue overlays', () => {
       harnessRunId: '00000000-0000-7000-8000-0000000000f3',
       prompt: 'Which ownership scope?',
       responseType: 'multi_select' as const,
-      options: [{ value: 'workspace', label: 'Workspace', description: null }],
+      options: [{ value: 'workspace', label: 'Organization', description: null }],
       minimumSelections: 1,
       maximumSelections: 1,
       targetUserId: null,

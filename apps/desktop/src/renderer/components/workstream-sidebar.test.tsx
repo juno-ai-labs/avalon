@@ -46,20 +46,20 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe('WorkstreamSidebar', () => {
-  it('shows the work stream, its artifacts, then participants, excluding sources and substreams', () => {
+  it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
     setup();
-    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage work-stream participants', 'Collapse work-stream sidebar',
+      'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel sidebar',
     ]);
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
-    expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
+    expect(screen.queryByText('Breakouts')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark')).not.toBeNull();
   });
 
-  it('marks the main conversation with the work stream\u2019s own icon and colour', () => {
+  it('marks the main conversation with the channel\u2019s own icon and colour', () => {
     // 'rocket' is not what this id generates ('atom'), so the assertion fails
     // if the saved icon stops being read rather than passing down either branch.
     setup({ ...workstream, appearance: { icon: 'rocket', color: 'teal' } });
@@ -72,7 +72,7 @@ describe('WorkstreamSidebar', () => {
     setup();
     expect(screen.getByText('Launch preparation')).toBeInTheDocument();
     expect(screen.queryByText('Main log')).not.toBeInTheDocument();
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
     fireEvent.doubleClick(edge);
     expect(edge).toHaveAttribute('aria-valuenow', '96');
     fireEvent.doubleClick(edge);
@@ -85,10 +85,10 @@ describe('WorkstreamSidebar', () => {
   // gesture that asks for the animation is the one that does not get it.
   it('leaves the resize suppression off when a double-click on the edge toggles', () => {
     setup();
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
     edge.setPointerCapture = vi.fn();
     edge.releasePointerCapture = vi.fn();
-    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
 
     for (const pointerId of [7, 8]) {
       fireEvent.pointerDown(edge, { button: 0, clientX: 563, pointerId });
@@ -114,21 +114,21 @@ describe('WorkstreamSidebar', () => {
     const { onParticipants, onFocusTranscript } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onFocusTranscript).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage channel participants' }));
     expect(onParticipants).toHaveBeenCalledTimes(1);
   });
 
   it('persists an independent icon-mode preference and restores expanded mode', () => {
     const view = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
     setup();
-    expect(screen.getByRole('button', { name: 'Expand work-stream sidebar' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Expand channel sidebar' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('button', { name: 'Open Launch draft.md' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand work-stream sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand channel sidebar' }));
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
   });
 
@@ -164,23 +164,23 @@ describe('WorkstreamSidebar', () => {
     const sidebar = screen.getByRole('complementary');
     const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
+      'Go to conversation: Launch preparation', 'Go to breakout: Launch risks', 'New breakout',
     ]);
     expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
     // A plus, so the row that starts a substream is not marked like the rows
     // that are one.
-    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.workstream-context-mark > .tabler-icon-plus')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-corner-down-right')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.workstream-context-mark > .tabler-icon-plus')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.tabler-icon-corner-down-right')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
-    fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New breakout' }));
     expect(onNewSubstream).toHaveBeenCalledOnce();
     // Compact has no title, so the mark carries the substream's first letter.
     // Both marks are in the slot in both widths — the stylesheet cross-fades
     // one into the other as the rail narrows — so the letter is already
     // there, and the arrow stays after the toggle.
     expect(child.querySelector('.workstream-substream-initial')?.textContent).toBe('L');
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
     expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-substream-initial')?.textContent).toBe('L');
     expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
@@ -190,7 +190,7 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
-  it('holds the place of a substream being created, last and without a destination', () => {
+  it('holds the place of a breakout being created, last and without a destination', () => {
     const onNewSubstream = vi.fn();
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{
@@ -219,7 +219,7 @@ describe('WorkstreamSidebar', () => {
     expect(pending).toHaveAttribute('aria-current', 'page');
     expect(pending?.querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
     expect(pending?.querySelector('.title-skeleton')).not.toBeNull();
-    expect(within(sidebar).getByText('Rally is creating this substream')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Rally is creating this breakout')).toBeInTheDocument();
     // Nothing to click: the reader is already on the surface this row stands
     // for, and the row that starts the next substream is no longer the one
     // saying where they are. Asserted as the list's whole button inventory, so
@@ -227,8 +227,8 @@ describe('WorkstreamSidebar', () => {
     // depending on the label a regression would happen to give it.
     const list = sidebar.querySelector('.workstream-substream-list');
     expect([...list?.querySelectorAll('button') ?? []].map((button) => button.getAttribute('aria-label')))
-      .toEqual(['Go to substream: Launch risks', 'New substream']);
-    const create = screen.getByRole('button', { name: 'New substream' });
+      .toEqual(['Go to breakout: Launch risks', 'New breakout']);
+    const create = screen.getByRole('button', { name: 'New breakout' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
     // Compact hides `.workstream-context-copy` with `visibility: hidden`, which
@@ -237,9 +237,9 @@ describe('WorkstreamSidebar', () => {
     // its button's `aria-label`; this one has no button, so the text is on the
     // row. jsdom applies no stylesheet, so the assertion is where the text sits
     // rather than whether it computed to hidden.
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
-    const name = within(sidebar).getByText('Rally is creating this substream');
+    const name = within(sidebar).getByText('Rally is creating this breakout');
     expect(name.closest('.workstream-pending-substream')).toBe(pending);
     expect(name.closest('.workstream-context-copy')).toBeNull();
     expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
@@ -270,12 +270,12 @@ describe('WorkstreamSidebar', () => {
     // Current on the published row rather than on nothing: the route still says
     // `new` for the tick before the response navigates, and the reader is in
     // that conversation either way.
-    expect(screen.getByRole('button', { name: 'Go to substream: Retry budget failures' }))
+    expect(screen.getByRole('button', { name: 'Go to breakout: Retry budget failures' }))
       .toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('button', { name: 'New breakout' })).not.toHaveAttribute('aria-current');
   });
 
-  it('keeps the arrow for a substream whose title has no first character', () => {
+  it('keeps the arrow for a breakout whose title has no first character', () => {
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: '   ', createdByUserId: asUserId(person.id),
@@ -287,7 +287,7 @@ describe('WorkstreamSidebar', () => {
       onFocusTranscript={vi.fn()}
     /></Tooltip.Provider>);
     const sidebar = screen.getByRole('complementary');
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
     // A lone space is wire-legal, and an empty mark square says nothing at all.
     expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
@@ -298,7 +298,7 @@ describe('WorkstreamSidebar', () => {
     setup();
     act(() => { width = 703; resized(); });
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    expect(screen.getByRole('button', { name: 'Expand work-stream sidebar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Expand channel sidebar' })).toBeDisabled();
     act(() => { width = 900; resized(); });
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
@@ -336,7 +336,7 @@ describe('WorkstreamSidebar', () => {
   // state the next one would leave behind.
   it('names the drag and the double-click, in the direction the next one goes', () => {
     setup();
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
 
     fireEvent.focus(edge);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
@@ -353,7 +353,7 @@ describe('WorkstreamSidebar', () => {
   // is refused where the double-click is refused.
   it('collapses and expands from Enter on the divider, and refuses it in a narrow pane', () => {
     setup();
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
 
     fireEvent.keyDown(edge, { key: 'Enter' });
     expect(edge).toHaveAttribute('aria-valuenow', '96');
@@ -375,7 +375,7 @@ describe('WorkstreamSidebar', () => {
   it('drops the shortcut a narrow pane would refuse', () => {
     setup();
     act(() => { width = 703; resized(); });
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
 
     fireEvent.focus(edge);
 
@@ -388,7 +388,7 @@ describe('WorkstreamSidebar', () => {
   // moment the reader is watching an edge move. The press has to leave it shut.
   it('keeps the hint shut through a grab that never waited for it', () => {
     setup();
-    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
     edge.setPointerCapture = vi.fn();
     edge.releasePointerCapture = vi.fn();
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -403,15 +403,15 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
-  it('drops the artifact section entirely until a work stream has one', () => {
+  it('drops the artifact section entirely until a channel has one', () => {
     setup({ ...workstream, resources: [], participants: [] });
     expect(screen.queryByRole('region', { name: 'Artifacts' })).not.toBeInTheDocument();
     expect(screen.queryByText('Artifacts')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
   });
 
-  it('heads the section with the artifacts a work stream has produced', () => {
+  it('heads the section with the artifacts a channel has produced', () => {
     setup();
     expect(within(screen.getByRole('region', { name: 'Artifacts' })).getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
   });
@@ -429,15 +429,15 @@ describe('WorkstreamSidebar', () => {
       onParticipants={vi.fn()}
       onFocusTranscript={vi.fn()}
     /></Tooltip.Provider>);
-    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
     const sections = within(sidebar).getAllByRole('region').map((section) => section.getAttribute('aria-label'));
-    expect(sections).toEqual(['Artifacts', 'Work-stream participants', 'Sidekicks']);
+    expect(sections).toEqual(['Artifacts', 'Channel participants', 'Sidekicks']);
     const rows = within(within(sidebar).getByRole('region', { name: 'Sidekicks' })).getAllByRole('button');
     expect(rows.map((row) => row.getAttribute('aria-label')))
       .toEqual(['Release notes', 'Editor']);
     expect(screen.getByText('Unavailable · Review wording.')).toBeVisible();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(onRemove).toHaveBeenCalledOnce();
 
     // Neither an empty answer nor a pending one leaves a heading behind, the
@@ -455,7 +455,7 @@ describe('WorkstreamSidebar', () => {
 
   it('drags relative to the second sidebar, persists its width, and stops after release', () => {
     const view = setup();
-    const handle = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    const handle = screen.getByRole('separator', { name: 'Resize channel sidebar' });
     handle.setPointerCapture = vi.fn();
     handle.releasePointerCapture = vi.fn();
     fireEvent.pointerDown(handle, { clientX: 563, pointerId: 1, button: 0 });
@@ -507,10 +507,10 @@ describe('WorkstreamSidebar', () => {
     expect(handle).toHaveAttribute('aria-valuenow', '276');
   });
 
-  it('replaces resources and participants when the selected work stream changes', () => {
+  it('replaces resources and participants when the selected channel changes', () => {
     const { rerender, onOpenArtifact, onParticipants } = setup();
-    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another work stream', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
-    expect(screen.getByRole('button', { name: 'Go to conversation: Another work stream' })).toHaveAttribute('aria-current', 'page');
+    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another channel', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Go to conversation: Another channel' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();
   });

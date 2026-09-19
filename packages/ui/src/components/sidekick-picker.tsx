@@ -40,10 +40,10 @@ export function SidekickPicker({ options, loading, saving, failure, open, setOpe
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
     <Modal open={open} onOpenChange={setOpen} title="Attach existing Sidekick">
-      <input className="sidekick-picker-search" aria-label="Search workspace Sidekicks" placeholder="Search workspace Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
+      <input className="sidekick-picker-search" aria-label="Search organization Sidekicks" placeholder="Search organization Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
       {loading && <p>Loading Sidekicks…</p>}
       {failure && <InlineError>{sidekickPickerFailureCopy[failure]}</InlineError>}
-      {items?.length === 0 && <p>No workspace Sidekicks found.</p>}
+      {items?.length === 0 && <p>No organization Sidekicks found.</p>}
       <ul className="sidekick-picker-list">{items?.map((item) => <li key={item.id}>
         <Button aria-label={item.name} aria-description={item.description} disabled={saving} onClick={() => onAttach(item.id)}><strong>{item.name}</strong><span>{item.description}</span></Button>
       </li>)}</ul>

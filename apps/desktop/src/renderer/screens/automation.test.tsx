@@ -75,7 +75,7 @@ beforeEach(() => {
 });
 
 describe('AutomationScreen archival', () => {
-  it('refreshes work streams and leaves the archived Sidekick route', async () => {
+  it('refreshes channels and leaves the archived Sidekick route', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     setCachedWorkstreams(client, []);
     renderScreen(client);

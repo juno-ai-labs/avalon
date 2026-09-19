@@ -184,7 +184,7 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
   return useQuery<T[]>({
     queryKey,
     queryFn: () => {
-      throw new Error(`${String(queryKey[0])} is pushed by the workspace socket, never fetched`);
+      throw new Error(`${String(queryKey[0])} is pushed by the organization socket, never fetched`);
     },
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
@@ -468,7 +468,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {
-                setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
+                setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this organization' }));
                 return false;
               }
               const attempt = ++switchAttemptRef.current;
@@ -493,8 +493,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                   [targetKey]: error instanceof AccountSignInFailedError
                     ? error.message
                     : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
-                    ? 'You are no longer a member of this workspace'
-                    : 'Rally could not open this workspace',
+                    ? 'You are no longer a member of this organization'
+                    : 'Rally could not open this organization',
                 }));
                 if (code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied') {
                   await workspaceDirectory.refetch();

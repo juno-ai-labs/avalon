@@ -88,7 +88,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
         </Row>
         </ContextMenu.Trigger>
       </Tip>
-      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every substream in this work stream. Agents can load it when relevant; it isn’t automatically loaded." side="right">
+      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every breakout in this channel. Agents can load it when relevant; it isn’t automatically loaded." side="right">
         <span className="sidekick-recommendation" role="img" aria-label="Recommended Sidekick" tabIndex={0}>
           <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
         </span>
@@ -96,9 +96,9 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
       {(item.managementPending || item.onRemove || item.onRemoveRecommendation || item.onRecommend) && <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content">
           {item.managementPending && <ContextMenu.Label className="menu-label">Loading Sidekick options…</ContextMenu.Label>}
-          {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove from this substream</ContextMenu.Item>}
-          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove work stream recommendation</ContextMenu.Item>}
-          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this work stream</ContextMenu.Item>}
+          {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove from this breakout</ContextMenu.Item>}
+          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove channel recommendation</ContextMenu.Item>}
+          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this channel</ContextMenu.Item>}
         </ContextMenu.Content>
       </ContextMenu.Portal>}
     </li></ContextMenu.Root>)}</ul>

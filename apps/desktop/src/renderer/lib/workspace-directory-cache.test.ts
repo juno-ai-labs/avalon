@@ -54,7 +54,7 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
   };
 }
 
-describe('workspace directory cache', () => {
+describe('organization directory cache', () => {
   beforeEach(() => clearAllLocalCache());
   afterEach(() => closeLocalCache());
 

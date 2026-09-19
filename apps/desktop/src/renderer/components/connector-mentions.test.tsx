@@ -269,7 +269,7 @@ describe('connector connection resolution', () => {
     });
   });
 
-  it('disables workspace OAuth for members', async () => {
+  it('disables organization OAuth for members', async () => {
     mocks.workspaceRole = 'member';
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -291,7 +291,7 @@ describe('connector connection resolution', () => {
    * will keep saying it until its access token rotates; the served workspace
    * says `admin` on the next read. The card has to believe the second one.
    */
-  it('lets an administrator promoted mid-session connect a workspace account', async () => {
+  it('lets an administrator promoted mid-session connect an organization account', async () => {
     mocks.workspaceRole = 'admin';
     expect(mocks.session.workspace.role).toBe('member');
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
