@@ -611,6 +611,7 @@ import {
 } from "./workspace-project-protocol";
 import { WorkspaceProjectStorage } from "./workspace-project-storage";
 import {
+  publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
   publishSpaceIntentResumes,
 } from "./workspace-space-default-publication";
@@ -626,6 +627,9 @@ import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultRequestSchema,
   WorkspaceSpaceDefaultResultSchema,
+  WorkspaceSpaceBootstrapPageSchema,
+  WorkspaceSpaceBootstrapFinalizeResultSchema,
+  WorkspaceSpaceBootstrapSettleRequestSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceListRequestSchema,
@@ -652,6 +656,9 @@ import {
   type WorkspaceSpaceChannelPageResult,
   type WorkspaceSpaceDefaultRequest,
   type WorkspaceSpaceDefaultResult,
+  type WorkspaceSpaceBootstrapFinalizeResult,
+  type WorkspaceSpaceBootstrapPage,
+  type WorkspaceSpaceBootstrapSettleRequest,
   type WorkspaceSpaceDirectoryResult,
   type WorkspaceSpaceGeneralResult,
   type WorkspaceSpaceListRequest,
@@ -4381,6 +4388,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
     const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
     const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
+    const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
@@ -4389,6 +4397,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(publication === null ? [] : [publication]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
+      ...(spaceBootstrap === null ? [] : [spaceBootstrap]),
       ...(search === null ? [] : [search]),
       ...(authorization === null ? [] : [authorization]),
       ...(searchAuthorization === null ? [] : [searchAuthorization]),
@@ -4440,6 +4449,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         } catch (error) {
           logWarn(this.env, "space_default_publication_failed", {
+            workspace_id: workspaceId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+      // The one-time cutover. It is here rather than on first access because
+      // the PRD's fleet migration must finish without relying on anybody
+      // signing in: the tracker's forced migration wakes every Organization,
+      // the alarm armed by construction claims a page, and the Queue carries
+      // it to a consumer that can act as one of the Channel's own people.
+      await this.instrumentWorkspaceAlarmPhase("space_bootstrap", undefined, async () => {
+        try {
+          await publishSpaceBootstrapWork({
+            storage: this.spaceStorage(),
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "space_bootstrap_publication_failed", {
             workspace_id: workspaceId,
             reason: error instanceof Error ? error.message : "unknown",
           });
@@ -6435,6 +6466,91 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     return WorkspaceSpaceBootstrapStatusSchema.parse(this.spaceStorage().bootstrapStatus());
+  }
+
+  /**
+   * One page of the Channels the cutover still has to place.
+   *
+   * Server-to-server, for the reason `spaceBootstrapStatus` is: there is no
+   * person on the request. The cutover runs with nobody signed in, and the
+   * workspace id is the whole address. It grants nothing — the actor each
+   * placement runs as is chosen from the `participantUserIds` it answers with,
+   * and every write that follows is authorized as that person.
+   */
+  async spaceBootstrapPage(input: {
+    workspaceId: string;
+    cursor: string | null;
+  }): Promise<WorkspaceSpaceBootstrapPage> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: IdSchema, cursor: IdSchema.nullable() }),
+      input,
+      "space_bootstrap_page",
+    );
+    this.assertWorkspace(request.workspaceId);
+    const storage = this.spaceStorage();
+    const page = storage.bootstrapPage(request.cursor);
+    return WorkspaceSpaceBootstrapPageSchema.parse({
+      generalSpaceId: storage.generalSpaceId(),
+      items: page.items,
+      nextCursor: page.nextCursor,
+    });
+  }
+
+  /**
+   * Record what one page of cutover work finished, and move the pass on.
+   *
+   * Receipts and blockers land in the same call as the phase advance, so a
+   * redelivery of the page skips the Channels the first delivery placed and
+   * reports the same blockers once. Clearing a Channel's blocker when it is
+   * placed is what lets an operator remediate a fence and have the next pass
+   * close the Organization.
+   */
+  async settleSpaceBootstrapPage(
+    input: WorkspaceSpaceBootstrapSettleRequest,
+  ): Promise<{ settled: true }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceBootstrapSettleRequestSchema, input, "settle_space_bootstrap_page",
+    );
+    this.assertWorkspace(request.workspaceId);
+    const storage = this.spaceStorage();
+    if (request.placedWorkstreamIds.length > 0) {
+      storage.recordBootstrapReceipts(request.placedWorkstreamIds, request.phase);
+      storage.clearBootstrapBlocked(request.placedWorkstreamIds);
+    }
+    storage.recordBootstrapBlocked(request.blocked);
+    storage.advanceBootstrap(
+      request.phase === "memberships" && request.cursor !== null ? "memberships"
+        : request.phase === "general" ? "memberships" : "finalize",
+      request.cursor,
+    );
+    await this.armNextAlarm();
+    return { settled: true };
+  }
+
+  /**
+   * Close the cutover, or say why it cannot close yet.
+   *
+   * Three gates, and the third is the PRD's shutdown barrier: no Channel
+   * outside every Space, no Channel the cutover is blocked on, and no Project
+   * effect still queued for delivery. A Project target that has not settled is
+   * work aimed at a Channel whose audience this cutover has just changed, so
+   * letting the Organization report complete with one pending would publish a
+   * hierarchy that a stale delivery can still write into.
+   */
+  async finalizeSpaceBootstrap(input: { workspaceId: string }): Promise<WorkspaceSpaceBootstrapFinalizeResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: IdSchema }), input, "finalize_space_bootstrap",
+    );
+    this.assertWorkspace(request.workspaceId);
+    if (this.spaceStorage().pendingProjectEffects()) {
+      return { outcome: "project_effects_pending" };
+    }
+    const outcome = this.spaceStorage().completeBootstrap();
+    if (outcome === "complete") this.publishSpaceSnapshot();
+    return WorkspaceSpaceBootstrapFinalizeResultSchema.parse({ outcome });
   }
 
   /**
