@@ -403,6 +403,15 @@ export async function applyDemoSeedAction(
   const clientMessageId = demoSeedClientMessageId(session.operationId, action.actionId);
   switch (action.kind) {
     case "create_workstream": {
+      // Every Channel is born in a Space, and a create that names none lands in
+      // General — which is Organization-wide, so the audience General's source
+      // unions in makes the Channel Organization-wide too. A `personal` room
+      // would therefore seed workspace-scoped, the readiness barrier would wait
+      // forever on a scope that can never arrive, and the demo would sit in
+      // **Waiting for workspace** until the operator gave up. Refused here
+      // rather than seeded as a lie; `docs/demo-workspaces.md` says what a pack
+      // does instead.
+      if (action.scope === "personal") throw new Error("demo_seed_personal_room_unsupported");
       if (action.execution === "history") {
         if (action.seed.assistant?.kind !== "say") throw new Error("prepared_demo_requires_text");
         const conversation = { messages: [
