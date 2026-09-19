@@ -3804,6 +3804,29 @@ pre {
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
+/* A block that rendered a diagram takes the appearance's paint back, whatever
+   surface it is on. Mermaid's palette is resolved by `readMermaidThemeConfig`
+   against `document.documentElement` — once per window, deliberately, because a
+   diagram's colours are the appearance's rather than any one surface's — so the
+   ground under it has to come from the same place. On a filled bubble the group
+   would otherwise hand the block a wash of the sender's ink and leave the
+   appearance's labels and connectors sitting on top of it: dark on dark in the
+   light appearance on a near-black bubble. The header goes with it, or its
+   language and copy control would be the bubble's near-white ink on the
+   appearance's near-white surface.
+
+   Scoped with `:has()` so it follows the diagram and not the fence: a Mermaid
+   parse that fails falls back to highlighted source, which is code again and
+   belongs to the surface it sits on. Everywhere outside a filled bubble every
+   line below is the value the group already carries. */
+.markdown-body .markdown-code-block:has(.markdown-mermaid-diagram) {
+  --markdown-ink: var(--av-ref-color-neutral-13);
+  --markdown-ink-quiet: var(--av-ref-color-neutral-11);
+  --markdown-ink-faint: var(--av-ref-color-neutral-9);
+  --markdown-wash: var(--av-ref-color-neutral-4);
+  --markdown-surface: var(--av-sys-color-surface-raised);
+  --markdown-border: var(--av-sys-color-border-subtle);
+}
 .markdown-mermaid-diagram { overflow: auto; padding: var(--space-4); }
 .markdown-mermaid-svg { margin: 0 auto; }
 /* Mermaid writes a responsive max-width into the generated SVG. The wrapper's

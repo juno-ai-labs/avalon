@@ -802,14 +802,20 @@ needs it should parse rather than widen the pattern again.
   different body colour has to restate it inside the wrapper, and should say why
   in the same breath. `.note-detail-article` carried a dead `color` of this kind
   until 2026-08-12.
-- **A Mermaid diagram inside a filled bubble is drawn in the appearance's
-  colours, not the bubble's.** `readMermaidThemeConfig` resolves its tokens
-  against `document.documentElement`, one render for the whole window, so the
-  paint group above does not reach it: a diagram in a person's own message is a
-  themed panel on their fill. Nobody has written one into a message — the
-  fences that render as diagrams are a model's — and giving Mermaid a
-  per-surface mapping means deriving its whole role set, surfaces through chart
-  series, from one ink. Named rather than half-done.
+- **A block that rendered a Mermaid diagram is an island of the appearance,
+  whatever surface it sits on.** `readMermaidThemeConfig` resolves against
+  `document.documentElement`, one render for the whole window, because a
+  diagram's palette is the appearance's rather than any one surface's — so the
+  block under it re-points the paint group back to the appearance's tokens, its
+  header included. Letting the group through instead is the failure this rule
+  exists for: the ground became a wash of the sender's ink while the SVG's
+  labels and connectors stayed the appearance's, which in the light appearance
+  on a near-black bubble is dark on dark. The alternative, deriving Mermaid's
+  whole role set — surfaces through chart series — from one ink, is what a
+  per-surface diagram palette would mean, and it is not what a filled bubble
+  needs to be legible. `:has()` scopes it to a rendered diagram: a parse that
+  fails falls back to highlighted source, which is code again and belongs to
+  the surface it sits on.
 - **A `resource://` target that is malformed, unknown, or invisible to the
   viewer** renders as the citation's label text — no chip, no card, no anchor.
 - **A footnote reference whose definition never arrived** renders literally on a
@@ -994,6 +1000,10 @@ strengths, where comments recede and punctuation sits between.
 
 **Consequences:** A new element rule in this group names a `--markdown-*`
 property, not a token, or it is wrong on the first filled surface it reaches.
+The exception is a block that rendered a Mermaid diagram, which re-points the
+group back to the appearance because that is where the diagram's own palette
+comes from; a person's fence does reach that path, since a human message is
+settled, non-glance and non-still.
 The two easiest to miss were missed in review of this change and are the shape
 to look for: neither the task box nor the table scroller is text, and a paint
 that is not a colour on a text rule — an `accent-color`, a scrollbar variable —
