@@ -159,7 +159,13 @@ const ACTIVITY_EFFECT: ConversationEffect = {
 
 const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
 
-/** The same directory effect a Space publishes, addressed at the workspace. */
+/**
+ * The same directory effect a Space publishes, addressed at the workspace.
+ *
+ * A fixed UUIDv7 rather than `crypto.randomUUID()`: the workspace handoff
+ * refuses a directory effect whose message id is not one, and a v4 here would
+ * be refused for the wrong reason.
+ */
 function spaceDirectoryEnvelope() {
   return ParentEffectEnvelopeSchema.parse({
     kind: "parent_effect",
@@ -169,7 +175,7 @@ function spaceDirectoryEnvelope() {
     parentKind: "space",
     parentId: SPACE_ID,
     generation: 1,
-    messageId: crypto.randomUUID(),
+    messageId: "00000000-0000-7000-8000-00000000ce09",
     partitionKey: "common",
     sourceVersion: 1,
     requiredProjectionVersion: null,
@@ -302,31 +308,27 @@ describe("a Space's Durable Object", () => {
     }))).rejects.toThrow(/workstream_effect_parent_kind_mismatch/u);
   });
 
-  it("leaves its directory effect on the Queue rather than storing it as a Channel", async () => {
+  it("lands its directory effect in the Space directory rather than the Channel one", async () => {
     await env.DB.batch([
       env.DB.prepare("CREATE TABLE workspaces(id TEXT PRIMARY KEY, region TEXT, abandoned_at TEXT)"),
       env.DB.prepare("INSERT INTO workspaces(id, region) VALUES (?, 'global')").bind(WORKSPACE_ID),
     ]);
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 
-    // Named, and refused ahead of the schema parse. The schema would reject it
-    // too, but as a `ZodError` that reaches the Queue consumer across an RPC
-    // hop as a bare `Error` with no issues and no field — which is the shape
-    // `docs/naming-a-schema-failure.md` exists to stop.
-    await expect(runInDurableObject(workspace(), (instance) =>
-      instance.applyWorkstreamDirectoryEffects({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [spaceDirectoryEnvelope()],
-      }))).rejects.toThrow(/space_directory_not_ready/u);
-
-    // And the delivery is retried rather than acknowledged, so the effect waits
-    // on the Queue for the release that can apply it instead of being lost.
-    expect(await consumeEffectBodies(env, [spaceDirectoryEnvelope()]))
-      .toEqual({ acked: 0, retried: 1 });
+    const envelope = spaceDirectoryEnvelope();
+    // Accepted and acknowledged. Phase 1 refused this by name because
+    // WorkspaceDO had nowhere to put it; migration 61 gave it somewhere, and
+    // the routing by parent kind is what keeps a Space out of the Channel
+    // sidebar now that both effects reach the same handoff.
+    expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 1, retried: 0 });
     expect(await workspace().runInspectionSql({
       sql: "SELECT workstream_id FROM workspace_workstream_directory",
       bindings: [],
     })).toMatchObject({ rows: [] });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT space_id, title, scope FROM workspace_space_directory",
+      bindings: [],
+    })).toMatchObject({ rows: [{ space_id: SPACE_ID, title: "Hiring", scope: "workspace" }] });
   });
 
   it("answers as retired once its workspace is closed, through the inherited gate", async () => {
