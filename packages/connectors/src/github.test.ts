@@ -145,7 +145,7 @@ describe("GitHub connector", () => {
     await expect(adapter.executeTool("repositories.list", {}, context)).resolves.toMatchObject({
       output: {
         totalCount: 1,
-        repositories: [{ id: 41, full_name: "acme/widget", access: "read_only" }],
+        repositories: [{ full_name: "acme/widget", access: "read_only" }],
       },
     });
     await expect(adapter.executeTool("issues.create", {
@@ -407,7 +407,11 @@ describe("GitHub connector", () => {
     const content = await adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
     expect(content.output).toMatchObject({ content: "x".repeat(40_000), truncated: true, totalChars: 45_000 });
     const files = await adapter.executeTool("pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 5 }, context);
-    expect((files.output as { files: { patch: string }[] }).files[0]?.patch).toHaveLength(12_000);
+    const patch = (files.output as { files: { patch: string }[] }).files[0]?.patch;
+    // The marker is spent from the budget, not added to it: a bound that
+    // reports 12,000 and delivers more is not a bound.
+    expect(patch).toHaveLength(12_000);
+    expect(patch).toMatch(/\[truncated: \d+ characters exceeds the 12000-character limit\]$/u);
 
     await expect(adapter.executeTool("issues.get", { owner: "acme", repo: "widget", issueNumber: 1 }, context))
       .rejects.toMatchObject({ code: "unsupported_capability" });
@@ -690,7 +694,7 @@ describe("GitHub connector", () => {
       principal: { type: "user", userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
       signal: neverAborts(),
     });
-    expect(result.output).toMatchObject({ repositories: [{ id: 1, full_name: "acme/widget" }] });
+    expect(result.output).toMatchObject({ repositories: [{ full_name: "acme/widget" }] });
     expect(refreshes).toBe(1);
     expect(authorizations).toEqual(["Bearer old-access", "Bearer new-access"]);
     expect(connection.credentials).toMatchObject({ accessToken: "new-access", refreshToken: "new-refresh" });
@@ -1223,6 +1227,180 @@ describe("GitHub connector", () => {
       hasMore: false,
       appliedFilters: { state: "open", head: "acme:feature-1" },
     });
+  });
+
+  it("returns the declared pull-request row rather than the object GitHub sent", async () => {
+    // The payload that made this necessary. A measured substream spent 5.1 MB
+    // of 5.2 MB of model-facing bytes on five GitHub list calls, 735 KB of it
+    // on thirty pull requests, because every row carried `head.repo` and
+    // `base.repo` — two complete repository records — plus `_links` and the
+    // thirty-odd URL templates below. No count-based bound in the adapter was
+    // anywhere near its limit: `perPage` was 30 of 100, no string approached
+    // 40,000 characters, no array 100 entries. The row was wide, not long.
+    const repository = {
+      id: 41,
+      full_name: "acme/widget",
+      forks_url: "https://api.github.com/repos/acme/widget/forks",
+      branches_url: "https://api.github.com/repos/acme/widget/branches{/branch}",
+      archive_url: "https://api.github.com/repos/acme/widget/{archive_format}{/ref}",
+      owner: { login: "acme", id: 7, avatar_url: "https://avatars.github.com/u/7" },
+    };
+    const served = [{
+      number: 670,
+      title: "Bound the GitHub list rows",
+      state: "open",
+      draft: false,
+      created_at: "2026-09-10T09:00:00Z",
+      updated_at: "2026-09-12T11:30:00Z",
+      closed_at: null,
+      merged_at: null,
+      user: { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" },
+      head: { ref: "feature", sha: "9fceb02", repo: repository, user: { login: "octocat" } },
+      base: { ref: "main", sha: "abc1234", repo: repository },
+      labels: [{ id: 2, name: "bug", color: "d73a4a", description: "Something is broken" }],
+      assignees: [{ login: "octocat", id: 1, type: "User" }],
+      requested_reviewers: [{ login: "hubot", id: 3, type: "User" }],
+      html_url: "https://github.com/acme/widget/pull/670",
+      body: "The body belongs to pull_requests.get.",
+      _links: { self: { href: "https://api.github.com/repos/acme/widget/pulls/670" } },
+      diff_url: "https://github.com/acme/widget/pull/670.diff",
+      comments_url: "https://api.github.com/repos/acme/widget/issues/670/comments",
+      milestone: null,
+    }];
+    const fetcher: FetchLike = async (input) => {
+      expect(requestUrl(input).pathname).toBe("/repos/acme/widget/pulls");
+      return jsonResponse(served);
+    };
+    const listed = await githubAdapter(fetcher).executeTool("pull_requests.list", {
+      owner: "acme",
+      repo: "widget",
+    }, {
+      connection: personalConnection([GitHubCapabilities.pullRequestsRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    // Exact rather than partial, in both directions at once: nothing GitHub
+    // sent survives that was not declared, and nothing declared was dropped on
+    // the way. A `toMatchObject` here would pass on a row that still carried
+    // both repositories.
+    expect((listed.output as { pullRequests: unknown[] }).pullRequests).toEqual([{
+      number: 670,
+      title: "Bound the GitHub list rows",
+      state: "open",
+      draft: false,
+      created_at: "2026-09-10T09:00:00Z",
+      updated_at: "2026-09-12T11:30:00Z",
+      // Present and null, because "not merged" is the answer to the question a
+      // reader of this list is asking, and an absent key is not that answer.
+      closed_at: null,
+      merged_at: null,
+      user: { login: "octocat" },
+      head: { ref: "feature", sha: "9fceb02" },
+      base: { ref: "main" },
+      labels: [{ name: "bug" }],
+      assignees: [{ login: "octocat" }],
+      requested_reviewers: [{ login: "hubot" }],
+      html_url: "https://github.com/acme/widget/pull/670",
+    }]);
+  });
+
+  it("keeps the identifiers the next call needs and drops the bulk beside them", async () => {
+    // A projection that loses an id does not save bytes, it breaks the tool
+    // that was documented to take it: `actions.get_workflow_run` tells the
+    // model `runId` is "copied from the `id` field of an
+    // actions_list_workflow_runs result".
+    const repository = { id: 41, full_name: "acme/widget", archive_url: "https://api.github.com/x{/ref}" };
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/widget/actions/runs") {
+        return jsonResponse({
+          total_count: 1,
+          workflow_runs: [{
+            id: 9_912_345,
+            name: "CI",
+            display_title: "Bound the GitHub list rows",
+            run_number: 412,
+            run_attempt: 2,
+            event: "pull_request",
+            status: "completed",
+            conclusion: "failure",
+            head_branch: "feature",
+            head_sha: "9fceb02",
+            created_at: "2026-09-12T11:00:00Z",
+            updated_at: "2026-09-12T11:20:00Z",
+            run_started_at: "2026-09-12T11:01:00Z",
+            html_url: "https://github.com/acme/widget/actions/runs/9912345",
+            pull_requests: [{ number: 670, head: { ref: "feature", repo: repository } }],
+            repository,
+            head_repository: repository,
+            head_commit: { id: "9fceb02", message: "Bound the rows", author: { name: "Octocat" } },
+            logs_url: "https://api.github.com/repos/acme/widget/actions/runs/9912345/logs",
+          }],
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/commits") {
+        return jsonResponse([{
+          sha: "9fceb02",
+          commit: {
+            message: "Bound the rows",
+            author: { name: "Octocat", email: "octocat@example.test", date: "2026-09-12T10:00:00Z" },
+            committer: { name: "GitHub", email: "noreply@github.com", date: "2026-09-12T10:00:00Z" },
+            verification: {
+              verified: true,
+              reason: "valid",
+              signature: "-----BEGIN PGP SIGNATURE-----\nnot small\n-----END PGP SIGNATURE-----",
+              payload: "tree 1f2e3d\nparent 4c5b6a\nauthor Octocat <octocat@example.test>\n",
+            },
+          },
+          author: { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" },
+          html_url: "https://github.com/acme/widget/commit/9fceb02",
+          comments_url: "https://api.github.com/repos/acme/widget/commits/9fceb02/comments",
+          parents: [{ sha: "4c5b6a", url: "https://api.github.com/repos/acme/widget/commits/4c5b6a" }],
+        }]);
+      }
+      return jsonResponse({ message: "Not Found" }, 404);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([GitHubCapabilities.actionsRead, GitHubCapabilities.contentsRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+
+    const runs = await adapter.executeTool("actions.list_workflow_runs", { owner: "acme", repo: "widget" }, context);
+    expect((runs.output as { workflowRuns: unknown[] }).workflowRuns).toEqual([{
+      id: 9_912_345,
+      name: "CI",
+      display_title: "Bound the GitHub list rows",
+      run_number: 412,
+      run_attempt: 2,
+      event: "pull_request",
+      status: "completed",
+      conclusion: "failure",
+      head_branch: "feature",
+      head_sha: "9fceb02",
+      created_at: "2026-09-12T11:00:00Z",
+      updated_at: "2026-09-12T11:20:00Z",
+      run_started_at: "2026-09-12T11:01:00Z",
+      pull_requests: [{ number: 670 }],
+      html_url: "https://github.com/acme/widget/actions/runs/9912345",
+    }]);
+
+    const commits = await adapter.executeTool("commits.list", { owner: "acme", repo: "widget" }, context);
+    // The signature and the payload beside it are most of a commit row on any
+    // repository that signs, and the verdict is the only part of either that a
+    // reader can act on.
+    expect((commits.output as { commits: unknown[] }).commits).toEqual([{
+      sha: "9fceb02",
+      commit: {
+        message: "Bound the rows",
+        author: { name: "Octocat", date: "2026-09-12T10:00:00Z" },
+        verification: { verified: true },
+      },
+      author: { login: "octocat" },
+      html_url: "https://github.com/acme/widget/commit/9fceb02",
+    }]);
   });
 
   it("pages issues by what GitHub served rather than by what survives the pull-request filter", async () => {
