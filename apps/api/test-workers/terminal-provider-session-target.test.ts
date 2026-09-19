@@ -98,8 +98,9 @@ describe("Terminal provider session target", () => {
       }, callbacks("createSandbox"))],
       ["prepareSandbox", () => target.prepareSandbox("s", [], callbacks("prepareSandbox"))],
       ["getSandbox", () => target.getSandbox("s", callbacks("getSandbox"))],
-      ["recoverSandbox", () => target.recoverSandbox("s", callbacks("recoverSandbox"))],
-      ["startSandbox", () => target.startSandbox("s", callbacks("startSandbox"))],
+      // These two also carry a wait deadline, so the callbacks are third.
+      ["recoverSandbox", () => target.recoverSandbox("s", undefined, callbacks("recoverSandbox"))],
+      ["startSandbox", () => target.startSandbox("s", undefined, callbacks("startSandbox"))],
       ["stopSandbox", () => target.stopSandbox("s", callbacks("stopSandbox"))],
       ["archiveSandbox", () => target.archiveSandbox("s", callbacks("archiveSandbox"))],
       ["deleteSandbox", () => target.deleteSandbox("s", callbacks("deleteSandbox"))],
