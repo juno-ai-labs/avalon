@@ -130,6 +130,33 @@ serves it through `rally-font://`.
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
   never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
   at equal specificity further down the file.
+- **The hover wash is layered over a control, never substituted for what it
+  paints.** `app.css` spells it `--hover-layer`, a `background-image` derived
+  from the token, and a hover rule sets that rather than `background`. A
+  control with no surface of its own could take the wash as a
+  `background-color` and composite correctly against its ancestor; one that
+  paints its own surface cannot, because `background-color` replaces that
+  surface. `.button` on `surface.raised` lost it and composited against the
+  canvas, turning `#2f2f2f` into roughly `#1a1a1a` — the control went *darker*
+  under the pointer. Layering makes the hover delta identical for every
+  control, which is what one wash is for. It costs the fill's fade:
+  `background-image` is discrete, so only border and text colour still
+  transition.
+- **There is one hover wash, and it is `sys.color.state.hover`.** Every neutral
+  control a pointer can cross — a navigation row, a menu item, a header icon, a
+  chip, a settings button — paints hover from that one token, and
+  `app.css.node.test.ts` fails a `:hover` or `[data-highlighted]` rule that
+  reaches for a neutral surface fill instead. Two kinds of rule are exempt and
+  say so: a hover carrying a semantic hue, where the hue is the point, and a
+  rule shared with a selected or pressed state, which is not a hover. The wash
+  is translucent in **both** appearances on purpose — an opaque fill has to know
+  what is behind it, which is how `sys.color.surface.raised` came to be a hover
+  on the light canvas that *was* the canvas.
+- **A control's resting chip fill is `cmp.control.background-quiet`, not the
+  hover wash.** They carry the same weight today and are still two tokens: the
+  composer's round tools rest on the quiet fill and hover a step above it, so a
+  single token would have collapsed their only feedback the moment either value
+  moved.
 - **Appearance files are data.** They cannot carry HTML or JavaScript, and the
   desktop registers no appearance-document protocol or iframe.
 
@@ -181,6 +208,69 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-19 — One hover wash for the whole product
+
+**What changed:** `sys.color.state.hover` is new and is now the only fill a
+neutral hover may take; 46 rules moved onto it. `cmp.row.background-hover` is
+retired into it, and `cmp.control.background-quiet` is new for the five places
+that used that value as a control's *resting* chip fill rather than as a hover.
+`app.css.node.test.ts` gained a sweep that fails any future `:hover` or
+`[data-highlighted]` rule painting a neutral surface fill.
+
+**Why:** hover was spelled seven ways — `surface.raised`, `surface.raised-hover`,
+`surface.elevated-hover`, `surface.subtle`, three steps of the neutral ramp, and
+the sidebar's own row token — and which one a control got was an accident of
+when it was written. `surface.raised` was the worst: it is a step above the
+canvas only in dark, and light sets it to the canvas's own `#fcfcfc`, so the
+work-stream header's icons had no visible hover at all while the title button
+beside them lit up. Fixing only those three would have left the same trap set
+for the next control, and left one bar hovering at four different weights.
+
+**Considered and rejected:** darkening light's `surface.raised`, which is also
+the fill of menus, dialogs, cards and the segmented control's chosen pill — all
+meant to be white against a white canvas and separated by their border. Also
+rejected: pointing everything at `cmp.row.background-hover`, which has the right
+value but names a row, so an icon button reading it is the component tier
+leaking into the system tier.
+
+**Consequences:** the wash is applied as a layer (`--hover-layer`), not as a
+fill, so a control keeps whatever surface it already paints and the hover delta
+is the same everywhere. The first revision of this change substituted it, which
+made every control with its own opaque surface go darker under the pointer in
+dark; Codex caught it on review. The cost of the layer is that
+`background-image` is discrete, so the fill no longer fades over the 120-140ms
+the transitions declare — border and text colour still do, and a hover that
+lands instantly was judged better than one that lands on the wrong colour. The
+wash is translucent in both appearances, so one value works on the canvas, in a
+menu and inside a dialog; an opaque fill cannot, and
+that is the property to preserve if either number is re-fitted. Light hovers at
+`0.09` and dark at `0.17` — the sidebar's existing weights, unchanged, so the
+sidebar is the reference anything else should be compared against. Controls that
+used to hover heavier than that are now lighter: the work-stream title button
+and `.icon-button` both dropped from `0.17`, which is deliberate and is what
+makes the top bar read as one family. Two dark restatements that existed only
+because light and dark disagreed about hover — the account menu's highlighted
+row and the composer capsule's tool buttons — became no-ops and were deleted.
+`.grokbot-computer-button` had folded hover and `aria-pressed` into one
+declaration; pressed keeps the heavier `surface.elevated-hover`, because it has
+to hold once the pointer leaves and the wash is deliberately too light for that.
+
+**What it does not fix:** the mention popover and the new-chat recipient list
+still draw hover from `cmp.row.background-selected`, so a hover in either still
+carries a selection's weight. The 2026-09-11 entry below raised this and pointed
+them at `cmp.row.background-hover`, which this change retires; the fill they
+want now is `sys.color.state.hover`. 
+`cmp.control.background-quiet` and `sys.color.state.hover` hold the same value
+today, so a control that rests on the first and hovers on the second gets its
+step from the wash being *layered* over the resting fill, not from the two
+numbers differing. That is worth knowing before either is re-fitted: review of
+this change twice read the shared value as meaning those controls have no hover
+feedback at all, which was true only of the revision that substituted the wash
+instead of layering it. The agent question's Skip button is the case to check —
+it rests on the quiet fill and takes `.button`'s hover. The collapsed sidebar's
+search pill is not, despite looking like it: `app.css` resets it to
+`transparent` in the compact rail, so it never rested on the quiet fill there.
 
 ### 2026-09-18 — Share theme presentation between desktop and browser
 

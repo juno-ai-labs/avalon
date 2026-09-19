@@ -702,20 +702,27 @@ function ruleWithin(source: string, selector: string): string | null {
 }
 
 /**
- * Every rule's selector prelude, with comments removed.
+ * Every rule, as its selector prelude and its declarations.
  *
  * Splitting on `}` and taking the text before the *last* `{` in each piece
  * keeps the inner selector of a nested rule rather than the `@media` that
  * encloses it. Comments go first so that prose naming a selector — this
  * stylesheet's comments name several — is not mistaken for the rule itself.
  */
-function preludes(): string[] {
+function rules(): { selector: string; body: string }[] {
   return stylesheet
     .replace(/\/\*[\s\S]*?\*\//gu, ' ')
     .split('}')
-    .map((block) => (block.includes('{') ? (block.split('{').at(-2) ?? '') : ''))
-    .map((prelude) => prelude.trim())
-    .filter(Boolean);
+    .flatMap((block) => {
+      if (!block.includes('{')) return [];
+      const selector = (block.split('{').at(-2) ?? '').trim();
+      return selector ? [{ selector, body: block.split('{').at(-1) ?? '' }] : [];
+    });
+}
+
+/** Just the selector preludes, for the checks that never look at a body. */
+function preludes(): string[] {
+  return rules().map(({ selector }) => selector);
 }
 
 /**
@@ -1077,7 +1084,7 @@ describe('raised popover interaction states', () => {
     expect(highlighted).not.toBeNull();
     expect(danger).not.toBeNull();
     expect(content).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(highlighted).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(highlighted).toContain('background-image: var(--hover-layer);');
     expect(danger).toContain('background: var(--av-sys-color-danger-tint);');
   });
 
@@ -1092,7 +1099,93 @@ describe('raised popover interaction states', () => {
     expect(popover).not.toBeNull();
     expect(rows).not.toBeNull();
     expect(popover).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(rows).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(rows).toContain('background-image: var(--hover-layer);');
+  });
+});
+
+describe('the one hover wash', () => {
+  /**
+   * Hover used to be spelled seven different ways — `surface.raised`,
+   * `surface.raised-hover`, `surface.elevated-hover`, `surface.subtle`, three
+   * steps of the neutral ramp and the sidebar's own row token — and which one a
+   * control got was an accident of when it was written. `surface.raised` was
+   * the worst of them: it is a step above the canvas only in dark, and light
+   * sets it to the canvas's own #fcfcfc, so the stream header's icons had no
+   * visible hover at all while the title button beside them lit up.
+   */
+  it('paints the controls a pointer crosses in one sweep from the same token', () => {
+    const icon = rule(
+      '.icon-button:hover:not(:disabled),\n'
+      + ".icon-button[data-state='open']:not(:disabled),\n"
+      + '.icon-button:focus-visible',
+    );
+    const family = [
+      icon,
+      rule('.participant-header-button:hover:not(:disabled)'),
+      rule('.header-socket-state:hover,\n.header-socket-state:focus-visible'),
+      rule('.workstream-title-button:hover'),
+      rule('.menu-item[data-highlighted]'),
+      rule('.appearance-picker-trigger:hover'),
+    ];
+
+    for (const declarations of family) {
+      expect(declarations).not.toBeNull();
+      expect(declarations).toContain('background-image: var(--hover-layer);');
+    }
+  });
+
+  /**
+   * The wash is layered, not substituted. A control that paints its own
+   * surface — `.button` on `surface.raised`, a provider card, a citation chip
+   * — keeps that surface in `background-color`; taking the wash as the
+   * background instead composited it against the ancestor, which in dark
+   * turned #2f2f2f into roughly #1a1a1a and made the control go *darker*
+   * under the pointer.
+   */
+  it('layers the wash over the control rather than replacing what it paints', () => {
+    expect(rule(':root')).toContain('--hover-layer: linear-gradient(var(--av-sys-color-state-hover) 0 100%);');
+
+    const layered = rules().filter(({ body }) => body.includes('var(--hover-layer)'));
+    expect(layered.length).toBeGreaterThan(40);
+    for (const { selector, body } of layered) {
+      expect(body, selector).toContain('background-image: var(--hover-layer);');
+      // `background:` would reset `background-color` to transparent and undo
+      // the layering the property name is there to provide.
+      expect(body, selector).not.toMatch(/(?:^|[;{\s])background:/u);
+    }
+  });
+
+  /**
+   * The guard, rather than one assertion per control: a hover added later takes
+   * the wash, and a neutral surface fill can no longer reach a hover rule by
+   * being copied off the one next to it. A hover that carries a hue is exempt
+   * because the hue is the point, and a rule shared with a selected or pressed
+   * state is exempt because that state is not a hover.
+   */
+  it('lets no hover paint a neutral surface fill instead', () => {
+    const neutralSurface = /var\(--av-(?:sys-color-surface-[a-z-]+|ref-color-neutral-\d+|cmp-row-background-selected|cmp-control-background-quiet)\)/u;
+    const hue = /danger|success|warning|brand|accent|scrim|bubble/u;
+    const settled = /\.is-selected|\.is-active|\.is-current|aria-pressed/u;
+    // The capsule composer's round tools rest on the wash already, so their
+    // hover has to be a further step or there is no feedback at all.
+    const restsOnTheWash = '.is-message-capsule .composer-tools > .icon-button:hover:not(:disabled)';
+
+    const offenders = rules()
+      .map(({ selector, body }) => ({ selector: selector.replace(/\s+/gu, ' '), body }))
+      .filter(({ selector }) => /:hover|\[data-highlighted\]/u.test(selector))
+      .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
+      .filter(({ body }) => !body.includes('var(--hover-layer)'))
+      .filter(({ body }) => {
+        // The *last* declaration, not the first: a rule that opens with the
+        // wash and then overrides it with a neutral surface violates the
+        // invariant through the one that actually paints.
+        const declared = [...body.matchAll(/(?:^|[;{\s])background(?:-color)?:\s*([^;}]+);?/gu)];
+        const background = declared.at(-1)?.[1] ?? '';
+        return neutralSurface.test(background) && !hue.test(background);
+      })
+      .map(({ selector }) => selector);
+
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -1124,7 +1217,7 @@ describe('sidebar project rows', () => {
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
     expect(stylesheet).toContain(
-      '.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }',
+      '.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }',
     );
     expect(stylesheet).toContain(
       '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
