@@ -1347,7 +1347,6 @@ describe('WorkspaceSocketProvider', () => {
       revision: 1,
       participants: [],
       channelCount: 0,
-      conversationWaterline: 0,
       defaultResourceIds: [],
       defaultSidekickIds: [],
       createdAt: '2026-08-27T00:00:00.000Z',
@@ -1389,6 +1388,52 @@ describe('WorkspaceSocketProvider', () => {
     // not be replaced by one a stale payload carried.
     expect(queryClient.getQueryData(['personal-order']))
       .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
+  });
+
+  // The Space dashboard's page is fetched, not pushed, so WorkspaceDO sends a
+  // nudge naming the Spaces to read again rather than the rows. This is the
+  // only thing that invalidates that entry while the screen is open.
+  it('invalidates only the named spaces when a dashboard nudge arrives', async () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    invalidate.mockClear();
+
+    act(() => socket.message({
+      type: 'space_conversations_changed',
+      occurredAt: '2026-08-27T00:01:00.000Z',
+      spaceIds: [
+        '00000000-0000-7000-8000-0000000000f2',
+        '00000000-0000-7000-8000-0000000000f3',
+      ],
+    }));
+
+    const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(keys).toEqual([
+      ['space-channels', '00000000-0000-7000-8000-0000000000f2'],
+      ['space-channels', '00000000-0000-7000-8000-0000000000f3'],
+    ]);
+    // A Space the nudge did not name is a dashboard this change cannot have
+    // moved, and refetching it would be one wasted page read per message in
+    // the Organization.
+    expect(keys).not.toContainEqual(['space-channels', '00000000-0000-7000-8000-0000000000f4']);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {

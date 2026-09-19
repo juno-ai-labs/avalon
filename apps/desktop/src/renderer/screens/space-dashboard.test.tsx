@@ -59,7 +59,6 @@ function makeSpace(overrides: Record<string, unknown> = {}): SpaceSummary {
     revision: 1,
     participants: [{ userId: member.id }],
     channelCount: 0,
-    conversationWaterline: 0,
     defaultResourceIds: [],
     defaultSidekickIds: [],
     createdAt: '2026-08-27T00:00:00.000Z',
@@ -104,7 +103,15 @@ function Location(): React.JSX.Element {
   return <output data-testid="location">{useLocation().pathname}</output>;
 }
 
-function renderSpace(summary = hiring, options: { ready?: boolean } = {}): QueryClient {
+/**
+ * The screen, plus the two handles a test needs: the cache it reads, and a
+ * re-render — the socket is a module-level double, so a reconnect is a change
+ * to that double followed by a render rather than an event.
+ */
+function renderSpace(summary = hiring, options: { ready?: boolean } = {}): {
+  queryClient: QueryClient;
+  rerender: () => void;
+} {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const active = summary.status === 'active';
   queryClient.setQueryData(['spaces'], { waterline: 1, items: active ? [summary] : [] });
@@ -118,7 +125,7 @@ function renderSpace(summary = hiring, options: { ready?: boolean } = {}): Query
     status: 'active',
     updatedAt: '2026-08-27T00:00:00.000Z',
   }]);
-  render(
+  const tree = (): React.JSX.Element => (
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/spaces/${summary.id}`]}>
@@ -128,9 +135,10 @@ function renderSpace(summary = hiring, options: { ready?: boolean } = {}): Query
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
-    </Tooltip.Provider>,
+    </Tooltip.Provider>
   );
-  return queryClient;
+  const { rerender } = render(tree());
+  return { queryClient, rerender: () => rerender(tree()) };
 }
 
 describe('the Space dashboard', () => {
@@ -173,7 +181,6 @@ describe('the Space dashboard', () => {
     api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
     renderSpace(makeSpace({
       channelCount: 1,
-      conversationWaterline: 0,
       defaultResourceIds: ['00000000-0000-7000-8000-0000000000c1'],
       defaultSidekickIds: ['00000000-0000-7000-8000-0000000000b1'],
     }));
@@ -229,20 +236,34 @@ describe('the Space dashboard', () => {
     expect(screen.queryByText('Nothing here needs you right now')).not.toBeInTheDocument();
   });
 
-  // The page is the one thing on this screen the socket cannot replace, and an
-  // activity-ordered, state-filtered list goes stale on far more than a
-  // membership change. One signal covers all of it.
-  it('refetches the page when the space conversation waterline moves', async () => {
+  // A nudge sent while the socket was away is never re-sent, and nothing
+  // durable records that it happened — so a fresh connect payload is this
+  // screen's only evidence that it may have missed one. `workspace-socket.tsx`
+  // owns the other half: the nudge itself.
+  it('refetches the page after the socket reconnects', async () => {
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
-    const queryClient = renderSpace(makeSpace({ channelCount: 1, conversationWaterline: 7 }));
+    workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
+    const { rerender } = renderSpace(makeSpace({ channelCount: 1 }));
     await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(1));
 
-    queryClient.setQueryData(['spaces'], {
-      waterline: 2,
-      items: [makeSpace({ channelCount: 1, conversationWaterline: 8 })],
-    });
+    workspaceSocket.current = { sidebarConnect: { generation: 2 }, state: 'connected' };
+    rerender();
 
     await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(2));
+  });
+
+  // The generation the screen mounted at is already accounted for by the
+  // query's own mount fetch, so adopting it must not cost a second read of the
+  // same page on every open.
+  it('does not refetch the page for the connection it opened on', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
+    workspaceSocket.current = { sidebarConnect: { generation: 3 }, state: 'connected' };
+    const { rerender } = renderSpace(makeSpace({ channelCount: 1 }));
+    await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(1));
+
+    rerender();
+
+    await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(1));
   });
 
   it('asks for the next page of channels when Load more is used', async () => {

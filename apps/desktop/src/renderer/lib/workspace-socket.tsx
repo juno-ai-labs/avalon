@@ -2,6 +2,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
@@ -41,6 +42,7 @@ import {
   SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
+  spaceConversationsQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { uuidV7 } from './telemetry';
@@ -597,6 +599,21 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
             );
+            return;
+          }
+          const spaceConversations = safeParseSocketEvent(
+            WorkspaceSpaceConversationsEventSchema, decoded,
+          );
+          if (spaceConversations.success) {
+            // A nudge, not a payload: the Space dashboard's page is the one
+            // list on that screen the socket does not carry, so what arrives
+            // is the Spaces to read again and nothing else. The only
+            // coalescing is React Query's own in-flight dedupe — a burst of
+            // messages in one Space costs one refetch while it is in flight,
+            // and there is no timer here to tune.
+            for (const spaceId of spaceConversations.data.spaceIds) {
+              void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+            }
             return;
           }
         });

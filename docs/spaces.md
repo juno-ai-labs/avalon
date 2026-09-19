@@ -25,7 +25,7 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the conversation waterlines (migration 63), the dashboard's conversation page and its live-for-viewer SQL, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL, the reads a dashboard nudge is addressed with, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
 | `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 63), and the generation-fenced applies over them. |
 | `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
@@ -775,29 +775,57 @@ far more than a membership: a message in a member Channel or breakout reorders
 it, a run finishing drops a row out of it, and this reader opening one takes it
 off their list and nobody else's.
 
-So the Space summary carries **`conversationWaterline`**, one per-viewer number
-the client refetches on. It is the sum of two counters WorkspaceDO keeps: a
-per-Space one advanced when a member conversation's shared row or its
-membership changes, and a per-(Space, person) one advanced when *that* person's
-viewer row on a member conversation changes. Each half only increases and each
-event advances exactly one of them, so the sum strictly increases on every
-change this viewer's page could be affected by and never moves for one it could
-not. Two halves rather than one per-person counter because a message in an
-Organization-wide Channel would otherwise cost one write per member, and rather
-than one shared counter because every member would then refetch whenever any
-other member read anything.
+So WorkspaceDO sends a **nudge**: `space_conversations_changed`, carrying
+nothing but the Space ids whose page may have moved *for the socket it is sent
+to*. The dashboard re-reads the page it is holding; nothing else reacts to it.
+It goes out when a directory batch changes a member Channel's shared row, when
+a breakout's forwarded projection changes its, when one person's viewer row on
+either changes, and when a membership settles, is removed, or is taken away and
+given back by a Space archive and restore.
 
-It **subsumes `channelCount`** as a staleness signal, because a settled
-membership advances it too — so the dashboard has one refetch trigger rather
-than one for Channels and a second for breakouts. `channelCount` stays on the
+**Nothing durable stands behind it, deliberately.** The page is re-read on
+mount, on socket reconnect and on this nudge, so a nudge lost to a closing
+socket costs one stale view until the next change or the next reconnect — and
+those three reads are what make that recoverable rather than permanent. The
+alternative shipped first and was withdrawn: a per-Space counter and a
+per-(Space, person) counter, summed into a `conversationWaterline` on the Space
+summary. It cost a durable write on the hottest path this object has — every
+message in every member Channel, which for General is every message in the
+Organization — it needed the Space snapshot to deliver it, which rebuilds both
+Space directories per socket, and it did not work: the snapshot is dropped by
+the client as a replay whenever the *directory* waterline has not moved, which
+is exactly the case the counter existed for. A counter is also the more
+expensive thing to reverse. If the nudge turns out to be too little, what
+replaces it is a version the client compares — not a second mechanism beside
+it.
+
+**It is addressed, not broadcast.** A socket hears about a Channel only if its
+viewer can list that Channel — the same `scope = 'workspace' OR is_participant`
+test the page applies, from the one code-owned text both render — and about a
+Space only if its viewer can see that Space. A Channel id never leaves the
+publisher; only the Spaces it is placed in do. That keeps two people's fast
+exchange in a private Channel off every other member's dashboard, and keeps a
+personal Space's id from reaching somebody who only shares a Channel with its
+owner. A guest is sent none: a guest is handed no Space state at all.
+
+The cost is two local reads per subscribed socket and no write. The page itself
+is never pushed: that would put one Channel's traffic on every reader of every
+Space that holds it, and would put breakouts on a socket nothing else draws
+them on.
+
+The nudge **subsumes `channelCount`** as a staleness signal, because a settled
+membership sends one too — so the dashboard has one refetch trigger rather than
+one for Channels and a second for breakouts. `channelCount` stays on the
 summary for what it is actually good at: telling the two empty states apart.
 
-The page itself is never pushed. What rides the socket is the Space snapshot,
-republished when the waterline moves, and that is the cost this list buys:
-every message in every member Channel republishes it. The alternative —
-pushing the page down the socket — would put one Channel's traffic on every
-reader of every Space that holds it, and would put breakouts on a socket
-nothing else draws them on.
+**A refetch reloads every page the reader has scrolled to.** The dashboard's
+query is a React Query infinite query, and invalidating one refetches all its
+loaded pages; a reader three pages into General pays three page reads per
+nudge. That is left as it is. The coalescing that exists is React Query's own
+in-flight dedupe — a burst of messages in one Space costs one refetch while it
+is in flight — and anything more would be a debounce interval nobody here can
+derive. If it has to come down, the thing to change is the page size or the
+query shape, not to add a timer.
 
 ### The desktop surfaces
 
@@ -833,11 +861,14 @@ pinned waterline. Without that the Channel stayed under the Spaces it had for
 the session, and the local cache carried the stale row through a reload.
 
 The Space dashboard's own conversation page is the one thing on that screen the
-socket cannot replace, so it is refetched when the Space snapshot's
-`conversationWaterline` moves. That covers the membership changing somewhere
-else — **Add to space** on a sidebar row, a drag — and everything else that
-reorders or empties an activity-ordered, state-filtered list. [The refresh
-signal](#the-refresh-signal) is the mechanism.
+socket cannot replace, so it is refetched when a `space_conversations_changed`
+nudge names its Space, and again after a reconnect — `sidebarConnect.generation`
+is the client's only evidence that it may have missed one, and it is what the
+directory query already reads a reconnect from. Between them those cover the
+membership changing somewhere else — **Add to space** on a sidebar row, a drag
+— and everything else that reorders or empties an activity-ordered,
+state-filtered list. [The refresh signal](#the-refresh-signal) is the
+mechanism.
 
 The sidebar holds one page of the Organization's Channels, so an expanded Space
 lists the placements this device has and says nothing about the rest. It does
@@ -1183,7 +1214,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
-| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and counted once, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, a keyset walk across a page boundary that falls inside a four-way tie, the refresh signal moving for a member breakout and not for a Channel in another Space, and the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal. |
+| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, a keyset walk across a page boundary that falls inside a four-way tie, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal, and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
@@ -1197,7 +1228,8 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the two empty states, the one activity-ordered list of both kinds, the refetch after a reconnect and the one it does not do for the connection it opened on, the blocked-archive copy, General's protections, and that one refusal appears once. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
@@ -1270,7 +1302,7 @@ when one of them refuses.
 
 ## Data model
 
-Ten tables in WorkspaceDO's migration 61, and four more in migration 63.
+Ten tables in WorkspaceDO's migration 61, and two more in migration 63.
 
 `workspace_space_directory` is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
@@ -1318,7 +1350,7 @@ Migration 61 also rebuilds `workspace_retirement_graph` so its `parent_kind`
 CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts —
 through a scratch table. Migration 42 is released and is not edited.
 
-**Migration 63 adds the four tables the dashboard list needs.**
+**Migration 63 adds the two tables the dashboard list needs.**
 `workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
 carrying what the forwarded effect carries — title, description, scope, state,
 `last_activity_at`, `completed_at`, `archived_at`, the attention ordinals, the
@@ -1330,8 +1362,10 @@ per-person half, keyed by that pair plus `user_id`, holding `is_participant`,
 columns are spelled the way the Channel directory spells the same facts on
 purpose: one code-owned predicate text is rendered against both aliases, and a
 column named differently here would be a second predicate pretending to be one.
-`space_conversation_state` and `space_conversation_viewer_state` are the two
-halves of [the refresh signal](#the-refresh-signal).
+
+There is no third table for [the refresh signal](#the-refresh-signal), and that
+is the decision rather than an omission: the dashboard is told to re-read
+itself, and nothing about that is worth a row.
 
 Neither breakout table is a node in `workspace_retirement_graph`. That graph
 enumerates *objects* to close — a Channel's `WorkstreamDO`, a Sidekick's
@@ -1651,9 +1685,9 @@ SQL. Migration 63 adds `workspace_breakout_directory` and
 breakouts' own directory projections over the outbox path it already had, with
 the substream id on the envelope. `GET /spaces/:id/channels` keeps its name and
 answers `SpaceConversation` rows carrying `kind` and, for a breakout, its
-parent Channel, its substream id and the parent's title. The Space summary
-carries `conversationWaterline`, one per-viewer number the dashboard refetches
-on.
+parent Channel, its substream id and the parent's title. The page is refetched
+on a `space_conversations_changed` nudge naming its Space and on socket
+reconnect, and nothing durable is written for that signal.
 
 **Why:** The section listed every Channel in the Space in id order, which is
 the least useful ordering a list of conversations can have and is not what
@@ -1685,18 +1719,30 @@ Channel in somebody's sidebar. Two tables means only the query that
 deliberately lists both has to know both exist. *Pushing the page over the
 socket* — it would put one member Channel's traffic on every reader of every
 Space holding it, and would put breakouts on a socket nothing else draws them
-on. *A second refresh mechanism for breakouts* — the waterline covers both
-kinds and subsumes `channelCount`, so there is one trigger rather than three.
+on. *A second refresh mechanism for breakouts* — one nudge covers both kinds
+and subsumes `channelCount`, so there is one trigger rather than three. *A
+durable per-viewer counter on the Space summary* — this is what shipped first
+and was withdrawn in review. It wrote a row on every message in every member
+Channel (for General, every message in the Organization), it needed the Space
+snapshot to reach a client, which rebuilds both Space directories per socket,
+and the client dropped that snapshot as a replay whenever the directory
+waterline had not moved — which is every case the counter existed for. A nudge
+with nothing behind it is cheaper to send, cheaper to reverse, and the failure
+it can have is one stale view rather than a number two authorities disagree
+about.
 
 **Consequences:** The page's SQL is the authority for what is listed and
 `conversationNeedsViewer` is a copy of it; the combination walk in
 `space-conversation-page.test.ts` is the only thing keeping them equal, and a
-change to either without the other is a defect that test is there to catch. A
-member conversation's activity now republishes the Space snapshot to every
-subscribed socket, which is a real increase in socket traffic — every message
-in every member Channel — and it is the cost the activity-ordered list buys; if
-it has to come down, the thing to change is what the snapshot carries, not the
-signal. A test fixture that publishes an idle, fully-read Channel and expects
+change to either without the other is a defect that test is there to catch.
+Every message in a member Channel or breakout now costs one small socket
+message per reader who can see it, and one page read from each reader who has
+that Space's dashboard open — three page reads if they have scrolled three
+pages, because invalidating an infinite query refetches all of them. That is
+the cost the activity-ordered list buys, and it is bounded by who can see the
+conversation rather than by who is in the Space. A dashboard is only ever
+*told* to re-read itself, so any future change that needs a client to detect a
+gap has to add a version to compare, not a second nudge. A test fixture that publishes an idle, fully-read Channel and expects
 it on the page will now fail, correctly: `space-authority.test.ts` publishes
 `needs_input` for exactly that reason. A future conversation kind — a Sidekick
 run, say — joins the list by adding an arm to `conversationPage` and a branch

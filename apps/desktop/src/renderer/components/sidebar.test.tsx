@@ -145,7 +145,6 @@ function space(
     revision: 1,
     participants: [{ userId: '00000000-0000-7000-8000-0000000000f1' }],
     channelCount: 0,
-    conversationWaterline: 0,
     defaultResourceIds: [],
     defaultSidekickIds: [],
     createdAt: '2026-08-27T00:00:00.000Z',

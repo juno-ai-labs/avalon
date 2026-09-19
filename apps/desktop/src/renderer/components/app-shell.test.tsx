@@ -30,7 +30,6 @@ const space = SpaceSummarySchema.parse({
   revision: 1,
   participants: [],
   channelCount: 0,
-  conversationWaterline: 0,
   defaultResourceIds: [],
   defaultSidekickIds: [],
   createdAt: '2026-08-27T00:00:00.000Z',
