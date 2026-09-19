@@ -85,9 +85,9 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `ConversationParentDurableObject`, the half of a conversation parent that is the same for both kinds: the child registry, per-child projections and receipts, cross-child aggregation, the parent outbox, and its drain onto `ACTIVITY_QUEUE`. Holds the shared table statements both parents' ledgers render. |
 | `apps/api/src/durable-objects/workstream-do.ts` | `WorkstreamDO`: the work-stream parent, and — under a different role — the Space parent. Adds `workstream_metadata`, the control socket's complete metadata snapshots, viewer authorization from scope and participation, and the one synchronous provisional directory delivery at creation. |
-| `apps/api/src/durable-objects/workstream-do-schema.ts` | `WORKSTREAM_DO_SCHEMA_MIGRATIONS`, in its own module so the role constants can name it without closing an import cycle with the class. |
+| `apps/api/src/durable-objects/workstream-do-schema.ts` | `WORKSTREAM_DO_SCHEMA_MIGRATIONS`, the one ledger both roles apply, in its own module so the role constants can name it without closing an import cycle with the class. |
 | `apps/api/src/durable-objects/conversation-parent-role.ts` | `ConversationParentRole` and the two role constants: every way a Space differs from a Channel, in one screen. |
-| `apps/api/src/durable-objects/space-do.ts`, `space-do-schema.ts` | `SpaceDO`: `WorkstreamDO` supplied with the space role, plus its retirement registration, and the one-version ledger that renders the shape the work-stream ledger currently ends at. |
+| `apps/api/src/durable-objects/space-do.ts` | `SpaceDO`: `WorkstreamDO` supplied with the space role, plus its retirement registration. It has no schema module of its own — the role points at the work-stream ledger. |
 | `apps/api/src/durable-objects/automation-do.ts`, `automation-do-protocol.ts` | `AutomationDO`: the automation parent. Adds the automation row, definition revisions, schedules, runs, and inbound-email receipts; forwards nothing its children say. Owned by [`automation-lifecycle.md`](automation-lifecycle.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
@@ -365,7 +365,7 @@ overriding nothing:
 | --- | --- | --- |
 | `kind` | `workstream` | `space` — what `parentIdentity()` stamps on every effect, and what `admitChildEnvelope` holds a child to |
 | `namespace` / `objectName` | `WORKSTREAM_DOS`, `workstreamDOName` | `SPACE_DOS`, `spaceDOName` — the self-registration and every name this object derives |
-| `migration` | `workstream_do`, `WorkstreamDO`, 17 versions | `space_do`, `SpaceDO`, one version rendering that ledger's current shape |
+| `migration` | `workstream_do`, `WorkstreamDO`, `WORKSTREAM_DO_SCHEMA_MIGRATIONS` | `space_do`, `SpaceDO`, **the same array** — only the component and class name are the Space's own |
 | `admitsClientSockets` | yes | no — `GET /socket` answers 403 `space_socket_refused` before a ticket is read |
 | `publishesGrantDirectory` | yes | no — `ScopeGrantStorage` is handed a no-op writer, so grants commit and nothing reaches the shared grant directory |
 | `forwardsFeedEffects` | yes | no — only `directory_common` and `directory_user` leave the parent; activity events and notifications are dropped here, because anything reaching the outbox is delivered |
@@ -400,15 +400,22 @@ relationship — membership, order, defaults, General — belongs to WorkspaceDO
 is documented in [`spaces.md`](spaces.md); this class owns only what a Space
 *is*.
 
-**What the Space role does not change.** The schema. `space_do` version 1
-renders the same tables, indexes and triggers `workstream_do` versions 1–17 end
-at, because the class is the same code and an inherited method that met a
-missing table would fail at a request rather than at a deploy. Nothing else in
-the tree compares the two ledgers, so `apps/api/test/space-do-schema.test.ts`
-applies both against real migration runners and compares `sqlite_master` object
-for object: a column added to one and not the other is otherwise invisible until
-a real Space meets it. A change to the table set therefore lands as
-`workstream_do` 18 *and* `space_do` 2.
+**What the Space role does not change.** The schema — and it does not change it
+by running the *same array*. `SPACE_ROLE.migration.migrations` is
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS`, applied under component `space_do`, so a
+Space receipts every version a Channel does in its own
+`_sql_schema_migrations`. That is the whole of it: a table added for a Channel
+exists on every Space without anybody writing it twice, and an inherited method
+cannot meet a missing table. What a Space pays for it is replaying versions
+that describe history it never had, the three `durable_outbox` rebuilds among
+them, once, on its first construction.
+
+One version-numbered statement is not about a Space at all. Version 17 retires
+grant-directory deliveries a Channel had already queued; a Space has never
+queued one, because the role suppresses the directory. The `afterMigrations`
+hook in `workstream-do.ts` that runs it is therefore gated on
+`role.kind === "workstream"`, and that gate is the shape any future
+history-repairing migration has to take.
 
 ### Control plane and data plane
 
@@ -1952,8 +1959,8 @@ may upgrade, whether a committed grant reaches the shared grant directory,
 whether a child's non-directory effects are forwarded to the workspace, and
 whether construction warms the main conversation. `SpaceDO` supplies
 `SPACE_ROLE` and defines nothing else. The ledger moved to
-`workstream-do-schema.ts`, and `space_do` version 1 renders the shape it
-currently ends at.
+`workstream-do-schema.ts`, and both roles apply it: `space_do` receipts the
+same versions `workstream_do` does, under its own component.
 
 **Why:** Spaces replace Projects, and a Space needs the whole work-stream
 primitive — presentation, participants, resources, Sidekick recommendations,
@@ -1969,16 +1976,25 @@ wrong for the subclass rather than visibly absent, so the difference is only
 found by reading the class — and the four that mattered were three hundred lines
 and two base classes apart. Also rejected: sharing the `workstream_do` migration
 component, which would put two classes with different histories under one
-tracker rollup and make `forceMigration`'s class fence meaningless; and
-replaying the work-stream ledger on a Space, which would make every new Space
-rebuild `durable_outbox` three times to reach a shape one statement can create.
+tracker rollup and make `forceMigration`'s class fence meaningless. **And
+rejected after it was written:** a hand-copied `space-do-schema.ts` rendering
+the work-stream ledger's current shape in one fresh version, so that a new
+Space did not replay three `durable_outbox` rebuilds. It bought one cold start
+per Space and charged a standing obligation for it — every table change had to
+be written into two ledgers, and the only thing holding them together was a
+Node test comparing `sqlite_master` object for object. Replaying a ledger costs
+milliseconds once; a dual-write obligation costs a correctness bug the first
+time somebody appends to one array and not the other.
 
 **What a future change has to respect:** A difference between a Channel and a
 Space belongs in the role, where the base class reads it and where it sits
 beside the other seven — not in an override, which reintroduces exactly the
-invisibility this replaced. And the two ledgers converge on one schema: a table
-or column added to `workstream_do` is also a new `space_do` version, which
-`apps/api/test/space-do-schema.test.ts` is what fails if it is not.
+invisibility this replaced. The ledger is not one of those differences: append
+a version to `WORKSTREAM_DO_SCHEMA_MIGRATIONS` and both components get it. A
+version that repairs *history* rather than describing shape is the exception,
+and it is gated in the `afterMigrations` hook on the role — version 17's
+grant-directory retirement is the worked example.
+
 ### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
 
 **What changed:** `localWorkstreamAuthority` tells two calls apart that used
