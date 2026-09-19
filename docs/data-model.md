@@ -1111,9 +1111,9 @@ every access operation on its exact request, in the shape
 `source_id`; existing rows backfill as `direct` through the defaults, which is
 what they were.
 
-The same statements are `space_do` version 2, because the two ledgers converge
-on one schema and `apps/api/test/space-do-schema.test.ts` is what fails if only
-one of them is written. No regional D1 table is involved: the provenance is
+Every Space runs the same version: `SPACE_ROLE` applies
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS` under component `space_do`, so one appended
+version reaches both classes. No regional D1 table is involved: the provenance is
 Channel-local, and the audience it plans is still written by the main
 conversation's scope and participant rows or by the grant ledger. See
 [workstream authority](workstream-durable-object.md) for the union rule and

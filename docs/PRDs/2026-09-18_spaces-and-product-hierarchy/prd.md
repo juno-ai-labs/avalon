@@ -387,6 +387,30 @@ vocabulary where renaming it buys nothing.
 
 **Changes:** Nothing in scope.
 
+### 2026-09-19 — SpaceDO shares WorkstreamDO's migration ledger under its own component
+
+**Decided:** `SPACE_ROLE.migration.migrations` is
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS` — the array `WorkstreamDO` applies — run
+under component `space_do` and class name `SpaceDO`. A Space receipts every
+version a Channel does, in its own `_sql_schema_migrations`. A migration that
+repairs history rather than describing shape is gated on the role in the
+`afterMigrations` hook; version 17, which retires grant-directory deliveries a
+Space has never queued, is the one that exists.
+
+**Why:** Design decision 1 asks that a Space reuse the work-stream primitive,
+which includes its schema. Implementation first rendered that schema's current
+shape into a separate one-version `space-do-schema.ts` so a new Space would not
+replay three `durable_outbox` rebuilds. That bought milliseconds once per Space
+and charged a standing obligation for it: every future table change had to be
+written into two ledgers, with only a Node test comparing `sqlite_master`
+holding them together. The components stay separate — the tracker rolls up by
+component and `forceMigration` fences on class name — but the statements are
+one array.
+
+**Changes:** Nothing in the agreed goals or in the acceptance criteria.
+`space-do-schema.ts` and its test are deleted; `space_do`'s head is
+`workstream_do`'s head.
+
 ## Key design decisions
 
 1. **A Space specializes the work-stream primitive.** A thin `SpaceDO` reuses

@@ -5,9 +5,10 @@ Rally runs five migrated Durable Object classes across two regional Workers,
 and each object applies its own SQLite migration history in its constructor.
 `SpaceDO` is `WorkstreamDO` under a different role rather than a distinct
 implementation, and it is nonetheless a distinct *class* here: it reports
-component `space_do` under class name `SpaceDO`, from its own one-version
-ledger. Sharing the work-stream component would have put two version histories
-under one rollup and made the class fence below meaningless. Nothing in
+component `space_do` under class name `SpaceDO`, from the *same* ledger
+`workstream_do` runs. Sharing the work-stream component would have put two
+version histories under one rollup and made the class fence below meaningless;
+sharing the ledger costs nothing, because the two classes are one class. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
 Durable Object namespace can be enumerated for object IDs, but an ID carries no
@@ -806,8 +807,8 @@ it does not shape the cost of any run somebody means to make.
 
 **What changed:** `REPORTING_CLASSES`, the consumer's dispatcher map and head
 table, and the regional Wrangler bindings all name `SpaceDO`. It reports
-component `space_do` from a ledger whose only version renders the shape
-`workstream_do`'s seventeen currently end at.
+component `space_do`, applying `WORKSTREAM_DO_SCHEMA_MIGRATIONS` — the array
+`workstream_do` applies — so the two components share a head.
 
 **Why:** A Space is `WorkstreamDO` under a different role, so nothing about the
 code is new — but a Durable Object namespace is bound to a class name, so a
@@ -819,16 +820,17 @@ have avoided a new rollup entirely. It puts two classes with unrelated version
 histories under one component count, so the operator page would report a
 component "behind" whenever the two heads differed, forever. It also empties
 `forceMigration`'s class fence, which is what stops a command minted for one
-class from being applied to another. Also rejected: replaying the work-stream
-ledger on a Space, which would make every new Space rebuild `durable_outbox`
-three times to reach a shape one statement creates, for a history no Space
-object has.
+class from being applied to another. Also rejected — after it had been written
+— a second ledger rendering the work-stream schema's current shape in one
+version, which avoided replaying three `durable_outbox` rebuilds per new Space
+and charged a dual-write obligation for it: every table change in two arrays,
+held together only by a Node test comparing `sqlite_master`.
 
-**Consequences:** The two ledgers are now something to keep in step:
-`apps/api/test/space-do-schema.test.ts` applies both and compares
-`sqlite_master` object for object, so a table or column added to one and not the
-other fails there rather than on a live Space. Adding the class to the dispatcher
-map and to `REPORTING_CLASSES` in the same change remains manual, as it was for
+**Consequences:** `MIGRATION_COMMAND_HEADS.SpaceDO` and `.WorkstreamDO` are the
+same number and will stay that way; an operator reading one component "behind"
+the other is reading a deployment that has not rolled out, never a ledger
+somebody forgot to write. Adding the class to the dispatcher map and to
+`REPORTING_CLASSES` in the same change remains manual, as it was for
 `AutomationDO`; `forced-migration.test.ts` asserts the two lists agree.
 
 ### 2026-09-08 — Keep renamed current identities monotonic

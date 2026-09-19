@@ -7,18 +7,25 @@ import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import { WORKSTREAM_ACCESS_SCHEMA_STATEMENTS } from "./workstream-access-storage";
 
 /**
- * WorkstreamDO's append-only schema ledger.
+ * The append-only schema ledger every `WorkstreamDO` applies — a Channel under
+ * `WORKSTREAM_ROLE` and a Space under `SPACE_ROLE` alike.
  *
- * In its own module rather than beside the class because `SpaceDO` is the same
- * class under a different {@link ConversationParentRole}, and the role names
- * both ledgers. A role constant that imported this from `workstream-do.ts`
- * would close a cycle — `workstream-do.ts` imports the role — and the ledger
- * would be in its temporal dead zone at the moment the role was built.
+ * In its own module rather than beside the class because the role names it and
+ * a role constant that imported it from `workstream-do.ts` would close a cycle
+ * — `workstream-do.ts` imports the role — leaving the ledger in its temporal
+ * dead zone at the moment the role was built.
+ *
+ * One array for both roles, under two migration components. The components are
+ * separate because `forceMigration` fences on class name and the tracker rolls
+ * up by component; the *statements* are not, because a Space is the same class
+ * running the same methods against the same tables. A Space therefore replays
+ * versions that describe history it never had — the `durable_outbox` rebuilds
+ * among them — and that replay is the price of the array having exactly one
+ * copy.
  *
  * Every statement here is hashed into the `_sql_schema_migrations` receipt of
  * every deployed object, so nothing below may be edited; the next version is
- * appended instead. `space-do-schema.ts` renders the shape this ledger *ends*
- * at in one fresh version, and a Node test holds the two to the same schema.
+ * appended instead. Appending one covers both components at once.
  */
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,

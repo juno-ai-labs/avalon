@@ -349,7 +349,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         component: role.migration.component,
         workerVersionId: env.APP_VERSION ?? "unknown",
         afterMigrations: (_sql, applied) => {
-          if (!applied.includes(17)) return;
+          // Version 17 retires deliveries a *Channel* had already queued into
+          // the shared grant directory. A Space applies the same version on
+          // its first construction and has nothing to retire: it has never
+          // published a delivery, because the role suppresses the directory
+          // entirely. Running it anyway would hand a no-op writer rows it was
+          // built never to see.
+          if (this.role.kind !== "workstream" || !applied.includes(17)) return;
           this.retireGrantDirectoryDeliveries();
         },
       }));
