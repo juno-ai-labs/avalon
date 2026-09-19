@@ -935,10 +935,17 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!space) return false;
       if (space.revision !== request.spaceRevision) return "conflict";
+      // `active` as well as `joining`, at the *same* generation. `prepareMembership`
+      // answers an already-active row with its current generation rather than
+      // staging a new one, so re-adding a Channel a Space already holds arrives
+      // here with nothing to activate — and settling that as "not found" made
+      // an idempotent add answer 404. A different generation is still refused:
+      // that is a staging this settlement is not about.
       const activated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE space_channel_memberships
             SET state = 'active', updated_at = ?, removed_at = NULL
-          WHERE space_id = ? AND workstream_id = ? AND state = 'joining' AND generation = ?
+          WHERE space_id = ? AND workstream_id = ?
+            AND state IN ('joining', 'active') AND generation = ?
           RETURNING space_id`,
         now,
         request.spaceId,
