@@ -16,7 +16,13 @@
  * what makes the second page exist at all.
  */
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import {
+  createExecutionContext,
+  createMessageBatch,
+  getQueueResult,
+  reset,
+  runInDurableObject,
+} from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -34,6 +40,7 @@ import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effect
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import { SPACE_BOOTSTRAP_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
 import type { AuthContext } from "../src/env";
+import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { SpaceService } from "../src/services/space-service";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -393,4 +400,56 @@ describe("a Space fan-out over more members than one page", () => {
     expect(await spaceSourceIds(walked)).toEqual([staying]);
     await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 120_000);
+
+  it("given a resume that fails, when the consumer catches it, then the reason is on the intent row", async () => {
+    const spaceId = await reserve("Company");
+    const stranded = CHANNELS[0]!;
+    await publishChannel(stranded);
+    await place(spaceId, stranded);
+    // Deliberately no objects behind the Channel, so every step of the walk
+    // throws — which is what a resume against a broken member looks like.
+
+    const operationId = crypto.randomUUID();
+    const noted = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      operationId,
+      audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+    if (!noted.ok) throw new Error(noted.code);
+
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      attempts: 1,
+      body: {
+        type: "space_intent_resume",
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        operationId,
+        kind: "audience",
+        spaceId,
+        workstreamId: null,
+        spaceRevision: noted.space.revision,
+        membershipGeneration: null,
+        cursor: null,
+        requestedByUserId: OWNER,
+      },
+    }]);
+    await consumeActivityQueue(batch, env);
+    const outcome = await getQueueResult(batch, createExecutionContext());
+    expect(outcome.retryMessages).toHaveLength(1);
+
+    // The row outlives the log line. Without this the only account of why an
+    // intent is still unsettled is a `space_intent_resume_failed` line, and the
+    // alarm republishes the message forever with nothing on the row but the
+    // fact that it did not finish.
+    const row = await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    });
+    expect(row.rows[0]).toMatchObject({ state: "pending" });
+    expect((row.rows[0] as { last_error_code: string | null }).last_error_code).toBeTruthy();
+  }, 60_000);
 });

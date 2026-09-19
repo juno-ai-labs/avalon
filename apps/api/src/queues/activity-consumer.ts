@@ -634,18 +634,28 @@ async function consumeOne(message: Message<unknown>, env: Env,
         message.ack();
         return;
       }
-      // Said out loud. A resume that keeps failing is republished by the alarm
-      // every `SPACE_INTENT_RESUME_DELAY_MS` and retried here as well, so a
-      // silent catch makes a half-applied audience or a half-finished archive
-      // a thing that shows up only as a dead-letter message with no reason on
-      // it — which is the diagnosis this costs on the way in.
+      // Said out loud, and written down. A resume that keeps failing is
+      // republished by the alarm every `SPACE_INTENT_RESUME_DELAY_MS` and
+      // retried here as well, so a silent catch makes a half-applied audience
+      // or a half-finished archive a thing that shows up only as a dead-letter
+      // message with no reason on it — which is the diagnosis this costs on the
+      // way in. The code goes on the intent as well as into the log, the way a
+      // default target's does: the row outlives the log line, and whoever finds
+      // it unsettled otherwise has the fact without the reason.
+      const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
+      await workspace.recordSpaceIntentFailure({
+        workspaceId: intent.workspaceId,
+        userId: intent.requestedByUserId,
+        operationId: intent.operationId,
+        errorCode: reason,
+      }).catch(() => undefined);
       logWarn(env, "space_intent_resume_failed", {
         workspace_id: intent.workspaceId,
         space_id: intent.spaceId,
         operation_id: intent.operationId,
         kind: intent.kind,
         attempts: message.attempts,
-        reason: diagnosticErrorCode(error, "space_intent_resume_failed"),
+        reason,
       });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
