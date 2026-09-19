@@ -50,6 +50,8 @@ function summary(overrides: Record<string, unknown> = {}) {
 interface WorkspaceDouble {
   spaceSummary: ReturnType<typeof vi.fn>;
   listSpaceMembers: ReturnType<typeof vi.fn>;
+  prepareSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
+  finalizeSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   noteSpaceAudience: ReturnType<typeof vi.fn>;
   reserveSpace: ReturnType<typeof vi.fn>;
   cancelSpaceReservation: ReturnType<typeof vi.fn>;
@@ -65,6 +67,10 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     listSpaceMembers: vi.fn(async () => ({
       ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }], nextCursor: null,
     })),
+    prepareSpaceMembershipRemoval: vi.fn(async () => ({
+      ok: true, space: summary(), membershipGeneration: 4,
+    })),
+    finalizeSpaceMembershipRemoval: vi.fn(async () => ({ ok: true, space: summary() })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
@@ -125,6 +131,11 @@ function channelDoubles(log: string[]) {
       })),
     },
     room: {
+      readManagementAccess: vi.fn(async () => ({ allowed: true })),
+      readAccessSources: vi.fn(async () => ({
+        direct: { scope: "workspace", participantUserIds: [], observed: true },
+        spaces: [],
+      })),
       retractSpaceAccessSource: vi.fn(async (input: { parentId: string }) => {
         log.push(`retract:${input.parentId}`);
         return { ok: true, plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] } };
@@ -162,6 +173,7 @@ function serviceEnv(input: {
   conversation?: object;
   room?: object;
   batch?: () => Promise<unknown>;
+  revocationQueue?: object;
 }): Env {
   const conversation = input.conversation ?? {
     previewAudienceContainment: vi.fn(async () => true),
@@ -184,6 +196,9 @@ function serviceEnv(input: {
     SPACE_DOS: namespaceDouble<Env["SPACE_DOS"]>({}),
     AUTOMATION_DOS: namespaceDouble<Env["AUTOMATION_DOS"]>({}),
     WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>(input.room ?? {}),
+    ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>(
+      (input.revocationQueue ?? { send: vi.fn(async () => undefined) }) as never,
+    ),
   });
 }
 
@@ -317,6 +332,36 @@ describe("SpaceService restore", () => {
     expect(log).toEqual(["restore", "members:active", `apply:${CHANNEL_ID}:6`]);
     expect(channels.room.applySpaceAccessSource)
       .toHaveBeenCalledWith(expect.objectContaining({ spaceRevision: 7, membershipGeneration: 6 }));
+  });
+});
+
+describe("SpaceService retraction announcements", () => {
+  it("given a narrowing whose announcement is refused, when the removal runs, then the membership is not settled", async () => {
+    const log: string[] = [];
+    const workspace = workspaceDouble();
+    const channels = channelDoubles(log);
+    // The retraction takes the Channel back to personal, which is the case the
+    // announcement exists for: the readers it drops are every member who is not
+    // a participant, and the room is told about none of them.
+    channels.room.retractSpaceAccessSource = vi.fn(async (input: { parentId: string }) => {
+      log.push(`retract:${input.parentId}`);
+      return { ok: true, plan: { narrowScope: true, seatUserIds: [], removeUserIds: [] } };
+    });
+    const env = serviceEnv({
+      workspace,
+      conversation: channels.conversation,
+      room: channels.room,
+      revocationQueue: { send: vi.fn(async () => { throw new Error("queue unavailable"); }) },
+    });
+
+    await expect(new SpaceService(env, auth()).removeChannel(SPACE_ID, CHANNEL_ID))
+      .rejects.toMatchObject({ code: "channel_narrowing_publish_failed" });
+
+    // The settlement is what takes the `remove` intent out of the alarm's
+    // claim. Recording a retraction as delivered when nothing was sent would
+    // leave every non-participant reader's socket open until they reconnect,
+    // with nothing left to republish it.
+    expect(workspace.finalizeSpaceMembershipRemoval).not.toHaveBeenCalled();
   });
 });
 

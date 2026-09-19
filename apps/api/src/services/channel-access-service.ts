@@ -539,9 +539,22 @@ export class ChannelAccessService {
         });
       }
     }
+    // The announcement's own outcome, kept until the retraction is otherwise
+    // finished. A narrowing that was not announced leaves every non-participant
+    // reader's socket open until they reconnect, and this path *can* retry —
+    // every caller of a retraction has a `space_intents` row behind it, so
+    // failing the step leaves that intent unsettled and the alarm republishes
+    // the whole operation. The throw is last rather than here because the
+    // removals below are the access changes themselves: giving up before them
+    // would leave a reader who should have lost the Channel holding it until
+    // the resume, which is strictly worse than a socket that outlives a
+    // narrowing by one alarm interval.
+    let announced = true;
     if (plan.narrowScope) {
       await client.update({ scope: "personal" });
-      await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), workstreamId);
+      announced = await publishChannelNarrowing(
+        this.env, asWorkspaceId(this.auth.workspaceId), workstreamId,
+      );
     }
     for (const userId of plan.removeUserIds) {
       await client.removeParticipant(userId, { spaceSourceId: spaceId });
@@ -556,6 +569,10 @@ export class ChannelAccessService {
         sessionId: null,
         target: { scope: "workstream_automations", workstreamId },
       });
+    }
+    if (!announced) {
+      throw new ApiError(503, "channel_narrowing_publish_failed",
+        "The Channel's narrowing could not be announced; it will be retried");
     }
   }
 }
@@ -574,13 +591,19 @@ export class ChannelAccessService {
  * still has a socket open, which is the only part of that set anybody can act
  * on. Shared by both narrowings — a Space's retraction and the Channel's own
  * scope change — so there is one announcement rather than two that can drift.
+ *
+ * Returns whether the message went out, and every caller reads it.
+ * `publishAccessRevocation` is deliberately not fatal to its own caller — the
+ * fact it announces has already committed — so the flag is the only signal a
+ * caller that *can* still retry ever gets, and dropping it records a retraction
+ * as delivered when nothing was sent.
  */
 export async function publishChannelNarrowing(
   env: Env,
   workspaceId: WorkspaceId,
   workstreamId: string,
-): Promise<void> {
-  await publishAccessRevocation(env, {
+): Promise<boolean> {
+  return publishAccessRevocation(env, {
     reason: "workstream_participant_removed",
     workspaceId,
     userId: null,
