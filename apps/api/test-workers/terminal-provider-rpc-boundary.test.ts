@@ -2,6 +2,23 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import { createTerminalProviderRpcClient } from "../src/services/terminal/provider-rpc-client";
+import type { SupportedTerminalConfiguration } from "../src/services/terminal/provider-rpc-contract";
+import {
+  createTerminalToolTrace,
+  currentTerminalToolTrace,
+  recordTerminalProviderRequest,
+  withTerminalToolTrace,
+  type TerminalProviderRequestMeasurement,
+} from "../src/services/terminal/tracing";
+
+const CONFIGURATION: SupportedTerminalConfiguration = {
+  capability: "supported",
+  apiKey: "secret",
+  apiUrl: "https://app.daytona.io/api",
+  target: "us",
+  snapshot: "snapshot",
+  emergencyDisabled: false,
+};
 
 describe("Terminal provider Service Binding RPC protocol", () => {
   const binding = env.TERMINAL_RPC_TEST;
@@ -89,6 +106,92 @@ describe("Terminal provider Service Binding RPC protocol", () => {
       { ok: true, value: { idOrName: "sandbox-1", options: { deadlineAtMs: 1_700_000_120_000 } } },
       { ok: true, value: { idOrName: "sandbox-1", options: { deadlineAtMs: 1_700_000_180_000 } } },
     ]);
+  /**
+   * The platform fact that zeroed `provider_duration_ms` on every
+   * `terminal_tool_finished` row. `AsyncLocalStorage` follows an async chain
+   * inside one Worker; a callback the provider Worker invokes arrives here as
+   * a fresh entry point instead, so the tool trace the caller was standing in
+   * is simply not there. The locally recorded `acquisition_duration_ms` beside
+   * it was right the whole time, which is what made the fault look like a
+   * measurement bug rather than a boundary one.
+   */
+  it("loses the caller's async context when the provider Worker calls back", async () => {
+    const seen: (string | undefined)[] = [];
+    const trace = createTerminalToolTrace({
+      toolName: "read_file",
+      toolCallId: "call-unbound",
+      toolInvocationId: null,
+    });
+
+    await withTerminalToolTrace(trace, async () => {
+      const session = await binding.createSession(CONFIGURATION);
+      try {
+        await session.getSandbox("sandbox-unbound", {
+          observeRequest: async (measurement) => {
+            seen.push(currentTerminalToolTrace()?.toolCallId);
+            recordTerminalProviderRequest(measurement);
+          },
+        });
+      } finally {
+        (session as unknown as Disposable)[Symbol.dispose]();
+      }
+    });
+
+    expect(seen).toEqual([undefined, undefined]);
+    expect(trace.providerDurationMs).toBe(0);
+    expect(trace.providerOperationCount).toBe(0);
+  });
+
+  it("carries the tool trace across the boundary and settles it before the call returns", async () => {
+    const seen: (string | undefined)[] = [];
+    const trace = createTerminalToolTrace({
+      toolName: "read_file",
+      toolCallId: "call-bound",
+      toolInvocationId: "receipt-1",
+    });
+    const provider = createTerminalProviderRpcClient(binding, CONFIGURATION, {
+      // The shape `createAvalonTerminalPlugin` installs: it resolves the trace
+      // from the ambient store at the moment it is called, which is the whole
+      // reason the client has to bind that store to the callback.
+      observeRequest: (measurement: TerminalProviderRequestMeasurement) => {
+        seen.push(currentTerminalToolTrace()?.toolCallId);
+        recordTerminalProviderRequest(measurement);
+      },
+    });
+
+    await withTerminalToolTrace(trace, async () => {
+      await expect(provider.getSandbox("sandbox-bound")).resolves.toMatchObject({
+        id: "sandbox-bound",
+      });
+      // Read inside the tool scope, where the tool logs its own row: every
+      // request the call made is already counted by the time it returns.
+      expect(currentTerminalToolTrace()?.providerOperationCount).toBe(2);
+    });
+
+    expect(seen).toEqual(["call-bound", "call-bound"]);
+    expect(trace.providerDurationMs).toBe(24);
+    expect(trace.providerRequestCount).toBe(2);
+  });
+
+  it("attributes a request to the concurrent tool call that issued it", async () => {
+    const provider = createTerminalProviderRpcClient(binding, CONFIGURATION, {
+      observeRequest: recordTerminalProviderRequest,
+    });
+    const traces = ["call-a", "call-b", "call-c"].map((toolCallId) => createTerminalToolTrace({
+      toolName: "run_command",
+      toolCallId,
+      toolInvocationId: null,
+    }));
+
+    await Promise.all(traces.map((trace, index) => withTerminalToolTrace(
+      trace,
+      () => provider.getSandbox(`sandbox-${index}`),
+    )));
+
+    // A session-scoped callback cannot tell these apart: one session serves
+    // every concurrent tool on the run.
+    expect(traces.map((trace) => trace.providerOperationCount)).toEqual([2, 2, 2]);
+    expect(traces.map((trace) => trace.providerDurationMs)).toEqual([24, 24, 24]);
   });
 
   it("retains session instrumentation callbacks after session creation returns", async () => {

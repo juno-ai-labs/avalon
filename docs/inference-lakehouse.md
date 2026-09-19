@@ -263,6 +263,16 @@ request and terminal attempt. A failed attempt's `error` column holds one
 — a gateway's HTML, a proxy's plain text — records `detail` alone, which is the
 case where the body is the only account of the failure there is.
 
+`cost_microusd` is what the provider billed, not an estimate Rally computed.
+OpenRouter reports `usage.cost` only when the request carries `usage: {
+"include": true }`, so every OpenRouter chat request sends it —
+`serializeOpenRouterChatRequest` adds it after the SDK serializer, which has no
+typed field for it and drops unknown keys. Azure never sends it: those calls
+are priced from Rally's own rate card in `bind-runtime.ts` and the computed
+figure is written into `usage.cost` before the attempt is recorded. **A cost
+column that reads zero across a whole provider is a missing accounting flag,
+not a cheap week.**
+
 ## Security and trust model
 
 Inference JSON is trusted only after Zod validation at capture and again at
@@ -558,6 +568,41 @@ becomes product-state repair authority.
 
 
 ## Changelog
+
+### 2026-09-19 — Ask OpenRouter what a call cost, and record it for structured calls too
+
+**What changed:** Every OpenRouter chat request now carries `usage: { include:
+true }`, added in `serializeOpenRouterChatRequest` so both the streamed turn
+and the structured call get it, and mirrored into the recorded request payload
+in `bind-runtime.ts` for OpenRouter candidates only. `StructuredModelDiagnostic`
+gains `costCents`, read from the response usage the same way the token counts
+already were, and `captureStructuredInferenceDiagnostic` maps it to
+`cost_microusd`.
+
+**Why:** `cost_microusd` was `0` on every OpenRouter row, which is most of
+Rally's spend, so the lakehouse could report load in tokens and not in money.
+Two independent causes. The request never opted into usage accounting, so
+`usage.cost` was absent and `costCents()` in `bind-runtime.ts` returned its `0`
+default — a structurally valid number that no schema, log, or query could tell
+from a genuinely free call. And structured calls carried no cost field at all
+from the harness onward, so every classifier, extraction, summary, and repair
+call was invisible to spend reporting however the request was formed. The
+Azure path was correct throughout and hid the gap: it computes cost from the
+rate card and writes it into `usage.cost` itself, so the column worked for the
+one provider that never asks the provider.
+
+**Considered and rejected:** Pricing OpenRouter calls from the endpoint-average
+KV the pricing Worker already maintains. It is the right input for *choosing* a
+route and the wrong one for billing a call: the average is hourly and the
+provider a route actually landed on is decided per request, so the number would
+disagree with the invoice and there would be no way to tell which was wrong.
+Asking OpenRouter costs one request field.
+
+**Consequences:** `cost_microusd` becomes comparable across providers and
+across streamed and structured calls, and any series spanning this change has
+a floor of zero before it that is an artifact, not a cost. A future provider
+adapter owes the same field: a `0` here is now a defect to fix rather than a
+value to read.
 
 ### 2026-09-17 — Measure inference start without making observation part of it
 

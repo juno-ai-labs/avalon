@@ -8,10 +8,12 @@ import type {
   TerminalProviderRpcBinding,
   TerminalProviderRpcCallbacks,
   TerminalProviderRpcCallbackResult,
+  TerminalProviderRpcInstrumentation,
   TerminalProviderRpcResult,
   TerminalProviderRpcSession,
 } from "./provider-rpc-contract";
 import { TerminalToolError } from "./tools";
+import { bindToTerminalToolTrace } from "./tracing";
 
 async function callbackResult(callback: () => Promise<void>): Promise<TerminalProviderRpcCallbackResult> {
   try {
@@ -62,7 +64,14 @@ export function createTerminalProviderRpcClient(
 ): TerminalSandboxProvider {
   let sessionPromise: Promise<TerminalProviderRpcSession> | undefined;
   const session = (): Promise<TerminalProviderRpcSession> => {
-    sessionPromise ??= binding.createSession(configuration, instrumentation);
+    // Only the session-scoped part of the instrumentation crosses here. A
+    // callback sent this way becomes a stub the provider Worker holds for the
+    // life of the session, so anything that belongs to a single call — every
+    // per-request measurement — is sent with that call instead.
+    const sessionInstrumentation: TerminalProviderRpcInstrumentation = {
+      ...(instrumentation.observe ? { observe: instrumentation.observe } : {}),
+    };
+    sessionPromise ??= binding.createSession(configuration, sessionInstrumentation);
     return sessionPromise;
   };
   const callbacks = (input?: {
@@ -70,6 +79,11 @@ export function createTerminalProviderRpcClient(
     assertSubmissionAuthority?: () => Promise<void>;
     onSubmitted?: (providerTaskId: string) => Promise<void>;
   }): TerminalProviderRpcCallbacks => {
+    // Built inside the tool invocation that is about to issue the request, so
+    // the tool trace is still on this async chain and can be captured. By the
+    // time the provider Worker calls back it is not, which is the whole reason
+    // this is bound here rather than resolved there.
+    const observeRequest = instrumentation.observeRequest;
     const signal = input?.signal;
     const assertSubmissionAuthority = input?.assertSubmissionAuthority;
     const onSubmitted = input?.onSubmitted;
@@ -89,6 +103,11 @@ export function createTerminalProviderRpcClient(
         })
       : undefined;
     return {
+      ...(observeRequest ? {
+        observeRequest: bindToTerminalToolTrace(async (measurement) => {
+          observeRequest(measurement);
+        }),
+      } : {}),
       ...(assertSubmissionAuthority ? {
         assertSubmissionAuthority: () => callbackResult(assertSubmissionAuthority),
       } : {}),

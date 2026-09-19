@@ -59,7 +59,13 @@ export interface TerminalProviderOperationMeasurement {
 export interface TerminalProviderInstrumentation {
   now?: () => number;
   observe?: (measurement: TerminalProviderOperationMeasurement) => void;
-  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void;
+  /**
+   * Awaited by the provider before the request it describes is allowed to
+   * complete. A caller that reports across a Worker boundary needs that
+   * ordering: deferred delivery let a tool log its own totals before its last
+   * request had been counted.
+   */
+  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void | Promise<void>;
 }
 
 export interface CreateTerminalSandboxInput {

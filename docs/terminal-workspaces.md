@@ -1066,6 +1066,22 @@ application events complement Cloudflare's automatic outbound-fetch spans: the
 automatic spans prove the HTTP path, while the semantic events identify which
 Terminal tool and provider operation caused it.
 
+The provider runs in its own Worker, so a request it measures has to reach the
+tool that asked for it across an RPC hop. The caller's tool trace lives in
+`AsyncLocalStorage`, which follows an async chain inside one Worker and does
+not survive that hop: a callback the provider Worker invokes arrives in the API
+Worker as a fresh entry point with no trace in scope. Two things carry it
+across. `bindToTerminalToolTrace` binds the reporting callback to the trace
+that is live where the callback is *created* — inside the tool invocation about
+to issue the request — and the callback travels with that one call rather than
+with the session, because one session serves every concurrent tool on a run and
+could not say which of them a measurement belongs to. `terminalProviderRpcCall`
+holds that callback for the duration of the call it arrived with, and the
+provider awaits delivery before the request completes, so a tool's totals are
+whole by the time it writes its own row. **A measurement reported out of band —
+through a session callback, or fired and not awaited — is not measured at all:
+it lands with no trace, or after the row it belonged in.**
+
 `terminal_plugin_activation_finished` uses the same acquisition and provider
 timing fields under the fixed `terminal_plugin_activation` tool identity. It
 also records a one-based `activation_attempt`, gives every retry a distinct
@@ -1100,6 +1116,48 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — A provider request reports to the tool call that issued it
+
+**What changed:** `observeRequest` moves off the session-scoped RPC
+instrumentation and onto the per-call `TerminalProviderRpcCallbacks`. The
+client builds it inside the tool invocation that is about to issue the request
+and wraps it in `bindToTerminalToolTrace`, a new primitive in `tracing.ts` that
+captures the ambient tool trace and re-enters it when the callback is invoked
+from elsewhere. `terminalProviderRpcCall` scopes the callback to the one call
+it arrived with, and `measureRequest` in the Daytona provider now awaits
+delivery instead of leaving it to `waitUntil`. Only `observe`, which needs
+nothing but the environment, still crosses as a session callback.
+
+**Why:** `provider_duration_ms` read `0` on 100% of `terminal_tool_finished`
+rows, and the counts beside it — requests, polls, operations, bytes — were
+equally empty, so the event built to separate Rally-side latency from Daytona
+latency could answer neither. `AsyncLocalStorage` propagates along an async
+chain within a Worker; the Terminal provider is a separate Worker, and its
+callback re-entered the API Worker outside that chain, so
+`recordTerminalProviderRequest` found no trace and returned. The field that
+made it diagnosable was the one beside it: `acquisition_duration_ms` populated,
+and it is the only one recorded locally. A second defect rode the same path —
+the measurement was dispatched through `ctx.waitUntil`, so even with the trace
+intact it raced its own call's result and could land after the tool had logged.
+
+**Considered and rejected:** Returning the measurements in band on the RPC
+result envelope, which needs no callback at all. It buffers: one `runCommand`
+polls at up to 2s for the length of the command, so the rows would arrive only
+when the call ended — exactly the case, a hung command, where watching polls
+arrive is the point — and the buffer would need a cap this team has no basis to
+set. Also rejected: keying traces by tool-call ID in a registry the callback
+looks up, which replaces a leaked async context with a map that has to be
+cleaned up on every path a call can end on.
+
+**Consequences:** Each provider request now costs one awaited RPC hop, which is
+sub-millisecond against Daytona calls measured in tens of milliseconds and poll
+sleeps measured in hundreds. Anything added to `TerminalProviderRpcCallbacks`
+that needs the caller's trace must be bound the same way; anything put back on
+the session instrumentation silently loses it. `terminal-provider-rpc-boundary.test.ts`
+holds the standing proof, including a test that pins the platform behaviour
+itself, so the regression is visible as a failure rather than as a column of
+zeroes.
 
 ### 2026-09-19 — Weekly snapshot adoption pushes to main
 
