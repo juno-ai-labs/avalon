@@ -68,6 +68,14 @@ export const NoteChannelDirectReaderRequestSchema = ChannelAccessAddressSchema.e
   userId: UserIdSchema,
 });
 
+/**
+ * A plan and nothing else.
+ *
+ * It records no source. What it holds instead is a receipt, so a redelivery
+ * answers what the first attempt did rather than recomputing a delta against a
+ * Channel the first attempt has already changed. The source itself is committed
+ * by {@link ConfirmSpaceAccessSourceRequestSchema}.
+ */
 export const ApplySpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
   scope: SpaceScopeSchema,
@@ -91,10 +99,41 @@ export const ApplySpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
 ]);
 export type ApplySpaceAccessSourceResult = z.infer<typeof ApplySpaceAccessSourceResultSchema>;
 
+/**
+ * The source a confirmation commits, when the confirmation is the one that
+ * commits it.
+ *
+ * Present on the confirmation rather than on the application because the
+ * application is a plan: recording a source before the audience it describes
+ * has been applied leaves, after any crash between the two, provenance that
+ * supplies nobody — a Space the Channel claims reaches it and that seated no
+ * reader. The confirmation is the first moment the Channel's readers and its
+ * record of why can be made true together.
+ *
+ * Absent means "attribute these readers to a source that is already here",
+ * which is what a narrowing does: it seats readers a Space has supplied all
+ * along, and the source row was committed when that Space arrived.
+ *
+ * `channel` is what the caller observed *before* it applied the audience, and
+ * is only read to seed a Channel whose own scope nothing has established yet.
+ * Reading it here rather than re-observing is the point: by now the audience
+ * may already be Organization-wide because of this very source.
+ */
+export const ConfirmedAccessSourceSchema = z.strictObject({
+  scope: SpaceScopeSchema,
+  participantUserIds: z.array(UserIdSchema),
+  spaceRevision: z.number().int().positive(),
+  membershipGeneration: z.number().int().positive(),
+  channel: ObservedChannelSchema,
+});
+
+export type ConfirmedAccessSource = z.infer<typeof ConfirmedAccessSourceSchema>;
+
 export const ConfirmSpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
   operationId: IdSchema,
   seatedUserIds: z.array(UserIdSchema),
+  source: ConfirmedAccessSourceSchema.optional(),
 });
 export const ConfirmSpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), suppliedUserIds: z.array(UserIdSchema) }),
