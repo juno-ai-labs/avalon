@@ -56,6 +56,33 @@ describe("workstream scope grants in real workerd", () => {
     });
   });
 
+  it("commits a Space-seated grant without publishing it, and lets a direct share claim it", async () => {
+    const spaceSourceId = "00000000-0000-4000-8000-000000000005";
+    await withStorage("scope-grant-space-provenance", (store, state) => {
+      const target = command().target;
+      expect(store.mutate(command({ spaceSourceId })).status).toBe("committed");
+
+      // It admits the reader like any other grant — `resolveScopedAccess` reads
+      // the same row — and it reaches no candidate index, because a
+      // Space-derived reader finds the Channel through the Space.
+      expect(store.read(userId, target)).toMatchObject({ active: true });
+      expect(store.sourceKind(userId, target)).toBe("space");
+      expect(deliveries(state)).toEqual([]);
+
+      // A direct share over it is the Channel taking responsibility for this
+      // reader, and it is published from then on: a Space leaving must not take
+      // away access the Channel granted itself.
+      expect(store.mutate(command({ active: false, expectedRevision: 1 })).status).toBe("committed");
+      expect(store.sourceKind(userId, target)).toBe("direct");
+      expect(deliveries(state)).toHaveLength(1);
+
+      // And the Space cannot take it back: direct provenance is sticky.
+      expect(store.mutate(command({ active: true, expectedRevision: 2, spaceSourceId })).status).toBe("committed");
+      expect(store.sourceKind(userId, target)).toBe("direct");
+      expect(deliveries(state)).toHaveLength(2);
+    });
+  });
+
   it("publishes combined access and does not acknowledge a newer projection with an old receipt", async () => {
     await withStorage("scope-grant-effective-projection", (store,state) => {
       state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,created_at,audience) VALUES ('0','main',1,'restricted'),(?,'child',1,'inherits_workstream')",childId);

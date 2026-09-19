@@ -144,13 +144,14 @@ export class ScopeGrantStorage {
     ).toArray().map((row) => ScopeGrantSchema.parse(JSON.parse(row.grant_json)));
   }
 
-  /** Where the stored row says its grant came from; `direct` when absent. */
-  sourceKind(userId: UserId, target: ScopeGrantTarget): "direct" | "space" {
+  /** Where the stored row says its grant came from; null when there is no row. */
+  sourceKind(userId: UserId, target: ScopeGrantTarget): "direct" | "space" | null {
     const row = this.storage.sql.exec<{ source_kind: string }>(
       "SELECT source_kind FROM scope_grants WHERE user_id=? AND scope_kind=? AND substream_id=?",
       userId, target.kind, target.kind === "workstream" ? "" : target.substreamId,
     ).toArray()[0];
-    return row?.source_kind === "space" ? "space" : "direct";
+    if (!row) return null;
+    return row.source_kind === "space" ? "space" : "direct";
   }
 
   hasOperation(operationId: string): boolean {
@@ -310,12 +311,14 @@ export class ScopeGrantStorage {
         const grant = ScopeGrantSchema.parse({ id: current?.id ?? uuidV7(), userId: request.userId,
           target: request.target, active: request.active, revision, membershipIncarnation });
         const grantJson = JSON.stringify(grant);
-        // Direct provenance is sticky and wins. A Space writing over a grant
-        // the Channel already holds directly must not turn it into a row that
-        // Space's departure can deactivate, and a direct share over a
-        // Space-derived row is the Channel taking responsibility for that
-        // reader.
-        const direct = !request.spaceSourceId || this.sourceKind(request.userId, request.target) === "direct";
+        // Direct provenance is sticky and wins, and only an *existing* row can
+        // make it stick: a Space writing over a grant the Channel already holds
+        // directly must not turn it into a row that Space's departure can
+        // deactivate, while a grant a Space is writing for the first time is
+        // the Space's. A direct share over a Space-derived row is the Channel
+        // taking responsibility for that reader.
+        const direct = !request.spaceSourceId
+          || this.sourceKind(request.userId, request.target) === "direct";
         this.storage.sql.exec(
           `INSERT INTO scope_grants (user_id, scope_kind, substream_id, grant_json, source_kind, source_id)
            VALUES (?, ?, ?, ?, ?, ?)
