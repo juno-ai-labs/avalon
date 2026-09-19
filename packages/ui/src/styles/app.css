@@ -3662,6 +3662,18 @@ pre {
    order. `.markdown-link-favicon` is qualified for the same reason. */
 .citation-pill-favicon { padding: 0 0.22em; }
 .markdown-body .citation-pill-favicon img { border-radius: 2px; display: inline-block; height: 0.95em; margin: 0; max-width: none; object-fit: contain; vertical-align: -0.13em; width: 0.95em; }
+/* In dark appearance the icon gets a ground of its own. A favicon is commonly
+   a dark glyph on a transparent field — it is drawn for a browser's light tab
+   strip — and the pill's plate is `text-default` at 16%, which in dark
+   appearance is a few percent above the surface: nearly black on nearly black.
+   In front of a link that costs a decoration and the link text still reads. In
+   the marker position the icon is the whole signal, so it costs the one thing
+   the asterisk could never fail to do, and the popover cannot rescue it because
+   nothing tells a reader to hover a marker they cannot see. `neutral-14` is the
+   appearance's own high-contrast end, which in dark is the near-white the
+   artwork already assumes; the inset keeps the plate's tint as the ring around
+   it, so the marker's geometry does not change. */
+[data-theme='dark'] .markdown-body .citation-pill-favicon img { background: var(--av-ref-color-neutral-14); box-shadow: 0 0 0 1px var(--av-ref-color-neutral-14); }
 /* Pending and resolved pills share geometry so resolution does not shift
    the sentence. An invisible asterisk gives the shimmer its exact glyph width
    in the active font, without estimating a digit width. The background paints

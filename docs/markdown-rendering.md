@@ -337,13 +337,28 @@ popover is open. It is decoration in the accessibility tree: the pill's own
 `aria-label` still carries `Source <n>: <label>`, and the popover still names
 the source and where it opens. Everything a favicon cannot answer for degrades
 to the asterisk, in one direction: a resource or a person has no host, a host
-has no icon, the request has not landed yet, or the surface has no API to ask.
+has no icon, the request has not landed yet, the surface has no API to ask, or
+the bytes that came back will not paint — the endpoint serves SVG among other
+formats, so a good response can still fail to decode here, and the `<img>`'s
+`onError` is part of the hook's contract rather than each caller's business.
 The plate the asterisk sits on — tint, border, pill radius, raise and hover —
 stays exactly as it is and the icon sits inside it, because a sentence citing a
 web page and an internal document cites both the same way and a marker that
 changed shape by target would read as two mechanisms. The icon is sized to the
 box that is already there rather than the other way round, so the two markers
 are identical in height and within a pixel and a half in width.
+
+**In dark appearance the icon is given a ground of its own.** A favicon is
+commonly a dark glyph on a transparent field, drawn for a browser's light tab
+strip, and the plate is `text-default` at 16% — a few percent above the surface
+in dark appearance, so the icon lands nearly black on nearly black. The ground
+is `neutral-14`, the appearance's own high-contrast end, which in dark is the
+near-white the artwork assumes; the plate's tint stays as the ring around it, so
+the geometry does not move. It is deliberately not applied in light appearance:
+the mirror case there is a *light* glyph on transparent, which a light ground
+makes invisible rather than faint — which is what a browser's own light tab
+strip does with the same file, and is a property of the artwork rather than of
+this surface.
 
 **While a turn streams, a reference whose definition has not arrived wears the
 pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
@@ -834,11 +849,21 @@ and a document in the same sentence, which is the common case. Also: sharing a
 decorated `<img>` component rather than the hook, which cannot serve both
 positions because the absent case is empty space in front of a link and a glyph
 in a marker; and letting a still fetch icons, which would print whatever had
-arrived by the moment the card was photographed.
+arrived by the moment the card was photographed. Also: giving the icon its
+light ground in *both* appearances rather than only in dark, which reads as one
+rule instead of a fork — rejected on the screenshots, because in light
+appearance the case it would have to fix is a light glyph, which a light ground
+turns from faint into invisible.
 
 **Consequences:** The icon is decoration only — the source still reaches
 assistive technology through the pill's `aria-label` and its popover, both
-unchanged. The icon rule is qualified as
+unchanged. `useHostFavicon` returns an `onError` alongside the source and its
+result carries the `api` and `hostname` it was fetched for: a target that
+changes under a mount React keeps, and a blob that will not decode, both
+degrade to the asterisk rather than leaving a broken image where the marker
+belongs. `app.css.node.test.ts` now guards both inline-icon rules — this one and
+`.markdown-link-favicon` — because the margin collision below is invisible to
+every DOM assertion. The icon rule is qualified as
 `.markdown-body .citation-pill-favicon img` and sets `margin: 0`: the
 block-image rule further down that stylesheet carries `margin: var(--space-4) 0`,
 which on an icon inside a sentence grows the line box of every line in the
