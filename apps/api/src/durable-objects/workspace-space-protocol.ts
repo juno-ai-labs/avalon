@@ -1,10 +1,9 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import {
+  ContainerOrderSchema,
   CreateSpaceRequestSchema,
   IdSchema,
-  ReorderSpacesRequestSchema,
   SpaceChannelPageSchema,
-  SpaceDirectorySchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
   SpaceIdSchema,
@@ -78,10 +77,32 @@ export const WorkspaceSpaceStagedRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpaceStagedRequest = z.infer<typeof WorkspaceSpaceStagedRequestSchema>;
 
-export const WorkspaceSpaceReorderRequestSchema = SpaceActorSchema.extend({
-  order: ReorderSpacesRequestSchema,
+/**
+ * One person's order for one container: the Organization's Spaces, a Space's
+ * Channels, or a Channel's Breakouts.
+ *
+ * One request for all three, because the authority's job is the same for each —
+ * check who is asking, keep the items that belong in that container, write the
+ * positions. The kind decides only which of those middle rules runs, and that
+ * decision lives in `WorkspaceSpaceStorage.writeOrder` rather than in three
+ * request shapes that would each have to be authorized separately.
+ */
+export const WorkspaceContainerOrderRequestSchema = SpaceActorSchema.extend({
+  order: ContainerOrderSchema,
 }).strict();
-export type WorkspaceSpaceReorderRequest = z.infer<typeof WorkspaceSpaceReorderRequestSchema>;
+export type WorkspaceContainerOrderRequest = z.infer<typeof WorkspaceContainerOrderRequestSchema>;
+
+/**
+ * What was actually stored, which is not always what was asked for: the
+ * Organization's list keeps the Spaces this viewer can see, a Space's list
+ * keeps the Channels actually placed there. The caller is answered with the
+ * stored list rather than an acknowledgement so a client can see what it lost.
+ */
+export const WorkspaceContainerOrderResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), order: ContainerOrderSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspaceContainerOrderResult = z.infer<typeof WorkspaceContainerOrderResultSchema>;
 
 /**
  * The presentation a Space's own authority has just accepted.
@@ -181,12 +202,6 @@ export const WorkspaceSpaceMutationResultSchema = z.union([
   WorkspaceSpaceAudienceFailureSchema,
 ]);
 export type WorkspaceSpaceMutationResult = z.infer<typeof WorkspaceSpaceMutationResultSchema>;
-
-export const WorkspaceSpaceDirectoryResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), directory: SpaceDirectorySchema }),
-  SpaceFailureSchema,
-]);
-export type WorkspaceSpaceDirectoryResult = z.infer<typeof WorkspaceSpaceDirectoryResultSchema>;
 
 export const WorkspaceSpaceChannelPageRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
