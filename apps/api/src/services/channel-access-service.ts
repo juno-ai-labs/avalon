@@ -323,14 +323,24 @@ export class ChannelAccessService {
   async retractSpaceSource(workstreamId: string, spaceId: SpaceId, operationId: string): Promise<void> {
     const client = this.client(workstreamId);
     const detail = await client.get();
-    const retracted = await (await this.room(workstreamId)).retractSpaceAccessSource({
+    const observed = this.observed(detail);
+    const room = await this.room(workstreamId);
+    const retracted = await room.retractSpaceAccessSource({
       ...this.address(workstreamId),
       spaceId,
       operationId,
-      channel: this.observed(detail),
+      channel: observed,
     });
     if (!retracted.ok) throw spaceAccessError(retracted.code, detail.title);
-    await this.applyRetraction(workstreamId, spaceId, retracted.plan);
+    // Read *after* the retraction, so what comes back is exactly the sources
+    // that survived it — which is where the plan's survivors come from, and
+    // which the plan itself cannot say because it is a list of readers. Only
+    // when there is somebody to attribute: a retraction that seats nobody is
+    // the common case and owes no extra hop.
+    const remaining = retracted.plan.seatUserIds.length === 0
+      ? []
+      : (await room.readAccessSources({ ...this.address(workstreamId), channel: observed })).spaces;
+    await this.applyRetraction(workstreamId, spaceId, retracted.plan, remaining);
   }
 
   /**
@@ -381,15 +391,55 @@ export class ChannelAccessService {
   /**
    * Apply a retraction through the Channel's canonical operations.
    *
-   * Seat, then narrow, then remove. Seating first is what keeps a narrowing
-   * from revoking access a surviving source still provides — the readers it
-   * supplies were never seated while everybody could read — and removing last
-   * means nobody is taken out of an audience that is still about to change.
+   * Seat, then attribute, then narrow, then remove. Seating first is what keeps
+   * a narrowing from revoking access a surviving source still provides — the
+   * readers it supplies were never seated while everybody could read — and
+   * removing last means nobody is taken out of an audience that is still about
+   * to change.
+   *
+   * A survivor is seated and attributed under a Space that **remains**, never
+   * under the one leaving. Naming the departing Space is not a cosmetic
+   * mis-labelling: its source row is already gone, so the attribution cannot
+   * commit at all, and the reader is left with a grant pointing at nothing.
+   * The Space that really supplies them then retracts with no provenance for
+   * them and leaves behind a reader nobody can account for — the same failure
+   * the attribution in `narrowDirectScope` exists to prevent, on the other
+   * path into the same state.
+   *
+   * A survivor no remaining Space lists is the direct source's, and is seated
+   * as the Channel's own with no source at all. One several Spaces list is
+   * attributed to each of them, because access is the live union and any one of
+   * them departing must leave the others' claim standing.
    */
-  private async applyRetraction(workstreamId: string, spaceId: SpaceId, plan: SpaceAccessRetraction): Promise<void> {
+  private async applyRetraction(
+    workstreamId: string,
+    spaceId: SpaceId,
+    plan: SpaceAccessRetraction,
+    remaining: ChannelAccessSources["spaces"],
+  ): Promise<void> {
     const client = this.client(workstreamId);
     for (const userId of plan.seatUserIds) {
-      await client.addParticipant(userId, { spaceSourceId: spaceId });
+      const supplier = remaining.find((space) => space.participantUserIds.includes(userId));
+      await client.addParticipant(userId, supplier ? { spaceSourceId: supplier.spaceId } : {});
+    }
+    const room = await this.room(workstreamId);
+    for (const space of remaining) {
+      const supplied = plan.seatUserIds.filter((userId) => space.participantUserIds.includes(userId));
+      if (supplied.length === 0) continue;
+      const confirmed = await room.confirmSpaceAccessSource({
+        ...this.address(workstreamId),
+        spaceId: space.spaceId,
+        operationId: uuidV7(),
+        seatedUserIds: supplied,
+      });
+      if (!confirmed.ok) {
+        // Named rather than thrown, for the reason `narrowDirectScope` names
+        // its own: the readers are seated and can read, and failing here would
+        // leave the Channel in the Space it has already been taken out of.
+        logWarn(this.env, "channel_retraction_attribution_refused", {
+          workstream_id: workstreamId, space_id: space.spaceId, code: confirmed.code,
+        });
+      }
     }
     if (plan.narrowScope) {
       await client.update({ scope: "personal" });
