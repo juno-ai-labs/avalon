@@ -4,6 +4,7 @@ import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { SCOPE_GRANT_SCHEMA_STATEMENTS } from "./scope-grant-storage";
 import { SCOPE_INVITATION_SCHEMA_STATEMENTS } from "./scope-invitation-storage";
 import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
+import { WORKSTREAM_ACCESS_SCHEMA_STATEMENTS } from "./workstream-access-storage";
 
 /**
  * WorkstreamDO's append-only schema ledger.
@@ -463,4 +464,8 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   version: 17,
   description: "retire intermediate grant discovery deliveries",
   statements: ["DELETE FROM scope_grant_deliveries WHERE delivered_at IS NOT NULL"],
+}, {
+  version: 18,
+  description: "record the Space sources that reach a Channel and the readers each supplied",
+  statements: [...WORKSTREAM_ACCESS_SCHEMA_STATEMENTS],
 }];

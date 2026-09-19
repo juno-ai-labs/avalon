@@ -197,15 +197,17 @@ describe("a Space's Durable Object", () => {
     // reported `workstream_do` would file every Space's schema version under
     // the Channel rollup, and one that reported `WorkstreamDO` would make this
     // object refuse the command the tracker sends it.
-    expect(result).toMatchObject({ className: "SpaceDO", component: "space_do", schemaVersion: 1 });
+    expect(result).toMatchObject({ className: "SpaceDO", component: "space_do", schemaVersion: 2 });
 
     await runInDurableObject(space(), (_instance, state) => {
-      // One version, and the whole shape: the ledger renders what the Channel
-      // ledger's seventeen versions end at, so an inherited method never meets
-      // a missing table.
+      // A ledger shorter than the Channel's by an order of magnitude, and the
+      // same shape: version 1 renders what the Channel ledger's first
+      // seventeen versions end at, and each later version is the one the
+      // Channel ledger gained, so an inherited method never meets a missing
+      // table.
       expect(state.storage.sql.exec<{ version: number }>(
         "SELECT version FROM _sql_schema_migrations ORDER BY version",
-      ).toArray()).toEqual([{ version: 1 }]);
+      ).toArray()).toEqual([{ version: 1 }, { version: 2 }]);
       for (const table of ["scope_grants", "conversation_children", "durable_outbox", "object_retirement"]) {
         expect(state.storage.sql.exec(
           "SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,

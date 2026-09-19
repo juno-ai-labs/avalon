@@ -4,6 +4,7 @@ import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { SCOPE_GRANT_SCHEMA_STATEMENTS } from "./scope-grant-storage";
 import { SCOPE_INVITATION_SCHEMA_STATEMENTS } from "./scope-invitation-storage";
 import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
+import { WORKSTREAM_ACCESS_SCHEMA_STATEMENTS } from "./workstream-access-storage";
 
 /**
  * SpaceDO's append-only schema ledger, under its own component `space_do`.
@@ -241,4 +242,12 @@ export const SPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[]
       event_id TEXT PRIMARY KEY, request_json TEXT NOT NULL CHECK(json_valid(request_json))
     ) STRICT`,
   ],
+}, {
+  version: 2,
+  description: "record the Space sources that reach a Channel and the readers each supplied",
+  // The same array `workstream_do` 18 runs. A Space holds no Space sources of
+  // its own — nothing adds a Space to a Space — but the class is the same code
+  // and its ledgers converge on one schema, so the tables exist here and stay
+  // empty.
+  statements: [...WORKSTREAM_ACCESS_SCHEMA_STATEMENTS],
 }];
