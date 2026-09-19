@@ -274,12 +274,12 @@ describe('New channel home', () => {
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    // The Space itself is not on the create request: the creation contract has
-    // no `spaceIds` yet, and placing a new Channel is Phase 4 of the Spaces
-    // plan. What the launcher does own is the roster it prefills from the
-    // personal Space.
+    // Both halves of what a Space launcher owns: the roster it prefills from
+    // the personal Space, and the Space itself, which is what places the
+    // Channel rather than leaving it to General.
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       participantIds: [teammate.id],
+      spaceIds: [spaceId],
     })));
   });
 
