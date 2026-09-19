@@ -53,3 +53,28 @@ export function moveWithin(ids: readonly string[], id: string, index: number): s
   const bounded = Math.max(0, Math.min(index, without.length));
   return [...without.slice(0, bounded), id, ...without.slice(bounded)];
 }
+
+/**
+ * What a finished drag should commit, or `null` when there is nothing to send.
+ *
+ * Every hand-arranged list in the app ends a drag with the same three
+ * questions, and one of them is easy to get wrong twice: the arrangement has to
+ * be compared against **the order the server last confirmed**, never against
+ * the one the drag is building. A list rendered mid-drag *is* that arrangement,
+ * so a call site that reaches for the list it is drawing compares the drag with
+ * itself, concludes nothing moved, and silently drops every drop. That bug was
+ * written twice while this feature was being built, which is why the comparison
+ * lives here and takes `stored` as its own argument rather than being
+ * re-derived at four call sites.
+ *
+ * `cancelled` is a drag backed out of — Escape, or a release nothing accepted —
+ * and must not be the same thing as finishing one.
+ */
+export function committedOrder(
+  arranged: readonly string[] | null,
+  stored: readonly string[],
+  cancelled: boolean,
+): string[] | null {
+  if (arranged === null || cancelled) return null;
+  return arranged.join() === stored.join() ? null : [...arranged];
+}

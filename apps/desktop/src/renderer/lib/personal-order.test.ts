@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { moveWithin, orderByStoredIds, storedOrderFor } from './personal-order';
+import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from './personal-order';
 
 const SPACE_ID = '00000000-0000-7000-8000-0000000000a1';
 const OTHER_SPACE_ID = '00000000-0000-7000-8000-0000000000a2';
@@ -50,6 +50,22 @@ describe('the arrangement every hand-ordered list is drawn by', () => {
     // yet, are the same answer: no arrangement, so the natural order stands.
     expect(storedOrderFor(ordering, { kind: 'space', id: OTHER_SPACE_ID })).toEqual([]);
     expect(storedOrderFor(undefined, { kind: 'space', id: SPACE_ID })).toEqual([]);
+  });
+
+  // The comparison that decides whether a finished drag is worth sending. It
+  // lives in one place because the wrong answer is silent: a list compared
+  // against the arrangement it is drawing concludes nothing moved, and every
+  // drop is dropped.
+  it('commits a drag only against the order the server last confirmed', () => {
+    expect(committedOrder(['b', 'a'], ['a', 'b'], false)).toEqual(['b', 'a']);
+    // The same list twice, which is what a call site reaching for the rows it
+    // is rendering mid-drag would pass.
+    expect(committedOrder(['b', 'a'], ['b', 'a'], false)).toBeNull();
+    // Escape, or a release nothing accepted, is not the same thing as
+    // finishing the drag.
+    expect(committedOrder(['b', 'a'], ['a', 'b'], true)).toBeNull();
+    // No drag in flight at all.
+    expect(committedOrder(null, ['a', 'b'], false)).toBeNull();
   });
 
   it('moves one id to a position, and stops at either end', () => {
