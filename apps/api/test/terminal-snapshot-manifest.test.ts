@@ -8,12 +8,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   TERMINAL_SNAPSHOT_PROBES,
+  TERMINAL_SNAPSHOT_RESOURCES,
   terminalBaselineHostAcceptanceCommand,
   terminalManagedSnapshotBootstrapCommand,
   terminalPackageManagerAcceptanceCommand,
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
+  terminalSnapshotResourceMismatches,
 } from "../src/services/terminal/snapshot-manifest";
 
 describe("Terminal snapshot manifest", () => {
@@ -232,5 +234,32 @@ describe("Terminal snapshot manifest", () => {
       "registry.npmjs.org",
     ]) expect(command).toContain(host);
     expect(command).toContain('GIT_SSL_CAINFO="$CURL_CA_BUNDLE" git ls-remote');
+  });
+
+  it("accepts a built snapshot only when every resource field comes back as requested", () => {
+    const { cpu, memory, disk } = TERMINAL_SNAPSHOT_RESOURCES;
+    expect(terminalSnapshotResourceMismatches({ cpu, mem: memory, disk })).toEqual([]);
+
+    // Daytona's default when a build requests nothing, which is what every
+    // snapshot through rally-terminal-20260914-0610 was built with. All three
+    // fields differ from what Rally now asks for, and the build has to say so
+    // rather than adopting a 1 GiB image that passes every capability probe.
+    expect(terminalSnapshotResourceMismatches({ cpu: 1, mem: 1, disk: 3 })).toEqual([
+      `cpu (requested ${cpu}, built 1)`,
+      `memory (requested ${memory}, built 1)`,
+      `disk (requested ${disk}, built 3)`,
+    ]);
+  });
+
+  it("reads the built memory from `mem`, the only name the provider reports it under", () => {
+    // `CreateSnapshot` takes `memory` and `SnapshotDto` answers with `mem`. A
+    // comparison against `memory` reads undefined off every real response, so a
+    // snapshot built at the requested size would fail the build and one built at
+    // 1 GiB would pass it — the check inverted, on a field-name mismatch no type
+    // catches because both shapes are optional numbers.
+    const { cpu, memory, disk } = TERMINAL_SNAPSHOT_RESOURCES;
+    const underTheRequestName: Record<string, number> = { cpu, memory, disk };
+    expect(terminalSnapshotResourceMismatches(underTheRequestName))
+      .toEqual([`memory (requested ${memory}, built unreported)`]);
   });
 });

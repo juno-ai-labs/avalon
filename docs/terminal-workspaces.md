@@ -651,6 +651,20 @@ Daytona cannot hand back a cached image, and the stamp is readable inside every
 sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
 is a reused image, not a rebuild.
 
+Sandbox size is part of the snapshot, not of the sandboxes made from it. Daytona
+fixes it when the image is built — the snapshots API creates, activates,
+deactivates and removes a snapshot, and never resizes one, while `resources`
+exists only on the SDK's create-*from-image* parameters — so a sandbox created
+from a snapshot inherits whatever that snapshot was built with. Builds request
+`TERMINAL_SNAPSHOT_RESOURCES` from `snapshot-manifest.ts`, 2 vCPU / 4 GiB / 8 GiB,
+and fail naming each field Daytona reports back differently, because an
+under-sized image passes every capability probe the acceptance gate runs and
+surfaces only as a work stream the kernel killed. Changing the size is therefore
+a rebuild and an adoption merge like any other, existing sandboxes keep the size
+they were created at, and the number belongs in the checked-in manifest: the
+weekly job builds from the repository, so a size set as a GitHub variable is one
+the next adoption pull request silently reverts.
+
 The workflow reads its configuration from the `api-production` GitHub
 environment: the `DAYTONA_API_KEY` secret and the `DAYTONA_API_URL`,
 `DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
@@ -771,6 +785,41 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — Terminal sandboxes are built at 2 vCPU / 4 GiB / 8 GiB
+
+**What changed:** `TERMINAL_SNAPSHOT_RESOURCES` in `snapshot-manifest.ts` gives
+the Rally-owned snapshot 2 vCPU, 4 GiB of memory, and 8 GiB of disk, and
+`build-terminal-snapshot.ts` requests it and fails the build when Daytona's
+create response reports a different `cpu`, `mem`, or `disk`. Nothing about how a
+sandbox is created changes; the weekly rebuild carries the size into the next
+adoption pull request.
+
+**Why:** Every Terminal sandbox had been running at 1 vCPU / 1 GiB / 3 GiB — not
+a decision, but Daytona's default for a build that passes no `resources`, which
+is what every snapshot through `rally-terminal-20260914-0610` was built with. One
+core and a gigabyte is a thin allowance for what the plugin prompt tells the
+model to do in there — install a toolchain, check a repository out, run its
+tests — and nothing can be done about it once a sandbox exists, because the size
+is fixed when the snapshot is built. 2 / 4 / 8 is the team's number, chosen
+rather than measured; it matches Daytona's own `daytona-medium` shape instead of
+being a lopsided one.
+
+**Considered and rejected:** Sizing at sandbox creation instead, which would let
+the number change without a rebuild. The SDK accepts `resources` only when
+creating *from an image*, so taking it would mean giving up the prebuilt snapshot
+and paying the ~14s capability install on every cold start that the owned image
+exists to avoid.
+
+**Consequences:** Per-sandbox memory now costs 4x against the Daytona
+organization's quota, so the ceiling on concurrent Terminal work streams drops
+by roughly the same factor; that ceiling is the provider's to raise when it is
+reached. The new size reaches production only through a snapshot rebuild, so
+`wrangler.global.jsonc` keeps pointing at the 1 GiB image until an adoption pull
+request merges, and sandboxes already created stay at the size they were made
+with. A future change to these numbers has to stay in this manifest: the weekly
+job builds from the repository, and a size configured anywhere else is reverted
+by the next adoption pull request without anyone noticing.
 
 ### 2026-09-18 — Terminal's tools take the names the model already knows
 

@@ -18,6 +18,55 @@ export interface TerminalSnapshotProbe {
  */
 export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
 
+export interface TerminalSnapshotResources {
+  /** Cores. */
+  cpu: number;
+  /** GiB. */
+  memory: number;
+  /** GiB. */
+  disk: number;
+}
+
+/**
+ * What every sandbox built from the Rally-owned snapshot is given.
+ *
+ * Daytona fixes a snapshot's size when it is built — the snapshots API offers
+ * create, activate, deactivate and remove, and nothing that resizes one — and a
+ * sandbox created from a snapshot inherits it, because `resources` exists only
+ * on the SDK's create-from-image parameters. So this is the one place the size
+ * can be set without giving up the prebuilt image.
+ *
+ * Passing nothing left the snapshot on Daytona's default 1 vCPU / 1 GiB / 3 GiB,
+ * which is what every build through `rally-terminal-20260914-0610` ran on. These
+ * numbers are the team's, and match Daytona's own `daytona-medium` shape.
+ *
+ * Checked in for the same reason as the base image above, and one more: the
+ * weekly rebuild builds from this file, so a size set in a GitHub variable
+ * instead is a size the next adoption pull request silently reverts.
+ */
+export const TERMINAL_SNAPSHOT_RESOURCES: TerminalSnapshotResources = { cpu: 2, memory: 4, disk: 8 };
+
+/**
+ * Names the resource fields a built snapshot did not come back with.
+ *
+ * A create response that accepted the request is not proof the image carries the
+ * size, and an under-sized snapshot is invisible afterwards: every probe passes,
+ * every command runs, and the only symptom is a work stream killed at 1 GiB. The
+ * provider reports memory as `mem`.
+ */
+export function terminalSnapshotResourceMismatches(
+  reported: { cpu?: number; mem?: number; disk?: number },
+): string[] {
+  const fields: [string, number, number | undefined][] = [
+    ["cpu", TERMINAL_SNAPSHOT_RESOURCES.cpu, reported.cpu],
+    ["memory", TERMINAL_SNAPSHOT_RESOURCES.memory, reported.mem],
+    ["disk", TERMINAL_SNAPSHOT_RESOURCES.disk, reported.disk],
+  ];
+  return fields
+    .filter(([, requested, built]) => built !== requested)
+    .map(([field, requested, built]) => `${field} (requested ${requested}, built ${built ?? "unreported"})`);
+}
+
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },
   { id: "python", command: "python3 -c 'import json; assert json.loads(\"{\\\"ok\\\": true}\")[\"ok\"]'" },
