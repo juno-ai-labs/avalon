@@ -302,6 +302,19 @@ export class ScopeGrantStorage {
       const now = Date.now();
       if ((current?.revision ?? 0) !== request.expectedRevision) {
         result = { status: "conflict", current };
+      } else if (!request.active && request.spaceSourceId && current?.active
+        && this.sourceKind(request.userId, request.target) === "direct") {
+        // Direct provenance is sticky in both directions, and the authority is
+        // where that is decided rather than whichever RPC happened to arrive
+        // last. A Space withdrawing from a row the Channel took responsibility
+        // for must leave it alone: otherwise a Space retraction racing a direct
+        // share silently revokes access the Channel granted itself, and the
+        // outcome depends on queue ordering nobody controls. `committed` with
+        // the grant as it stands, not `conflict`: the retraction asked for a
+        // state this row is already in on its own account — the reader this
+        // Space supplies can read — so there is nothing for the caller to
+        // re-read and retry.
+        result = { status: "committed", grant: current };
       } else if (current && current.active === request.active && current.membershipIncarnation === membershipIncarnation) {
         result = { status: "committed", grant: current };
       } else {
