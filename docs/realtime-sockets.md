@@ -701,7 +701,8 @@ test written there can assert a rebuild "works" while production throws. Any
 assertion about what may be *constructed* belongs in `test-workers/`, where the
 runtime is the real one. Ticket fixtures are also deliberately not shaped like
 real JWTs: a `eyJ`-prefixed literal trips the Gitleaks `jwt` rule and fails the
-`secrets` gate over the whole history, not just the diff.
+`secrets` gate on the pull request that adds it, and deleting it in a later
+commit does not clear it — the scan reads commits, not the working tree.
 
 ## Security and trust model
 

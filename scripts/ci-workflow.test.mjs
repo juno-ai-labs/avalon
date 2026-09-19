@@ -145,9 +145,18 @@ test('CI retains one terminal verify check for branch protection', async () => {
  * request adds to its base branch is what makes a red gate mean "this change
  * introduced a secret".
  *
- * Both halves are load-bearing and neither is obvious from reading the job, so
- * both are asserted here: the range itself, and the full history that makes the
- * range computable.
+ * Every part of that range is asserted here, because none of it is obvious
+ * from reading the job and each part has its own failure:
+ *
+ * - The full history, without which the range cannot be computed at all.
+ * - Both excluded sides. The live tip alone misses a base branch force-pushed
+ *   past the recorded SHA; the recorded SHA alone misses a finding that lands
+ *   on the base branch after the event fired and is then merged in. Either
+ *   omission puts base commits back in the range, which is the original bug.
+ * - The range resolving before the scan. `detect` exits 0 when git rejects its
+ *   range — it logs the error and reports no leaks — so without this the gate
+ *   fails open, and a required security check that passes silently is worse
+ *   than one that never ran.
  */
 test('the secret scan covers what this pull request adds, and nothing else', async () => {
   const workflow = await readWorkflow();
@@ -157,28 +166,23 @@ test('the secret scan covers what this pull request adds, and nothing else', asy
   const secretsJob = workflow.slice(start);
 
   assert.match(secretsJob, /^ {10}fetch-depth: 0$/mu);
-  assert.match(secretsJob, /--log-opts="\$HEAD_SHA --not \$base_tip"/u);
+  assert.match(secretsJob, /^ {10}BASE_REF: \$\{\{ github\.base_ref \}\}$/mu);
+  assert.match(secretsJob, /^ {10}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/mu);
   assert.match(secretsJob, /^ {10}HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/mu);
+  assert.match(
+    secretsJob,
+    /--log-opts="\$HEAD_SHA --not origin\/\$BASE_REF \$BASE_SHA"/u,
+    'the scan must exclude both the base branch tip and the recorded base SHA',
+  );
+  assert.match(
+    secretsJob,
+    /^ {10}git rev-list --count "\$HEAD_SHA" --not "origin\/\$BASE_REF" "\$BASE_SHA" > \/dev\/null$/mu,
+    'an unresolvable range must fail the job rather than pass it silently',
+  );
   assert.equal(
     secretsJob.match(/gitleaks" detect/gu).length,
     1,
     'CI must keep a single Gitleaks invocation, so the range cannot be bypassed by a second one',
-  );
-
-  // Which commit the range excludes is the subtle half, and the assertions
-  // above cannot see it: `base_tip="$BASE_SHA"` satisfies every one of them
-  // while quietly reintroducing the failure. The base SHA is the base branch's
-  // tip when the event fired, so a finding that lands on the base branch after
-  // that and is then merged in is inside the range again — which is the whole
-  // bug. The live tip is the excluded side; the recorded SHA is the fallback
-  // for a checkout that somehow has no remote-tracking ref, and is a wider
-  // scan rather than a failed job.
-  assert.match(secretsJob, /^ {10}BASE_REF: \$\{\{ github\.base_ref \}\}$/mu);
-  assert.match(secretsJob, /^ {10}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/mu);
-  assert.match(secretsJob, /^ {10}base_tip="origin\/\$BASE_REF"$/mu);
-  assert.match(
-    secretsJob,
-    /^ {10}git rev-parse --verify --quiet "\$base_tip" > \/dev\/null \|\| base_tip="\$BASE_SHA"$/mu,
   );
 });
 

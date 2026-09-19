@@ -194,11 +194,17 @@ jobs:
           # on every open pull request at once, each with nothing in its own
           # diff to fix and no way to re-run its way out.
           #
-          # The base branch's live tip is preferred over the base SHA recorded
-          # when the event fired, so a finding that reaches the base branch
-          # after this pull request opened stays excluded when the author
-          # merges the base branch in. It belongs to whoever put it there.
-          base_tip="origin/$BASE_REF"
-          git rev-parse --verify --quiet "$base_tip" > /dev/null || base_tip="$BASE_SHA"
+          # Both sides of the base branch are excluded. Its live tip covers a
+          # finding that lands after this pull request opened and is then
+          # merged in; the base SHA recorded when the event fired covers the
+          # reverse, a base branch force-pushed so that commit is no longer
+          # reachable from the tip. Either one alone lets base commits back
+          # into the range, which is the whole bug.
+          #
+          # Resolve the range before scanning: when git rejects it, `detect`
+          # logs the error, reports no leaks and exits 0. A gate that cannot
+          # work out its own scope has to fail loudly rather than pass
+          # silently, which is what this line is for.
+          git rev-list --count "$HEAD_SHA" --not "origin/$BASE_REF" "$BASE_SHA" > /dev/null
           "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose \
-            --log-opts="$HEAD_SHA --not $base_tip"
+            --log-opts="$HEAD_SHA --not origin/$BASE_REF $BASE_SHA"
