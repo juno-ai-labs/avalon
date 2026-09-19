@@ -428,6 +428,32 @@ export function channelVisibleToViewerSql(directory: string, viewer: string): st
   return `(${directory}.scope = 'workspace' OR ${viewer}.is_participant = 1)`;
 }
 
+/**
+ * The keyset seek for one arm of the conversation page.
+ *
+ * Rendered per arm rather than once over the union, because `kind` is a
+ * *constant* inside an arm: the three-part comparison collapses to a literal
+ * against the cursor's kind, and the whole predicate becomes a range over that
+ * arm's own `(last_activity_at, id)` — which is the shape
+ * `docs/durable-object-sqlite.md` asks a cursor to be written in.
+ *
+ * `?3 IS NULL` still guards the first page, and it is the one part of the
+ * advice this cannot follow: the alternative is two rendered texts, and one
+ * page shape with an unused branch is safer than two page shapes that can
+ * disagree. The branch costs nothing after the first row, where `?3` is a
+ * bound value rather than a column.
+ */
+function afterCursorSql(
+  kind: "channel" | "breakout",
+  activity: string,
+  conversationId: string,
+): string {
+  return `(?3 IS NULL
+             OR ${activity} < ?3
+             OR (${activity} = ?3
+                 AND ('${kind}' > ?4 OR ('${kind}' = ?4 AND ${conversationId} > ?5))))`;
+}
+
 interface SpaceRow extends Record<string, SqlStorageValue> {
   space_id: string;
   title: string;
@@ -1270,11 +1296,24 @@ export class WorkspaceSpaceStorage {
    * breakout is one of theirs. Dropping the first would list a private
    * Channel's side thread to somebody who cannot open the Channel.
    *
-   * The optional-cursor predicate is written as an `OR` rather than as a range
-   * seek, against the advice in `docs/durable-object-sqlite.md`: the ordering
-   * is over a `UNION ALL` of two joins, so there is no index for it to seek
-   * into either way, and the bound on rows is the membership set rather than
-   * the cursor.
+   * **Each arm takes its own page, and the union merges two of them.** The
+   * cursor and the `LIMIT` are applied inside each arm, before the
+   * `UNION ALL`, so what the outer statement sorts is at most two pages rather
+   * than every live conversation in the Space. Within an arm `kind` is
+   * constant, so the three-part cursor is a plain range over that arm's
+   * `(last_activity_at, id)` — see {@link afterCursorSql} — and the arm's own
+   * `ORDER BY` is exactly the restriction of the page's order to it, which is
+   * what makes merging the two arms' heads the globally first page.
+   *
+   * What that does **not** buy is the scan: the planner drives both arms from
+   * `space_channel_memberships(space_id, state, workstream_id)`, so one page
+   * still costs one pass over the Space's active membership set, with a
+   * primary-key lookup into the Channel directory and the viewer row per
+   * member. For General that set is the whole Organization. Removing the pass
+   * needs an index that orders a *Space's* members by activity, which does not
+   * exist and is not worth guessing at before anybody here has Organization
+   * sizes; `docs/spaces.md` records the cost so the next person does not have
+   * to re-derive it.
    */
   conversationPage(
     userId: string,
@@ -1292,53 +1331,59 @@ export class WorkspaceSpaceStorage {
       last_activity_at: number;
     } & Record<string, SqlStorageValue>>(
       `SELECT kind, workstream_id, substream_id, conversation_id, last_activity_at FROM (
-         SELECT 'channel' AS kind,
-                directory.workstream_id AS workstream_id,
-                NULL AS substream_id,
-                directory.workstream_id AS conversation_id,
-                directory.last_activity_at AS last_activity_at
-           FROM space_channel_memberships membership
-           JOIN workspace_workstream_directory directory
-             ON directory.workstream_id = membership.workstream_id
-           LEFT JOIN workspace_workstream_viewers viewer
-             ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
-            AND viewer.authority_generation = directory.authority_generation
-          WHERE membership.space_id = ?2 AND membership.state = 'active'
-            AND directory.archived_at IS NULL
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
-            AND ${liveForViewerSql("directory", "viewer")}
+         SELECT * FROM (
+           SELECT 'channel' AS kind,
+                  directory.workstream_id AS workstream_id,
+                  NULL AS substream_id,
+                  directory.workstream_id AS conversation_id,
+                  directory.last_activity_at AS last_activity_at
+             FROM space_channel_memberships membership
+             JOIN workspace_workstream_directory directory
+               ON directory.workstream_id = membership.workstream_id
+             LEFT JOIN workspace_workstream_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE membership.space_id = ?2 AND membership.state = 'active'
+              AND directory.archived_at IS NULL
+              AND ${channelVisibleToViewerSql("directory", "viewer")}
+              AND ${liveForViewerSql("directory", "viewer")}
+              AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
+            ORDER BY directory.last_activity_at DESC, directory.workstream_id
+            LIMIT ?6
+         )
          UNION ALL
-         SELECT 'breakout' AS kind,
-                breakout.workstream_id AS workstream_id,
-                breakout.substream_id AS substream_id,
-                breakout.substream_id AS conversation_id,
-                breakout.last_activity_at AS last_activity_at
-           FROM space_channel_memberships membership
-           JOIN workspace_workstream_directory directory
-             ON directory.workstream_id = membership.workstream_id
-           LEFT JOIN workspace_workstream_viewers viewer
-             ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
-            AND viewer.authority_generation = directory.authority_generation
-           JOIN workspace_breakout_directory breakout
-             ON breakout.workstream_id = membership.workstream_id
-           JOIN workspace_breakout_viewers breakout_viewer
-             ON breakout_viewer.workstream_id = breakout.workstream_id
-            AND breakout_viewer.substream_id = breakout.substream_id
-            AND breakout_viewer.user_id = ?1
-            AND breakout_viewer.authority_generation = breakout.authority_generation
-          WHERE membership.space_id = ?2 AND membership.state = 'active'
-            AND directory.archived_at IS NULL
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
-            AND breakout.archived_at IS NULL
-            AND breakout_viewer.listable = 1
-            AND ${liveForViewerSql("breakout", "breakout_viewer")}
+         SELECT * FROM (
+           SELECT 'breakout' AS kind,
+                  breakout.workstream_id AS workstream_id,
+                  breakout.substream_id AS substream_id,
+                  breakout.substream_id AS conversation_id,
+                  breakout.last_activity_at AS last_activity_at
+             FROM space_channel_memberships membership
+             JOIN workspace_workstream_directory directory
+               ON directory.workstream_id = membership.workstream_id
+             LEFT JOIN workspace_workstream_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+             JOIN workspace_breakout_directory breakout
+               ON breakout.workstream_id = membership.workstream_id
+             JOIN workspace_breakout_viewers breakout_viewer
+               ON breakout_viewer.workstream_id = breakout.workstream_id
+              AND breakout_viewer.substream_id = breakout.substream_id
+              AND breakout_viewer.user_id = ?1
+              AND breakout_viewer.authority_generation = breakout.authority_generation
+            WHERE membership.space_id = ?2 AND membership.state = 'active'
+              AND directory.archived_at IS NULL
+              AND ${channelVisibleToViewerSql("directory", "viewer")}
+              AND breakout.archived_at IS NULL
+              AND breakout_viewer.listable = 1
+              AND ${liveForViewerSql("breakout", "breakout_viewer")}
+              AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
+            ORDER BY breakout.last_activity_at DESC, breakout.substream_id
+            LIMIT ?6
+         )
        )
-       WHERE ?3 IS NULL
-          OR last_activity_at < ?3
-          OR (last_activity_at = ?3
-              AND (kind > ?4 OR (kind = ?4 AND conversation_id > ?5)))
        ORDER BY last_activity_at DESC, kind, conversation_id
        LIMIT ?6`,
       userId,
