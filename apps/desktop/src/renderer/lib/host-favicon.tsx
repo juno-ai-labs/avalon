@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { RallyApi } from './api';
 import { useFaviconApi } from './favicon-api';
 
 /**
@@ -37,11 +38,22 @@ export function httpHostname(href: string | undefined): string | null {
  * has scrolled out of a virtualised transcript is dropped rather than set, and
  * the object URL is revoked on the way out, because a blob URL nobody revokes
  * holds its bytes for the life of the window.
+ *
+ * **What the result is answering for travels with it**, which is why this holds
+ * a record rather than a bare string. A caller's target can change under a
+ * mount that React keeps — a footnote marker holds its position across a
+ * re-parse, so a definition re-pointed at another host hands the same component
+ * a new hostname — and the effect that revokes the old object URL runs *after*
+ * that render. A bare `source` would therefore be handed back for one paint
+ * pointing at revoked bytes, and indefinitely if the new host's request comes
+ * back empty or never lands: a broken image where the asterisk belongs. Reading
+ * the result only when it still matches makes the stale case impossible to
+ * render rather than a race to be won.
  */
 export function useHostFavicon(href: string | undefined): string | null {
   const api = useFaviconApi();
   const hostname = httpHostname(href);
-  const [source, setSource] = useState<string | null>(null);
+  const [resolved, setResolved] = useState<{ api: RallyApi; hostname: string; source: string } | null>(null);
   useEffect(() => {
     if (!api || !hostname) return;
     let active = true;
@@ -50,7 +62,7 @@ export function useHostFavicon(href: string | undefined): string | null {
       .then((blob) => {
         if (!blob || !active) return;
         objectUrl = URL.createObjectURL(blob);
-        setSource(objectUrl);
+        setResolved({ api, hostname, source: objectUrl });
       })
       .catch(() => undefined);
     return () => {
@@ -58,5 +70,5 @@ export function useHostFavicon(href: string | undefined): string | null {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [api, hostname]);
-  return source;
+  return resolved !== null && resolved.api === api && resolved.hostname === hostname ? resolved.source : null;
 }
