@@ -4,6 +4,7 @@ import {
   asSubstreamId,
   asWorkspaceId,
   type AgentId,
+  type ConversationParentKind,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 
@@ -29,6 +30,12 @@ import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespac
  * composed.
  */
 export interface TerminalRunScope {
+  /**
+   * What the conversation's parent is. A work stream's sandboxes are retired
+   * by the workspace's lifecycle sweep; an automation's are not reached by it,
+   * so the coordinator hands their retention to the provider at creation.
+   */
+  parentKind: ConversationParentKind;
   /** The conversation this run executes in. */
   runSubstreamId: string;
   /** The conversation whose `SubstreamAgent` owns the sandbox this run uses. */
@@ -76,7 +83,7 @@ export async function resolveTerminalRunScope(
 ): Promise<TerminalRunScope> {
   const runSubstreamId = input.substreamId ?? "0";
   if (!input.backgroundAgent) {
-    return { runSubstreamId, authoritySubstreamId: runSubstreamId };
+    return { parentKind: input.parentKind, runSubstreamId, authoritySubstreamId: runSubstreamId };
   }
   let root: AgentId = agentIdForAddress({
     parentKind: input.parentKind,
@@ -96,5 +103,5 @@ export async function resolveTerminalRunScope(
   if (address.parentKind !== input.parentKind || address.parentId !== input.parentId) {
     throw new Error("terminal_authority_parent_mismatch");
   }
-  return { runSubstreamId, authoritySubstreamId: address.substreamId };
+  return { parentKind: input.parentKind, runSubstreamId, authoritySubstreamId: address.substreamId };
 }
