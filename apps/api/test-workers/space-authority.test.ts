@@ -461,10 +461,13 @@ async function personalOrder(userId: string): Promise<PersonalOrder> {
 function storedItemIds(
   ordering: PersonalOrder,
   kind: "organization" | "space" | "channel",
-  containerId: string,
+  containerId?: string,
 ): string[] | null {
-  return ordering.find((entry) => entry.container.kind === kind && entry.container.id === containerId)
-    ?.itemIds ?? null;
+  // The Organization's entry carries no id, because a request is addressed to
+  // one Organization already; the other two are a pair.
+  return ordering.find((entry) => (entry.container.kind === "organization"
+    ? kind === "organization"
+    : entry.container.kind === kind && entry.container.id === containerId))?.itemIds ?? null;
 }
 
 beforeEach(async () => {
@@ -1218,11 +1221,11 @@ describe("WorkspaceDO space authority", () => {
     await place(first, CHANNEL_B);
     // The read is what gives a viewer their Organization rows, and it is the
     // read the other member's untouched order has to survive.
-    expect(storedItemIds(await personalOrder(MEMBER), "organization", WORKSPACE_ID))
+    expect(storedItemIds(await personalOrder(MEMBER), "organization"))
       .toEqual([first, second]);
 
     for (const order of [
-      { container: { kind: "organization" as const, id: WORKSPACE_ID }, itemIds: [second, first] },
+      { container: { kind: "organization" as const }, itemIds: [second, first] },
       { container: { kind: "space" as const, id: first }, itemIds: [CHANNEL_B, CHANNEL_A] },
       { container: { kind: "channel" as const, id: CHANNEL_A }, itemIds: [BREAKOUT_B, BREAKOUT_A] },
     ]) {
@@ -1233,7 +1236,7 @@ describe("WorkspaceDO space authority", () => {
     // All three come back on the one field, so a session paints every list it
     // orders from the same answer rather than from three.
     const owner = await personalOrder(OWNER);
-    expect(storedItemIds(owner, "organization", WORKSPACE_ID)).toEqual([second, first]);
+    expect(storedItemIds(owner, "organization")).toEqual([second, first]);
     expect(storedItemIds(owner, "space", first)).toEqual([CHANNEL_B, CHANNEL_A]);
     // Stored as given: a Breakout is the Channel's own object's child and this
     // authority cannot see one, so there is nothing here to validate against.
@@ -1242,7 +1245,7 @@ describe("WorkspaceDO space authority", () => {
     // The order is the person's, so the member beside them is untouched — in
     // the list they earned by reading and in the two they never arranged.
     const member = await personalOrder(MEMBER);
-    expect(storedItemIds(member, "organization", WORKSPACE_ID)).toEqual([first, second]);
+    expect(storedItemIds(member, "organization")).toEqual([first, second]);
     expect(storedItemIds(member, "space", first)).toBeNull();
     expect(storedItemIds(member, "channel", CHANNEL_A)).toBeNull();
   });
@@ -1367,7 +1370,7 @@ describe("WorkspaceDO space authority", () => {
     await workspace().reorderContainer({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
-      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [spaceId] },
+      order: { container: { kind: "organization" }, itemIds: [spaceId] },
     });
     await workspace().noteSpacePresentation({
       workspaceId: WORKSPACE_ID,
@@ -1391,7 +1394,7 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().reorderContainer({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
-      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [second, first] },
+      order: { container: { kind: "organization" }, itemIds: [second, first] },
     })).resolves.toMatchObject({ ok: true, order: { itemIds: [second, first] } });
     expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id))
       .toEqual([second, first]);

@@ -78,13 +78,6 @@ interface SpaceSidebarSectionProps {
   onReorder: (order: ContainerOrder) => Promise<void>;
   /** Every list this person has arranged, including the two drawn here. */
   ordering: PersonalOrder;
-  /**
-   * The Organization, which is the container the Space list belongs to.
-   *
-   * Named rather than implied, so an order row says what it is about without
-   * the object it is stored in being part of its key.
-   */
-  workspaceId: string;
   onRestore: (spaceId: string) => Promise<void>;
   /**
    * Placements use the same row the rest of the sidebar does — and, inside an
@@ -119,7 +112,6 @@ export function SpaceSidebarSection({
   onAddChannel,
   onReorder,
   ordering,
-  workspaceId,
   onRestore,
   renderWorkstream,
 }: SpaceSidebarSectionProps): React.JSX.Element {
@@ -153,7 +145,7 @@ export function SpaceSidebarSection({
    */
   const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; ids: string[] } | null>(null);
   const placementDrag = useRef<{ spaceId: string; workstreamId: string; dropped: boolean } | null>(null);
-  const spaceContainer = { kind: 'organization' as const, id: workspaceId };
+  const spaceContainer = { kind: 'organization' as const };
   // The Space directory arrives already sorted by these same rows, and is
   // arranged here anyway: it is what makes a drag something this component can
   // show before the server has answered, and what makes all three hand-ordered

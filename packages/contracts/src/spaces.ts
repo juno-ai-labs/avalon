@@ -236,17 +236,24 @@ export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceReque
  * *this* container. The kind says which list, the id says which container of
  * that kind, and the items are ids of whatever that container holds.
  *
- * `organization` takes the workspace id rather than an implicit "this
- * Organization", so a row says what it is about without the object it is stored
- * in being part of the key.
+ * **`organization` carries no id.** A request is already addressed to one
+ * Organization — the authority reads the workspace from the caller's session
+ * and writes the rows under it — so an id here would be a second answer to a
+ * question already settled, and a wrong one would be *accepted*: the write
+ * landed on the real Organization's list while the answer echoed the id the
+ * caller sent, which the desktop then filed its cache under. The shape says
+ * which kinds have a container to name instead of leaving a field somebody has
+ * to fill in correctly. The stored row still keys on the workspace id, because
+ * a row wants to say what it is about; the wire does not have to be told.
  */
 export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel"]);
 export type OrderedContainerKind = z.infer<typeof OrderedContainerKindSchema>;
 
-export const OrderedContainerSchema = z.strictObject({
-  kind: OrderedContainerKindSchema,
-  id: IdSchema,
-});
+export const OrderedContainerSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("organization") }),
+  z.strictObject({ kind: z.literal("space"), id: IdSchema }),
+  z.strictObject({ kind: z.literal("channel"), id: IdSchema }),
+]);
 export type OrderedContainer = z.infer<typeof OrderedContainerSchema>;
 
 /**
