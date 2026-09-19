@@ -48,6 +48,30 @@ function channel(id: string, title: string, lastActivityAt: string, ...spaceIds:
   return { id, title, lastActivityAt, spaceIds } as WorkstreamSummary;
 }
 
+/**
+ * jsdom implements no `DataTransfer`, and the Spaces drag reads two of its
+ * fields: `types`, which is how a Space row tells a Channel's drag passing
+ * through it from its own, and `dropEffect`, which is how `dragend` tells a
+ * release the list took from one backed out of.
+ */
+function spaceTransfer(dropEffect: 'move' | 'none' = 'move'): {
+  dropEffect: string; effectAllowed: string; types: string[];
+  setData: (type: string, value: string) => void; getData: (type: string) => string;
+} {
+  const data = new Map<string, string>();
+  const transfer = {
+    dropEffect,
+    effectAllowed: '',
+    types: [] as string[],
+    setData: (type: string, value: string) => {
+      data.set(type, value);
+      if (!transfer.types.includes(type)) transfer.types.push(type);
+    },
+    getData: (type: string) => data.get(type) ?? '',
+  };
+  return transfer;
+}
+
 function Location(): React.JSX.Element {
   return <output data-testid="location">{useLocation().pathname}</output>;
 }
@@ -302,9 +326,11 @@ describe('the Spaces sidebar section', () => {
     const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
     renderSection({ spaces: [first, second], onReorder });
 
-    // jsdom implements no `DataTransfer`; `types` is the field the Space row
-    // reads, to tell a Channel's drag passing through it from its own.
-    const dataTransfer = { effectAllowed: '', setData: () => undefined, types: [] as string[] };
+    // jsdom implements no `DataTransfer`, and this drag needs two of its
+    // fields: `types`, which is how a Space row tells a Channel's drag from
+    // its own, and `dropEffect`, which is how `dragend` tells a release the
+    // list took from one backed out of.
+    const dataTransfer = spaceTransfer();
     const rows = screen.getAllByRole('link').map((link) => link.closest('.space-sidebar-item')!);
     fireEvent.dragStart(rows[1]!, { dataTransfer });
     fireEvent.dragEnter(rows[0]!, { dataTransfer });
@@ -314,6 +340,31 @@ describe('the Spaces sidebar section', () => {
       container: { kind: 'organization', id: WORKSPACE_ID },
       itemIds: [second.id, first.id],
     }));
+  });
+
+  /**
+   * The third meaning of the gesture, and the one the Spaces list used to get
+   * wrong: a reader who starts dragging, passes over three rows and thinks
+   * better of it. Backing out of a drag must not be the same thing as
+   * finishing one — this list persists to every session the person has open.
+   */
+  it('given a drag backed out of, when it ends, then nothing is saved', async () => {
+    const onReorder = vi.fn(async () => undefined);
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'First');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
+    renderSection({ spaces: [first, second], onReorder });
+
+    const dataTransfer = spaceTransfer();
+    const rows = screen.getAllByRole('link').map((link) => link.closest('.space-sidebar-item')!);
+    fireEvent.dragStart(rows[1]!, { dataTransfer });
+    fireEvent.dragEnter(rows[0]!, { dataTransfer });
+    // Escape leaves the drag with no accepted drop, which the browser reports
+    // as `none`.
+    fireEvent.dragEnd(rows[1]!, { dataTransfer: { ...dataTransfer, dropEffect: 'none' } });
+
+    await waitFor(() => expect(screen.getAllByRole('link').map((link) => link.textContent))
+      .toEqual([expect.stringContaining('First'), expect.stringContaining('Second')]));
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it('given fixed server order, when saving a reorder fails, then the section explains why the row snapped back', async () => {

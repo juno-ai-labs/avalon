@@ -51,7 +51,8 @@ export function SpaceRowContent({ space }: { space: SpaceRowSpace }): React.JSX.
  * carries, not by which element it landed on.
  */
 export interface SpaceRowDrag {
-  onDragEnd: () => void;
+  /** `cancelled` is a drag backed out of rather than dropped on the list. */
+  onDragEnd: (cancelled: boolean) => void;
   onDragEnter: (event: DragEvent<HTMLDivElement>) => void;
   onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -96,7 +97,11 @@ export function SpaceRow({
     <div
       className="space-sidebar-item"
       draggable
-      onDragEnd={drag.onDragEnd}
+      // A drag nothing accepted reports `none`. Treated as cancelled when the
+      // browser gives no `dataTransfer` at all, because a drop the list handled
+      // always leaves one behind. The same reading as the Channel row's and the
+      // Breakout rail's, so all three lists tell Escape from a drop one way.
+      onDragEnd={(event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') === 'none')}
       onDragEnter={drag.onDragEnter}
       onDragOver={(event) => event.preventDefault()}
       onDragStart={drag.onDragStart}
