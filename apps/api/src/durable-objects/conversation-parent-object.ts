@@ -278,6 +278,23 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   }
 
   /**
+   * Whether this child's *own* directory projection is carried to the
+   * workspace beside the parent's aggregate.
+   *
+   * The two are different questions and a parent answers them independently.
+   * `aggregatesChildProjection` asks whether this child counts toward the row
+   * the parent publishes about itself; this asks whether the child gets a row
+   * of its own up there. A Channel says no to the first and yes to the second
+   * for its breakouts — a breakout must not move the Channel's title or state,
+   * and must still be listable on a Space dashboard — and nothing else says
+   * yes to this at all, which is why the default is no.
+   */
+  protected forwardsChildProjection(substreamId: string): boolean {
+    void substreamId;
+    return false;
+  }
+
+  /**
    * A child published its own shared row; still inside the transaction, and
    * called for every child whether or not this parent aggregates or forwards
    * it. The registry a parent keeps beside the projections — a child's title,
@@ -486,6 +503,14 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           const aggregate = this.aggregateCommon();
           this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection("common", aggregate, now);
+        // The child's own payload, under a key of its own, so its versions are
+        // numbered independently of the parent's aggregate and of every other
+        // child's. Read after the upsert above, because that is what decided
+        // whether this child is one whose projection leaves at all.
+        } else if (this.forwardsChildProjection(substreamId)) {
+          this.enqueueProjection(
+            `substream:${substreamId}:common`, envelope.effect, now, substreamId,
+          );
         }
       } else if (envelope.effect.kind === "directory_user") {
         this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
@@ -493,6 +518,13 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
+        } else if (this.forwardsChildProjection(substreamId)) {
+          this.enqueueProjection(
+            `substream:${substreamId}:user:${envelope.effect.userId}`,
+            envelope.effect,
+            now,
+            substreamId,
+          );
         }
       } else if (forwards) {
         this.enqueueImmutable(substreamId, envelope, now);
@@ -679,6 +711,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     projectionKey: string,
     effect: ParentEffect,
     now: number,
+    substreamId?: string,
   ): ParentEffectEnvelope | null {
     const identity = this.parentIdentity();
     if (!identity) throw new Error("conversation_parent_missing");
@@ -707,6 +740,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       workspaceId: identity.workspaceId,
       parentKind: identity.parentKind,
       parentId: identity.parentId,
+      ...(substreamId === undefined ? {} : { substreamId: asSubstreamId(substreamId) }),
       generation: identity.authorityGeneration,
       messageId,
       partitionKey: projectionKey,

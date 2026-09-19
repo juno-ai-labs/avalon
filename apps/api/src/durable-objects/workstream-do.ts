@@ -2490,6 +2490,42 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return substreamId === "0";
   }
 
+  /**
+   * A Channel's breakouts get a row of their own in the Organization; a
+   * Space's children and the background agents do not.
+   *
+   * The Space dashboard lists every conversation in the Space that needs the
+   * viewer, breakouts included, and the Organization cannot answer that
+   * without holding each breakout's own title, activity and per-person state —
+   * which until now reached this object's `substream_directory` and stopped
+   * there. Forwarding the child's payload under its own key is what carries
+   * it; it stays out of `aggregateCommon`, so a side thread's title or state
+   * still never becomes the Channel's.
+   *
+   * A background agent is excluded because it is not a conversation anybody
+   * opens: it is a worker this object starts, counted in the Channel's
+   * `backgroundAgentCount` and drawn nowhere as a row. Forwarding those would
+   * put one Queue message and one workspace row on every step a worker takes.
+   * The flag is read back from the child's own stored projection, which the
+   * caller has just upserted, so a common effect is classified by the payload
+   * that arrived with it and a viewer effect by the last one that did. A
+   * viewer row that beats its own common row up is harmless: the page joins
+   * the breakout directory, so a viewer row with no row beside it lists
+   * nothing.
+   *
+   * A Space says no on its own account. Its hidden main conversation is the
+   * only conversation it has, and the PRD gives it no breakout surface at all.
+   */
+  protected override forwardsChildProjection(substreamId: string): boolean {
+    if (!this.role.forwardsFeedEffects) return false;
+    if (substreamId === "0") return false;
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_directory
+        WHERE substream_id = ? AND json_extract(effect_json, '$.backgroundAgent') = 1`,
+      substreamId,
+    )) === null;
+  }
+
   protected override childCommonProjections(): DirectoryCommonEffect[] {
     return this.parentSql.exec<{ effect_json: string }>(
       `SELECT effect_json FROM substream_directory WHERE substream_id = '0'`,
