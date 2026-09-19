@@ -256,11 +256,16 @@ already has. A replayed receipt reconciles through
 Two creation paths do not go through here, and both call
 `placeConnectorChannelInGeneral` for the same step. The Slack agent opens a
 Channel for a Slack member with no Rally identity and provisions the
-conversation itself. The local development seed route restores a captured
-fixture into objects it provisions under the ids the fixture chose, and waits
-for each Channel to reach the Organization's directory before placing it —
-without the parent authority that row's arrival announces, the placement is
-refused `conversation_parent_missing`. [`spaces.md`](spaces.md) owns both.
+conversation itself; it borrows this module's ordering to place it —
+`reserveChild` on the parent first, with its directory delivery deferred, then
+the conversation, then the placement, then the flush — because the placement
+addresses the parent authority, and because a Channel is not listed until it has
+a home. The local development seed route restores a captured fixture into
+objects it provisions under the ids the fixture chose, and waits for each
+Channel to reach the Organization's directory before placing it — a wait that
+is acceptable only because that route is development-only. Without the parent
+authority that row's arrival announces, a placement is refused
+`conversation_parent_missing`. [`spaces.md`](spaces.md) owns both.
 
 The one saving kept is that the participant and attachment checks run
 concurrently. Both are no-ops when there is nothing to check, so it costs
