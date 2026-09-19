@@ -70,7 +70,10 @@ The lease is held for one tool call, not one run. Readiness — creating,
 starting or restoring the sandbox under the run's authority and policy, and
 preparing its repository — is paid once per run and cached; each write tool
 then claims the lease, does its provider work, and releases it when the call
-ends, whether it returned or threw. A claim that finds the row no longer
+ends, whether it returned or threw. A release that fails is attempted once
+more and, failing again, logged as `terminal_lease_release_failed` with its
+reason; the lease then stays with the run until its next call releases it,
+the run yields, or the lease deadline passes. A claim that finds the row no longer
 describing the cached sandbox (the generation replaced, the sandbox stopped by
 the sweep or a policy change) runs readiness again under the lease. So a
 conversation and the agents it starts interleave at call granularity: a
@@ -302,8 +305,13 @@ entry comes due the sweep asks the work stream's parent object which
 conversations are due (`childTerminalDeadlines`) and reconciles each one's
 sandbox on its own row; a work stream that lists none is treated as the main
 conversation's, as every work stream was before conversations reported their
-own. A sandbox whose lease holder ran in another conversation is held while
-that conversation says the run is active.
+own. A policy change enumerates the same way and always asks the main
+conversation whatever the parent lists, because the list is a projection that
+lands after a sandbox exists; a side thread's sandbox created inside that gap
+is missed by the application and converges at its next claim, which finds the
+row's applied revision behind the workspace's and re-runs readiness against
+the new policy. A sandbox whose lease holder ran in another conversation is
+held while that conversation says the run is active.
 
 None of that reaches a sandbox under an automation. A Sidekick's parent
 projects no Terminal deadline into the workspace directory (its child effects
@@ -600,6 +608,11 @@ network proxy, or a general GitHub administration surface.
   for the work stream adopts it by name instead. That is an accepted gap, not a
   design: the started/finished pair shows whether it happens, and a sweep by
   stable name is the fix if it does.
+- A lease release that fails twice leaves the lease with its run.
+  `terminal_lease_release_failed` at `warn` names the run, the call and the
+  reason, and siblings see `sandbox_busy` until the run's next call releases
+  it, the run yields, or the sixteen-minute lease deadline passes. Nothing
+  retries past the second attempt; the deadline is the backstop.
 - A republish that loses the content compare-and-swap to a concurrent one
   releases the bytes it wrote to asynchronous cleanup and reports what the
   document now holds, rather than clobbering the winner. A failed WorkspaceDO
@@ -1225,8 +1238,9 @@ elsewhere only after that conversation's own harness-run authority says it
 yielded, naming the exact holder. `WorkstreamDO` forwards the earliest
 Terminal deadline of any conversation under it and lists them
 (`childTerminalDeadlines`); the workspace sweep and the settings policy
-application reconcile each conversation's sandbox, and the Daytona webhook
-routes by a `rally.substream` label.
+application reconcile each conversation's sandbox, the policy application
+asking the main conversation whatever the parent lists, and the Daytona
+webhook routes by a `rally.substream` label.
 
 The operation lease is claimed at the start of each write tool call and
 released when the call ends; the per-run cache holds the readiness handle
@@ -1237,8 +1251,10 @@ otherwise. `releaseOperation` is new and fenced on the exact holder, and it
 keeps the lease while the holder has an unsettled command on the generation;
 the claim's takeover fence ignores the claimant's own unsettled tasks, and
 every claim stamps `last_command_at`, which the lifecycle sweep reads as
-activity inside the warm window. Both lease operations are non-directory. The
-`sandbox_busy` guidance tells the model to retry in seconds.
+activity inside the warm window. Both lease operations are non-directory. A
+release that fails is attempted once more and then logged with its reason
+rather than swallowed. The `sandbox_busy` guidance tells the model to retry
+in seconds.
 
 `TerminalRunScope` carries the conversation's parent kind, and
 `createReservedSandbox` passes `autoDeleteAfterStoppedMinutes`, Rally's
@@ -1322,11 +1338,14 @@ observe another run's write in progress, and a background agent's
 owner's object cannot see. A run between two calls holds nothing, so the
 sweep's idle decision rests on `last_command_at` rather than on a live
 holder; a sandbox whose run died mid-call is freed by the sixteen-minute
-deadline as before. The activation pre-warm still starts the sandbox in the
+deadline as before, and so is one whose release failed twice, which the log
+names. The activation pre-warm still starts the sandbox in the
 background but releases the lease when its readiness settles, so a sibling is
 no longer blocked by an activation that happened to come first. The sweep's
 directory entry for a work stream is now the earliest of several
-conversations, so one due entry may reconcile several sandboxes. The
+conversations, so one due entry may reconcile several sandboxes. A side
+thread's sandbox created after a policy application listed the parent's
+children is missed by that application and converges at its next claim. The
 desktop's per-work-stream Terminal card still reads the main conversation's
 sandbox; a side thread's is reachable only through the sweep, the settings
 policy application, and its own runs.

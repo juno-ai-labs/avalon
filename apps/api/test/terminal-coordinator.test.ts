@@ -16,6 +16,7 @@ import type {
   TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
+import type { TerminalPortFactory } from "../src/services/terminal/object-port";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -1013,6 +1014,52 @@ describe("Terminal sandbox coordinator", () => {
       autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
     });
     expect(await created("workstream", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
+  });
+
+  it("retries a failed lease release once and logs one that fails again, with its reason", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const ports = testTerminalPortFactory(objectStore);
+    let refusals = 0;
+    // The owner's object refusing the release hop, as a reset object does.
+    const flaky: TerminalPortFactory = (workspaceId, workstreamId, substreamId) => {
+      const port = ports(workspaceId, workstreamId, substreamId);
+      return new Proxy(port, {
+        get(target, key, receiver) {
+          if (key !== "releaseOperation") return Reflect.get(target, key, receiver);
+          return async (input: Parameters<typeof port.releaseOperation>[0]) => {
+            if (refusals > 0) {
+              refusals -= 1;
+              throw new Error("object_reset");
+            }
+            return target.releaseOperation(input);
+          };
+        },
+      });
+    };
+    const coordinator = new TerminalSandboxCoordinator(env, flaky, testResourcePortFactory(objectStore), provider, clock);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const lease = () => workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1");
+
+    await coordinator.acquire(context());
+    expect(lease()).toEqual({ operation_run_id: RUN_ID });
+    refusals = 1;
+    await coordinator.release(context());
+    // The second attempt gave it back, and a hop that recovered is not news.
+    expect(lease()).toEqual({ operation_run_id: null });
+    expect(warn).not.toHaveBeenCalled();
+
+    await coordinator.acquire({ ...context(), toolCallId: "second-call" });
+    refusals = 2;
+    await expect(coordinator.release({ ...context(), toolCallId: "second-call" })).resolves.toBeUndefined();
+    // Still this run's until its next call, its yield, or the lease deadline;
+    // the log says so, and says why.
+    expect(lease()).toEqual({ operation_run_id: RUN_ID });
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "terminal_lease_release_failed",
+      harness_run_id: RUN_ID,
+      tool_call_id: "second-call",
+      reason: "object_reset",
+    }));
   });
 
   it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {

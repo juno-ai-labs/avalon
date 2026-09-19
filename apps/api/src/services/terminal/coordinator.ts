@@ -19,7 +19,7 @@ import {
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
-import { logStructuredEvent } from "../../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../../observability/logger";
 import {
   createHarnessRunPortFactory,
   type HarnessRunPortFactory,
@@ -294,12 +294,41 @@ export class TerminalSandboxCoordinator {
       : "stale";
   }
 
-  /** Give the lease back; a no-op when this run does not hold it. */
+  /**
+   * Give the lease back; a no-op when this run does not hold it.
+   *
+   * Never throws: the call this follows has already produced its result, and
+   * a release that fails is not that result's failure. The release is fenced
+   * on this run being the holder, so a second attempt after a failed one
+   * repeats nothing the first already did; it is made once, because a hop
+   * that fails twice in a row is not going to be talked round by a third. A
+   * release that still fails leaves the lease with this run until its next
+   * call releases it, the run yields, or the lease deadline passes, and every
+   * sibling sees `sandbox_busy` until then, so the failure is logged with its
+   * reason rather than swallowed.
+   */
   async release(context: HarnessToolContext): Promise<void> {
-    await this.terminal(context).releaseOperation({
+    const attempt = () => this.terminal(context).releaseOperation({
       runId: context.harnessRunId,
       now: this.clock.now().getTime(),
     });
+    try {
+      await attempt();
+    } catch {
+      try {
+        await attempt();
+      } catch (error) {
+        logStructuredEvent(this.env, "warn", "terminal_lease_release_failed", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          substream_id: this.scope.runSubstreamId,
+          terminal_substream_id: this.scope.authoritySubstreamId,
+          harness_run_id: context.harnessRunId,
+          tool_call_id: context.toolCallId,
+          reason: diagnosticErrorCode(error, "release_failed"),
+        });
+      }
+    }
   }
 
   /**
