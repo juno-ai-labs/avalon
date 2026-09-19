@@ -58,6 +58,7 @@ export * from "./artifacts";
 export * from "./attachment-contracts";
 export * from "./projects";
 export * from "./resource-relationships";
+export * from "./spaces";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
