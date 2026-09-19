@@ -33,7 +33,7 @@ import {
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
-import { workspaceDOName } from "../src/durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000cf00");
@@ -211,6 +211,64 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
     membershipGeneration: plan.membershipGeneration,
   });
   if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
+}
+
+/**
+ * One member Channel's own authority, opened the way
+ * `channel-access-sources.test.ts` opens one.
+ *
+ * The archive fan-out is two objects: WorkspaceDO says which Channels this
+ * Space still reaches, and each of those Channels withdraws the source itself.
+ * Proving the source is gone therefore needs the real Channel authority, not a
+ * count of membership rows.
+ */
+function memberChannel(workstreamId: WorkstreamId) {
+  return env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
+}
+
+const observedChannel = {
+  readers: { scope: "workspace" as const },
+  participantUserIds: [OWNER],
+};
+
+async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
+  await runInDurableObject(memberChannel(workstreamId), (_instance, state) => {
+    // Written directly, for the reason the access-sources suite writes it: this
+    // case is about the provenance rows, not about how a Channel comes to be.
+    state.storage.sql.exec(
+      `INSERT INTO workstream_metadata
+         (id, workspace_id, workstream_id, region, authority_generation, title, description,
+          preview, scope, exact_state, last_activity_at, created_at, updated_at)
+       VALUES (1, ?, ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+      WORKSPACE_ID,
+      workstreamId,
+    );
+    state.storage.sql.exec(
+      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES ('0', 'main', ?, 1, 'ready', 1)`,
+      OWNER,
+    );
+  });
+}
+
+/** Apply and confirm one Space's source, the two calls the service makes. */
+async function seatSpaceSource(workstreamId: WorkstreamId, spaceId: SpaceId): Promise<void> {
+  const address = { workspaceId: WORKSPACE_ID, parentId: workstreamId };
+  const source = {
+    scope: "workspace" as const,
+    participantUserIds: [OWNER],
+    spaceRevision: 1,
+    membershipGeneration: 1,
+    channel: observedChannel,
+  };
+  const applied = await memberChannel(workstreamId).applySpaceAccessSource({
+    ...address, spaceId, ...source, operationId: crypto.randomUUID(),
+  });
+  if (!applied.ok) throw new Error(`applySpaceAccessSource refused: ${applied.code}`);
+  const confirmed = await memberChannel(workstreamId).confirmSpaceAccessSource({
+    ...address, spaceId, operationId: crypto.randomUUID(), seatedUserIds: [], source,
+  });
+  if (!confirmed.ok) throw new Error(`confirmSpaceAccessSource refused: ${confirmed.code}`);
 }
 
 function nextMessage(socket: WebSocket): Promise<MessageEvent> {
@@ -506,6 +564,52 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toMatchObject({ ok: true, space: { status: "archived" } });
     await expect(workspace().listInactiveSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
       .resolves.toMatchObject({ ok: true, directory: { items: [{ id: spaceId }] } });
+  });
+
+  it("given an archive, when the fan-out runs, then the Space's source is off every member Channel", async () => {
+    const spaceId = await reserve("Company");
+    const second = await reserve("Recruiting");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
+      await place(spaceId, workstreamId);
+      await place(second, workstreamId);
+      await openMemberChannel(workstreamId);
+      await seatSpaceSource(workstreamId, spaceId);
+      await seatSpaceSource(workstreamId, second);
+    }
+
+    const staged = await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+    });
+    if (!staged.ok) throw new Error(staged.code);
+    // The prepare has already flipped every membership to `removing`, which is
+    // why the fan-out asks which Channels this Space still *reaches*. Asking
+    // for its active members answers nothing and leaves the retraction loop
+    // below with no Channel to run over.
+    const members = await workspace().listSpaceMembers({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, reach: "reaching",
+    });
+    if (!members.ok) throw new Error(members.code);
+    for (const workstreamId of members.workstreamIds) {
+      const retracted = await memberChannel(workstreamId).retractSpaceAccessSource({
+        workspaceId: WORKSPACE_ID,
+        parentId: workstreamId,
+        spaceId,
+        operationId: crypto.randomUUID(),
+        channel: observedChannel,
+      });
+      if (!retracted.ok) throw new Error(retracted.code);
+    }
+    await workspace().finalizeSpaceArchive({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId });
+
+    for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
+      expect(await memberChannel(workstreamId).readAccessSources({
+        workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
+      })).toMatchObject({
+        spaces: [{ spaceId: second, scope: "workspace", participantUserIds: [OWNER] }],
+      });
+    }
   });
 
   it("given an archived Space, when it is restored, then its memberships come back", async () => {
