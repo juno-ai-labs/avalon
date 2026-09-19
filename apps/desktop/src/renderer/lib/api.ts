@@ -120,6 +120,7 @@ import type {
   WorkspaceInvitationPreview,
   PendingWorkspaceInvitation,
   ResourcePage,
+  SpaceConversationSummary,
   WorkspaceMember,
   WorkstreamConnection,
   WorkstreamBoot,
@@ -1279,18 +1280,24 @@ export class RallyApi {
   }
 
   /**
-   * One page of the Channels in a Space.
+   * One page of the conversations in a Space that currently need this viewer:
+   * its member Channels and their breakouts, newest activity first.
    *
    * The one Space read that is not on the socket: General holds every Channel
-   * in the Organization, so the membership is paginated and the opening sidebar
-   * payload carries a count instead. The cursor is opaque — the ordering is the
-   * authority's.
+   * in the Organization, so the answer is paginated and the opening sidebar
+   * payload carries a count instead. The cursor is opaque — the ordering is
+   * the authority's — and so is the filtering: the server decides which
+   * conversations still need this reader, because a filter applied here would
+   * make every page arbitrarily short and the cursor a promise about rows the
+   * client had already thrown away.
+   *
+   * The path still says `channels`. It answers conversations.
    */
   async listSpaceChannels(
     spaceId: string,
     cursor: string | null,
     signal?: AbortSignal,
-  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
+  ): Promise<{ items: SpaceConversationSummary[]; nextCursor: string | null }> {
     const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
     const page = await this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
       schema: WireSpaceChannelPageSchema,
@@ -1298,8 +1305,16 @@ export class RallyApi {
     });
     // Through the same mapper every other Channel row goes through, so a
     // placement on the dashboard and the same Channel in the sidebar are one
-    // shape rather than two that drift.
-    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
+    // shape rather than two that drift. A breakout adds two fields to it and
+    // changes none.
+    return {
+      items: page.items.map((conversation) => ({
+        ...mapWorkstreamSummary(conversation),
+        kind: conversation.kind,
+        breakoutOf: conversation.breakoutOf,
+      })),
+      nextCursor: page.nextCursor,
+    };
   }
 
   addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {

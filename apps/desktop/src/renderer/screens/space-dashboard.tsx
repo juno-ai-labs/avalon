@@ -139,17 +139,20 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // not re-render when the socket replaces the list, so a Sidekick default
   // rendered as "Sidekick" until something unrelated on this screen changed.
   const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data ?? [];
-  // That page is the one thing on this screen the socket cannot replace, so it
-  // is the one thing that goes stale when the membership moves somewhere else
-  // — **Add to space** on a sidebar row, a drag, or another person's add. The
-  // Space snapshot that every settlement republishes carries the count, so the
-  // count moving is the Organization saying this page is out of date.
-  const membershipCount = spaces.data?.items.find((item) => item.id === spaceId)?.channelCount
-    ?? inactiveSpaces.data?.items.find((item) => item.id === spaceId)?.channelCount ?? null;
+  // That page is the one thing on this screen the socket cannot replace, and
+  // an activity-ordered, state-filtered list goes stale on far more than a
+  // membership change: a message in a member Channel or breakout reorders it,
+  // a run finishing drops a row out of it, and opening one takes it off this
+  // reader's list and nobody else's. One signal covers all of it — the
+  // per-viewer `conversationWaterline` the Organization advances on every one
+  // of those, a settled membership included — so there is one refetch trigger
+  // here rather than one for Channels and another for breakouts.
+  const refreshSignal = spaces.data?.items.find((item) => item.id === spaceId)?.conversationWaterline
+    ?? inactiveSpaces.data?.items.find((item) => item.id === spaceId)?.conversationWaterline ?? null;
   useEffect(() => {
-    if (spaceId === undefined || membershipCount === null) return;
+    if (spaceId === undefined || refreshSignal === null) return;
     void queryClient.invalidateQueries({ queryKey: ['space-channels', spaceId] });
-  }, [queryClient, spaceId, membershipCount]);
+  }, [queryClient, spaceId, refreshSignal]);
   // A refusal belongs to the Space it was about. This screen is one component
   // for every Space, so without this "That space no longer exists" followed
   // the reader onto the next Space's dashboard and stayed there.
@@ -210,8 +213,9 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // The Space's own answer, not the device's directory page filtered by it: a
   // Space holds Channels this device has never listed, and naming only the ones
   // it happens to hold made the section under-report every Space bigger than
-  // one page of the sidebar.
-  const placed = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
+  // one page of the sidebar. Breakouts are in the same list for the same
+  // reason — this device has never listed most of them either.
+  const conversations = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
   const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
   const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
   const resourcesById = new Map((resources.data?.items ?? []).map((resource) => [resource.id, resource]));
@@ -329,22 +333,53 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         >
           {channelPages.isPending
             ? <LoadingState label="Loading channels…" />
-            : placed.length === 0
-              ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived space has no channels.'} />
+            : conversations.length === 0
+              // Two empty states, because they are two different facts and
+              // telling a reader "no channels yet" about a Space with forty of
+              // them would send them looking for a bug. The count is what
+              // separates them: it is the Organization's own answer to "is
+              // there anything in here at all", while the list above is
+              // "is any of it yours to deal with".
+              ? space.channelCount === 0
+                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived space has no channels.'} />
+                : <EmptyState
+                    description="Everything in this space has been read and nothing is running. Channels and breakouts show up here while they need you; the rest stay in the sidebar and in search."
+                    title="Nothing here needs you right now"
+                  />
               : <div className="waiting-workstream-list">
-                {placed.map((workstream) => (
+                {conversations.map((conversation) => (
                   <SpaceChannelRow
-                    key={workstream.id}
-                    link={<NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
-                      <StatusDot status={workstreamMarkerStatus(workstream)} />
-                      <span className="waiting-workstream-copy"><strong>{workstream.title}</strong>{workstream.preview && <span>{workstream.preview}</span>}</span>
-                      <RelativeTime value={workstream.lastActivityAt} />
-                    </NavLink>}
-                    onRemove={() => void save(
-                      'channels',
-                      () => api!.removeChannelFromSpace(space.id, workstream.id),
-                      'The channel could not be removed from this space.',
-                    )}
+                    key={conversation.id}
+                    link={conversation.breakoutOf
+                      ? <NavLink
+                          className="waiting-workstream-row space-breakout-row"
+                          to={`/workstreams/${conversation.breakoutOf.workstreamId}?substream=${conversation.breakoutOf.substreamId}`}
+                        >
+                          <StatusDot status={workstreamMarkerStatus(conversation)} />
+                          <span className="waiting-workstream-copy">
+                            <span aria-hidden="true" className="space-breakout-mark">↳</span>
+                            <strong>{conversation.title}</strong>
+                            <span>in {conversation.breakoutOf.title}</span>
+                          </span>
+                          <RelativeTime value={conversation.lastActivityAt} />
+                        </NavLink>
+                      : <NavLink className="waiting-workstream-row" to={`/workstreams/${conversation.id}`}>
+                          <StatusDot status={workstreamMarkerStatus(conversation)} />
+                          <span className="waiting-workstream-copy"><strong>{conversation.title}</strong>{conversation.preview && <span>{conversation.preview}</span>}</span>
+                          <RelativeTime value={conversation.lastActivityAt} />
+                        </NavLink>}
+                    // A breakout follows its Channel. There is nothing to take
+                    // it out of this Space that is not taking its Channel out,
+                    // and a control that looked like there was would be
+                    // offering an operation the Space authority has no word
+                    // for.
+                    {...(conversation.breakoutOf ? {} : {
+                      onRemove: () => void save(
+                        'channels',
+                        () => api!.removeChannelFromSpace(space.id, conversation.id),
+                        'The channel could not be removed from this space.',
+                      ),
+                    })}
                     removeDisabled={!editable || saving}
                   />
                 ))}
@@ -420,7 +455,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           {blockedChannelIds.length > 0 && (
             <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
               {blockedChannelIds.map((id) => (
-                <li key={id}>{placed.find((channel) => channel.id === id)?.title ?? 'A channel not loaded on this device'}</li>
+                <li key={id}>{conversations.find((conversation) => conversation.id === id)?.title ?? 'A channel not loaded on this device'}</li>
               ))}
             </ul>
           )}
