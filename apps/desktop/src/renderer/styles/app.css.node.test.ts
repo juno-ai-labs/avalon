@@ -74,6 +74,26 @@ describe('capsule composer stacking', () => {
     expect(rule(`${spanning} :is(textarea, .composer-highlight),\n${withAttachments} :is(textarea, .composer-highlight)`))
       .not.toContain('39px');
   });
+
+  /**
+   * `clip` and `hidden` paint the same — a control parked outside the rounded
+   * corner is cut at the same pixel by either — and only `hidden` is a scroll
+   * container. Two things inside this capsule are deliberately outside its
+   * box: Stop parks past the right edge so it can slide in, and
+   * `ComposerInput` translates the input shell by the leading column's width
+   * for 220ms whenever a draft flips to the wrapped layout. Under `hidden`
+   * that is a scroll range with no scrollbar, and nothing reads or resets the
+   * capsule's scroll position, so a draft that was scrolled once sat
+   * permanently to the left of its own capsule — first characters and model
+   * pill alike — until the composer unmounted. jsdom lays nothing out and a
+   * clipped box still reports `scrollWidth`, so the declaration is what a test
+   * can hold onto; a real window is where it was looked at.
+   */
+  it('clips the capsule instead of making it a scroll container', () => {
+    const capsule = rule(':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule');
+    expect(capsule).toContain('overflow: clip;');
+    expect(capsule).not.toContain('overflow: hidden;');
+  });
 });
 
 /**
