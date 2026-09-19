@@ -1,5 +1,6 @@
 import {
   ExternalActorSchema,
+  asUserId,
   asWorkstreamId,
   type UserId,
   type WorkspaceId,
@@ -25,6 +26,7 @@ import { WorkstreamEmailRoutingService } from "./workstream-email-routing-servic
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { placeConnectorChannelInGeneral } from "./space-bootstrap-service";
 import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
@@ -123,6 +125,20 @@ export class SlackWorkspaceWorkstreamService {
       systemKind: null,
       modelOverride: null,
       now: at,
+    });
+    // Before the opening message, so the Channel's audience is settled when it
+    // lands. This is the one creation path that does not go through
+    // `WorkstreamObjectCreationService` — the Slack member has no Rally
+    // identity, and the run uses the workspace principal — and every
+    // non-deleted Channel still belongs to at least one Space.
+    await placeConnectorChannelInGeneral(this.env, this.workspaceId, {
+      workstreamId: asWorkstreamId(workstreamId),
+      scope: input.scope ?? "personal",
+      archived: false,
+      placed: false,
+      participantUserIds: [
+        ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
+      ].map(asUserId),
     });
     const openingMessageId = newId();
     const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };
