@@ -415,7 +415,7 @@ beforeEach(async () => {
   await reset();
   effectSequence = 0;
   await establishWorkspace();
-}, 30_000);
+});
 
 describe("space dashboard conversation page", () => {
   it("given a breakout projection, when its Channel forwards it, then it lands in the breakout tables", async () => {
@@ -559,6 +559,46 @@ describe("space dashboard conversation page", () => {
     // beside it answers the same way.
     expect((await page(spaceId, MEMBER)).items.map((item) => item.title))
       .toEqual(["Open thread"]);
+  });
+
+  it("given a cursor this Space did not issue, when the page is read, then the refusal names the cursor", async () => {
+    const spaceId = await reserve("Hiring");
+
+    const refused = await workspace().listSpaceChannels({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, cursor: "not-a-cursor",
+    });
+
+    // Not `space_not_found`, which is what this used to answer. The two ask
+    // opposite things of the caller — one says stop, the other says drop the
+    // cursor and read the first page — and "that space no longer exists" about
+    // a Space the reader is looking at is a diagnosis nobody can act on.
+    expect(refused).toMatchObject({ ok: false, code: "space_cursor_invalid" });
+    expect((await page(spaceId, OWNER)).items).toEqual([]);
+  });
+
+  it("given a breakout whose naming pass died, when the page is read, then its row stops claiming a name is coming", async () => {
+    const spaceId = await reserve("Hiring");
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+    await place(spaceId, CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      {
+        ...breakoutCommonEffect("Untitled", { state: "needs_input" }),
+        titleStatus: "naming",
+        createdAt: "2026-09-18T00:00:00.000Z",
+      } as ConversationEffect,
+      viewerEffect(OWNER) as ConversationEffect,
+    ]);
+
+    // `naming` is a promise that a name is on its way, and the client draws a
+    // skeleton for it. Past the grace the Channel row applies, a breakout row
+    // beside it in the same list has to stop making that promise too —
+    // otherwise a dead naming pass leaves one row shimmering forever while the
+    // Channel above it does not.
+    expect((await page(spaceId, OWNER)).items[0]).toMatchObject({
+      title: "Untitled",
+      titleStatus: "automatic",
+    });
   });
 
   it("given conversations of both kinds, when the page is read, then it is newest first and the cursor continues it", async () => {

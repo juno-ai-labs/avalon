@@ -111,6 +111,8 @@ export function spaceRefusal(
       // own authority did not answer, and retrying is the whole of what the
       // caller can do about it.
       return new ApiError(503, code, `${subject} could not be reached; try again`);
+    case "space_cursor_invalid":
+      return new ApiError(400, code, "That page cursor is not one this Space issued");
   }
 }
 

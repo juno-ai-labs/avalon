@@ -279,15 +279,25 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
 
   /**
    * Whether this child's *own* directory projection is carried to the
-   * workspace beside the parent's aggregate.
+   * workspace, **instead of** being folded into the parent's aggregate.
    *
-   * The two are different questions and a parent answers them independently.
-   * `aggregatesChildProjection` asks whether this child counts toward the row
-   * the parent publishes about itself; this asks whether the child gets a row
-   * of its own up there. A Channel says no to the first and yes to the second
-   * for its breakouts — a breakout must not move the Channel's title or state,
-   * and must still be listable on a Space dashboard — and nothing else says
-   * yes to this at all, which is why the default is no.
+   * The two hooks ask different questions — does this child count toward the
+   * row the parent publishes about itself, and does this child get a row of
+   * its own up there — but they are asked as an `if`/`else if`, so a child is
+   * aggregated, or forwarded, or neither. "Both" is not representable, and
+   * that is deliberate: a child folded into its Channel's title, state and
+   * activity *and* listed beside it would appear twice on one Space dashboard,
+   * once as itself and once as the thing it had just moved.
+   *
+   * The three outcomes that do exist are the three that are wanted. A Channel
+   * aggregates its main conversation and forwards its breakouts — a breakout
+   * must not move the Channel's row, and must still be listable — and answers
+   * neither for a background agent or for a Space's hidden child, which
+   * nothing draws. If a fourth outcome is ever needed, this coupling is the
+   * thing to undo, and undoing it means deciding what a doubly-published
+   * conversation looks like on the dashboard.
+   *
+   * Nothing but a Channel answers yes, which is why the default is no.
    */
   protected forwardsChildProjection(substreamId: string): boolean {
     void substreamId;
