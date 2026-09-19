@@ -554,33 +554,50 @@ restates the browser's own `disc → circle → square` progression, counting de
 in list ancestors of either kind so that an `ol` holding a `ul` is a second level.
 
 Every paint in that group is a substitution rather than a token reference:
-`.markdown-body` declares its rule-local properties — `--markdown-ink` and its
-quieter steps, `--markdown-wash`, `--markdown-surface`, `--markdown-rule`,
-`--markdown-quote-bar`, `--markdown-border`, the two link roles, and the two
-GFM affordances that are painted without being text, `--markdown-mark` for a
-task box's tick and `--markdown-scrollbar-thumb` for the bar under a wide table
-— from the appearance's own tokens, and every element rule reads one of those.
+`.markdown-body` declares its rule-local properties — `--markdown-ink`, its one
+stronger step and its three quieter ones, `--markdown-wash`,
+`--markdown-surface`, `--markdown-rule`, `--markdown-quote-bar`,
+`--markdown-border`, the two link roles, and the two GFM affordances that are
+painted without being text, `--markdown-mark` for a task box's tick and
+`--markdown-scrollbar-thumb` for the bar under a wide table — from the
+appearance's own tokens, and every element rule reads one of those.
 
 The indirection is there because not every markdown surface sits on the
-appearance's canvas. A person's turn is drawn on a filled bubble, near-black by
-default or the sender's profile colour, carrying whichever of the two absolute
-palette inks that fill takes. A ramp step knows nothing about that fill, and the
-bubble had been patching over the consequences one element at a time: two rules
-forced `p`, `strong`, `em`, `code` and `a` to the bubble's foreground and left
-the chip behind `.markdown-inline-code` on `neutral-4`, so a `/goal` in a
-message was a near-white word on a near-white chip. The heading, the quote bar,
-a table's cells and a thematic break each had a quieter version of the same
-problem, and a code fence had the loudest: the highlighter's palette is tuned
-for the appearance's code surface, and in the light appearance `syntax-plain` is
-near-black, so a pasted fence on a near-black bubble was black on black.
+appearance's canvas. A person's turn is drawn on a filled bubble — near-black in
+the light appearance, mid-grey in the dark one, or the sender's profile colour —
+carrying whichever of the two absolute palette inks that fill takes. A ramp step
+knows nothing about that fill, and the bubble had been patching over the
+consequences one element at a time: two rules forced `p`, `strong`, `em`, `code`
+and `a` to the bubble's foreground and left the chip behind
+`.markdown-inline-code` on `neutral-4`, so a `/goal` in a message was a
+near-white word on a near-white chip. The heading, the quote bar, list markers,
+a table's cells, a thematic break, a ticked task box and a wide table's
+scrollbar thumb each had a quieter version of the same problem. The fenced block
+did not: it carried its own `surface-raised` ground, which is why it now opts
+out below rather than joining them.
 
 So a surface that fills itself re-points the group — `.human-message-bubble
-.markdown-body` does, from `currentColor`, alongside the `syntax` roles the
-highlighter names — instead of restating element rules. Percentages of the
-bubble's own ink contrast by construction whichever fill is underneath, which is
-what the mention chip and the in-flight sweep on the same bubble already do, and
-an element added to the group is painted correctly on every surface the day it
-lands.
+.markdown-body` does, from `currentColor` — instead of restating element rules.
+Percentages of the bubble's own ink contrast by construction whichever fill is
+underneath, which is what the mention chip and the in-flight sweep on the same
+bubble already do, and an element added to the group is painted correctly on
+every surface the day it lands. They compound where a parent is itself a tint:
+a chip inside a blockquote is 14% of the quote's 82%, which is a quote receding
+as a whole.
+
+**A fenced block opts out, and takes the whole group back to the appearance.**
+Both kinds of contents it can hold are resolved from the root and cannot follow
+a surface: `markdownCodeTheme` hands the highlighter inline references to the
+`syntax` group, and `readMermaidThemeConfig` resolves a diagram against
+`document.documentElement` once per window. Painting the panel from the group
+instead costs contrast exactly where the quietest roles live — a language label
+on the dark appearance's default bubble measured 2.93:1 against the 4.14:1 the
+appearance's own panel gives it, and 2.00:1 on a saturated profile fill — so the
+block re-points `--markdown-ink` and its quieter steps, `--markdown-wash`,
+`--markdown-surface` and `--markdown-border` back to the appearance's tokens,
+its header included. The cost is that a code panel inside a coloured bubble
+reads as a panel from somewhere else; that is the arrangement this group found
+and deliberately kept.
 
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
@@ -802,20 +819,13 @@ needs it should parse rather than widen the pattern again.
   different body colour has to restate it inside the wrapper, and should say why
   in the same breath. `.note-detail-article` carried a dead `color` of this kind
   until 2026-08-12.
-- **A block that rendered a Mermaid diagram is an island of the appearance,
-  whatever surface it sits on.** `readMermaidThemeConfig` resolves against
-  `document.documentElement`, one render for the whole window, because a
-  diagram's palette is the appearance's rather than any one surface's — so the
-  block under it re-points the paint group back to the appearance's tokens, its
-  header included. Letting the group through instead is the failure this rule
-  exists for: the ground became a wash of the sender's ink while the SVG's
-  labels and connectors stayed the appearance's, which in the light appearance
-  on a near-black bubble is dark on dark. The alternative, deriving Mermaid's
-  whole role set — surfaces through chart series — from one ink, is what a
-  per-surface diagram palette would mean, and it is not what a filled bubble
-  needs to be legible. `:has()` scopes it to a rendered diagram: a parse that
-  fails falls back to highlighted source, which is code again and belongs to
-  the surface it sits on.
+- **A fenced block does not follow its surface**, per the styling section
+  above: it is an island of the appearance, so a code panel or a diagram inside
+  a coloured bubble is drawn in the window's colours on the window's ground.
+  The alternatives were a per-surface syntax palette, which for Mermaid means
+  deriving its whole role set — surfaces through chart series — from one ink,
+  and reducing a fence to the surface's ink at three strengths, which reads well
+  on a dark fill and measured 2.00:1 for a comment on a saturated one.
 - **A `resource://` target that is malformed, unknown, or invisible to the
   viewer** renders as the citation's label text — no chip, no card, no anchor.
 - **A footnote reference whose definition never arrived** renders literally on a
@@ -967,24 +977,26 @@ substitution. `.markdown-body` declares fourteen rule-local `--markdown-*`
 properties from the same appearance tokens the element rules used to name
 directly — including the two that are painted without being text, a task box's
 `accent-color` and the thumb under a wide table — and each rule reads one of
-them. `.human-message-bubble .markdown-body`
-re-points all of them, plus the ten `syntax` roles `markdownCodeTheme` hands the
-highlighter, as percentages of `currentColor` — the bubble's own ink. The two
-rules that forced `p`, `strong`, `em`, `code` and `a` to the bubble's foreground
-are gone, and the bubble's fill and ink are stated on the bubble alone.
+them. `.human-message-bubble .markdown-body` re-points all of them as
+percentages of `currentColor`. A fenced block re-points them back to the
+appearance. The two rules that forced `p`, `strong`, `em`, `code` and `a` to the
+bubble's foreground are gone, and so is the `color` an agent turn restated.
 Computed paint on every other markdown surface is byte-identical, checked
 element by element in a real window before and after.
 
 **Why:** A person's turn is the one markdown surface whose ground is not the
-appearance's canvas: it is near-black, or the sender's profile colour, under
-whichever of the two absolute palette inks that fill carries. An absolute ramp
-step cannot be right on a ground the ramp has never seen, and the symptom was
-routine — a `/goal` in a message was near-white text on a `neutral-4` chip,
-because the bubble had forced the ink and nothing had moved the chip under it.
-Patching each element as somebody notices it is how that state was reached, and
-the elements nobody had noticed yet — a heading, a quote bar, a table's cells, a
-thematic break, and a code fence painted black on black in the light appearance
-— were sitting there in the same bubble.
+appearance's canvas: it is near-black in the light appearance, mid-grey in the
+dark one, or the sender's profile colour, under whichever of the two absolute
+palette inks that fill carries. An absolute ramp step cannot be right on a
+ground the ramp has never seen, and the symptom was routine — a `/goal` in a
+message was near-white text on a `neutral-4` chip, because the bubble had forced
+the ink and nothing had moved the chip under it. Patching each element as
+somebody notices it is how that state was reached, and the elements nobody had
+noticed yet — a heading, a quote bar, list markers, a table's cells, a thematic
+break, a ticked task box in the reader's accent rather than the sender's ink,
+and a scrollbar thumb at `#2f2f2f` on a `#070707` bubble — were sitting in the
+same bubble. The full catalogue is in the styling section above rather than
+here.
 
 **Considered and rejected:** Adding a third element override to the pair the
 bubble already had, which is the fix that produced the bug and does nothing for
@@ -992,31 +1004,26 @@ the next element. Promoting the group to registry tokens, which the appearance
 files cannot express: what a theme has an opinion about is which colours exist,
 not which of them a surface that paints its own fill should be using instead, so
 these sit beside `--sweep-ink` and `--turn-bubble-radius` in the stylesheet's
-own namespace. Keeping the code fence on the appearance's surface so the
-highlighter's palette stayed valid, which would have left a light panel of
-another surface's colours inside a coloured bubble; a person's own message is
-read rather than worked on, so it is reduced to the bubble's ink at three
-strengths, where comments recede and punctuation sits between.
+own namespace. Reducing a fence to the surface's ink at three strengths, which
+this change shipped first and review measured: a ground washed toward a
+surface's own ink has less headroom for that ink than the appearance's ground
+does, and a language label came out at 2.93:1 on the dark appearance's default
+bubble and 2.00:1 on a saturated profile fill, against 4.14:1 before. A fence is
+an island of the appearance instead — the arrangement that already existed,
+kept deliberately this time, with the reasoning written down.
 
 **Consequences:** A new element rule in this group names a `--markdown-*`
-property, not a token, or it is wrong on the first filled surface it reaches.
-The exception is a block that rendered a Mermaid diagram, which re-points the
-group back to the appearance because that is where the diagram's own palette
-comes from; a person's fence does reach that path, since a human message is
-settled, non-glance and non-still.
-The two easiest to miss were missed in review of this change and are the shape
-to look for: neither the task box nor the table scroller is text, and a paint
-that is not a colour on a text rule — an `accent-color`, a scrollbar variable —
-does not read as paint at a glance. A
-role added to the group has to be re-pointed in the bubble's block, and a role
-added to `markdownCodeTheme` too; `app.css.node.test.ts` compares both sets of
-names and fails when one runs ahead. Highlighting inside a person's bubble is
-monochrome by design — the same reduction the exported card already makes for
-its own fixed ground. The mixes are percentages of the ink rather than fixed
-values, so a palette colour added to the product needs no rule here; it was
-checked in both appearances against the default near-black fill, a dark
-profile fill and a light one, which are the two ink cases the palette can
-produce. Nothing outside a bubble moved.
+property, not a token, or it is wrong on the first filled surface it reaches;
+`app.css.node.test.ts` scans for that directly, and its two exemptions — the
+fence island and a failure notice's `danger-soft` — are the argued list a third
+has to join. A role added to the group has to be re-pointed in the bubble's
+block, which the same file's name comparison catches. Anything inside a fence,
+highlighting and Mermaid alike, keeps the appearance's palette and needs no
+per-surface mapping. The mixes are percentages of the ink rather than fixed
+values, so a palette colour added to the product needs no rule here; they were
+checked in both appearances against both default fills, a dark profile fill and
+a light one, which are the two ink cases the palette can produce. Nothing
+outside a bubble moved.
 
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
