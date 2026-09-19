@@ -730,6 +730,16 @@ Global exports them — and the notifier sends only codes, counts, and opaque
 ids, escaped for Slack markup: the channel is outside Rally's trust boundary
 ([`ops-alerting.md`](ops-alerting.md)).
 
+The Gitleaks gate scans the commits a pull request adds to its base branch —
+`HEAD_SHA --not <base tip>` — and not the repository's whole history. `detect`
+with no range walks every ref the checkout fetched, which makes one branch's
+finding everyone's failing job: the gate stops saying "this change introduces a
+secret" and starts saying "somebody, somewhere, has an unmerged branch". What
+that scope does not do is re-scan what is already on the base branch, so a
+secret that reaches `main` is caught on the pull request that carries it or not
+at all. That is the same one chance the gate has always had in practice — CI
+runs on `pull_request` only, so nothing scans `main` after a merge either.
+
 Exceptions to the Gitleaks scan live in `.gitleaks.toml` as narrowly bounded
 patterns rather than as suppressed paths or fingerprints, because those two fail in
 opposite directions. A path exemption is permanent and total: it suppresses
@@ -999,6 +1009,41 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-09-19 — The secret gate scans the pull request, not the repository
+
+**What changed:** the `secrets` job passes
+`--log-opts="$HEAD_SHA --not <base tip>"` to `gitleaks detect`, so it scans the
+commits the pull request adds to its base branch. It prefers the base branch's
+live tip over the base SHA recorded when the event fired, and falls back to that
+SHA if the remote-tracking ref is somehow absent. `fetch-depth: 0`
+stays, because the range needs both sides. `scripts/ci-workflow.test.mjs` fails
+if the range or the full history goes away, or if a second Gitleaks invocation
+appears beside the scoped one.
+
+**Why:** `detect` with no range walks every ref the checkout fetched, and
+`fetch-depth: 0` fetches all of them. A credential-shaped test fixture pushed to
+one unmerged branch therefore failed this job on every open pull request at
+once — each with nothing in its own diff to fix, no way to re-run out of it, and
+a red required check blocking auto-merge. The gate had stopped answering "does
+this change introduce a secret" and started answering "does anyone have a branch
+with a finding on it", which is not a question a pull request author can act on.
+
+**Considered and rejected:** allowlisting the fingerprint that triggered this.
+It is the fix this document already argues against, and it treats one instance
+of a structural problem — the next branch would do it again. Also rejected:
+scanning `git log` from the merge commit, which walks the base branch's whole
+history again and reintroduces exactly what this removes.
+
+**Consequences:** a finding on the base branch is no longer re-reported on every
+pull request, which is the point, and also the cost: a secret that is already on
+`main` will not be found by this gate again. It was caught, or missed, on the
+pull request that carried it. Anything relying on the old behaviour to
+retroactively catch history — nothing does today — needs a scan of its own
+rather than a widening of this one. A scheduled full-history scan is the obvious
+shape for that, and is deliberately not added here: it is a standing job with a
+standing noise budget, and whether the repository wants one is the team's call
+rather than this change's to make.
 
 ### 2026-09-19 — Bind Canva loopback redemption to the initiating session
 
