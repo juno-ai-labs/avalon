@@ -125,33 +125,3 @@ export async function hmacSha256(secret: string, value: string | Uint8Array): Pr
   );
   return bytesToBase64Url(new Uint8Array(signature));
 }
-
-/**
- * One opaque string standing in for a structured value in a link someone
- * receives — the whole of what the recipient sees, in place of the fields it
- * carries.
- *
- * `purpose` is authenticated alongside the payload, so a credential minted for
- * one kind of link cannot be presented as another, and the key makes the string
- * readable only to the deployment that issued it.
- */
-export async function sealPayload(value: unknown, secret: string, purpose: string): Promise<string> {
-  const encrypted = await encryptString(JSON.stringify(value), secret, purpose);
-  return `${encrypted.iv}.${encrypted.ciphertext}`;
-}
-
-/**
- * Null is the single answer to every way a sealed payload can fail to open — a
- * key that did not mint it, an edited character, the wrong purpose. Telling
- * those apart would tell a holder something about a credential they do not
- * have; the caller owes its own reader one unavailable link either way.
- */
-export async function openPayload(sealed: string, secret: string, purpose: string): Promise<unknown> {
-  const separator = sealed.indexOf(".");
-  if (separator < 1) return null;
-  try {
-    return JSON.parse(await decryptString(sealed.slice(separator + 1), sealed.slice(0, separator), secret, purpose));
-  } catch {
-    return null;
-  }
-}

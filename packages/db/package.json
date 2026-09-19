@@ -5,14 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./private-access": "./src/private-access.ts"
+    "./private-access": "./src/private-access.ts",
+    "./link-payloads": "./src/link-payloads.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
-    "@rally/contracts": "workspace:*"
+    "@rally/contracts": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

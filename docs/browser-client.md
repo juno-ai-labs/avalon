@@ -13,7 +13,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
-| `apps/browser/src/invitation.ts` | Sealed and addressed invitation fragments, and exact canonical scope destinations. |
+| `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
@@ -68,13 +68,13 @@ link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
 An invitation fragment is validated and removed from history, with the secret
-kept only in document memory. Current links are one sealed credential and
-nothing else, so the whole fragment is that credential; a fragment spelling out
-parameters is the addressed format that predates sealing, and only that one
-names a region. A sealed link is opened against the deployment serving the page,
-which is the only one this host forwards to.
+kept only in document memory. Current links are one opaque token and nothing
+else, so the whole fragment is that token; a fragment spelling out parameters is
+the addressed format that predates it, and only that one names a region. A token
+is opened against the deployment serving the page, which is the only one this
+host forwards to and the only one holding the row it reads.
 
-Before any session exists the client posts the credential to the unauthenticated
+Before any session exists the client posts the token to the unauthenticated
 `/invitation` browser route and fills the invited address into the email field,
 which the recipient can still change. The link no longer says who it was sent
 to, and telling someone to "sign in with the address that received this" while
@@ -85,8 +85,8 @@ cannot be opened, or an invitation since revoked or expired, fills nothing and
 says the invitation is unavailable. The entry tells the recipient to use the
 invited mailbox. If a magic link signs in a different tab, focusing the
 invitation tab restores the new cookie session without losing its invitation.
-Explicit acceptance posts the same credential to the identity-only sharing
-endpoint, which opens it into an address server-side; server authority still
+Explicit acceptance posts the same token to the identity-only sharing endpoint,
+which resolves it into an address server-side; server authority still
 checks the verified recipient, invitation and current sharer. Failure retains
 the invitation for retry or switching accounts. Success activates the workspace
 its accepted targets name — the first thing the recipient's own link could tell
@@ -379,7 +379,7 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 ## Changelog
 
-### 2026-09-19 — Fill in the mailbox a sealed invitation was sent to
+### 2026-09-19 — Fill in the mailbox an opaque invitation was sent to
 
 **What changed:** Invitation fragments are one opaque credential, and the entry
 asks the unauthenticated `/invitation` route for the invited address before

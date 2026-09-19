@@ -8,7 +8,7 @@ import { encryptString, decryptString, randomToken, hmacSha256, timingSafeEqualT
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
-import { scopeInvitationLinkUrl, sealScopeInvitationLink } from "../services/scope-invitation-link";
+import { issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
 
@@ -80,8 +80,13 @@ export class ScopeInvitationService {
     if (!origin) return denied("configuration_required");
     const prepared = await Promise.all([...new Set(request.emails)].map(async (email) => {
       const id = uuidV7(), token = randomToken();
-      const link = scopeInvitationLinkUrl(origin, await sealScopeInvitationLink(this.env,
-        { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token }));
+      // Before the sharing checks and the transaction below, with every other
+      // external await. A denied or replayed creation therefore leaves a row
+      // addressing an invitation that never existed: inert, since opening it
+      // reaches an owner that has no such invitation to offer.
+      const link = scopeInvitationLinkUrl(origin, await issueScopeInvitationLink(this.env,
+        { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token },
+        request.expiresAt));
       const delivery = { recipientEmail: email, text: `You have been invited to collaborate in Rally.\n\nSign in with ${email} and accept:\n${link}\n\nThis invitation does not grant access until you sign in and accept it.` };
       return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         tokenHash: await this.tokenHash(id, token),

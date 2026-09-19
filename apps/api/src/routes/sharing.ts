@@ -92,8 +92,8 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
 });
 sharingRoutes.post("/accept", zValidator("json", AcceptRequestSchema), async (c) => {
   // The credential names its own scope; an authenticated caller cannot address
-  // an invitation this deployment did not seal, and never sees where it points
-  // until the acceptance it authorizes succeeds.
+  // an invitation this deployment did not issue a token for, and never sees
+  // where it points until the acceptance it authorizes succeeds.
   const address = await openScopeInvitationCredential(c.env, c.req.valid("json"));
   if (!address) throw new ApiError(403, "scope_invitation_unavailable", UNAVAILABLE_INVITATION);
   const request = AcceptScopeInvitationSchema.parse({ ...address, userId: getIdentityAuth(c).userId });

@@ -111,12 +111,12 @@ export const AcceptScopeInvitationSchema = z.strictObject({
 /**
  * What a recipient's invitation link hands back.
  *
- * `link` is the opaque credential current invitation emails carry: the
- * workspace, the workstream, the invitation and its secret are sealed inside
- * it, so neither the recipient nor the page they open learns which scope they
- * were offered until they accept it. The addressed form is the fragment format
- * those emails used before, kept usable while links sent under it are still in
- * inboxes; nothing mints it any more.
+ * `link` is the opaque token current invitation emails carry. The workspace,
+ * the workstream, the invitation and its secret are a row the issuing
+ * deployment holds, so neither the recipient nor the page they open learns
+ * which scope they were offered until they accept it. The addressed form is the
+ * fragment format those emails used before, kept usable while links sent under
+ * it are still in inboxes; nothing mints it any more.
  */
 export const ScopeInvitationCredentialSchema = z.union([
   z.strictObject({ link: z.string().min(1) }),
