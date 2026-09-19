@@ -241,7 +241,25 @@ export function SpaceSidebarSection({
 
   return (
     <>
-      <section aria-labelledby="spaces-heading" className="sidebar-section spaces-section">
+      {/*
+        The whole section is the drop target, heading included — the rule the
+        pinned list is already under. A release anywhere a reader would call
+        "inside the list they are arranging" has to count as a drop, because
+        `dragend` now reads a release nothing accepted as a cancellation: the
+        gap between two rows, or the strip of heading above the first one,
+        would otherwise throw the arrangement away. A Channel released on a
+        Space is the other gesture and is claimed by that row, which stops the
+        event before it reaches here.
+      */}
+      <section
+        aria-labelledby="spaces-heading"
+        className="sidebar-section spaces-section"
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={(event) => event.preventDefault()}
+      >
         <div className="sidebar-section-heading">
           <h2 id="spaces-heading">Spaces</h2>
           {/* Nothing to create into while the Organization is still opening;
@@ -366,8 +384,13 @@ export function SpaceSidebarSection({
                 <SpaceRow
                   active={active}
                   drag={{
-                    onDragEnd: () => {
-                      const committed = committedOrder(dragOrder, storedSpaceIds, false);
+                    // Escape, or a release outside the section, must not be the
+                    // same thing as finishing the drag: the arrangement built
+                    // while the pointer crossed the other rows is abandoned
+                    // rather than persisted to every one of this person's
+                    // sessions.
+                    onDragEnd: (cancelled) => {
+                      const committed = committedOrder(dragOrder, storedSpaceIds, cancelled);
                       dragging.current = null;
                       if (committed) void commit(committed);
                       else setDragOrder(null);
