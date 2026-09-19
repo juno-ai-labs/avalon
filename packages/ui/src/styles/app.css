@@ -5284,6 +5284,21 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-default-list li small { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .space-channel-row { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
 .space-channel-row .waiting-workstream-row { min-width: 0; }
+/* A breakout on the Space dashboard: the same row as its Channel, marked with
+   the ↳ the middle column already uses for one.
+
+   The mark sits inside the copy rather than in a grid track of its own. The
+   row's template differs between the wide and narrow layouts, so a track would
+   have had to be placed twice and would have landed in the chevron slot the
+   one time it was got wrong; inside the copy it is a flex child and the
+   arithmetic disappears. It keeps its size where the sibling spans are
+   `flex: 1`, and it survives the narrow layout where they are hidden — the
+   parent Channel's name is the first thing to drop at that width, but without
+   the mark the row would stop saying it is a breakout at all. */
+.space-breakout-row .space-breakout-mark { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; }
+@media (max-width: 560px) {
+  .space-breakout-row .space-breakout-mark { display: inline; }
+}
 .space-recovery-list { display: grid; gap: 8px; }
 /* The Organization-opening card, in the sidebar section and on the
    dashboard. One rule for both: the state is the same sentence in two
