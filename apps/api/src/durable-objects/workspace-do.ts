@@ -6378,6 +6378,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Put a settled cutover back on the walk.
+   *
+   * Server-to-server, for the reason the rest of the cutover's RPCs are: there
+   * is no person on the request. Two callers, both saying the same thing —
+   * something about this Organization's hierarchy is not true yet, so the walk
+   * has to run again. `runFinalize` says it when a blocker is still recorded,
+   * because the pass that clears one is the pass this re-arms; and a connector
+   * placement that was refused says it because the Channel it just opened is in
+   * no Space at all.
+   *
+   * Idempotent, and it keeps the claim's retry gate rather than zeroing it, so
+   * an Organization nobody remediates re-walks on the ordinary interval instead
+   * of spinning the alarm.
+   */
+  async reopenSpaceBootstrap(input: { workspaceId: string }): Promise<{ reopened: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: IdSchema }), input, "reopen_space_bootstrap",
+    );
+    this.assertWorkspace(request.workspaceId);
+    // True only when this took the Organization out of `complete`, which is the
+    // one transition a client can see: `spacesReady` goes false and the sidebar
+    // goes back to the Organization-opening state.
+    const reopened = this.spaceStorage().reopenBootstrap();
+    if (reopened) this.publishSpaceSnapshot();
+    await this.armNextAlarm();
+    return { reopened };
+  }
+
+  /**
    * Close the cutover, or say why it cannot close yet.
    *
    * Three gates, and the third is the PRD's shutdown barrier: no Channel

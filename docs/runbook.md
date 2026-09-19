@@ -892,14 +892,24 @@ to be signed in.
 
 3. **Remediate blockers.** `space_membership_content_fence` means the Channel
    holds retained content the Organization may not read, so placing it in
-   General would disclose it. The cutover never bypasses that — somebody decides
-   whether the Channel should be Organization-wide, and the ordinary
-   **Add to space** flow does it once they have.
+   General would disclose it. **Adding it to an Organization-wide Space is not
+   the remedy** — that is the same widening, refused by the same fence — and
+   the fence itself is immutable, so it cannot be edited away either. Two paths
+   exist: give the Channel a home whose audience the fence already admits,
+   which is **Add to space** against a *personal* Space whose participants the
+   fence allows; or delete the Channel. Either one takes it out of the walk,
+   because the invariant the cutover is closing on is that every Channel has a
+   Space, not that every Channel is in General.
+
    `space_bootstrap_no_active_actor` means every participant of a personal
-   Channel has left the Organization; re-activating one member, or leaving the
-   Channel personal and out of the hierarchy, are both decisions rather than
-   operations. The alarm re-runs `finalize` on its ordinary interval, so a
-   remediated Organization closes itself with no further command.
+   Channel has left the Organization; re-activating one member, or deleting the
+   Channel, are the two that move it — leaving it as it is keeps the
+   Organization open.
+
+   A `finalize` that refuses sends the Organization back to `preflight` on the
+   alarm's ordinary retry interval, so a remediated Organization re-walks and
+   closes itself with no further command, and one nobody remediates re-walks
+   about once a minute until somebody does.
 
 4. **`project_effects_pending` is the one blocker with an operator remedy.** It
    means a Project default was still queued when the cutover tried to close. The
