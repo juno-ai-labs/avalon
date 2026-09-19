@@ -629,6 +629,7 @@ describe("carrying one revocation to the objects", () => {
     substreamIds?: string[];
     automationChildren?: string[];
     ownedAutomationIds?: string[];
+    narrowedUserIds?: string[];
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -648,6 +649,11 @@ describe("carrying one revocation to the objects", () => {
             visits.push({ name: id.toString(), revocation });
             if (options.failAt) throw new Error("object unreachable");
             return answer();
+          },
+          revokeNarrowedAudienceAccess: async (request: unknown) => {
+            listed.push({ name: id.toString(), request });
+            if (options.failAt) throw new Error("object unreachable");
+            return { closedUserIds: options.narrowedUserIds ?? [] };
           },
           automationIdsOwnedByWorkstream: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -789,6 +795,68 @@ describe("carrying one revocation to the objects", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
     expect(targetsOf(sent)).toEqual([{ scope: "automation", automationId: OWNED }]);
+  });
+
+  it("turns a narrowed audience into one ordinary hop per reader still holding a socket", async () => {
+    const READER = "00000000-0000-7000-8000-0000000000b1";
+    const { env, visits, listed, sent } = fanOut({ narrowedUserIds: [READER] });
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    // The hop arrives naming nobody, because a narrowing takes access from
+    // every member who is not a participant. Only the room can say which of
+    // them is holding a socket, so it decides and answers with the names; from
+    // there each one is the ordinary per-user revocation, which is what
+    // reaches the substreams and the automations the room owns.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: WORKSTREAM });
+    expect(targetsOf(sent)).toEqual([
+      { scope: "workstream", workstreamId: WORKSTREAM },
+      { scope: "workstream_automations", workstreamId: WORKSTREAM },
+    ]);
+    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
+      .toEqual([READER, READER]);
+  });
+
+  it("publishes nothing for a narrowing nobody was reading through", async () => {
+    const { env, sent } = fanOut();
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    expect(sent).toEqual([]);
+  });
+
+  it("refuses a message that names a user and a narrowing, or neither", async () => {
+    // The two are mutually exclusive by construction: a per-user hop that lost
+    // its user would close every socket it found, and a narrowing carrying one
+    // would close only that person's while leaving the rest reading.
+    const base = {
+      kind: "access_revoked", reason: "workspace_membership_removed",
+      workspaceId: WORKSPACE, sessionId: null, occurredAt: NOW,
+    };
+    const named = AccessRevocationMessageSchema.safeParse({
+      ...base, userId: MEMBER, target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+    });
+    expect(named.success).toBe(false);
+    expect(named.error?.issues.map((issue) => issue.path.join("."))).toEqual(["userId"]);
+    expect(AccessRevocationMessageSchema.safeParse({
+      ...base, userId: null, target: { scope: "workstream", workstreamId: WORKSTREAM },
+    }).success).toBe(false);
   });
 
   it("stops at an automation with no conversations of its own", async () => {

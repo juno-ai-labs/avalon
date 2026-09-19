@@ -52,7 +52,7 @@ import {
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
-import { ChannelAccessService, spaceAccessError } from "./channel-access-service";
+import { ChannelAccessService, publishChannelNarrowing, spaceAccessError } from "./channel-access-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -860,12 +860,22 @@ export class WorkstreamService {
     if (input.scope === "personal") await access.narrowDirectScope(id);
     const recorded = await access.recordDirectScope(id, input.scope);
     if (!recorded.ok) throw spaceAccessError(recorded.code, (await client.get()).title);
+    let result;
     try {
-      return await client.update(input);
+      result = await client.update(input);
     } catch (error) {
       await access.restoreDirectScope(id, recorded.previousScope);
       throw error;
     }
+    // The room closes its own sockets for somebody it was told about, and a
+    // narrowing tells it about nobody: the readers it drops are every member
+    // who is not a participant. So the write publishes it, in the same
+    // request, exactly as `removeParticipant` does — and only once the
+    // canonical update took, because until then nothing has narrowed.
+    if (input.scope === "personal" && recorded.previousScope === "workspace") {
+      await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id);
+    }
+    return result;
   }
 
   /** Main's read state, by hand, from the sidebar, where the row's dot is Main's. */
