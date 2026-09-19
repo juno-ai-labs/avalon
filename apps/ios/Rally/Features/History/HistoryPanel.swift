@@ -18,9 +18,9 @@ struct WorkstreamListScreen: View {
         List {
             if model.workstreams.isEmpty {
                 ContentUnavailableView(
-                    "No work streams",
+                    "No channels",
                     systemImage: "smallcircle.filled.circle",
-                    description: Text("Work streams in this workspace will show up here.")
+                    description: Text("Channels in this organization will show up here.")
                 )
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -44,7 +44,7 @@ struct WorkstreamListScreen: View {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .listRowBackground(Color.clear)
-                            .accessibilityLabel("Loading more work streams")
+                            .accessibilityLabel("Loading more channels")
                     }
                 }
             }
@@ -52,7 +52,7 @@ struct WorkstreamListScreen: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(colors.canvas.ignoresSafeArea())
-        .navigationTitle("Work streams")
+        .navigationTitle("Channels")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -64,7 +64,7 @@ struct WorkstreamListScreen: View {
                         fallbackName: model.accountAvatarName
                     )
                 }
-                .accessibilityLabel("Workspace and settings")
+                .accessibilityLabel("Organization and settings")
             }
         }
         .task(id: model.workstreams.map(\.id)) {
@@ -133,7 +133,7 @@ struct WorkstreamListScreen: View {
             Button {
                 Task { await model.setScope(item, scope: item.scope == "workspace" ? "personal" : "workspace") }
             } label: {
-                Label(item.scope == "workspace" ? "Make private" : "Make public to workspace", systemImage: item.scope == "workspace" ? "lock" : "globe")
+                Label(item.scope == "workspace" ? "Make private" : "Make public to organization", systemImage: item.scope == "workspace" ? "lock" : "globe")
             }
             Button {
                 Task { await model.pin(item) }
@@ -197,7 +197,7 @@ struct WorkstreamRow: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .accessibilityLabel(item.title)
-        .accessibilityHint("Shows substreams in this work stream")
+        .accessibilityHint("Shows breakouts in this channel")
     }
 
     private static func listTime(_ raw: String) -> String {

@@ -55,14 +55,14 @@ struct SubstreamListScreen: View {
             case .awaitingChildren:
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Loading substreams")
+                    Text("Loading breakouts")
                         .font(RallyType.bodySmall())
                         .foregroundStyle(colors.textSecondary)
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Loading substreams")
+                .accessibilityLabel("Loading breakouts")
             case .directory:
                 ForEach(model.displayedChildren) { child in
                     row(
@@ -99,13 +99,13 @@ struct SubstreamListScreen: View {
             Button {
                 model.startSubstream(throughTurnId: nil)
             } label: {
-                Label("New substream", systemImage: "plus")
+                Label("New breakout", systemImage: "plus")
                     .font(RallyType.conversationTitle())
                     .foregroundStyle(colors.textPrimary)
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
-            .accessibilityLabel("New substream")
+            .accessibilityLabel("New breakout")
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -164,15 +164,15 @@ struct SubstreamListScreen: View {
     }
 
     private var archiveTitle: String {
-        if case .child = archiveTarget { return "Archive substream" }
-        return "Archive work stream"
+        if case .child = archiveTarget { return "Archive breakout" }
+        return "Archive channel"
     }
 
     private var archiveMessage: String {
         if case .child = archiveTarget {
-            return "This substream will leave the list. You can still open a link to it."
+            return "This breakout will leave the list. You can still open a link to it."
         }
-        return "This work stream will leave History."
+        return "This channel will leave History."
     }
 
     @ViewBuilder
@@ -181,7 +181,7 @@ struct SubstreamListScreen: View {
             Button {
                 Task { await model.setScope(workstream, scope: "workspace") }
             } label: {
-                Label("Make public to workspace", systemImage: "globe")
+                Label("Make public to organization", systemImage: "globe")
             }
             .disabled(workstream.scope == "workspace")
         }
@@ -194,12 +194,12 @@ struct SubstreamListScreen: View {
         Button {
             model.copyConversationLink(substreamId: SubstreamAddress.main)
         } label: {
-            Label("Copy work stream link", systemImage: "link")
+            Label("Copy channel link", systemImage: "link")
         }
         Button(role: .destructive) {
             archiveTarget = .main
         } label: {
-            Label("Archive work stream", systemImage: "archivebox")
+            Label("Archive channel", systemImage: "archivebox")
         }
     }
 
@@ -214,12 +214,12 @@ struct SubstreamListScreen: View {
         Button {
             model.copyConversationLink(substreamId: child.substreamId)
         } label: {
-            Label("Copy substream link", systemImage: "link")
+            Label("Copy breakout link", systemImage: "link")
         }
         Button(role: .destructive) {
             archiveTarget = .child(child)
         } label: {
-            Label("Archive substream", systemImage: "archivebox")
+            Label("Archive breakout", systemImage: "archivebox")
         }
     }
 
@@ -292,7 +292,7 @@ struct SubstreamLaunchView: View {
                     if model.isCreatingSubstream {
                         HStack(spacing: 10) {
                             ProgressView()
-                            Text("Starting substream")
+                            Text("Starting breakout")
                                 .font(RallyType.bodySmall())
                                 .foregroundStyle(colors.textSecondary)
                         }
@@ -319,7 +319,7 @@ struct SubstreamLaunchView: View {
                 onAttach: { data, name, mime in model.attach(data: data, fileName: name, mimeType: mime) },
                 onRemoveAttachment: { model.removeAttachment($0) },
                 onVoice: { model.isVoicePresented = true },
-                placeholder: "Start a substream",
+                placeholder: "Start a breakout",
                 isDisabled: model.isCreatingSubstream
             )
         }

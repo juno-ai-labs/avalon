@@ -11,7 +11,7 @@ struct SidekicksScreen: View {
                     ContentUnavailableView(
                         "No Sidekicks",
                         systemImage: "hexagon",
-                        description: Text("Sidekicks in this workspace will show up here.")
+                        description: Text("Sidekicks in this organization will show up here.")
                     )
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
