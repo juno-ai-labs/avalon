@@ -60,7 +60,6 @@ import {
   SpaceSummarySchema as WireSpaceSummarySchema,
   type ChannelAccess,
   type CreateSpaceRequest,
-  type SpaceChannelPage,
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceSummary,
@@ -1272,12 +1271,20 @@ export class RallyApi {
    * payload carries a count instead. The cursor is opaque — the ordering is the
    * authority's.
    */
-  listSpaceChannels(spaceId: string, cursor: string | null, signal?: AbortSignal): Promise<SpaceChannelPage> {
+  async listSpaceChannels(
+    spaceId: string,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
     const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
-    return this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
+    const page = await this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
       schema: WireSpaceChannelPageSchema,
       ...(signal ? { signal } : {}),
     });
+    // Through the same mapper every other Channel row goes through, so a
+    // placement on the dashboard and the same Channel in the sidebar are one
+    // shape rather than two that drift.
+    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
   }
 
   addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {

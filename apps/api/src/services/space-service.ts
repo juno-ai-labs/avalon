@@ -6,6 +6,7 @@ import {
   asWorkspaceId,
   SpaceChannelPageSchema,
   SpaceDirectorySchema,
+  SpaceRefusalDetailsSchema,
   SpaceSummarySchema,
   type CreateSpaceRequest,
   type SpaceChannelPage,
@@ -60,11 +61,21 @@ import { WorkstreamObjectClient } from "./workstream-object-client";
  * Channel cannot be archived when they asked to archive a Space is worse than
  * having two tables.
  */
-export function spaceRefusal(code: SpaceErrorCode, spaceName: string, unreachable: readonly UserId[] = []): ApiError {
+export function spaceRefusal(
+  code: SpaceErrorCode,
+  spaceName: string,
+  unreachable: readonly UserId[] = [],
+  blockedChannelIds: readonly WorkstreamId[] = [],
+): ApiError {
   // Named when the caller has the name in hand and "this Space" when it does
   // not, rather than rendering an empty pair of quotation marks: a refusal that
   // says “” about a Space is worse than one that does not name it.
   const subject = spaceName.trim().length > 0 ? `“${spaceName.trim()}”` : "this Space";
+  // Carried on the two refusals that are about a Channel, so a confirmation can
+  // name what has to move first instead of asking the person to find it.
+  const details = blockedChannelIds.length > 0
+    ? SpaceRefusalDetailsSchema.parse({ channelIds: [...blockedChannelIds] })
+    : undefined;
   switch (code) {
     case "space_access_denied":
       return new ApiError(403, code, "You cannot change this Space");
@@ -74,10 +85,11 @@ export function spaceRefusal(code: SpaceErrorCode, spaceName: string, unreachabl
       return new ApiError(409, code, "General cannot be archived or made private");
     case "space_membership_final":
       return new ApiError(409, code,
-        `A Channel in ${subject} belongs to no other Space, so it would have no home`);
+        `A Channel in ${subject} belongs to no other Space, so it would have no home`, details);
     case "space_audience_incompatible":
       return new ApiError(409, code,
-        `Leaving ${subject} would leave ${unreachable.length || "some"} of its readers unable to find the Channel in any Space they can see`);
+        `Leaving ${subject} would leave ${unreachable.length || "some"} of its readers unable to find the Channel in any Space they can see`,
+        details);
     case "space_membership_content_fence":
       return new ApiError(409, code,
         "A Channel holds retained content this audience cannot view");
@@ -491,7 +503,9 @@ export class SpaceService {
       kind,
       targetId,
     }));
-    if (!result.ok) throw spaceRefusal(result.code, space.name, result.unreachableUserIds);
+    if (!result.ok) {
+      throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
+    }
     return result.space;
   }
 
@@ -810,7 +824,9 @@ export class SpaceService {
 
   private settled(result: WorkspaceSpaceMutationResult, spaceName: string): SpaceSummary {
     const parsed = WorkspaceSpaceMutationResultSchema.parse(result);
-    if (!parsed.ok) throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds);
+    if (!parsed.ok) {
+      throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds, parsed.blockedWorkstreamIds);
+    }
     return SpaceSummarySchema.parse(parsed.space);
   }
 
@@ -819,7 +835,9 @@ export class SpaceService {
     spaceName: string,
   ): Extract<WorkspaceSpaceMembershipPlanResult, { ok: true }> {
     const parsed = WorkspaceSpaceMembershipPlanResultSchema.parse(result);
-    if (!parsed.ok) throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds);
+    if (!parsed.ok) {
+      throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds, parsed.blockedWorkstreamIds);
+    }
     return parsed;
   }
 

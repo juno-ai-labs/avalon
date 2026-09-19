@@ -5259,6 +5259,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-dashboard-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
 .space-dashboard-header p,
 .space-dashboard-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
+.space-dashboard-blocked-channels { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 0 0; padding-left: 18px; }
 .space-dashboard-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding: 24px 0 32px; }
 .space-dashboard-section-heading { align-items: center; display: flex; justify-content: space-between; }
 .space-dashboard-section-heading h2 { font-size: 16px; margin: 0; }
