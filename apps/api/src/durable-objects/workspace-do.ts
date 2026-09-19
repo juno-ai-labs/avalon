@@ -6161,11 +6161,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
     if (refusal) return { ok: false, code: refusal };
-    const workstreamIds = this.spaceStorage()
-      .memberWorkstreamIds(request.userId, request.spaceId, request.reach);
-    return WorkspaceSpaceMembersResultSchema.parse(workstreamIds === false
+    const members = this.spaceStorage().members(request.userId, request.spaceId, request.reach);
+    return WorkspaceSpaceMembersResultSchema.parse(members === false
       ? { ok: false, code: "space_not_found" }
-      : { ok: true, workstreamIds });
+      : { ok: true, members });
   }
 
   /** The active Spaces one Channel currently sits in. */
