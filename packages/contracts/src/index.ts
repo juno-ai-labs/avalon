@@ -5,6 +5,8 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
+export * from "./conversation-attention";
+import { HarnessStatusSchema } from "./conversation-attention";
 export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
@@ -132,15 +134,6 @@ export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
 export type UserId = z.infer<typeof UserIdSchema>;
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
 export const ScopeSchema = z.enum(["personal", "workspace"]);
-export const HarnessStatusSchema = z.enum([
-  "scheduled",
-  "running",
-  "needs_input",
-  "completed",
-  "failed",
-  "stopped",
-  "idle"
-]);
 export const HarnessFailureCodeSchema = z.enum([
   "run_wall_time_limit_exceeded",
   "run_iteration_limit_exceeded",
@@ -1048,17 +1041,67 @@ export const ElicitationSchema = z.object({
 });
 
 /**
- * One page of the Channels a Space holds.
+ * One conversation on a Space's dashboard: a Channel, or one of a Channel's
+ * breakouts.
  *
- * The same `Workstream` rows the Channel directory serves, shaped for the
- * viewer: General holds every Channel in the Organization, so this is the one
- * Space read that cannot ride the workspace socket. It answered bare ids
- * first, which made the Space dashboard able to name only the Channels that
- * happened to be in the device's loaded directory page and say nothing about
- * the rest — and a second read per id would have been a round trip per row.
+ * Both kinds are `WorkstreamSchema` plus two fields, rather than a union,
+ * because the dashboard draws them as one row type: the same status dot, the
+ * same title, the same activity time, in one list ordered by activity. A union
+ * would have made every one of those a branch, and the difference between the
+ * kinds is two facts and a destination.
  *
- * It lives here rather than in `spaces.ts` because a page of Channels is made
- * of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
+ * `id` is the *conversation's* id, which is the Channel id for a Channel and
+ * the substream id for a breakout. That is what makes the list keyable and the
+ * cursor total; `breakoutOf` carries the addressing a breakout needs on top —
+ * its parent Channel, its substream id again (checked equal to `id`, so the
+ * two can never drift) and the parent's title, which the row prints so a
+ * breakout is not a name with no context.
+ */
+export const SpaceConversationSchema = WorkstreamSchema.extend({
+  kind: z.enum(["channel", "breakout"]),
+  /** Non-null on exactly the breakouts. */
+  breakoutOf: z.strictObject({
+    workstreamId: IdSchema,
+    substreamId: IdSchema,
+    title: z.string().min(1).max(180),
+  }).nullable().default(null),
+}).superRefine((conversation, context) => {
+  if ((conversation.kind === "breakout") !== (conversation.breakoutOf !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["breakoutOf"],
+      message: "A breakout carries its parent Channel and a Channel carries none",
+    });
+  }
+  if (conversation.breakoutOf && conversation.breakoutOf.substreamId !== conversation.id) {
+    context.addIssue({
+      code: "custom",
+      path: ["breakoutOf", "substreamId"],
+      message: "A breakout's id is its substream id",
+    });
+  }
+});
+export type SpaceConversation = z.infer<typeof SpaceConversationSchema>;
+
+/**
+ * One page of the conversations a Space currently needs this viewer for.
+ *
+ * The route is still `GET /spaces/:id/channels` and this is still the answer
+ * to it, but what it answers is *conversations*: the Space's member Channels
+ * and those Channels' breakouts in one list, newest activity first, with
+ * everything that is stale for this viewer left out entirely
+ * (`conversationNeedsViewer`). The name is kept because the route is, and
+ * renaming a shipped path to describe its payload buys a reader nothing.
+ *
+ * The same rows the Channel directory serves, shaped for the viewer: General
+ * holds every Channel in the Organization, so this is the one Space read that
+ * cannot ride the workspace socket. It answered bare ids first, which made the
+ * Space dashboard able to name only the Channels that happened to be in the
+ * device's loaded directory page and say nothing about the rest — and a second
+ * read per id would have been a round trip per row.
+ *
+ * It lives here rather than in `spaces.ts` because a page of conversations is
+ * made of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
  * imported by it and cannot import back.
  *
  * Opaque cursor: the ordering is the authority's, and a client that could
@@ -1067,7 +1110,7 @@ export const ElicitationSchema = z.object({
  * not read is dropped after the page is taken.
  */
 export const SpaceChannelPageSchema = z.strictObject({
-  items: z.array(WorkstreamSchema),
+  items: z.array(SpaceConversationSchema),
   nextCursor: z.string().min(1).nullable(),
 });
 export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
@@ -3593,7 +3636,6 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 
 export type Region = z.infer<typeof RegionSchema>;
 export type Scope = z.infer<typeof ScopeSchema>;
-export type HarnessStatus = z.infer<typeof HarnessStatusSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
