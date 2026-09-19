@@ -3695,3 +3695,91 @@ describe('a background worker starting and ending', () => {
     ]);
   });
 });
+
+describe('counted rows and the plugin run behind them', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+
+  it('does not count a send that failed as a message delivered', () => {
+    const send = (id: string, status: 'completed' | 'failed'): Message => row(id, {
+      messageType: 'tool_event',
+      toolEvent: {
+        id, toolCallId: id, name: 'send_message', status, durationMs: 300,
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      },
+    });
+
+    const grouped = groupPluginToolMessages([send('ok', 'completed'), send('lost', 'failed')])
+      .filter((message) => message.pluginActivity);
+
+    // The host counts only completed and ambiguous effects as a hand-off, so a
+    // run whose send failed is told its worker finished without replying. A
+    // feed claiming the message was sent would contradict that two rows later.
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '1 message sent to a background agent',
+      'Used Background agents',
+    ]);
+  });
+
+  it('drops the plugin run whose every call moved to a counted row, and keeps a mixed one', () => {
+    const snapshotFor = (toolNames: readonly string[]): WorkstreamTranscriptSnapshot => {
+      const blocks = toolNames.map((toolName, index) => ({
+        type: 'tool' as const, blockId: `block-${index}`, blockIndex: index,
+        toolCallId: `call-${index}`, pluginId: 'avalon:agents', toolName, callIndex: index,
+        status: 'completed' as const, participantSafeInput: null, participantSafeResult: null,
+        error: null, activityId: null,
+      }));
+      const turn = {
+        transcriptSequence: 1, turnId: 'turn-one', entryKind: 'conversation' as const,
+        actor: 'assistant' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+        createdAtUtc: createdAt, revision: 1, blocks, activityId: 'turn-activity',
+      };
+      return {
+        snapshotId: 'runs', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: createdAt,
+        unreadAnchorSequence: null, unreadReason: 'no_unread',
+        ranges: [{
+          purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+          covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [],
+        }],
+        // The server's own aggregate for the whole plugin, which is keyed on
+        // the plugin id and therefore survives rerouting the blocks.
+        pluginRuns: [{
+          pluginRunId: 'run-agents', turnId: 'turn-one', pluginId: 'avalon:agents',
+          displayName: 'Background agents', state: 'completed' as const,
+          durationMs: 1_400, elapsedMsAtSnapshot: null, timingAccuracy: 'observed' as const,
+          toolCallIds: blocks.map((block) => block.toolCallId),
+        }],
+        activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      };
+    };
+
+    // The verb and the time separately: `AgentWorkTiming` assembles the label
+    // from the two, so the duration is never in `completedVerb`.
+    const rows = (toolNames: readonly string[]) =>
+      groupPluginToolMessages(orderedTranscriptMessages(snapshotFor(toolNames), 'workstream-one'))
+        .filter((message) => message.pluginActivity)
+        .map((message) => [message.pluginActivity?.completedVerb, message.pluginActivity?.durationMs]);
+
+    // Every call moved, so the aggregate stands for nothing left in the feed.
+    // Left in, it puts the row this change removes back beside its replacement,
+    // with the server's whole 1.4s on it.
+    expect(rows(['send_message', 'start_agent'])).toEqual([
+      ['1 message sent to a background agent', null],
+      ['1 background agent started', null],
+    ]);
+    // A call stayed, so the plugin's own stretch is still worth a row, and it
+    // still reports the stretch the server timed.
+    expect(rows(['send_message', 'list_agents'])).toEqual([
+      ['1 message sent to a background agent', null],
+      ['Used Background agents', 1_400],
+    ]);
+  });
+});

@@ -618,6 +618,30 @@ export function orderedTranscriptMessages(
     // own id is the fallback, which is what positioning used before runs
     // existed. Without it such a row has nowhere to sit and is dropped.
     const calls = new Set(run.toolCallIds);
+    // A run whose every call now has a counted row of its own has nothing left
+    // to aggregate, and printing it anyway puts the exact row this change
+    // removes — "Used Background agents for 1s" — back beside the row that
+    // replaced it. The server reports the run for the whole plugin; rerouting
+    // the blocks alone left it behind, because it is keyed on the plugin id
+    // rather than on the calls.
+    //
+    // A run with calls left keeps its row: it is the plugin's own stretch, gaps
+    // and all, which is what a plugin row has always reported, and it remains
+    // true that Rally worked there. It does then carry the rerouted calls'
+    // share of the time, which is not separable — the server times the plugin,
+    // not the calls — and is the same approximation every plugin row makes.
+    //
+    // A run with no `toolCallIds` cannot answer the question, and a run whose
+    // blocks have not all arrived can answer it only for the ones that have.
+    // Both keep the row: dropping one on an unknown would take a real row out
+    // of the feed, which is the worse of the two failures.
+    const runBlocks = lastTurn.blocks.filter((block) => block.type === 'tool' && calls.has(block.toolCallId));
+    if (calls.size > 0
+      && runBlocks.length === calls.size
+      && runBlocks.every((block) => block.type === 'tool'
+        && countedGroupForToolCall(block.toolName, block.status) !== null)) {
+      continue;
+    }
     const anchored = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
       && (calls.size > 0 ? calls.has(block.toolCallId) : block.pluginId === run.pluginId)
       ? [block.blockIndex]
@@ -1157,6 +1181,40 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
 }
 
 /**
+ * The counted group a tool call belongs to instead of its plugin's row, or
+ * null when it stays on that row.
+ *
+ * One function because two places ask the same question and must not answer it
+ * differently: the contribution that builds the counted row, and the plugin
+ * run that must not *also* print an aggregate for calls it no longer stands
+ * for. Two copies of this test would disagree the first time a status rule
+ * moved, and the symptom would be a duplicated row rather than a type error.
+ *
+ * It takes both status vocabularies — the projected one and the raw block's —
+ * because the two callers hold different ones, and the rule is about the call
+ * rather than about which of them is asking.
+ *
+ * A call that failed did not send a message or start a worker, so it is not
+ * one of the things these rows count, and it falls back to the plugin row,
+ * which says only that Rally reached for the plugin and is still true. That
+ * matters beyond tidiness for a send: the host counts only completed and
+ * ambiguous effects as a hand-off, so a run whose only send failed is told its
+ * worker finished without replying — and a feed that had already claimed the
+ * message was sent would be contradicting itself two rows later. `ambiguous`
+ * counts, on the same authority: a write whose confirmation was lost most
+ * likely landed.
+ */
+function countedGroupForToolCall(
+  name: string | undefined,
+  status: ToolEventData['status'] | 'planned' | 'cancelled',
+): PluginGroup | null {
+  if (status === 'failed' || status === 'cancelled') return null;
+  if (isAgentMessageSendWireName(name)) return AGENT_MESSAGES_OUTBOUND_GROUP;
+  if (isAgentStartWireName(name)) return AGENT_WORKERS_STARTED_GROUP;
+  return null;
+}
+
+/**
  * One contribution to a counted group, before the run knows its total.
  *
  * The count is 1 and the duration is null on every one of them: the row this
@@ -1197,30 +1255,18 @@ function pluginGroupContribution(message: Message): {
   }
   const tool = message.toolEvent;
   if (!tool) return null;
-  // Ahead of the plugin lookup, because these two calls belong to their own
-  // subject rather than to the plugin that carries them: `avalon:agents` also
-  // owns `start_agent`, `list_agents` and `stop_agent`, which really are the
-  // reader using a plugin and keep the Background agents row. Folding all seven
-  // together is what produced "Used Background agents for 1s" over a second
-  // that contained two messages — a duration standing in for a count nobody
-  // could see.
-  if (isAgentMessageSendWireName(tool.name)) {
+  // Ahead of the plugin lookup, because these calls belong to their own subject
+  // rather than to the plugin that carries them: `avalon:agents` also owns
+  // `list_agents`, `stop_agent`, `sidekicks_list` and `create_sidekick`, which
+  // really are the reader using a plugin and keep the Background agents row.
+  // Folding all seven together is what produced "Used Background agents for 1s"
+  // over a second that contained two messages — a duration standing in for a
+  // count nobody could see.
+  const counted = countedGroupForToolCall(tool.name, tool.status);
+  if (counted) {
     return {
-      key: AGENT_MESSAGES_OUTBOUND_GROUP.key,
-      activity: countedActivity(AGENT_MESSAGES_OUTBOUND_GROUP, tool.status === 'started'),
-      authoritativeDuration: false,
-    };
-  }
-  // A start that failed started nothing, so it is not one of the workers this
-  // row counts; it falls through to the Background agents plugin row, which
-  // says only that Rally used that plugin and is still true. `ambiguous` counts
-  // for the reason the host counts it as a handoff: a write whose confirmation
-  // was lost most likely landed, and reporting the worker as never started
-  // would invite the reader to conclude the work was dropped.
-  if (isAgentStartWireName(tool.name) && tool.status !== 'failed') {
-    return {
-      key: AGENT_WORKERS_STARTED_GROUP.key,
-      activity: countedActivity(AGENT_WORKERS_STARTED_GROUP, tool.status === 'started'),
+      key: counted.key,
+      activity: countedActivity(counted, tool.status === 'started'),
       authoritativeDuration: false,
     };
   }

@@ -161,12 +161,19 @@ wire name, ahead of the plugin lookup:
 | `send_message`, `reply_to_message` | **messages sent to a background agent** | **mail-ai** |
 | `start_agent` | **background agents started** | **stack-backward** |
 
-A `start_agent` that failed started nothing and is not one of the workers that
-row counts, so it falls back to the Background agents plugin row, which says
-only that Rally used the plugin and is still true. An `ambiguous` one counts,
-for the reason the host counts it as a handoff: a write whose confirmation was
-lost most likely landed, and reporting the worker as never started would invite
-the reader to conclude the work was dropped.
+A call that **failed** did none of those things, so it is not one of the things
+those rows count and falls back to the Background agents plugin row, which says
+only that Rally used the plugin and is still true. `countedGroupForToolCall` is
+that rule, and is deliberately the only copy of it — two places ask, and the
+symptom of their disagreeing is a duplicated row rather than a type error.
+
+For a send this matters beyond tidiness. The host counts only `completed` and
+`ambiguous` effects as a hand-off, so a run whose only send failed is told its
+worker *finished without replying*; a feed that had already claimed the message
+was sent would be contradicting itself two rows later. `ambiguous` counts, on
+the same authority: a write whose confirmation was lost most likely landed, and
+reporting the worker as never started would invite the reader to conclude the
+work was dropped.
 
 Three more rows come in the other direction, from a `system` block whose
 structured content is `AGENT_MESSAGE_CONTENT_KIND`. Which one it is depends on
@@ -465,6 +472,16 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   timer is never part of that total — it is the whole response, not a step in
   it, and summing it into a turn's thinking would double-count it and put it out
   of reach of `foldSettledWorkIntoMessages`.
+- **A plugin run whose every call was rerouted prints no row.** The server
+  reports one aggregate per plugin per turn, keyed on the plugin id, and it
+  survives rerouting the blocks underneath it: without this, a turn whose only
+  `avalon:agents` calls were sends rendered "1 message sent to a background
+  agent" *and* "Used Background agents for 1s" — the row this feature removes,
+  back beside its own replacement, wearing the whole duration. A run with a
+  call left keeps its row, because that row is the plugin's own stretch, gaps
+  and gone-elsewhere calls alike, which is what a plugin row has always
+  reported. A run with no `toolCallIds`, or whose blocks have not all arrived,
+  also keeps it: dropping a row on an unknown is the worse of the two failures.
 - **A counted row reports no interval, and that is not the same as an unknown
   one.** A message is an event rather than a stretch of work, and
   `send_message` returns at once by contract, so a counted row carries no
@@ -728,6 +745,12 @@ both stop closing the plugin run around them, because a message arriving is not
 something a person read. `PluginGroup` gained `countPhrase` and
 `PluginActivityData` gained `count`; `AGENT_MESSAGE_CONTENT_KIND` and
 `isAgentMessageSendWireName` are in `@rally/contracts`.
+
+A call that failed sent nothing and started nothing, so it keeps the plugin
+row; `countedGroupForToolCall` holds that rule for both the contribution and
+the aggregate-run check, and the aggregate run itself is dropped when every one
+of its calls was rerouted, which is what stops the old row reappearing beside
+the new one.
 
 The worker's own life got rows too: `start_agent` reads "2 background agents
 started", and the host's two settlement notices — which travelled the ordinary
