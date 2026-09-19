@@ -554,10 +554,12 @@ restates the browser's own `disc → circle → square` progression, counting de
 in list ancestors of either kind so that an `ol` holding a `ul` is a second level.
 
 Every paint in that group is a substitution rather than a token reference:
-`.markdown-body` declares a dozen rule-local properties — `--markdown-ink` and
-its quieter steps, `--markdown-wash`, `--markdown-surface`, `--markdown-rule`,
-`--markdown-quote-bar`, `--markdown-border`, and the two link roles — from the
-appearance's own tokens, and every element rule reads one of those.
+`.markdown-body` declares its rule-local properties — `--markdown-ink` and its
+quieter steps, `--markdown-wash`, `--markdown-surface`, `--markdown-rule`,
+`--markdown-quote-bar`, `--markdown-border`, the two link roles, and the two
+GFM affordances that are painted without being text, `--markdown-mark` for a
+task box's tick and `--markdown-scrollbar-thumb` for the bar under a wide table
+— from the appearance's own tokens, and every element rule reads one of those.
 
 The indirection is there because not every markdown surface sits on the
 appearance's canvas. A person's turn is drawn on a filled bubble, near-black by
@@ -955,9 +957,11 @@ than reimplementing the lifetime.
 ### 2026-09-19 — Markdown paint is a group a filled surface re-points
 
 **What changed:** Every colour in the `.markdown-body` group is now a
-substitution. `.markdown-body` declares a dozen rule-local `--markdown-*`
+substitution. `.markdown-body` declares fourteen rule-local `--markdown-*`
 properties from the same appearance tokens the element rules used to name
-directly, and each rule reads one of them. `.human-message-bubble .markdown-body`
+directly — including the two that are painted without being text, a task box's
+`accent-color` and the thumb under a wide table — and each rule reads one of
+them. `.human-message-bubble .markdown-body`
 re-points all of them, plus the ten `syntax` roles `markdownCodeTheme` hands the
 highlighter, as percentages of `currentColor` — the bubble's own ink. The two
 rules that forced `p`, `strong`, `em`, `code` and `a` to the bubble's foreground
@@ -989,7 +993,11 @@ read rather than worked on, so it is reduced to the bubble's ink at three
 strengths, where comments recede and punctuation sits between.
 
 **Consequences:** A new element rule in this group names a `--markdown-*`
-property, not a token, or it is wrong on the first filled surface it reaches. A
+property, not a token, or it is wrong on the first filled surface it reaches.
+The two easiest to miss were missed in review of this change and are the shape
+to look for: neither the task box nor the table scroller is text, and a paint
+that is not a colour on a text rule — an `accent-color`, a scrollbar variable —
+does not read as paint at a glance. A
 role added to the group has to be re-pointed in the bubble's block, and a role
 added to `markdownCodeTheme` too; `app.css.node.test.ts` compares both sets of
 names and fails when one runs ahead. Highlighting inside a person's bubble is

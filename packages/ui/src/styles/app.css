@@ -3342,6 +3342,8 @@ pre {
   --markdown-border: var(--av-sys-color-border-subtle);
   --markdown-link: var(--av-sys-color-accent-soft);
   --markdown-link-hover: var(--av-sys-color-accent-strong);
+  --markdown-mark: var(--av-sys-color-accent-base);
+  --markdown-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb);
   color: var(--markdown-ink);
   font-size: var(--av-sys-font-size-prose);
   line-height: var(--av-sys-font-leading-prose);
@@ -3792,7 +3794,7 @@ pre {
    marker rules' one, so it survives them. */
 .markdown-body .contains-task-list { list-style: none; padding-left: var(--space-1); }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: var(--space-2); }
-.markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
+.markdown-body .task-list-item > input { accent-color: var(--markdown-mark); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
 .markdown-inline-code { background: var(--markdown-wash); border-radius: var(--av-sys-size-radius-sm); color: var(--markdown-ink); font-size: 0.88em; padding: 2px var(--space-1); }
 .markdown-code-block { background: var(--markdown-surface); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
 .markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--markdown-border); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
@@ -3812,7 +3814,19 @@ pre {
 .markdown-body blockquote { border-left: 2px solid var(--markdown-quote-bar); color: var(--markdown-ink-quiet); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: var(--markdown-rule); border: 0; height: 1px; margin: var(--space-6) 0; }
-.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: var(--space-4) -2px; overflow-x: auto; }
+/* A wide table is the one markdown element that brings its own scrollbar, and
+   the shared `::-webkit-scrollbar-thumb` paints it from the window's ramp: in
+   the dark appearance that is `#2f2f2f` on a `#070707` bubble, a bar a reader
+   cannot see on the surface that most often needs one. The thumb joins the
+   paint group so it follows its surface like everything else.
+
+   The `--tw-fade-scrollbar-thumb`/`-width` pair that used to sit here went with
+   it. No Tailwind plugin is configured in this repository and nothing reads
+   either name, so they painted nothing — while reading exactly like the
+   declaration that did, which is how a review of this change came to look for
+   the thumb's colour in them. */
+.markdown-table-scroll { margin: var(--space-4) -2px; overflow-x: auto; }
+.markdown-table-scroll::-webkit-scrollbar-thumb { background: var(--markdown-scrollbar-thumb); }
 .markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
 .markdown-body td { background: var(--markdown-surface); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
@@ -5549,6 +5563,17 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   --markdown-border: color-mix(in srgb, currentColor 16%, transparent);
   --markdown-link: currentColor;
   --markdown-link-hover: currentColor;
+  /* GFM's own two painted affordances, and the pair most easily missed because
+     neither is text. A ticked task box carries `accent-color`, which is the
+     *reader's* personal accent — a colour chosen against the window, with no
+     relationship to the fill the sender picked, so the two can be the same one
+     and the box disappears into it. The thumb under a wide table is worse than
+     arbitrary: in the dark appearance it is `#2f2f2f` against a `#070707`
+     bubble, which is a scroll affordance a reader cannot see on the one surface
+     whose width most often needs it. Both become the bubble's ink, and the
+     tick's own glyph is the user agent's to contrast. */
+  --markdown-mark: currentColor;
+  --markdown-scrollbar-thumb: color-mix(in srgb, currentColor 38%, transparent);
   /* The highlighter's palette reaches the markup as inline references to the
      `syntax` token group, tuned for the appearance's own code surface, so it
      fails here the way the chip did: in the light appearance `syntax-plain` is
