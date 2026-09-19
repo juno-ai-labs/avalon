@@ -618,7 +618,7 @@ describe("the Space cutover", () => {
     void unplaced;
   });
 
-  it("reopens a finished cutover when a directory row arrives for a Channel in no Space", async () => {
+  it("reopens a finished cutover when a Channel it already holds projects from no Space", async () => {
     await createChannel("already-placed");
     await forgetSpaces();
     await runWholeCutover();
@@ -627,12 +627,12 @@ describe("the Space cutover", () => {
     // The event nothing noticed. Every creation path places the Channel it
     // makes, and the cutover places every Channel that predates them — but a
     // directory row is committed by this handoff, and a `complete`
-    // Organization is never walked again, so a Channel that arrives here
-    // unplaced would stay homeless with `spacesReady` still saying the
-    // hierarchy is renderable. A real Channel, taken back out of every Space,
-    // because the walk that has to repair this reads the conversation's own
-    // audience and the participants who may act on it.
-    const homeless = await createChannel("arrives-unplaced");
+    // Organization is never walked again, so a Channel that projects from no
+    // Space would stay homeless with `spacesReady` still saying the hierarchy
+    // is renderable. A real Channel, taken back out of every Space, because
+    // the walk that has to repair this reads the conversation's own audience
+    // and the participants who may act on it.
+    const homeless = await createChannel("left-unplaced");
     await forgetMembership(homeless);
     expect((await bootstrapRow()).phase).toBe("complete");
 
@@ -669,12 +669,40 @@ describe("the Space cutover", () => {
 
     // And a system Channel, which the hierarchy invariant is not about: the
     // subsystem that writes it decides both its audience and its home, and the
-    // close's own predicate excludes it by `system_kind`.
-    await deliverDirectoryCommon({
-      workstreamId: asWorkstreamId("00000000-0000-7000-8000-000000000de2"),
-      title: "Daily digest",
-      systemKind: "digest",
-    });
+    // close's own predicate excludes it by `system_kind`. Delivered twice, so
+    // what is under test here is that exclusion: a system Channel's *first*
+    // row is an arrival, which the case below leaves alone whatever the
+    // predicate says, and only its second projection reaches the predicate at
+    // all.
+    const digest = asWorkstreamId("00000000-0000-7000-8000-000000000de2");
+    await deliverDirectoryCommon({ workstreamId: digest, title: "Daily digest", systemKind: "digest" });
+    await deliverDirectoryCommon({ workstreamId: digest, title: "Daily digest v2", systemKind: "digest" });
+    expect((await directoryRow(digest))?.title).toBe("Daily digest v2");
+    expect((await bootstrapRow()).phase).toBe("complete");
+    expect(await spacesReadyOnSnapshot()).toBe(true);
+  });
+
+  it("leaves a finished cutover alone for a Channel arriving in the directory", async () => {
+    await createChannel("already-placed");
+    await forgetSpaces();
+    await runWholeCutover();
+
+    // A Channel's *first* common row is a creation in flight, not a Channel
+    // nobody is going to place. `reserveChild` enqueues that row before either
+    // creation path has placed anything, and the Channel authority's own
+    // recovery alarm delivers it straight to this handoff when it wins the
+    // race with the coordinator's flush. On a connector path the reservation
+    // comes before the placement and the conversation is provisioned in
+    // between, so that alarm has the whole window: a guard that fired on an
+    // arrival took `spacesReady` away from every member's sidebar on every run
+    // of the ordinary Slack creation, which `space-creation.test.ts` pins from
+    // the other side. The Channel's
+    // next common projection is what asks the question, by which time its
+    // creation has either placed it or failed.
+    const arriving = asWorkstreamId("00000000-0000-7000-8000-000000000de3");
+    await deliverDirectoryCommon({ workstreamId: arriving, title: "Arriving now" });
+
+    expect((await directoryRow(arriving))?.title).toBe("Arriving now");
     expect((await bootstrapRow()).phase).toBe("complete");
     expect(await spacesReadyOnSnapshot()).toBe(true);
   });

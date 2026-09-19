@@ -2047,12 +2047,13 @@ export class WorkspaceSpaceStorage {
    * Organization permanently one short of complete.
    *
    * `workstreamIds` narrows the same question to a named set, which is what the
-   * directory handoff's guard asks about the Channels one batch just committed.
-   * One SQL text deliberately: the close and the guard have to mean the same
-   * thing by "outside every Space", and a second query written to the same
-   * description is how the two come to disagree about a system Channel or a
-   * `joining` membership. `json_each` rather than a placeholder list because a
-   * batch has no bound on its size.
+   * directory handoff's guard asks about the Channels one batch projected that
+   * the Organization was already holding. One SQL text deliberately: the close
+   * and the guard have to mean the same thing by "outside every Space", and a
+   * second query written to the same description is how the two come to
+   * disagree about a system Channel or a `joining` membership. `json_each`
+   * rather than a placeholder list so that stays one text whatever the caller
+   * passes.
    */
   unplacedChannelExists(workstreamIds?: readonly string[]): boolean {
     if (!this.ready()) return false;
