@@ -37,7 +37,14 @@ function disposeRpcCallback(callback: unknown): void {
   if (typeof dispose === "function") dispose.call(callback);
 }
 
-class TerminalProviderSessionTarget extends RpcTarget implements TerminalProviderRpcSession {
+/**
+ * Exported for `terminal-provider-session-target.test.ts`, which drives every
+ * method against an injected provider. Each one has to hand its own callbacks
+ * to `terminalProviderRpcCall` for a measurement to reach the caller, and
+ * omitting that on one method is both the likeliest slip here and invisible:
+ * the method still works and only its instrumentation goes quiet.
+ */
+export class TerminalProviderSessionTarget extends RpcTarget implements TerminalProviderRpcSession {
   private readonly provider: DaytonaTerminalProvider;
   private readonly observe: TerminalProviderRpcInstrumentation["observe"];
 
@@ -45,11 +52,12 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
     ctx: ExecutionContext,
     configuration: SupportedTerminalConfiguration,
     instrumentation?: TerminalProviderRpcInstrumentation,
+    provider?: DaytonaTerminalProvider,
   ) {
     super();
     this.observe = retainRpcCallback(instrumentation?.observe);
     const observe = this.observe;
-    this.provider = createDaytonaTerminalProvider(configuration, undefined, {
+    this.provider = provider ?? createDaytonaTerminalProvider(configuration, undefined, {
       // A lifecycle observation needs nothing but the caller's environment, so
       // it can outlive the call that produced it.
       ...(observe ? {

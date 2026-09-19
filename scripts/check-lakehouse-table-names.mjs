@@ -44,6 +44,15 @@ export async function lakehouseTables(directory = 'config') {
 
 const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
 
+/**
+ * The quote characters an identifier may wear. ANSI uses `"`, and the two
+ * dialect forms are here because the check's job is to *notice* a reference,
+ * not to police syntax: a quoting style it cannot see is a query that names
+ * the wrong table and passes.
+ */
+const OPEN_QUOTE = '["`\\[]?';
+const CLOSE_QUOTE = '["`\\]]?';
+
 /** A manifest name is an identifier today; do not let a future one be a pattern. */
 function literal(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -53,36 +62,59 @@ function literal(value) {
  * Every mention of `table` in `text` that is not `namespace.table`.
  *
  * A mention is either qualified by some other namespace or left bare after a
- * `FROM`/`JOIN`, in each case with or without the double quotes SQL allows
- * around an identifier. A bare name outside a query — the manifest's own
- * `"table": "llm_inference"`, or prose naming the table — is not a query
- * anyone will run and is left alone.
+ * `FROM`/`JOIN`, in each case with or without the quotes an identifier may
+ * wear, and with SQL's whitespace — newlines included — anywhere it is
+ * allowed. A bare name outside a query — the manifest's own `"table":
+ * "llm_inference"`, or prose naming the table — is not a query anyone will
+ * run and is left alone.
  *
  * Matching ignores case so that a differently-cased mention is still *found*,
  * but the comparison below does not: R2 SQL is backed by an Iceberg catalog,
  * whose namespace and table names are case-sensitive, so `AVALON.llm_inference`
  * is a name that does not resolve and is worth reporting rather than excusing.
+ *
+ * The scan runs over the whole document rather than line by line, because a
+ * query wrapped after its `FROM` is still a query; the reported line is
+ * derived from the match offset.
  */
 export function misqualifiedReferences(text, { namespace, table }) {
   const name = literal(table);
+  const quoted = `${OPEN_QUOTE}${name}${CLOSE_QUOTE}`;
   const pattern = new RegExp(
-    `(?<![\\w"])(?:"?(?<qualifier>${IDENTIFIER})"?\\s*\\.\\s*"?${name}"?`
-    + `|(?:FROM|JOIN)\\s+"?(?<bare>${name})"?)(?![\\w"])`,
+    `(?<![\\w"\`\\]])(?:${OPEN_QUOTE}(?<qualifier>${IDENTIFIER})${CLOSE_QUOTE}\\s*\\.\\s*${quoted}`
+    + `|(?:FROM|JOIN)\\s+${OPEN_QUOTE}(?<bare>${name})${CLOSE_QUOTE})(?![\\w"\`[])`,
     'giu',
   );
-  const found = [];
-  text.split('\n').forEach((line, index) => {
-    for (const match of line.matchAll(pattern)) {
-      const qualifier = match.groups?.qualifier;
-      if (qualifier === namespace) continue;
-      found.push({
-        line: index + 1,
-        text: line.trim(),
-        found: qualifier ? `${qualifier}.${table}` : table,
-        expected: `${namespace}.${table}`,
-      });
+  const lines = text.split('\n');
+  /** Byte-free line lookup: the index of the first line starting past an offset. */
+  const lineStarts = [];
+  let cursor = 0;
+  for (const line of lines) {
+    lineStarts.push(cursor);
+    cursor += line.length + 1;
+  }
+  const lineAt = (offset) => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (lineStarts[middle] <= offset) low = middle;
+      else high = middle - 1;
     }
-  });
+    return low;
+  };
+  const found = [];
+  for (const match of text.matchAll(pattern)) {
+    const qualifier = match.groups?.qualifier;
+    if (qualifier === namespace) continue;
+    const index = lineAt(match.index);
+    found.push({
+      line: index + 1,
+      text: lines[index].trim(),
+      found: qualifier ? `${qualifier}.${table}` : table,
+      expected: `${namespace}.${table}`,
+    });
+  }
   return found;
 }
 
