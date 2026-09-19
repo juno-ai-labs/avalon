@@ -6544,11 +6544,18 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    follows changes only the data. */
 
 /* The one thing the launching state does not take from `.workstream-screen` is
-   this template, and it cannot: that screen's header row is a fixed `55px`, and
+   this template, and it cannot: that screen's header row is a fixed height, and
    inheriting it would snap the row to full height on the frame the class lands,
    shoving the transcript down — the jump this whole block exists to remove. An
    `auto` row lets the header animate its own height into place instead, and at
-   rest the two resolve to the same 55px. */
+   rest the two resolve to the same number.
+
+   That number is 44px, not the `55px` written on `.workstream-screen` itself:
+   every conversation renders `.grokbot-workstream-header`, whose `:has()` rule
+   takes the track down to 44. Two numbers have to agree here — this row's
+   resting height, below, and the launching header's own — and both have to
+   follow the row that *applies* rather than the base one, which is the drift
+   `app.css.node.test.ts` now pins. */
 .workstream-launch-screen {
   display: grid;
   /* The column is stated because the rows alone leave an implicit `auto` one,
