@@ -389,7 +389,6 @@ export type SpaceBootstrapQueueMessage = z.infer<typeof SpaceBootstrapQueueMessa
 export const SpaceBootstrapChannelSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema,
   scope: SpaceScopeSchema,
-  archived: z.boolean(),
   placed: z.boolean(),
   participantUserIds: z.array(UserIdSchema),
 });
