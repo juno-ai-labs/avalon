@@ -39,6 +39,16 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
   }),
   z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
   /**
+   * A Space, for a person who just lost the Organization.
+   *
+   * It holds no sockets of its own — its role refuses a client upgrade — so
+   * this hop exists only to name its children. That is the whole reason it is
+   * a hop rather than nothing: the Space's hidden main conversation is an
+   * ordinary `SubstreamAgent`, it *does* hold whatever was opened against it,
+   * and only the Space knows which conversations it has.
+   */
+  z.strictObject({ scope: z.literal("space"), spaceId: IdSchema }),
+  /**
    * Every automation a work stream owns, for a person who just lost that
    * room. A room-owned automation admits the room's participants to its
    * conversation and its runs, and removing a participant is a room-local

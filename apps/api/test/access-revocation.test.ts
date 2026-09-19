@@ -685,6 +685,7 @@ describe("carrying one revocation to the objects", () => {
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
       AUTOMATION_DOS: namespace(() => undefined),
+      SPACE_DOS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },
@@ -756,6 +757,24 @@ describe("carrying one revocation to the objects", () => {
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: AUTOMATION, substreamId: "0" },
       { scope: "substream", workstreamId: AUTOMATION, substreamId: RUN },
+    ]);
+  });
+
+  it("publishes a message for every conversation a Space names, and closes none of its own", async () => {
+    const SPACE = "00000000-0000-7000-8000-0000000000f1";
+    const { env, visits, listed, sent } = fanOut({ automationChildren: ["0"] });
+    await applyAccessRevocation(env, message({ scope: "space", spaceId: SPACE }));
+
+    // A Space admits no client socket, so there is nothing here to close and
+    // the hop never asks. Its hidden main conversation is an ordinary
+    // `SubstreamAgent` that does hold what was opened against it, and only the
+    // Space can name it — addressed under the Space's own id, the way an
+    // automation's conversations are addressed under its.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: SPACE });
+    expect(targetsOf(sent)).toEqual([
+      { scope: "substream", workstreamId: SPACE, substreamId: "0" },
     ]);
   });
 
