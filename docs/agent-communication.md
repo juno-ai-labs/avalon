@@ -99,19 +99,31 @@ while authority checks still precede every new model and tool call.
 
 Model-authored agent-to-agent communication is explicit through `send_message` or `reply_to_message`,
 including final results, questions, and updates. Standard assistant messages stay
-in the sender's own transcript. Completion and needs-input settlement never synthesize or forward a message.
-A failed background run emits one host notice to its owning parent:
-`Agent failed due to <reason>. Id: <id>`. The reason is the terminal diagnostic
-code (or `unknown reason` when unavailable), and the ID identifies the agent.
-The run supplies stable delivery identity, so settlement retries cannot duplicate
-the notice. A failure notice preserves a stopped parent’s admission hold; it
-remains pending until an explicit continuation resumes the parent. An archived
-parent refuses admission without blocking settlement.
+in the sender's own transcript. Settlement never forwards the model's final
+response as a message. The host sends an owning parent two notices on a run's
+behalf, and no other message. A failed background run emits
+`Agent failed due to <reason>. Id: <id>`, where the reason is the terminal
+diagnostic code (or `unknown reason` when unavailable). A background run that
+completes without one completed send to any agent emits
+`Agent <name> finished without replying. Id: <id>`; a run that sent at least
+one message, asked for input, or was stopped emits nothing. Each notice takes
+its delivery identity from the run, so settlement retries cannot duplicate it,
+and each preserves a stopped parent’s admission hold: it remains pending until
+an explicit continuation resumes the parent. An archived parent refuses
+admission without blocking settlement.
 The model sends any needed reply before finishing through Bind's ordinary final
-response. No `end_turn` tool or separate silent-completion receipt is required.
+response; no `end_turn` tool or completion receipt is required, and the
+silent-completion notice is what a worker's owner gets when the reply was
+skipped.
 Explicit sends use durable tool effect identities and ordinary admission replay;
 replaying a send after lost confirmation and a recipient crash must not duplicate input or inference.
 An archived destination refuses the send through the normal tool result.
+The `start_agent`, `send_message` and `reply_to_message` results each carry a
+`next` sentence saying that the reply arrives as a message, at the next step
+or by waking the conversation after the turn ends, and that there is nothing
+to fetch; a result is read at the moment the model decides its next step,
+where a description was skimmed. `list_agents` is a directory of `agentId`,
+name and description, not a status feed.
 
 Background identity travels in the existing child common-state projection.
 The conversation parent counts running background substreams, including nested
@@ -166,7 +178,12 @@ communication errors explain what to do next while retaining their diagnostic
 codes. These wording checks do not substitute for small-model evaluation.
 Background agents are explicitly told
 to execute their assignment directly and delegate further only when splitting
-work would materially help. Participant-responsiveness guidance belongs only to
+work would materially help, and that a run ending without a message to their
+coordinator is reported to it as finished without replying. Every role is told
+how to wait for a delegate: keep working on what does not depend on the result
+or end the turn, because the reply arrives as a message and wakes the
+conversation, and schedule a single wake-up only as a deadline, never as a
+poll. Participant-responsiveness guidance belongs only to
 the foreground workstream role. The base prompt and loaded coordination plugin
 share the same role selection, including workers spawned by Sidekicks.
 
@@ -205,6 +222,53 @@ stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-09-19 — Ending the turn is the wait, the tools say so, and a silent completion is reported
+
+**What changed:** The `start_agent`, `send_message` and `reply_to_message`
+results carry a `next` sentence: the reply arrives here as a message, at your
+next step if you keep working or by waking this conversation after you finish,
+and there is nothing to fetch. Their descriptions say the same in a clause
+where they said only "does not wait". `list_agents` returns `agentId`, name and
+description and no longer a status. Every role's guidance gained two
+sentences: after delegating, keep working on what does not depend on the
+result or end the turn with a short status, and schedule one wake-up only as a
+deadline, never a repeating one. A background agent is also told to send its
+findings, or why it has none, before finishing. The host emits
+`Agent <name> finished without replying. Id: <id>` to the owner of a
+background run that completes without one completed send to any agent, with
+the same per-run delivery identity and stopped-owner handling as the failure
+notice.
+
+**Why:** In the "Avalon scroll gradients" substream of 2026-09-18 the
+foreground agent delegated, then stayed in its run: four `list_agents` calls,
+one `current_time`, three nudges, and a competing implementation, while the
+reply it was waiting for landed at a safe boundary 14 seconds after it was
+sent. The delegation contract, fire and forget with the reply admitted as an
+input, was invisible where the model decides: the result said nothing about
+delivery, the directory advertised execution status, and ending a turn reads
+as "done" in every other tool ecosystem the model knows. The one case ending
+the turn could not cover was a worker that finishes without sending anything,
+which was silent; the notice closes it, so a deadline wake-up is a backstop
+rather than the wait.
+
+**Considered and rejected:** A loadable skill for the guidance: the model
+loads a skill when it thinks to, and the moment that matters is the
+delegation itself, where the always-active plugin's text is already in
+context. A waiting run state that parks the run until a reply is admitted,
+reusing the elicitation suspension: it would remove the false choice between
+polling and finishing, but ending the turn already is that wait once the
+result says so, and a parked run is one more state for stop, archive and
+recovery to reason about. A repeating wake-up while a delegate works: each
+firing is a full inference at the run's context, and the 12-minute delegation
+above would have fired 24 times.
+
+**Consequences:** A worker that completes without replying now wakes its
+owner once, which costs the owner one inference; a worker that reports
+"nothing to do" should say so with a reply rather than by finishing. The
+Workers suite's delegation tests observe that notice after every silent child
+completion. The `next` sentence is result text, not description text, so a
+change to how replies are admitted has to change it too.
 
 ### 2026-09-18 — Agent tools lose their prefix, and `reply` gains an object
 

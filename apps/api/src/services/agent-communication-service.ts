@@ -14,6 +14,21 @@ import { createResourceObjectPort } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 
+/**
+ * The wire names of the two tools that send a message to another agent. A run
+ * that completes without one completed call to either has left its owner
+ * waiting, and the host says so (see `notifySilentCompletion`).
+ */
+export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as const;
+
+/**
+ * What a delegating or messaging result tells the model about what happens
+ * next. A result is read at the moment the model decides its next step, where
+ * a description was only skimmed, so the delivery contract is stated here:
+ * the reply is a message that arrives on its own, and nothing is fetched.
+ */
+const REPLY_ARRIVES = "at your next step if you keep working, or by waking this conversation after you finish. Nothing to fetch";
+
 /** Host-only routing: tools cannot supply their sender, workspace, team or principal. */
 export class AgentCommunicationService {
   readonly senderId: AgentId;
@@ -117,27 +132,51 @@ export class AgentCommunicationService {
       if (sourceStopped) await child.stopOwnedAgent();
     }
     if (sourceStopped) throw new AgentCommunicationError("agent_origin_stopped");
-    return { agentId: childId };
+    return {
+      agentId: childId,
+      name: args.name,
+      next: `Started ${args.name}. Its reply arrives here as a message from it, ${REPLY_ARRIVES}; do not resend the assignment.`,
+    };
   }
 
   async send(args: SendAgentMessageInput | ReplyToAgentMessageInput, context: HarnessToolContext) {
-    if ("agentId" in args) {
-      const teamId = await this.team();
-      await this.contactSidekick(args.agentId, teamId);
-      return this.deliver(args, await this.messageId(context), true, teamId);
-    }
-    return this.deliver(args, await this.messageId(context));
+    const delivered = "agentId" in args
+      ? await (async () => {
+        const teamId = await this.team();
+        await this.contactSidekick(args.agentId, teamId);
+        return this.deliver(args, await this.messageId(context), true, teamId);
+      })()
+      : await this.deliver(args, await this.messageId(context));
+    return { ...delivered, next: `Delivered. A reply arrives here as a message from that agent, ${REPLY_ARRIVES}.` };
   }
 
-  /** Host failure settlement is the sole automatic parent notification. */
+  /**
+   * The two notices the host sends an owner on a run's behalf, and the only
+   * messages it ever synthesizes: a failure, and a completion that sent nothing.
+   */
   async notifyFailure(reason: string) {
+    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`);
+  }
+
+  /**
+   * A worker that finishes without a word to anyone has left its owner waiting
+   * on a reply that will never come. Saying so once lets the owner decide,
+   * exactly as a failure does; a run that sent even one message needs no notice.
+   */
+  async notifySilentCompletion(name: string | null) {
+    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}`, `completion:${this.input.harnessRunId}`);
+  }
+
+  private async notifyOwner(message: string, effectKey: string) {
     const owner = await (await this.workspace()).agentOwner({ workspaceId: this.input.workspaceId, agentId: this.senderId });
     if (!owner.agentId) return;
     try {
-      await this.deliver({ agentId: owner.agentId, message: `Agent failed due to ${reason}. Id: ${this.senderId}`, attachmentIds: [] },
-        await this.messageId({ effectIntentId: `failure:${this.input.harnessRunId}` }), false);
+      // The run supplies the delivery identity, so a settlement retry cannot
+      // deliver the same notice twice.
+      await this.deliver({ agentId: owner.agentId, message, attachmentIds: [] },
+        await this.messageId({ effectIntentId: effectKey }), false);
     } catch (error) {
-      // Archival closes admission; it must not prevent the failed run settling.
+      // Archival closes admission; it must not prevent the run settling.
       if (error instanceof AgentCommunicationError && error.code === "workstream_archived") return;
       throw error;
     }
@@ -235,8 +274,10 @@ export class AgentCommunicationService {
           && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) return null;
         throw error;
       }
+      // A directory, not a status feed: the way to learn what a teammate is
+      // doing is to message it, and the way to wait for one is to finish.
       const runtime = await (await this.conversation(agentId)).agentRuntimeInfo();
-      return runtime ? { agentId, name: runtime.name, description: runtime.description, status: runtime.status } : null;
+      return runtime ? { agentId, name: runtime.name, description: runtime.description } : null;
     }));
     return { agents: agents.filter((agent) => agent !== null) };
   }

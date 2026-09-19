@@ -4,7 +4,7 @@ import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, Parti
   type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
-import { AgentCommunicationService } from "../services/agent-communication-service";
+import { AGENT_MESSAGE_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -4844,6 +4844,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return settlementDiagnosticCode;
   }
 
+  /** Whether a run completed at least one send to another agent. A refused send is not a reply. */
+  private runSentAgentMessage(runId: string): boolean {
+    return this.state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM tool_effects
+       WHERE run_id = ? AND status = 'completed' AND tool_name IN (SELECT value FROM json_each(?))`,
+      runId, JSON.stringify(AGENT_MESSAGE_TOOL_NAMES),
+    ).one().count > 0;
+  }
+
   private async deliverAgentRunResult(
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
@@ -4868,6 +4877,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (input.backgroundAgent && outcome.status === "failed") {
       await new AgentCommunicationService(this.env, input).notifyFailure(outcome.error?.code ?? "unknown reason");
+    }
+    if (input.backgroundAgent && outcome.status === "completed" && !this.runSentAgentMessage(input.harnessRunId)) {
+      // A worker that finished without a word to anyone has left its owner
+      // waiting on a reply that will never come. Say so once, as a failure is
+      // said, and let the owner decide.
+      await new AgentCommunicationService(this.env, input).notifySilentCompletion((await this.agentRuntimeInfo())?.name ?? null);
     }
     // Hidden workers publish results only through explicit messaging tools. Their
     // local final response must not be projected into the parent's Slack room.
