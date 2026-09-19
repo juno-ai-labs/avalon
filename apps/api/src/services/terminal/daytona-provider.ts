@@ -246,6 +246,9 @@ export function createDaytonaTerminalProvider(
     } = {},
   ): Promise<T> => {
     if (!instrumentation.observeRequest) return callback();
+    // Cheap enough to ask per request, and it has to be per request: the one
+    // provider instance serves callers that report and callers that do not.
+    if (instrumentation.requestObserved?.() === false) return callback();
     const startedAt = now();
     let outcome: TerminalProviderRequestMeasurement["outcome"] = "completed";
     let result: T | undefined;

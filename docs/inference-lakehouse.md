@@ -270,9 +270,8 @@ returns `undefined` so that "not reported" and "free" stay different facts in
 the column. A run's own running total defaults to zero because it is
 arithmetic; do not let that default reach a row.
 OpenRouter reports `usage.cost` only when the request carries `usage: {
-"include": true }`, so every OpenRouter chat request sends it —
-`serializeOpenRouterChatRequest` adds it after the SDK serializer, which has no
-typed field for it and drops unknown keys. Azure never sends it: those calls
+"include": true }`, so every OpenRouter chat request sends it, from
+`serializeOpenRouterChatRequest`. Azure never sends it: those calls
 are priced from Rally's own rate card in `bind-runtime.ts` and the computed
 figure is written into `usage.cost` before the attempt is recorded. **A cost
 column that reads zero across a whole provider is a missing accounting flag,
