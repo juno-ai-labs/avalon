@@ -158,7 +158,11 @@ import {
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import {
+  WorkstreamTranscriptStorage,
+  UnsettledToolBatchError,
+  isUnsettledToolBatchError,
+} from "./workstream-transcript-storage";
 import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
 import {
   TranscriptOperationRequestSchema,
@@ -3613,8 +3617,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               },
             );
           } catch (failure) {
-            if (!(failure instanceof Error)
-              || failure.message !== "substream_loop_has_unsettled_tool_batch") throw failure;
+            if (!isUnsettledToolBatchError(failure)) throw failure;
             // Not a failure to record the failure: the loop is deliberately
             // left executing so its lease can expire and hand the interrupted
             // tool batch to `recoverInterruptedToolBatch`, which is the only
@@ -3622,6 +3625,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             // terminalized. Recorded under its own name because it is a
             // deferral with a known resolution, and reading it as a drain
             // failure is what turned the same state into a day of hot retries.
+            //
+            // This is the whole account of the event: the branch returns, so
+            // `substream_loop_execution_failed` below never runs, and dropping
+            // `reason` here would tell an operator that a batch is stuck while
+            // withholding why the run failed in the first place — on the one
+            // path this change added in order to make that legible.
+            const withheld = failure instanceof UnsettledToolBatchError ? failure : null;
             logWarn(this.env, "substream_loop_failure_awaiting_tool_batch_repair", {
               workspace_id: activation.input.workspaceId,
               workstream_id: activation.input.parentId,
@@ -3629,7 +3639,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               execution_id: activation.execution.runId,
               execution_epoch: activation.execution.executionEpoch,
               error_code: code,
+              reason: error instanceof Error ? error.message : "unknown",
+              stack: harnessErrorFrames(error),
               lease_expires_at: loop.lease_expires_at,
+              withheld_turn_id: withheld?.turnId ?? null,
+              withheld_model_turn_index: withheld?.modelTurnIndex ?? null,
+              withheld_call_count: withheld?.withheldCallCount ?? null,
             });
             return;
           }
@@ -4044,6 +4059,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // No attempt to fence a receipt settlement with. `recoverInterruptedToolBatch`
     // would refuse one anyway, so leave it to the backstop rather than half-doing it.
     if (!attempt?.legacy_attempt_id || !attempt.lease_owner) return;
+    // Handing these straight back to `ToolReceiptStorage#fence` would be asking
+    // the row to vouch for itself: that fence compares the values it is given
+    // against this same row, so it could only ever fail on expiry or
+    // terminalization, never on "another instance owns this attempt now". Every
+    // other caller passes a lease `claimHarnessAttempt` minted for it, which
+    // proves current ownership; this path has no such lease to pass, so it
+    // proves the same thing by reconstructing the owner. `harnessAttemptOwner`
+    // ends in a per-isolate nonce, so a takeover does not match — and neither
+    // does an attempt recovered from a dead instance, whose owner the reaper
+    // rewrites. Either way the settlement stands down and the release guard
+    // hands the batch to the lease-expiry recovery, which is the slow path but
+    // never the wrong one.
+    const ownedHere = attempt.lease_owner === this.harnessAttemptOwner(
+      input,
+      attempt.legacy_attempt_id,
+    ) || attempt.lease_owner === previousInstanceRecoveryOwner(attempt.legacy_attempt_id);
+    if (!ownedHere) {
+      logWarn(this.env, "substream_loop_failure_tool_batch_settlement_not_owned", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        attempt_id: attempt.legacy_attempt_id,
+      });
+      return;
+    }
     await this.recoverInterruptedToolBatch(
       this.localRuntimeEnvironment(
         input.workspaceId,
@@ -6939,10 +6980,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // stays open. Admitting the answer arms its own wake.
     if (loop) {
       if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
-      // The room then goes quiet with messages still queued, and an
-      // `elicitation_requests` row only ever moves `pending -> answered`, so a
-      // question nobody answers — the reader missed the card, or left — stalls
-      // it with no expiry to end the wait. The stall is correct; being unable
+      // The room then goes quiet with messages still queued. No path writes
+      // `elicitation_requests.status = 'cancelled'` today — every one of them
+      // writes `answered` — so in practice a question nobody answers, because
+      // the reader missed the card or left, stalls it with no expiry to end the
+      // wait. `openQuestionToolCallIds` reads the status rather than assuming
+      // that, so the day cancellation does ship this branch keeps its meaning:
+      // a cancelled question is not one an answer can still arrive for. The stall is correct; being unable
       // to see it is not, and this is the one branch where the loop stops
       // without an error to find it by.
       const queued = this.loop.pendingInputs();

@@ -1330,8 +1330,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
 | A run fails holding an accepted tool batch whose results never landed | The failure settles the batch first, through `recoverInterruptedToolBatch` under the fence and attempt lease it still holds, and then terminalizes normally. A call with no receipt settles as `not_run`, which is the shape a run refused before its tool ran leaves behind. |
-| That settlement cannot run — the loop lease lapsed, or the attempt was taken over | `recordWorkflowFailed` refuses, logging `substream_loop_failure_awaiting_tool_batch_repair`. The run stays `running` and the loop stays `executing`, so `LOOP_EXECUTION_LEASE_MS` later the recovery branch of `claimPersistentLoopExecution` adopts it and repairs the batch there. Slow, and the only state in which the repair can run at all — the receipt fence requires a run that has not terminalized. |
-| A loop is already `idle` holding an unsettled tool batch | Unreachable since 2026-09-19, and unrecoverable if it is ever reached again: the repair needs an execution and the only route to one is an admission Bind refuses. The loop parks rather than spinning — `inputsBindCanAccept` offers nothing, so no alarm is derived — and reports `substream_loop_parked_with_queued_input` on each wake. Objects wedged before the guard shipped stay parked until repaired by hand. |
+| That settlement cannot run — the loop lease lapsed, or this isolate no longer owns the attempt | `recordWorkflowFailed` refuses, logging `substream_loop_failure_awaiting_tool_batch_repair` with the failure's own reason and the withheld turn. The run stays `running` and the loop stays `executing`, so `LOOP_EXECUTION_LEASE_MS` later the recovery branch of `claimPersistentLoopExecution` can adopt it and repair the batch. That is the only state in which the repair can run at all — the receipt fence requires a run that has not terminalized — but it is a retry, not a guarantee: a fence that keeps failing re-leases once per lease interval indefinitely. Bounded and visible rather than convergent, and about six wakes a second better than what it replaces. |
+| A loop is already `idle` holding an unsettled tool batch | Unreachable since 2026-09-19, and unrecoverable if it is ever reached again: the repair needs an execution and the only route to one is an admission Bind refuses. The loop parks rather than spinning — `inputsBindCanAccept` offers nothing, so no alarm is derived. It reports `substream_loop_parked_with_queued_input` on any wake it does get, but removing the wake removes most of them: read that line as evidence when it appears, never as a heartbeat, because a parked substream nothing else touches is quiet rather than noisy. That trade is why the release guard and not this branch is the fix. Objects wedged before the guard shipped stay parked until repaired by hand. |
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
 | Object approaches SQLite storage limit | Alert and archive/export; do not split one ordered child implicitly. Cloudflare's per-object limit is 10 GB. |
 
@@ -1739,8 +1739,16 @@ resolution needs its own name, or it reads as noise.
 This also settles a disagreement the two copies of the predicate had been
 carrying. The release guard filtered elicitations to `status IN ('pending',
 'answered')`; `openQuestionToolCallIds` did not, so a `cancelled` question
-counted as open and parked the queue on an answer that was never coming. One
-definition, and the release guard's reading, because it is the correct one.
+counted as open and would have parked the queue on an answer that was never
+coming. One definition, and the release guard's reading, because it is the
+correct one. **No path writes that status today** — every writer sets
+`answered` — so this is a trap disarmed rather than a stall repaired, and the
+reason to disarm it now is that the two readings were already in the tree
+disagreeing. Whenever cancellation does ship it owes one thing this change
+cannot supply: cancelling a withheld question while the batch's other calls are
+unsettled has to settle the batch in the same transaction, or the loop can
+release to `idle` still owing results — the same wedge, and a silent one,
+because the queue no longer arms an alarm to complain with.
 
 **What a future change has to respect:** a loop may only go back to `idle` with
 its provider protocol settled, and both release paths have to keep asking the
