@@ -1746,62 +1746,20 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
-### 2026-09-19 — A retraction's survivors are seated under a Space that remains
+### 2026-09-19 — A Space is this class under an immutable role, and Space-derived access is provenance applied through the Channel's own operations
 
-**What changed:** `ChannelAccessService.applyRetraction` reads the sources that
-survived the retraction and seats each survivor under one that actually supplies
-them — with no `spaceSourceId` at all when none does, because that reader is the
-direct source's — then attributes them with `confirmSpaceAccessSource` for
-*every* remaining Space that lists them.
+**What changed:** `WorkstreamDO`'s constructor takes a
+`ConversationParentRole`, defaulting to `WORKSTREAM_ROLE`, and reads it for the
+eight things that used to be literals: the namespace and name it registers
+itself under, its migration component, class and ledger, whether `GET /socket`
+may upgrade, whether a committed grant reaches the shared grant directory,
+whether a child's non-directory effects are forwarded to the workspace, and
+whether construction warms the main conversation. `SpaceDO` supplies
+`SPACE_ROLE` and defines nothing else. The ledger moved to
+`workstream-do-schema.ts`, and both roles apply it: `space_do` receipts the
+same versions `workstream_do` does, under its own component.
 
-**Why:** It seated all of them under the departing Space and confirmed nothing.
-That is not a mislabelling that a later read could correct: the retraction has
-already deleted that source's row, so the attribution could not have committed
-even if it had been attempted — `confirmSpaceAccessSource` answers
-`space_not_found` for a source that is gone. The reader ends up seated with a
-grant naming a Space that does not exist and no `workstream_space_supplied_readers`
-row anywhere, so the Space that really supplies them retracts later with no
-provenance for them and leaves behind a reader the Channel itself never
-admitted. `narrowDirectScope` already seated and attributed per supplying Space;
-the other path into the same state did not.
-
-**Considered and rejected:** Carrying the suppliers in
-`SpaceAccessRetractionSchema`, so the plan said who to seat *and* under whose
-authority. It is the more honest shape — the applier genuinely cannot know —
-but it widens an RPC contract and its stored operation receipts to fix a caller,
-and the service already reads the sources on the neighbouring path. Reading them
-*after* the retraction, not before, is what makes the read exactly "the sources
-that survived", with no filtering and nothing to go stale between the plan and
-the attribution.
-
-**What a future change has to respect:** A reader seated on behalf of a source
-is attributed to a source that exists, and to every one of them when several
-supply the same reader — access is the live union, so any one departing has to
-leave the others' claim standing. A survivor no source lists is seated as the
-Channel's own; giving them a Space would hand that Space's next retraction a
-licence to take them out.
-
-### 2026-09-19 — A Space's directory effects are routed by parent kind at the workspace
-
-**What changed:** WorkspaceDO's directory handoff admits `parentKind: "space"`
-beside `"workstream"` and routes those envelopes to the Space directory that
-migration 61 added, replacing the `space_directory_not_ready` refusal this
-object's effects used to meet. Nothing about the role or this class changed; the
-Organization-side authority, its tables and its invariants are
-[`spaces.md`](spaces.md).
-
-**Why:** A Space publishes the same `directory_common` and `directory_user`
-effects a Channel does — that is the point of it being this class — so both
-reach one handoff, and the only thing that can tell them apart there is the
-parent kind the effect already carries.
-
-**Consequences:** The refusal is gone, so the first Space ever created is no
-longer born into an alarm retry loop. A Space's other effects are still refused
-at that handoff and still dropped by the role before they reach the outbox.
-
-### 2026-09-19 — Space-derived access is provenance here, applied through the Channel's own operations
-
-**What changed:** Migration 18 adds `workstream_direct_audience`,
+Migration 18 adds `workstream_direct_audience`,
 `workstream_space_access_sources`, `workstream_space_supplied_readers` and
 `workstream_access_operations`, and gives `scope_grants` a `source_kind` and
 `source_id` that existing rows backfill into as `direct`. Six RPCs read, record
@@ -1814,7 +1772,26 @@ application is a plan and a receipt; **the source row is committed by
 and `POST /:id/participants` moved onto `WorkstreamService` so a direct scope
 change and a direct add are recorded as the Channel's own.
 
-**Why:** A Space grants its participants access to every Channel in it, and that
+WorkspaceDO's directory handoff admits `parentKind: "space"`
+beside `"workstream"` and routes those envelopes to the Space directory that
+migration 61 added, replacing the `space_directory_not_ready` refusal this
+object's effects used to meet. Nothing about the role or this class changed; the
+Organization-side authority, its tables and its invariants are
+[`spaces.md`](spaces.md).
+
+`ChannelAccessService.applyRetraction` reads the sources that
+survived the retraction and seats each survivor under one that actually supplies
+them — with no `spaceSourceId` at all when none does, because that reader is the
+direct source's — then attributes them with `confirmSpaceAccessSource` for
+*every* remaining Space that lists them.
+
+**Why:** Spaces replace Projects, and a Space needs the whole work-stream
+primitive — presentation, participants, resources, Sidekick recommendations,
+receipts, lifecycle, retirement — with none of its product surface. A sibling
+object would have forked every one of those capabilities into a second
+authority on the day it shipped.
+
+A Space grants its participants access to every Channel in it, and that
 access has to be withdrawable without touching access the Channel holds
 directly or gets from another Space. `workstream_metadata.scope` cannot carry
 that: once a Space has made a Channel Organization-wide it is the *effective*
@@ -1823,7 +1800,41 @@ this object became the provenance authority — which source reaches the Channel
 and which readers each one seated — while the audience itself stays where it
 already was.
 
-**Considered and rejected:** Recording Space sources in the scope-grant ledger
+A Space publishes the same `directory_common` and `directory_user`
+effects a Channel does — that is the point of it being this class — so both
+reach one handoff, and the only thing that can tell them apart there is the
+parent kind the effect already carries.
+
+It seated all of them under the departing Space and confirmed nothing.
+That is not a mislabelling that a later read could correct: the retraction has
+already deleted that source's row, so the attribution could not have committed
+even if it had been attempted — `confirmSpaceAccessSource` answers
+`space_not_found` for a source that is gone. The reader ends up seated with a
+grant naming a Space that does not exist and no `workstream_space_supplied_readers`
+row anywhere, so the Space that really supplies them retracts later with no
+provenance for them and leaves behind a reader the Channel itself never
+admitted. `narrowDirectScope` already seated and attributed per supplying Space;
+the other path into the same state did not.
+
+**Considered and rejected:** `class SpaceDO extends WorkstreamDO` with
+overrides, which is what the PRD's first sketch described. It fails on the thing
+subclassing is usually chosen for: a base method that hard-codes
+`env.WORKSTREAM_DOS`, `workstreamDOName` or `MIGRATION_COMPONENT` is silently
+wrong for the subclass rather than visibly absent, so the difference is only
+found by reading the class — and the four that mattered were three hundred lines
+and two base classes apart. Also rejected: sharing the `workstream_do` migration
+component, which would put two classes with different histories under one
+tracker rollup and make `forceMigration`'s class fence meaningless. **And
+rejected after it was written:** a hand-copied `space-do-schema.ts` rendering
+the work-stream ledger's current shape in one fresh version, so that a new
+Space did not replay three `durable_outbox` rebuilds. It bought one cold start
+per Space and charged a standing obligation for it — every table change had to
+be written into two ledgers, and the only thing holding them together was a
+Node test comparing `sqlite_master` object for object. Replaying a ledger costs
+milliseconds once; a dual-write obligation costs a correctness bug the first
+time somebody appends to one array and not the other.
+
+Recording Space sources in the scope-grant ledger
 alone, which is what design decision 4 of the PRD first described. That ledger
 only becomes the admission authority for a Channel after its first share; every
 other Channel is still admitted from its main conversation's scope and
@@ -1866,7 +1877,25 @@ nobody controls. The rebuild inside `authorizedGrantMutation` is the one place
 `spaceSourceId` can be lost on the way in, and losing it publishes every
 Space-seated grant on a migrated Channel.
 
-**What a future change has to respect:** The union is derived in one place and
+Carrying the suppliers in
+`SpaceAccessRetractionSchema`, so the plan said who to seat *and* under whose
+authority. It is the more honest shape — the applier genuinely cannot know —
+but it widens an RPC contract and its stored operation receipts to fix a caller,
+and the service already reads the sources on the neighbouring path. Reading them
+*after* the retraction, not before, is what makes the read exactly "the sources
+that survived", with no filtering and nothing to go stale between the plan and
+the attribution.
+
+**What a future change has to respect:** A difference between a Channel and a
+Space belongs in the role, where the base class reads it and where it sits
+beside the other seven — not in an override, which reintroduces exactly the
+invisibility this replaced. The ledger is not one of those differences: append
+a version to `WORKSTREAM_DO_SCHEMA_MIGRATIONS` and both components get it. A
+version that repairs *history* rather than describing shape is the exception,
+and it is gated in the `afterMigrations` hook on the role — version 17's
+grant-directory retirement is the worked example.
+
+The union is derived in one place and
 applied through the canonical operations; a path that writes an audience
 directly is a path with no containment fence. A retraction reads the provenance,
 never a recomputed audience, or it withdraws readers no Space ever supplied. And
@@ -1880,51 +1909,16 @@ rule. Either narrowing then publishes `workstream_audience_narrowed`, because
 the room closes sockets only for somebody it was told about and a narrowing
 names nobody ([access revocation](access-revocation.md)).
 
-### 2026-09-19 — A Space is this class under an immutable role, not a subclass with overrides
+The refusal is gone, so the first Space ever created is no
+longer born into an alarm retry loop. A Space's other effects are still refused
+at that handoff and still dropped by the role before they reach the outbox.
 
-**What changed:** `WorkstreamDO`'s constructor takes a
-`ConversationParentRole`, defaulting to `WORKSTREAM_ROLE`, and reads it for the
-eight things that used to be literals: the namespace and name it registers
-itself under, its migration component, class and ledger, whether `GET /socket`
-may upgrade, whether a committed grant reaches the shared grant directory,
-whether a child's non-directory effects are forwarded to the workspace, and
-whether construction warms the main conversation. `SpaceDO` supplies
-`SPACE_ROLE` and defines nothing else. The ledger moved to
-`workstream-do-schema.ts`, and both roles apply it: `space_do` receipts the
-same versions `workstream_do` does, under its own component.
-
-**Why:** Spaces replace Projects, and a Space needs the whole work-stream
-primitive — presentation, participants, resources, Sidekick recommendations,
-receipts, lifecycle, retirement — with none of its product surface. A sibling
-object would have forked every one of those capabilities into a second
-authority on the day it shipped.
-
-**Considered and rejected:** `class SpaceDO extends WorkstreamDO` with
-overrides, which is what the PRD's first sketch described. It fails on the thing
-subclassing is usually chosen for: a base method that hard-codes
-`env.WORKSTREAM_DOS`, `workstreamDOName` or `MIGRATION_COMPONENT` is silently
-wrong for the subclass rather than visibly absent, so the difference is only
-found by reading the class — and the four that mattered were three hundred lines
-and two base classes apart. Also rejected: sharing the `workstream_do` migration
-component, which would put two classes with different histories under one
-tracker rollup and make `forceMigration`'s class fence meaningless. **And
-rejected after it was written:** a hand-copied `space-do-schema.ts` rendering
-the work-stream ledger's current shape in one fresh version, so that a new
-Space did not replay three `durable_outbox` rebuilds. It bought one cold start
-per Space and charged a standing obligation for it — every table change had to
-be written into two ledgers, and the only thing holding them together was a
-Node test comparing `sqlite_master` object for object. Replaying a ledger costs
-milliseconds once; a dual-write obligation costs a correctness bug the first
-time somebody appends to one array and not the other.
-
-**What a future change has to respect:** A difference between a Channel and a
-Space belongs in the role, where the base class reads it and where it sits
-beside the other seven — not in an override, which reintroduces exactly the
-invisibility this replaced. The ledger is not one of those differences: append
-a version to `WORKSTREAM_DO_SCHEMA_MIGRATIONS` and both components get it. A
-version that repairs *history* rather than describing shape is the exception,
-and it is gated in the `afterMigrations` hook on the role — version 17's
-grant-directory retirement is the worked example.
+A reader seated on behalf of a source
+is attributed to a source that exists, and to every one of them when several
+supply the same reader — access is the live union, so any one departing has to
+leave the others' claim standing. A survivor no source lists is seated as the
+Channel's own; giving them a Space would hand that Space's next retraction a
+licence to take them out.
 
 ### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
 
