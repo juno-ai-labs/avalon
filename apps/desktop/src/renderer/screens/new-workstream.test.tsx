@@ -126,6 +126,7 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
       revision: 1,
       participants: [currentUser, teammate].map((member) => ({ userId: asUserId(member.id) })),
       channelCount: 0,
+      conversationWaterline: 0,
       defaultResourceIds: [],
       defaultSidekickIds: [],
       createdAt: '2026-08-27T00:00:00.000Z',
