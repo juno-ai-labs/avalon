@@ -1,7 +1,6 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 
 import {
-  SpaceChannelPageSchema,
   SpaceDirectorySchema,
   SpaceSummarySchema,
   asSpaceId,
@@ -9,7 +8,6 @@ import {
   asWorkstreamId,
   SPACE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
-  type SpaceChannelPage,
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceSummary,
@@ -351,6 +349,12 @@ function decodeChannelCursor(cursor: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** One page of the memberships a Space read is about, before the projection. */
+export interface SpaceChannelIdPage {
+  workstreamIds: string[];
+  nextCursor: string | null;
 }
 
 /** A directory with nothing in it, for an object whose Space tables are absent. */
@@ -774,8 +778,15 @@ export class WorkspaceSpaceStorage {
     return changed;
   }
 
-  /** The Channels a surface can list, one page at a time. */
-  channelPage(userId: string, spaceId: string, cursor: string | null): SpaceChannelPage | false {
+  /**
+   * One page of the Channel ids a surface can list in this Space.
+   *
+   * Ids rather than rows, because the rows belong to the Channel directory and
+   * the projection that turns one into a `Workstream` is WorkspaceDO's — the
+   * same one `listDirectory` uses. This decides *which* Channels a page is
+   * about; the caller decides what a Channel looks like to this viewer.
+   */
+  channelIdPage(userId: string, spaceId: string, cursor: string | null): SpaceChannelIdPage | false {
     if (!this.canRead(userId, spaceId)) return false;
     const after = cursor === null ? null : decodeChannelCursor(cursor);
     if (cursor !== null && after === null) return false;
@@ -797,10 +808,10 @@ export class WorkspaceSpaceStorage {
     const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
     if (hasMore) rows.pop();
     const last = rows.at(-1);
-    return SpaceChannelPageSchema.parse({
-      items: rows.map((row) => row.workstream_id),
+    return {
+      workstreamIds: rows.map((row) => row.workstream_id),
       nextCursor: hasMore && last ? encodeChannelCursor(last.workstream_id) : null,
-    });
+    };
   }
 
   /**
@@ -891,7 +902,7 @@ export class WorkspaceSpaceStorage {
   ): WorkspaceSpaceMembershipPlanResult {
     return this.storage.transactionSync(() => {
       if (!this.visibleSpaceIds(request.userId).includes(request.spaceId)) {
-        return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const existing = this.storage.sql.exec<{
         state: string;
@@ -1011,7 +1022,7 @@ export class WorkspaceSpaceStorage {
   ): WorkspaceSpaceMembershipPlanResult {
     return this.storage.transactionSync(() => {
       if (!this.canRead(request.userId, request.spaceId)) {
-        return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const membership = this.storage.sql.exec<{
         generation: number;
@@ -1021,15 +1032,23 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
         request.workstreamId,
       ).toArray()[0];
-      if (!membership) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+      if (!membership) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       const remainingSpaceIds = this.otherActiveSpaceIds(request.workstreamId, request.spaceId);
       if (remainingSpaceIds.length === 0) {
-        return { ok: false, code: "space_membership_final", unreachableUserIds: [] };
+        return { ok: false, code: "space_membership_final", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const unreachable = this.unreachableReaders(remainingSpaceIds, request.remainingAudience);
       if (unreachable.length > 0 || (request.remainingAudience.scope === "workspace"
         && !this.holdsOrganizationWideSpace(remainingSpaceIds))) {
-        return { ok: false, code: "space_audience_incompatible", unreachableUserIds: unreachable };
+        // No `blockedWorkstreamIds`: the caller named the Channel in the
+        // request. The archive is the refusal that has to say which of a
+        // Space's Channels is in the way.
+        return {
+          ok: false,
+          code: "space_audience_incompatible",
+          unreachableUserIds: unreachable,
+          blockedWorkstreamIds: [],
+        };
       }
       const generation = membership.generation + 1;
       this.storage.sql.exec(
@@ -1089,7 +1108,7 @@ export class WorkspaceSpaceStorage {
   prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
       if (!this.visibleSpaceIds(userId).includes(spaceId)) {
-        return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const row = this.storage.sql.exec<{
         scope: "personal" | "workspace";
@@ -1100,22 +1119,46 @@ export class WorkspaceSpaceStorage {
         spaceId,
       ).one();
       if (row.system_role === "general") {
-        return { ok: false, code: "space_protected", unreachableUserIds: [] };
+        return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const audience: RemainingChannelAudience = {
         scope: row.scope,
         participantUserIds: this.participantUserIds(spaceId).map(asUserId),
       };
+      // Every member is tested rather than the first blocker returned, because
+      // the refusal is what tells a person which Channels to move and stopping
+      // at one would make them archive once per Channel to find them all.
+      const stranded: string[] = [];
+      const unreachableFor: string[] = [];
+      let unreachableUserIds: string[] = [];
       for (const workstreamId of this.memberWorkstreamIdsUnchecked(spaceId)) {
         const remainingSpaceIds = this.otherActiveSpaceIds(workstreamId, spaceId);
         if (remainingSpaceIds.length === 0) {
-          return { ok: false, code: "space_membership_final", unreachableUserIds: [] };
+          stranded.push(workstreamId);
+          continue;
         }
         const unreachable = this.unreachableReaders(remainingSpaceIds, audience);
         if (unreachable.length > 0 || (audience.scope === "workspace"
           && !this.holdsOrganizationWideSpace(remainingSpaceIds))) {
-          return { ok: false, code: "space_audience_incompatible", unreachableUserIds: unreachable };
+          unreachableFor.push(workstreamId);
+          if (unreachableUserIds.length === 0) unreachableUserIds = unreachable;
         }
+      }
+      if (stranded.length > 0) {
+        return {
+          ok: false,
+          code: "space_membership_final",
+          unreachableUserIds: [],
+          blockedWorkstreamIds: this.listableChannelIds(userId, stranded).map(asWorkstreamId),
+        };
+      }
+      if (unreachableFor.length > 0) {
+        return {
+          ok: false,
+          code: "space_audience_incompatible",
+          unreachableUserIds: unreachableUserIds.map(asUserId),
+          blockedWorkstreamIds: this.listableChannelIds(userId, unreachableFor).map(asWorkstreamId),
+        };
       }
       this.storage.sql.exec(
         `UPDATE space_channel_memberships SET state = 'removing', generation = generation + 1, updated_at = ?
@@ -1202,7 +1245,7 @@ export class WorkspaceSpaceStorage {
   addDefault(request: WorkspaceSpaceDefaultRequest, now = Date.now()): WorkspaceSpaceDefaultResult {
     return this.storage.transactionSync(() => {
       if (!this.visibleSpaceIds(request.userId).includes(request.spaceId)) {
-        return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const existing = this.storage.sql.exec<{
         state: string;
@@ -1833,6 +1876,35 @@ export class WorkspaceSpaceStorage {
       ).toArray()) reachable.add(row.user_id);
     }
     return [...new Set(audience.participantUserIds)].filter((userId) => !reachable.has(userId));
+  }
+
+  /**
+   * The subset of these Channels this viewer may already list.
+   *
+   * A refusal about a Space names Channels, and a Space's membership can hold a
+   * Channel this person has no access to. Naming that one would disclose that
+   * it exists, and they could not move it either — so the list a refusal
+   * carries is what the caller can act on, and the sentence beside it still has
+   * to be true when the list comes back empty.
+   */
+  private listableChannelIds(userId: string, workstreamIds: readonly string[]): string[] {
+    const listable: string[] = [];
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT directory.workstream_id
+           FROM workspace_workstream_directory directory
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
+            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+          ORDER BY directory.workstream_id`,
+        userId,
+        ...chunk,
+      ).toArray()) listable.push(row.workstream_id);
+    }
+    return listable;
   }
 
   private memberWorkstreamIdsUnchecked(spaceId: string): string[] {

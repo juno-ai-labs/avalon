@@ -15,7 +15,6 @@ import {
   SPACE_COLOR_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
   SPACE_ICON_KEYS,
-  SpaceChannelPageSchema,
   SpaceColorKeySchema,
   SpaceErrorCodeSchema,
   SpaceSnapshotSchema,
@@ -118,11 +117,7 @@ describe("space contracts", () => {
     }).success).toBe(false);
   });
 
-  it("given a Channel page and its access sources, when they are parsed, then both stay closed", () => {
-    expect(SpaceChannelPageSchema.safeParse({ items: [CHANNEL_ID], nextCursor: null }).success).toBe(true);
-    expect(SpaceChannelPageSchema.safeParse({ items: [CHANNEL_ID], nextCursor: "" }).success).toBe(false);
-    expect(SpaceChannelPageSchema.safeParse({ items: [CHANNEL_ID] }).success).toBe(false);
-
+  it("given a Channel's access sources, when they are parsed, then the shape stays closed", () => {
     expect(ChannelAccessSourcesSchema.safeParse({
       direct: { scope: "personal", participantUserIds: [USER_ID] },
       spaces: [{ spaceId: SPACE_ID, scope: "workspace", participantUserIds: [USER_ID] }],
