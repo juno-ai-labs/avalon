@@ -15,7 +15,7 @@ import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/compone
 import { SPACE_SCOPE_OPTIONS } from '@rally/ui/components/space-dashboard';
 
 import { compareWorkstreamRecency } from '../lib/format';
-import { moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
+import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
@@ -346,11 +346,14 @@ export function SpaceSidebarSection({
                   // Space row underneath has already taken it. Escape is the
                   // third: backing out of a drag must not be the same thing as
                   // finishing it.
-                  if (cancelled || current?.dropped !== true || held.join() === stored.join()) {
+                  const committed = committedOrder(
+                    held, stored, cancelled || current?.dropped !== true,
+                  );
+                  if (committed === null) {
                     setPlacementOrder(null);
                     return;
                   }
-                  void commitPlacements(space.id, held);
+                  void commitPlacements(space.id, committed);
                 },
                 onMove: (target, direction) => {
                   const from = placementIds.indexOf(target.id);
@@ -364,9 +367,9 @@ export function SpaceSidebarSection({
                   active={active}
                   drag={{
                     onDragEnd: () => {
-                      const ids = dragOrder ?? storedSpaceIds;
+                      const committed = committedOrder(dragOrder, storedSpaceIds, false);
                       dragging.current = null;
-                      if (ids.join() !== storedSpaceIds.join()) void commit(ids);
+                      if (committed) void commit(committed);
                       else setDragOrder(null);
                     },
                     onDragEnter: (event) => {
