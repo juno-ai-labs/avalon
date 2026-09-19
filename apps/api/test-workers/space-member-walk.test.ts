@@ -264,6 +264,11 @@ async function spaceSourceIds(workstreamId: WorkstreamId): Promise<string[]> {
   return sources.spaces.map((source) => source.spaceId);
 }
 
+/** The cursor shape the storage writes: base64url of the Channel id. */
+function cursorAt(workstreamId: WorkstreamId): string {
+  return btoa(workstreamId).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
 function intentRow(operationId: string) {
   return workspace().runInspectionSql({
     sql: "SELECT state, cursor FROM space_intents WHERE operation_id = ?",
@@ -340,5 +345,52 @@ describe("a Space fan-out over more members than one page", () => {
       .toEqual(firstPageOperations);
     await expect(intentRow(intent.operation_id))
       .resolves.toMatchObject({ rows: [{ state: "settled" }] });
+  }, 120_000);
+
+  it("given a restore that never walked, when it resumes, then it re-applies the source from the cursor on", async () => {
+    const departing = await reserve("Company");
+    const staying = await reserve("Recruiting");
+    // Two Channels, because what this is about is the `restore` branch of the
+    // resume rather than the page bound the case above already crosses.
+    const walked = CHANNELS[0]!;
+    const remaining = CHANNELS[1]!;
+    for (const workstreamId of [walked, remaining]) {
+      await publishChannel(workstreamId);
+      await place(departing, workstreamId);
+      await place(staying, workstreamId);
+      await openMemberChannel(workstreamId);
+      await seatSpaceSource(workstreamId, departing);
+      await seatSpaceSource(workstreamId, staying);
+    }
+    const service = new SpaceService(env, AUTH);
+    await service.archive(departing);
+    expect(await spaceSourceIds(remaining)).toEqual([staying]);
+
+    // The restore commits and the request dies before it asks any Channel for
+    // anything: the Space is active again in the directory and on every socket,
+    // and no member holds its source. Before this staged an intent, that state
+    // was the one Space operation nothing would ever notice.
+    const operationId = crypto.randomUUID();
+    const restored = await workspace().restoreSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: departing, operationId,
+    });
+    if (!restored.ok) throw new Error(restored.code);
+    expect(await spaceSourceIds(remaining)).toEqual([staying]);
+
+    await service.resumeIntent({
+      operationId,
+      kind: "restore",
+      spaceId: departing,
+      workstreamId: null,
+      spaceRevision: restored.space.revision,
+      membershipGeneration: null,
+      cursor: cursorAt(walked),
+    });
+
+    // The member the walk had not reached has the source back; the one behind
+    // the cursor is left where the interrupted walk left it.
+    expect(await spaceSourceIds(remaining)).toEqual([departing, staying].sort());
+    expect(await spaceSourceIds(walked)).toEqual([staying]);
+    await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 120_000);
 });

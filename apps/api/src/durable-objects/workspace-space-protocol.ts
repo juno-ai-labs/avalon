@@ -58,19 +58,25 @@ export const WorkspaceSpaceRequestSchema = SpaceActorSchema.extend({
 export type WorkspaceSpaceRequest = z.infer<typeof WorkspaceSpaceRequestSchema>;
 
 /**
- * An archive, staged and settled under one operation id the caller owns.
+ * A whole-Space operation staged and settled under one operation id the caller
+ * owns: an archive, or a restore.
  *
  * Separate from {@link WorkspaceSpaceRequestSchema} because the settlement has
- * to name the intent the preflight staged, and the id it used to reconstruct
- * that from — the Space revision, minus one, read back after the archive
- * advanced it — was arithmetic over two writes in two objects. The caller
- * already mints one for an audience change; an archive is the same shape.
+ * to name the intent the staging wrote, and the id an archive used to
+ * reconstruct that from — the Space revision, minus one, read back after the
+ * archive advanced it — was arithmetic over two writes in two objects. The
+ * caller mints one and hands it to both halves.
+ *
+ * One schema for both, because they are the same request: a Space id, and the
+ * id of the operation the fan-out after it belongs to. Two identical
+ * declarations named after their callers would be two places to change when the
+ * next whole-Space operation arrives.
  */
-export const WorkspaceSpaceArchiveRequestSchema = SpaceActorSchema.extend({
+export const WorkspaceSpaceStagedRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   operationId: IdSchema,
 }).strict();
-export type WorkspaceSpaceArchiveRequest = z.infer<typeof WorkspaceSpaceArchiveRequestSchema>;
+export type WorkspaceSpaceStagedRequest = z.infer<typeof WorkspaceSpaceStagedRequestSchema>;
 
 export const WorkspaceSpaceReorderRequestSchema = SpaceActorSchema.extend({
   order: ReorderSpacesRequestSchema,

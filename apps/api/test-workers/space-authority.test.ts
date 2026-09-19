@@ -848,11 +848,21 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
     });
 
-    await expect(workspace().restoreSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
-      .resolves.toMatchObject({ ok: true, space: { status: "active", channelCount: 1 } });
+    const operationId = crypto.randomUUID();
+    await expect(workspace().restoreSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
+    })).resolves.toMatchObject({ ok: true, space: { status: "active", channelCount: 1 } });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [spaceId, second].sort() });
+    // Staged like the other four. The memberships are back before any Channel
+    // has been asked for anything, so a request that stops here leaves the
+    // Space active with its members holding no source from it — and the intent
+    // is the only thing that would ever notice.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    })).toMatchObject({ rows: [{ kind: "restore", state: "pending" }] });
   });
 
   it("given General, when it is archived or made personal, then both are refused", async () => {
