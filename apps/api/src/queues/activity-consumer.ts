@@ -1,5 +1,4 @@
 import { publishAccessRevocation } from "../services/access-revocation";
-
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
@@ -84,7 +83,6 @@ const RetiredProjectDefaultMessageSchema = z.object({
   workspaceId: z.string(),
   workstreamId: z.string(),
 });
-
 
 interface ActivityRow {
   id: string;

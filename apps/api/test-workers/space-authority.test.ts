@@ -29,6 +29,7 @@ import {
   WorkspaceSpaceSnapshotEventSchema,
   type ParentEffect,
   type SpaceId,
+  type UserId,
   type WorkspaceSidebar,
   type WorkspaceSpaceSnapshotEvent,
   type WorkstreamId,
@@ -45,6 +46,7 @@ const GUEST = asUserId("00000000-0000-7000-8000-00000000cf03");
 const INACTIVE = asUserId("00000000-0000-7000-8000-00000000cf04");
 const CHANNEL_A = asWorkstreamId("00000000-0000-7000-8000-00000000cf05");
 const CHANNEL_B = asWorkstreamId("00000000-0000-7000-8000-00000000cf06");
+const CHANNEL_C = asWorkstreamId("00000000-0000-7000-8000-00000000cf07");
 const RESOURCE_ID = "00000000-0000-7000-8000-00000000cf07";
 
 function workspace() {
@@ -210,6 +212,69 @@ async function reserve(
 }
 
 /** Put a Channel in a Space the way the service does: stage, then settle. */
+/**
+ * One Channel that only its own participant may see.
+ *
+ * `directory_common` makes it personal; the `directory_user` row beside it is
+ * what says who its participant is. Both halves are needed, because the page
+ * decides visibility from exactly that pair.
+ */
+async function publishPersonalChannel(
+  workstreamId: WorkstreamId,
+  participantUserId: UserId,
+): Promise<void> {
+  const common: ParentEffect = {
+    kind: "directory_common",
+    title: "Private Channel",
+    description: "",
+    preview: "",
+    scope: "personal",
+    state: "idle",
+    systemKind: null,
+    lastActivityAt: "2026-09-19T00:00:00.000Z",
+    completedAt: null,
+    archivedAt: null,
+    createdByUserId: participantUserId,
+    latestAttentionOrdinal: 0,
+    unreadTrackingStartOrdinal: 0,
+    createdAt: "2026-09-19T00:00:00.000Z",
+    updatedAt: "2026-09-19T00:00:00.000Z",
+    resourceLinks: [],
+  };
+  const viewer: ParentEffect = {
+    kind: "directory_user",
+    userId: participantUserId,
+    isParticipant: true,
+    participantAddedAt: "2026-09-19T00:00:00.000Z",
+    unreadCount: 0,
+    youAreMentioned: false,
+    unseen: false,
+    listable: true,
+    seenAttentionOrdinal: 0,
+    manualUnreadFromOrdinal: null,
+    manualUnreadGeneration: 0,
+    latestMentionAttentionOrdinal: 0,
+  };
+  await workspace().applyWorkstreamDirectoryEffects({
+    workspaceId: WORKSPACE_ID,
+    envelopes: [common, viewer].map((effect) => ParentEffectEnvelopeSchema.parse({
+      kind: "parent_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: workstreamId,
+      generation: 1,
+      messageId: messageId(),
+      partitionKey: effect.kind === "directory_common" ? "common" : `user:${participantUserId}`,
+      sourceVersion: 1,
+      requiredProjectionVersion: null,
+      payloadHash: conversationEffectHash(effect),
+      effect,
+    })),
+  });
+}
+
 async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void> {
   const plan = await workspace().prepareSpaceMembership({
     workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId,
@@ -448,6 +513,32 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toMatchObject({ ok: true, page: { items: [], nextCursor: null } });
   });
 
+  it("given a personal member Channel, when somebody outside it reads the Space, then it is not listed", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_C);
+
+    // The page is a read of the Channel directory, so it answers the reader
+    // rather than the Space. A personal Channel inside a Space somebody else
+    // can see is still a Channel they may not open, and a page that named it
+    // would be a way to enumerate them — the membership row says where the
+    // Channel lives, never who may see it.
+    await expect(workspace().listSpaceChannels({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, cursor: null,
+    })).resolves.toMatchObject({
+      ok: true,
+      page: { items: [{ id: CHANNEL_A }], nextCursor: null },
+    });
+    await expect(workspace().listSpaceChannels({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, cursor: null,
+    })).resolves.toMatchObject({
+      ok: true,
+      page: { items: [{ id: CHANNEL_A }, { id: CHANNEL_C }], nextCursor: null },
+    });
+  });
+
   it("given a staged membership, when the Space moved before finalization, then it is refused", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
@@ -490,9 +581,16 @@ describe("WorkspaceDO space authority", () => {
     // screen reads and the membership a fan-out reads deliberately differ.
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({ ok: true, space: { channelCount: 1 } });
+    // Channels rather than ids: the page is projected through the same
+    // directory select and mapper the sidebar's own list uses, so a Space page
+    // and a sidebar row cannot drift. The placement travels on the row, which
+    // is what lets a client draw the Channel under its Space on first paint.
     await expect(workspace().listSpaceChannels({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, cursor: null,
-    })).resolves.toMatchObject({ ok: true, page: { items: [CHANNEL_A], nextCursor: null } });
+    })).resolves.toMatchObject({
+      ok: true,
+      page: { items: [{ id: CHANNEL_A, spaceIds: [spaceId] }], nextCursor: null },
+    });
     await expect(workspace().listSpaceMembers({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({
         ok: true,
