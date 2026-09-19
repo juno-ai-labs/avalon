@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import type { CitationTarget } from '@rally/contracts/citations';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
 import type { CitationContext, CitationResource } from './markdown-citations';
 import { MarkdownBody } from './workstream-blocks';
@@ -10,6 +10,13 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText: vi.fn(), exportMessage: vi.fn(), reportTelemetryProductIntent: vi.fn() }),
   desktopServicesAvailable: () => false,
 }));
+
+/** The one session capability a Markdown body reads; null in this file by default. */
+const faviconApi = vi.hoisted(() => ({ getFavicon: vi.fn<(hostname: string) => Promise<Blob | null>>(async () => null) }));
+vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => faviconApi }));
+// A hoisted mock outlives `restoreMocks`, so a test that asserts on what was
+// asked for has to start from a known history rather than the last test's.
+beforeEach(() => { faviconApi.getFavicon.mockReset(); faviconApi.getFavicon.mockResolvedValue(null); });
 
 const DECK: CitationResource = { id: 'board-deck', title: 'Q3 board deck', resourceType: 'document' };
 
@@ -448,6 +455,43 @@ describe('footnote citations', () => {
     // The vertical cost of a source footer is the frustration this replaces.
     expect(document.querySelector('.footnotes')).toBeNull();
     expect(document.body).not.toHaveTextContent('Footnotes');
+  });
+
+  it('marks a web source with the site favicon and leaves an internal one an asterisk', async () => {
+    // The asterisk says only that a source is here. A web source has a mark of
+    // its own, and it is the one already drawn in front of a link to the same
+    // site — so the two readings of one destination agree. A resource has no
+    // host to ask, and keeps the glyph.
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    faviconApi.getFavicon.mockResolvedValue(new Blob([png], { type: 'image/png' }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:memo-favicon');
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toBeInTheDocument());
+    expect(faviconApi.getFavicon).toHaveBeenCalledWith('example.com');
+    const pills = [...document.querySelectorAll('.citation-pill')];
+    // The icon is decoration: the source still reaches assistive technology
+    // through the pill's own label, and the popover still names it.
+    expect(pills.map((pill) => pill.getAttribute('aria-label'))).toEqual([
+      'Source 1: Q3 board deck', 'Source 2: Margin memo',
+    ]);
+    expect(pills.map((pill) => pill.querySelector('img')?.getAttribute('src') ?? pill.textContent)).toEqual([
+      '*', 'blob:memo-favicon',
+    ]);
+    expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('keeps a still\'s numbered markers rather than fetching icons into a picture', () => {
+    // A still is rendered synchronously and photographed; an icon that lands
+    // after the shutter is an empty box in the file somebody keeps, and the
+    // numbers are what its trailing source list is read by.
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+
+    render(<MarkdownBody citations={context()} still>{grounded}</MarkdownBody>);
+
+    expect(faviconApi.getFavicon).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1', '2']);
   });
 
   it('keeps the source list in a still, where no popover can be opened', () => {
