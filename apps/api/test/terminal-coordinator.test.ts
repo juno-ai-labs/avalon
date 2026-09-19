@@ -1,12 +1,13 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   TerminalSandboxCoordinator,
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
+import { TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS } from "../src/services/terminal/contract";
 import type {
   TerminalSandboxProvider,
   TerminalSandboxState,
@@ -247,7 +248,10 @@ describe("Terminal sandbox coordinator", () => {
     advance(10);
 
     const acquired = await coordinator.acquire(context());
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ state: "running" });
     expect(workstreamObjectGet(
       objectStore,
@@ -271,9 +275,102 @@ describe("Terminal sandbox coordinator", () => {
 
     const acquired = await coordinator.acquire(context());
 
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ providerSandboxId: "sandbox-1", state: "running" });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  describe("acquisition deadline", () => {
+    // Installed and restored in hooks rather than the test body, per
+    // docs/testing.md: a restore a throwing assertion can skip is not a
+    // restore.
+    const ACQUISITION_STARTED_AT = 1_700_000_000_000;
+    let wallClock = ACQUISITION_STARTED_AT;
+
+    beforeEach(() => {
+      wallClock = ACQUISITION_STARTED_AT;
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("gives a restore the tool's acquisition deadline, not a provider default", async () => {
+      const { objectStore, env, provider, clock, advance } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      await coordinator.acquire(context());
+      advance(90);
+
+      // The deadline is anchored to when acquisition began, so everything it
+      // spends before the restore — the workspace policy read, the
+      // repository-authority join, the provider state read-back — comes out of
+      // the same budget rather than resetting it. Handing the provider an
+      // instant rather than a duration is what makes that true across the RPC
+      // hop and the adapter's own lookup as well.
+      vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+      vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
+        wallClock += 25_000;
+        return {
+          id: "sandbox-1",
+          name: requested,
+          state: "archived" as const,
+          domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+        };
+      });
+
+      await coordinator.acquire(context());
+
+      expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
+        deadlineAtMs: ACQUISITION_STARTED_AT + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
+      });
+    });
+  });
+
+  it("re-observes a created sandbox whose start ran out of the deadline", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    // The wait is bounded by the caller's deadline now, not a fixed minute, so
+    // running out of it is an ordinary outcome. The restore is still on its
+    // way, and Daytona says so when asked.
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({
+      providerSandboxId: "sandbox-1",
+      state: "running",
+    });
+    expect(provider.getSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("returns retryable guidance when a created sandbox is still starting", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+    observeProviderState(provider, "sandbox-1", "starting");
+
+    // A raw Daytona error here would reach the model as an unclassified tool
+    // failure. It gets a retryable code and a reason instead, and the sandbox
+    // is kept rather than discarded over a wait that merely ran out.
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({
+      code: "sandbox_unavailable",
+      details: { retryAfterMs: 5_000 },
+    });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
   });
 
   it.each([true, false, undefined])("honors provider recoverability %s before replacing an errored sandbox", async (recoverable) => {
@@ -315,6 +412,14 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "running");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.recoverSandbox).toHaveBeenCalledOnce();
+    // Recovery is a restore too — the failed-but-recoverable case is exactly
+    // the one the old fixed minute censored — so it is bounded like one.
+    // Asserting only the call count here left the argument unproved: deleting
+    // it from the coordinator kept the whole suite green.
+    expect(provider.recoverSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
@@ -360,7 +465,10 @@ describe("Terminal sandbox coordinator", () => {
 
     observeProviderState(provider, "sandbox-1", "archived");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
@@ -419,7 +527,10 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "archived");
     vi.mocked(provider.readFile).mockRejectedValueOnce(Object.assign(new Error("runner unavailable"), { status }));
     await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))

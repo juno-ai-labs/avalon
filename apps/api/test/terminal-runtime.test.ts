@@ -908,7 +908,10 @@ describe("Daytona Terminal runtime", () => {
     await expect(firstLinkedRead).resolves.toEqual(new TextEncoder().encode("hello\n"));
     expect(provider.stopSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.readFile).toHaveBeenCalledTimes(2);
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0]!);
@@ -1069,7 +1072,10 @@ describe("Daytona Terminal runtime", () => {
     await expect(runtime.readFile(linked, "src/file.txt"))
       .resolves.toEqual(new TextEncoder().encode("hello\n"));
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",

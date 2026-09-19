@@ -270,6 +270,46 @@ preserving the sandbox ID, generation, and filesystem.
 | Unexpected metadata 404 | Preserve the ID and generation; return unavailable and reconcile again. |
 | Transitional or unknown | Preserve the identity and retry after the transition. |
 
+**How long a restore may take is the acquisition budget's to say.** Starting an
+archived sandbox restores its filesystem, and the Daytona call that asks for
+that also waits for it — but the two are separable, and only the request is
+what makes the restore happen. So acquisition hands the provider the instant
+its work must not outlive: `acquisitionStartedAt` plus
+`TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS`, the same number every Terminal tool's
+`timeoutMs` is sized from. `startSandbox` and `recoverSandbox` carry it as
+`deadlineAtMs`, and the adapter subtracts `Date.now()` from it immediately
+before the SDK call. Repository checkout does not acquire — it takes the
+mutation lease and restores the sandbox itself — so it anchors its own deadline
+from `TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS`, the budget its tool deadline
+reserves for that phase. Between them no restore path is left on the SDK
+default.
+
+**An instant, not a remaining duration.** A duration is only true when it is
+computed, and three things sit between the coordinator and the wait: the policy
+read, authority replacement and network reconciliation before the call; the
+provider RPC session; and the adapter's own sandbox lookup. A duration
+snapshotted at the coordinator would let the wait outlive the budget by however
+long those took — with a 120s budget and 20s of session and lookup, Daytona
+would still be asked to wait a further 120s. An instant survives every hop
+unchanged, so each of those is charged against it wherever it is spent.
+
+Rounding to the SDK's seconds is **down**, so a wait can never outrun the
+instant it was given. A deadline already reached still sends the start and
+waits one second, the smallest finite value the SDK accepts — `0` means "wait
+forever" there. That sub-second overshoot is the floor's unavoidable cost, not
+a grace.
+
+Be exact about what that floor buys, because it is the case it exists for: the
+SDK spends the same number on the start request as on the wait, so at one
+second the request carries a 1000ms timeout and Daytona's control plane may not
+answer within it. The start is *sent*; it is not guaranteed to be accepted, and
+nothing re-issues it. What makes that safe is not the floor but
+`resumeProviderSandbox` re-observing provider state afterwards, which it does
+whether the wait succeeded, timed out, or threw. A caller with no deadline of
+its own — only the lifecycle alarm now — passes none and gets the SDK's own
+default; that path never starts an archived sandbox, so it cannot reach the
+restore measurement.
+
 A start or recovery timeout does not establish loss. Acquisition reads metadata
 again and accepts a completed start, waits out a transition, or replaces only
 when the provider explicitly establishes loss. Failed deletion does not release
@@ -834,7 +874,14 @@ content.
 `pnpm terminal:analytics -- --days 7` queries Cloudflare's SQL API and prints
 the actual first/last observation time, sampled and sampling-weighted counts,
 and average/p50/p95/max latency for create, bootstrap, stopped warming, and
-archived restore. It separately prints provider-create, policy-read-back,
+archived restore. Restore samples from before the acquisition budget reached
+the provider are censored at 60_000ms and recorded as failures, so a restore
+tail read across that boundary is measuring the old ceiling rather than
+Daytona. The bucket is keyed on operation and source state alone, with no field
+separating call sites, so a censored sample from any restore path merges into
+**Restore archived sandbox** indistinguishably from a budgeted one — which is
+why leaving even one restore unbudgeted would make the row a mixture of
+ceilings rather than a distribution. It separately prints provider-create, policy-read-back,
 compatibility-install, and manifest-verification percentiles plus how often each
 missing executable was installed. Region and snapshot filters are available.
 
@@ -848,6 +895,83 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — A sandbox restore is bounded by the acquisition budget, not the SDK's default
+
+**What changed:** `startSandbox` and `recoverSandbox` take a
+`TerminalSandboxWaitOptions` across the provider contract and its RPC hop,
+carrying a deadline as an absolute `deadlineAtMs`. The coordinator computes it
+once per acquisition from `terminalAcquisitionDeadlineAt`; repository checkout,
+which restores outside `acquire`, computes its own from
+`terminalRepositoryPreparationDeadlineAt`. The Daytona adapter subtracts
+`Date.now()` immediately before the SDK call, rounds the remainder down to the
+SDK's seconds, and floors it at one so a reached deadline never arrives as the
+SDK's "wait forever" zero. The lifecycle alarm passes nothing and keeps the SDK
+default; it never starts an archived sandbox, so it is not a restore path. No
+number moved: `TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS` is still 120s and
+`TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS` still 180s.
+
+**Why:** Archived-restore latency was bimodal — p50 4.7s, p90 59.6s — with
+observations landing on exactly 60s. That 60 was not a bound anyone chose: the
+adapter passed `60` to `Sandbox.start`, which is that method's own default
+signature value re-typed as an argument. It bounded nothing real, because a
+wait that runs out does not stop Daytona restoring, and `resumeProviderSandbox`
+already re-reads provider state precisely for that case. What it did do was
+record every restore past a minute as a `sandbox_start` failure at exactly
+60_000ms, censoring the distribution that anyone choosing a real ceiling would
+have to read. Raising it to a larger guess was rejected for that reason: it
+moves the censor without answering the question, and
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
+puts the number outside a change author's gift anyway. Meanwhile
+`TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS` already existed, was already what the
+model was promised, and had never travelled past `contract.ts` — so the
+provider silently gave up at half the advertised deadline. Deleting the second
+deadline rather than raising it leaves one number, owned where it is
+advertised, and lets `pnpm terminal:analytics` show the real restore tail.
+
+**What a future change has to respect:** the deadline crosses the RPC hop as an
+instant and is subtracted at the point of use, never carried as a remaining
+duration. Review of the first draft caught exactly that: it passed a `waitMs`
+computed in the coordinator, which the RPC session handshake and the adapter's
+sandbox lookup then spent without deducting, so a 120s budget could authorize a
+wait ending at 140s. Rounding is down for the same reason.
+
+Review also caught the created-sandbox start having no re-observation
+fallback. `resumeProviderSandbox` had one from the start; the create path did
+not, and a bounded wait is what made that reachable — a wait running out there
+would have escaped as an unclassified provider error rather than a retryable
+`sandbox_unavailable`. **A bounded wait obliges the caller to re-observe**, so
+any future call site that passes a deadline owes that catch too.
+
+Review also caught the draft budgeting `acquire` alone while claiming the
+measurement was fixed. It was not: repository checkout restores outside
+`acquire`, kept the SDK default implicitly, and fed censored samples into the
+same analytics bucket — so the report would have mixed two ceilings while
+reading as one distribution. **Any new call site that can start an archived
+sandbox owes a deadline**, or it silently re-censors the row that tells the
+team whether a budget needs to move.
+
+**What this bounds, and what it does not.** Only the *restore wait* is
+budgeted. The adapter still passes the SDK's `60` to `stop`, `delete` and
+`create`, and two of those — the `stop` in `reconcileNetworkPolicy` and the
+`delete` in `replaceForAuthority` — run inside acquisition, so a slow one can
+still spend the budget that the restore after it then finds gone. The restore
+handles that correctly, because the deadline is absolute and it simply gets
+what is left, but the acquisition as a whole can still overrun. Bounding those
+is a separate change and a separate set of numbers.
+
+What is fully bounded is the *measurement*: `operation: "sandbox_start"` is
+emitted only from the provider's `startSandbox`, so no unbudgeted call can
+reach the **Restore archived sandbox** row. The direct `sandbox.start` calls
+inside `configureGitHubReadAccess` and command cancellation emit a request
+measurement only.
+
+If a restore ceiling ever does need to be its own number, it is one of the two
+budgets that moves; do not reintroduce a bound on a restore inside the adapter. And the wait
+is not a durability decision: a timeout must keep re-observing rather than
+treating the sandbox as lost — which is also the only thing that makes a
+floored one-second start safe, since that request can be aborted before Daytona
+accepts it.
 
 ### 2026-09-19 — A mutation no longer waits for its instructions, and `apply_patch` takes the model's own format
 

@@ -120,6 +120,49 @@ export const TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS = 180_000;
 export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
   TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
 
+/**
+ * The wall-clock instant an acquisition's provider waits must not outlive.
+ *
+ * The budget above sizes every tool deadline in this file, but it used to stop
+ * there: the coordinator never saw it, so the longest a sandbox restore could
+ * take was decided instead by the `60` seconds the Daytona adapter passed to
+ * `Sandbox.start`, which is that SDK method's own default re-typed as an
+ * argument. Half the advertised budget therefore went unused while archived
+ * restores past a minute were recorded as `sandbox_start` failures at exactly
+ * 60_000ms — a ceiling that censored the measurement anyone would need in
+ * order to choose a real one. One deadline, owned where it is advertised,
+ * replaces the two.
+ *
+ * This is an instant rather than a duration on purpose. A remaining-duration
+ * is only true at the moment it is computed, and several awaits sit between
+ * the coordinator and the SDK call that finally waits — the provider RPC
+ * session, then the adapter's own sandbox lookup. A duration snapshotted
+ * before those would let the wait outlive the budget by however long they
+ * took; an instant survives every hop unchanged and is subtracted from where
+ * it is spent.
+ */
+export function terminalAcquisitionDeadlineAt(startedAtMs: number): number {
+  return startedAtMs + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS;
+}
+
+/**
+ * The same, for the one restore that does not run inside `acquire`.
+ *
+ * Repository checkout takes the mutation lease rather than acquiring, and
+ * restores an archived sandbox itself before backing it up. Left unbudgeted it
+ * kept the SDK's `60` implicitly — the literal this file's other deadline
+ * exists to delete — and went on emitting `sandbox_start` / `archived`
+ * failures at 60_000ms. `report-terminal-analytics.mjs` buckets on operation
+ * and source state alone, so those samples land in the same **Restore archived
+ * sandbox** row as the budgeted ones: a tail mixing two ceilings, read by
+ * whoever is deciding whether the acquisition budget needs to move. One
+ * unowned number on one call site was enough to make the report unreadable
+ * again, which is the whole failure this change exists to end.
+ */
+export function terminalRepositoryPreparationDeadlineAt(startedAtMs: number): number {
+  return startedAtMs + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
+}
+
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
     name: "read_file",
