@@ -30,8 +30,8 @@ import {
   railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow, conversationShowsRunStoppedNotice, conversationShowsStoppingRow } from './conversation-surface';
-import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement } from './conversation-surface';
+import { JumpToLatestButton } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
 describe('organization foreground presence', () => {
@@ -997,51 +997,44 @@ describe('conversationShowsStoppingRow', () => {
   });
 });
 
-describe('conversationShowsRunStoppedNotice', () => {
-  const stopped = {
-    status: 'stopped' as const,
-    createdAt: '2026-09-19T10:00:00.000Z',
-    startedAt: '2026-09-19T10:00:00.000Z',
-    completedAt: '2026-09-19T10:00:30.000Z',
-  };
-  const turn = (authorType: 'human' | 'agent', createdAt: string) => ({ authorType, createdAt });
+describe('nextStopAcknowledgement', () => {
+  const running = { id: 'run-one', status: 'running' as const };
+  const stopped = { id: 'run-one', status: 'stopped' as const };
 
-  it('explains the stop while the stop is still the last thing that happened', () => {
-    expect(conversationShowsRunStoppedNotice(stopped, [
-      turn('human', '2026-09-19T10:00:00.000Z'),
-      turn('agent', '2026-09-19T10:00:20.000Z'),
-    ])).toBe(true);
-    // The partial answer the stop cut off settles after it.
-    expect(conversationShowsRunStoppedNotice(stopped, [
-      turn('human', '2026-09-19T10:00:00.000Z'),
-      turn('agent', '2026-09-19T10:00:31.000Z'),
-    ])).toBe(true);
+  it('holds the arming across the wait, which is the whole of the mechanism', () => {
+    // Between the request and the settlement the run still reads `running`.
+    // An arming that cleared itself the moment it found nothing to say would
+    // be gone by the time the run settled, which is exactly what it exists to
+    // survive — and what shipped broken the first time.
+    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, true, running);
+    expect(asked).toEqual({ runId: null, stopPending: true });
+    // The stopping row goes as soon as the run leaves `running`, so the pass
+    // that settles it carries no arming signal of its own.
+    expect(nextStopAcknowledgement(asked, false, stopped)).toEqual({ runId: 'run-one', stopPending: false });
   });
 
-  it('clears on the next member turn, including one that starts no run', () => {
-    // The whole point: a turn the addressing classifier reads as conversation
-    // between people leaves `latestHarnessRun` on the stopped run for good, so
-    // a notice that waits for a new run sits under it until somebody addresses
-    // Rally — in a room where people are talking to each other, never.
-    expect(conversationShowsRunStoppedNotice(stopped, [
-      turn('human', '2026-09-19T10:00:00.000Z'),
-      turn('human', '2026-09-19T10:00:31.000Z'),
-    ])).toBe(false);
+  it('keeps saying so until the conversation has another run to describe', () => {
+    const held = { runId: 'run-one', stopPending: false };
+    expect(nextStopAcknowledgement(held, false, stopped)).toEqual(held);
+    expect(nextStopAcknowledgement(held, false, { id: 'run-two', status: 'running' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, false, { id: 'run-two', status: 'stopped' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, false, null)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, false, undefined)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 
-  it('keeps the acknowledgement for a colleague who typed before the stop settled', () => {
-    // They had not seen the stop yet. Their turn is not the conversation
-    // moving past it, and taking the notice away answers the wrong person.
-    expect(conversationShowsRunStoppedNotice(stopped, [
-      turn('human', '2026-09-19T10:00:00.000Z'),
-      turn('human', '2026-09-19T10:00:10.000Z'),
-    ])).toBe(true);
+  it('says nothing to a reader who was not there', () => {
+    // The status on the row is permanent, so opening a conversation stopped
+    // last week would otherwise greet them with an answer to a button press
+    // they never made — and, in a room where people talk to each other, keep
+    // it on screen under every later message, because a turn the addressing
+    // classifier reads as human-only starts no run to replace it.
+    expect(nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, false, stopped)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 
-  it('says nothing about a run that was not stopped', () => {
-    expect(conversationShowsRunStoppedNotice({ ...stopped, status: 'completed' }, [])).toBe(false);
-    expect(conversationShowsRunStoppedNotice(null, [])).toBe(false);
-    expect(conversationShowsRunStoppedNotice(undefined, [])).toBe(false);
+  it('drops the arming on a run that ended some other way', () => {
+    const asked = { runId: null, stopPending: true };
+    expect(nextStopAcknowledgement(asked, false, { id: 'run-one', status: 'completed' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(asked, false, { id: 'run-one', status: 'failed' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 });
 
@@ -1176,17 +1169,6 @@ describe('RunFailureNotice', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
-  });
-});
-
-describe('RunStoppedNotice', () => {
-  it('makes a terminal member stop explicit without offering a retry', () => {
-    const { container } = render(<RunStoppedNotice />);
-
-    expect(screen.getByRole('status', { name: 'Run stopped' }))
-      .toHaveTextContent('This run was stopped by request.');
-    expect(container.querySelector('.run-stopped-icon svg')).toHaveAttribute('fill', 'currentColor');
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });
 
