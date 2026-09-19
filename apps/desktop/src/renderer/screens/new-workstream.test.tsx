@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asProjectId, type ProjectDirectory } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asSpaceId, asUserId, type SpaceDirectory } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -66,8 +66,8 @@ function announceApplicationSettings(settings: typeof applicationSettings.curren
   });
 }
 
-const currentUser = { id: 'user-1', name: 'Morgan Ellis', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
-const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
+const currentUser = { id: '00000000-0000-7000-8000-000000000001', name: 'Morgan Ellis', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
+const teammate = { id: '00000000-0000-7000-8000-000000000002', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Rally Studio',
@@ -106,38 +106,39 @@ function workstream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     preview: `${title} preview`,
     ...overrides,
   };
 }
 
-function personalProjectDirectory(projectId: ReturnType<typeof asProjectId>): ProjectDirectory {
+function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDirectory {
   return {
     waterline: 1,
     items: [{
-      id: projectId,
+      id: spaceId,
       name: 'Hiring',
       iconKey: 'briefcase',
       colorKey: 'blue',
       scope: 'personal',
       status: 'active',
-      presentationRevision: 1,
-      audienceGeneration: 1,
-      lifecycleGeneration: 1,
-      participants: [currentUser, teammate].map((member) => ({ userId: member.id, state: 'active', generation: 1 })),
-      workstreamIds: [],
+      systemRole: null,
+      revision: 1,
+      participants: [currentUser, teammate].map((member) => ({ userId: asUserId(member.id) })),
+      channelCount: 0,
       defaultResourceIds: [],
+      defaultSidekickIds: [],
       createdAt: '2026-08-27T00:00:00.000Z',
       updatedAt: '2026-08-27T00:00:00.000Z',
     }],
   };
 }
 
-function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }): QueryClient {
+function renderScreen(spaces: SpaceDirectory = { waterline: 0, items: [] }): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  queryClient.setQueryData(['projects'], projects);
+  queryClient.setQueryData(['spaces'], spaces);
   render(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
@@ -152,22 +153,22 @@ function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }):
   return queryClient;
 }
 
-function renderProjectScreen(
-  projectId: string,
-  projects: ProjectDirectory = { waterline: 0, items: [] },
-  nextProjectId?: string,
+function renderSpaceScreen(
+  spaceId: string,
+  spaces: SpaceDirectory = { waterline: 0, items: [] },
+  nextSpaceId?: string,
 ): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  queryClient.setQueryData(['projects'], projects);
+  queryClient.setQueryData(['spaces'], spaces);
   render(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
-          {nextProjectId && <Link to={`/projects/${nextProjectId}/workstreams/new`}>New channel in another project</Link>}
+        <MemoryRouter initialEntries={[`/spaces/${spaceId}/workstreams/new`]}>
+          {nextSpaceId && <Link to={`/spaces/${nextSpaceId}/workstreams/new`}>New channel in another space</Link>}
           <Routes>
-            <Route element={<NewWorkstreamScreen projectId="route" workspace={workspace} />} path="/projects/:projectId/workstreams/new" />
+            <Route element={<NewWorkstreamScreen spaceId="route" workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -251,31 +252,33 @@ describe('New channel home', () => {
     expect(workspaceSocket.listWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
-    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
-    const projects = personalProjectDirectory(projectId);
-    renderProjectScreen(projectId, projects);
+  it('given a space launcher, when the first message is submitted, then it omits home sections and takes its participants from the space', async () => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
 
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
-    expect(screen.queryByTitle('Participants are managed by the project')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Participants are managed by the space')).not.toBeInTheDocument();
     const modifier = document.querySelector('.participant-modifier');
     if (!(modifier instanceof HTMLElement)) throw new Error('participant modifier missing');
     const face = modifier.querySelector('.avatar-stack-item');
     if (!(face instanceof HTMLElement)) throw new Error('participant face missing');
     fireEvent.pointerMove(face, { pointerType: 'mouse' });
     const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip).toHaveTextContent('Participants are managed by the project');
+    expect(tooltip).toHaveTextContent('Participants are managed by the space');
     expect(tooltip).not.toHaveTextContent('Morgan Ellis');
     expect(tooltip).not.toHaveTextContent('Samantha Lee');
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
+    // The Space itself is not on the create request: the creation contract has
+    // no `spaceIds` yet, and placing a new Channel is Phase 4 of the Spaces
+    // plan. What the launcher does own is the roster it prefills from the
+    // personal Space.
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
-      projectId,
       participantIds: [teammate.id],
     })));
   });
@@ -333,12 +336,12 @@ describe('New channel home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       openingMessage: 'ask @Samantha Lee',
-      participantIds: ['user-2'],
+      participantIds: [teammate.id],
       operationId: expect.any(String),
       mentions: [{
         type: 'person',
         label: 'Samantha Lee',
-        userId: 'user-2',
+        userId: teammate.id,
         connectorType: null,
         startOffset: 4,
         endOffset: 17,
@@ -348,7 +351,7 @@ describe('New channel home', () => {
       .toMatchObject({ ranges: [{ turns: [{ blocks: [{
         mentions: [{
           type: 'person',
-          userId: 'user-2',
+          userId: teammate.id,
           startOffset: 4,
           endOffset: 17,
         }],
@@ -457,7 +460,7 @@ describe('New channel home', () => {
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
-      participantIds: ['user-2'],
+      participantIds: [teammate.id],
       operationId: expect.any(String),
       // The create request travels under the trace id the screen printed;
       // asserted as present rather than by value so the exact-shape check that
@@ -468,11 +471,11 @@ describe('New channel home', () => {
     expect(request?.operationId).toBe(request?.requestId);
   });
 
-  it.each(['workspace', 'project'] as const)('focuses the message composer when the %s launcher opens', async (scope) => {
-    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+  it.each(['workspace', 'space'] as const)('focuses the message composer when the %s launcher opens', async (scope) => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
     const queryClient = scope === 'workspace'
       ? renderScreen()
-      : renderProjectScreen(projectId, personalProjectDirectory(projectId));
+      : renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
 
     expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus();
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
@@ -480,18 +483,18 @@ describe('New channel home', () => {
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
   });
 
-  it('focuses the message when navigating between project launchers', async () => {
-    const firstId = asProjectId('00000000-0000-7000-8000-0000000000f2');
-    const secondId = asProjectId('00000000-0000-7000-8000-0000000000f3');
-    renderProjectScreen(firstId, {
+  it('focuses the message when navigating between space launchers', async () => {
+    const firstId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    const secondId = asSpaceId('00000000-0000-7000-8000-0000000000f3');
+    renderSpaceScreen(firstId, {
       waterline: 1,
-      items: [...personalProjectDirectory(firstId).items, ...personalProjectDirectory(secondId).items],
+      items: [...personalSpaceDirectory(firstId).items, ...personalSpaceDirectory(secondId).items],
     }, secondId);
     const firstComposer = screen.getByRole('textbox', { name: 'Opening channel message' });
     expect(firstComposer).toHaveFocus();
-    const nextProject = screen.getByRole('link', { name: 'New channel in another project' });
-    act(() => nextProject.focus());
-    fireEvent.click(nextProject);
+    const nextSpace = screen.getByRole('link', { name: 'New channel in another space' });
+    act(() => nextSpace.focus());
+    fireEvent.click(nextSpace);
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
   });
