@@ -772,7 +772,10 @@ uniqueness on the Channel, because a Channel belongs to as many Spaces as it was
 added to. `space_intents` is one row per staged cross-object operation, keyed by
 the caller's operation id, carrying its kind, its three nullable fences, its
 receipts, the `cursor` its member walk reached, the `last_error_code` of its
-most recent failed resume, and the retry gate the alarm claims on. The cursor is the same shape `space_bootstrap` carries for the
+most recent failed resume, and the retry gate the alarm claims on. The kind
+vocabulary is exactly the five operations that stage one — `add`, `remove`,
+`audience`, `archive`, `restore` — because a default's delivery and the cutover
+each have staging, a retry gate and a consumer leg of their own. The cursor is the same shape `space_bootstrap` carries for the
 cutover's walk — the Channel id the last finished page stopped at — and it is
 what a resume reads; the receipts are one per page rather than one per Channel,
 because `receipts_json` is rewritten whole by `json_insert` and a receipt per

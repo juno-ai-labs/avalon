@@ -209,7 +209,7 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE space_intents (
     operation_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN (
-      'add', 'remove', 'audience', 'archive', 'restore', 'default', 'bootstrap'
+      'add', 'remove', 'audience', 'archive', 'restore'
     )),
     space_id TEXT NOT NULL,
     workstream_id TEXT,
@@ -348,9 +348,20 @@ export interface WorkspaceSpaceDefaultPublication extends WorkspaceSpaceDefaultT
   attempts: number;
 }
 
+/**
+ * The kinds of operation that stage an intent.
+ *
+ * Exactly what `recordIntent` is called with, and nothing else. A default's
+ * delivery has `space_default_targets` and the cutover has `space_bootstrap`,
+ * each with its own staging, its own retry gate and its own consumer leg — so
+ * `default` and `bootstrap` were vocabulary the CHECK admitted and nothing ever
+ * wrote, and the resume carried a branch for a message that could not exist.
+ */
+export type WorkspaceSpaceIntentKind = "add" | "remove" | "audience" | "archive" | "restore";
+
 export interface WorkspaceSpaceIntentClaim {
   operationId: string;
-  kind: "add" | "remove" | "audience" | "archive" | "restore" | "default" | "bootstrap";
+  kind: WorkspaceSpaceIntentKind;
   spaceId: string;
   workstreamId: string | null;
   spaceRevision: number;

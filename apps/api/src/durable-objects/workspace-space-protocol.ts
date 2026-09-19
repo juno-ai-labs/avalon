@@ -326,6 +326,18 @@ export const SpaceDefaultTargetFailureRequestSchema = SpaceDefaultQueueMessageSc
 export type SpaceDefaultTargetFailureRequest = z.infer<typeof SpaceDefaultTargetFailureRequestSchema>;
 
 /**
+ * The operations that stage an intent, and therefore the ones a resume can be
+ * about.
+ *
+ * Exactly the kinds `WorkspaceSpaceStorage.recordIntent` is called with. A
+ * default's delivery and the cutover each have staging, a retry gate and a
+ * consumer leg of their own, so admitting `default` and `bootstrap` here
+ * described messages nothing could publish.
+ */
+export const SpaceIntentKindSchema = z.enum(["add", "remove", "audience", "archive", "restore"]);
+export type SpaceIntentKind = z.infer<typeof SpaceIntentKindSchema>;
+
+/**
  * One unsettled Space intent, republished so an interrupted operation finishes.
  *
  * The alarm publishes these; the activity consumer re-runs the service step the
@@ -338,7 +350,7 @@ export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   operationId: IdSchema,
-  kind: z.enum(["add", "remove", "audience", "archive", "restore", "default", "bootstrap"]),
+  kind: SpaceIntentKindSchema,
   spaceId: SpaceIdSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   spaceRevision: z.number().int().positive(),
