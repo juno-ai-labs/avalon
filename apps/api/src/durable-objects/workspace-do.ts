@@ -626,6 +626,7 @@ import {
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceListRequestSchema,
+  WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMembershipRemovalRequestSchema,
@@ -648,6 +649,7 @@ import {
   type WorkspaceSpaceDefaultResult,
   type WorkspaceSpaceDirectoryResult,
   type WorkspaceSpaceListRequest,
+  type WorkspaceSpaceMembersRequest,
   type WorkspaceSpaceMembersResult,
   type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMembershipRemovalRequest,
@@ -6125,14 +6127,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Every Channel a Space holds, archived ones included; server-to-server. */
-  async listSpaceMembers(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMembersResult> {
+  async listSpaceMembers(input: WorkspaceSpaceMembersRequest): Promise<WorkspaceSpaceMembersResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "list_space_members");
+    const request = parseRpcInput(WorkspaceSpaceMembersRequestSchema, input, "list_space_members");
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
       return { ok: false, code: "space_access_denied" };
     }
-    const workstreamIds = this.spaceStorage().memberWorkstreamIds(request.userId, request.spaceId);
+    const workstreamIds = this.spaceStorage()
+      .memberWorkstreamIds(request.userId, request.spaceId, request.reach);
     return WorkspaceSpaceMembersResultSchema.parse(workstreamIds === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, workstreamIds });
