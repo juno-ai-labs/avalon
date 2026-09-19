@@ -329,6 +329,50 @@ describe("Terminal sandbox coordinator", () => {
     });
   });
 
+  it("re-observes a created sandbox whose start ran out of the deadline", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    // The wait is bounded by the caller's deadline now, not a fixed minute, so
+    // running out of it is an ordinary outcome. The restore is still on its
+    // way, and Daytona says so when asked.
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({
+      providerSandboxId: "sandbox-1",
+      state: "running",
+    });
+    expect(provider.getSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("returns retryable guidance when a created sandbox is still starting", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+    observeProviderState(provider, "sandbox-1", "starting");
+
+    // A raw Daytona error here would reach the model as an unclassified tool
+    // failure. It gets a retryable code and a reason instead, and the sandbox
+    // is kept rather than discarded over a wait that merely ran out.
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({
+      code: "sandbox_unavailable",
+      details: { retryAfterMs: 5_000 },
+    });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([true, false, undefined])("honors provider recoverability %s before replacing an errored sandbox", async (recoverable) => {
     const { objectStore, env, provider, clock } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
