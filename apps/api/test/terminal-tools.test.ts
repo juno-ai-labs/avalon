@@ -291,7 +291,11 @@ describe("Terminal file and command tools", () => {
       context,
       "report.md",
       expect.any(Uint8Array),
-      { previousText: "before\n" },
+      {
+        previousText: "before\n",
+        // The digest of the bytes the edit read, which the write replaces only while the file still holds them.
+        previousSha256: "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+      },
     );
   });
 

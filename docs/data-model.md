@@ -613,12 +613,21 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - Terminal's work-stream-specific durable rows are object-local.
   `terminal_workspace` owns one generation, authority fingerprint, provider
   reconciliation identity, exclusive operation lease, lifecycle deadlines, and
-  final-diff pointer per work stream. `terminal_tasks` binds one command to one
+  final-diff pointer per conversation: the main conversation's sandbox is the
+  work stream's, a side thread has its own, and a background agent uses the
+  one of the conversation that started it, with `operation_run_substream_id`
+  naming the holder's conversation while a run from elsewhere holds the lease
+  (conversation schema 63). `terminal_tasks` binds one command to one
   harness tool receipt and retains only command hash, terminal state, exit,
   termination reason, byte counts, and bounded head/tail plus an optional full-log
-  resource. `terminal_imported_resources` records planned and completed imports
+  resource; since conversation schema 65 it no longer keys the run and the
+  receipt to this object's own tables, because a background agent's command
+  records its task in its owner's object while its run and receipt stay in its
+  own, named by `run_substream_id`. `terminal_imported_resources` records planned and completed imports
   per generation, destination, source hash, and byte size so a retry never trusts
-  pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
+  pre-existing sandbox bytes, and since conversation schema 64 the conversation
+  whose attachment authorized the import when that is not the row's own
+  (`attached_substream_id`). `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
   own the revision-fenced preview/confirm/read-back protocol.
   `terminal_repository` stores the immutable numeric GitHub
   repository ID, canonical name, selected base/ref/SHA, fixed head ref, durable

@@ -13,7 +13,7 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import { observeTerminalSandbox, deleteTerminalSandbox, stopTerminalSandbox, type TerminalSandboxProvider } from "./provider-contract";
-import { TERMINAL_WARM_STOP_MS } from "./coordinator";
+import { isLegacyTerminalAliasRow, TERMINAL_WARM_STOP_MS } from "./coordinator";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
@@ -115,6 +115,15 @@ export async function reconcileDueTerminalSandbox(
   const terminal = terminalPort(workspaceId, workstreamId, substreamId);
   const row = await terminal.sandbox();
   if (!row?.sandboxId || row.lifecycleState === "expired") return { transition: "none" };
+  // A row a side thread or background agent reserved under the work stream's
+  // one name, before a sandbox belonged to a conversation, names the main
+  // conversation's sandbox. It is dropped without a provider call: that
+  // sandbox is the main conversation's to stop, archive or delete, and this
+  // conversation reserves its own on its next use.
+  if (await isLegacyTerminalAliasRow(row, workspaceId, workstreamId, substreamId)) {
+    await terminal.resetSandbox({ generation: row.generation, now: now.getTime() });
+    return { transition: "none" };
+  }
 
   if (
     row.operationRunId

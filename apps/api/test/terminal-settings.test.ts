@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { TerminalSettingsService } from "../src/services/terminal/settings";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -375,7 +376,7 @@ describe("Terminal workspace settings", () => {
     const { objectStore, objectStores, provider, service } = fixture();
     const thread = "00000000-0000-4000-8000-000000000077";
     const threadStore = seedSandboxObject(objectStores, `${S}:${thread}`, {
-      state: "running", stableName: "settings-sandbox-thread", providerSandboxId: "provider-2",
+      state: "running", stableName: await terminalSandboxStableName(W, S, thread), providerSandboxId: "provider-2",
     });
     // Daytona takes the new policy on the main sandbox and refuses it on the
     // side thread's, then refuses to roll the side thread's back as well.
@@ -409,7 +410,7 @@ describe("Terminal workspace settings", () => {
     const { objectStores, unprojected, provider, service } = fixture();
     const thread = "00000000-0000-4000-8000-000000000077";
     seedSandboxObject(objectStores, `${S}:${thread}`, {
-      state: "running", stableName: "settings-sandbox-thread", providerSandboxId: "provider-2",
+      state: "running", stableName: await terminalSandboxStableName(W, S, thread), providerSandboxId: "provider-2",
     });
     unprojected.add(S);
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
@@ -417,5 +418,21 @@ describe("Terminal workspace settings", () => {
 
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-2");
+  });
+
+  it("leaves a row a side thread reserved under the main conversation's name to the main conversation", async () => {
+    const { objectStores, provider, service } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    // Reserved before a sandbox belonged to a conversation: the work stream's
+    // one name, and the main conversation's sandbox behind it.
+    seedSandboxObject(objectStores, `${S}:${thread}`, {
+      state: "running", stableName: await terminalSandboxStableName(W, S, "0"), providerSandboxId: "provider-1",
+    });
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+    await service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true });
+
+    // Stopped once, through the row that owns it.
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
   });
 });
