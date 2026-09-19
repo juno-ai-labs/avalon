@@ -196,6 +196,20 @@ export interface WorkstreamSummary {
   spaceIds: string[];
 }
 
+/**
+ * One row on a Space dashboard: a Channel, or one of a Channel's breakouts.
+ *
+ * Both draw as the same row — one status dot, one title, one activity time —
+ * so they are one type with a discriminator rather than two the screen has to
+ * branch on everywhere. `breakoutOf` is what the breakout row adds: the
+ * destination it links to, and the parent Channel's name it prints under its
+ * own so a breakout called "Pricing" says where it lives.
+ */
+export interface SpaceConversationSummary extends WorkstreamSummary {
+  kind: 'channel' | 'breakout';
+  breakoutOf: { workstreamId: string; substreamId: string; title: string } | null;
+}
+
 export interface Participant extends WorkspaceMember {
   accent?: string;
   viewing?: boolean;
