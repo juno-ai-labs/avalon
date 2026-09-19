@@ -682,6 +682,17 @@ carries no group headings, and is absent when empty, which is the ordinary
 state. Pinned Channels are left out of it, as they were left out of the list it
 replaces: the section above already has them.
 
+**"Visible directory" means the one that is on screen, not the one that
+arrived.** While the Organization is still opening, the Spaces section draws its
+opening card *instead of* the rows, and the directory already carries General —
+so the set the fallback tests against is `spaces` **and** `spacesReady`, the
+same pair that decides where a row's **Add to space** may place a Channel. Read
+without the readiness, every Channel the cutover placed would leave **Other
+channels** for a hierarchy nobody can see yet: a member with the desktop open
+would watch their sidebar empty itself one page of 50 at a time, and get it back
+at `complete`. The one value both sections read is `placementSpaces` in
+`sidebar.tsx`.
+
 The name is the plainest one the product's own language offers. "Unplaced" and
 "Unfiled" describe the Organization's hierarchy rather than the reader's view,
 and both are wrong about what is actually going on — the Channel *is* placed,
@@ -930,7 +941,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement and absent otherwise — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
 
@@ -1277,6 +1288,13 @@ hierarchy says where each one lives and the list below it was the same sidebar
 twice. **Other channels** replaces it: the Channels whose only placements are
 Spaces this reader cannot see, flat and by recency, absent when empty. A guest
 is handed no directory and keeps the flat list exactly as it was.
+
+Which Spaces those are is `spaces` *and* `spacesReady` together, and a future
+change has to keep them together: the Spaces section draws its opening card
+instead of its rows until the cutover completes, so a fallback that tested the
+directory alone would draw a placed Channel in neither list — for as long as an
+Organization's cutover takes, with the desktop open and rows leaving the sidebar
+one page of 50 at a time.
 
 **Why:** Three tables would have been three of everything above them — three
 writes, three reads, three deliveries, three authorization decisions, three
