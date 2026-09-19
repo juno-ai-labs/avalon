@@ -2359,10 +2359,14 @@ export class WorkspaceSpaceStorage {
       systemRole: row.system_role,
       revision: row.revision,
       participants: this.participantUserIds(row.space_id).map((userId) => ({ userId })),
+      // An inner join, because `archived_at IS NULL` is true of a missing
+      // directory row as well as of an active Channel: outer-joined, a
+      // membership whose projection has not landed — or whose Channel has been
+      // deleted — would be counted as an active one.
       channelCount: this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
         `SELECT COUNT(*) AS count
            FROM space_channel_memberships membership
-           LEFT JOIN workspace_workstream_directory directory
+           JOIN workspace_workstream_directory directory
              ON directory.workstream_id = membership.workstream_id
           WHERE membership.space_id = ? AND membership.state = 'active'
             AND directory.archived_at IS NULL`,

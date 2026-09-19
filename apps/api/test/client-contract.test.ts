@@ -52,7 +52,9 @@ describe("the client contract gate", () => {
       origin: "app://rallywithai",
       "x-rally-client-contract": String(CLIENT_CONTRACT_VERSION),
     })).toBeNull();
-    // The superseded prefix every installed build may still be sending.
+    // The superseded prefix, admitted because `readRallyHeader` tries every
+    // alias of a product header for free. No claim is made about which builds
+    // send it.
     expect(refusal({
       origin: "app://rallywithai",
       "x-avalon-client-contract": String(CLIENT_CONTRACT_VERSION),
