@@ -1,4 +1,6 @@
 import type { Region } from "@rally/contracts/regions";
+
+import { publishFencedTargets } from "./fenced-target-publication";
 import {
   ProjectDefaultResourceQueueMessageSchema,
   type ProjectDefaultResourceQueueMessage,
@@ -32,18 +34,18 @@ export interface ProjectDefaultPublicationInput {
 /**
  * Publishes one bounded set of authoritative project-default targets.
  *
- * Claiming advances each row's durable retry gate before the external await.
- * A rejected or ambiguous Queue send therefore remains recoverable without
- * spinning the WorkspaceDO alarm, while a duplicate accepted send is harmless
- * because the consumer fences application on the target generations.
+ * The claim/send/accept mechanism itself lives in
+ * {@link publishFencedTargets}, which the Space default publisher uses too;
+ * this is the Project's three arguments to it — which rows, which body, which
+ * Queue.
  */
 export async function publishProjectDefaultResourceTargets(
   input: ProjectDefaultPublicationInput,
 ): Promise<number> {
-  const publications = input.storage.claimDefaultPublications(input.now, input.retryAt);
-  if (publications.length === 0) return 0;
-  await input.queue.sendBatch(publications.map((publication) => ({
-    body: ProjectDefaultResourceQueueMessageSchema.parse({
+  return publishFencedTargets({
+    claim: (now, retryAt) => input.storage.claimDefaultPublications(now, retryAt),
+    accept: (publications, now) => input.storage.acceptDefaultPublications(publications, now),
+    message: (publication) => ProjectDefaultResourceQueueMessageSchema.parse({
       type: "project_default_resource",
       region: input.region,
       workspaceId: input.workspaceId,
@@ -54,7 +56,8 @@ export async function publishProjectDefaultResourceTargets(
       workstreamId: publication.workstreamId,
       membershipGeneration: publication.membershipGeneration,
     }),
-  })));
-  input.storage.acceptDefaultPublications(publications, input.now);
-  return publications.length;
+    queue: input.queue,
+    now: input.now,
+    retryAt: input.retryAt,
+  });
 }

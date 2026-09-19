@@ -77,6 +77,7 @@ import {
   WorkspaceIdSchema,
   WorkspaceAttentionSchema,
   WorkspaceProjectSnapshotEventSchema,
+  WorkspaceSpaceSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
@@ -94,6 +95,7 @@ import {
   type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
   type ProjectSnapshot,
+  type SpaceSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
@@ -609,6 +611,58 @@ import {
 } from "./workspace-project-protocol";
 import { WorkspaceProjectStorage } from "./workspace-project-storage";
 import {
+  publishSpaceDefaultTargets,
+  publishSpaceIntentResumes,
+} from "./workspace-space-default-publication";
+import {
+  SpaceDefaultQueueMessageSchema,
+  WorkspaceChannelSpacesRequestSchema,
+  WorkspaceChannelSpacesResultSchema,
+  WorkspaceSpaceAudienceNoteRequestSchema,
+  WorkspaceSpaceBootstrapStatusSchema,
+  WorkspaceSpaceChannelPageRequestSchema,
+  WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceSpaceDefaultRequestSchema,
+  WorkspaceSpaceDefaultResultSchema,
+  WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceSpaceListRequestSchema,
+  WorkspaceSpaceMembersResultSchema,
+  WorkspaceSpaceMembershipPlanResultSchema,
+  WorkspaceSpaceMembershipRemovalRequestSchema,
+  WorkspaceSpaceMembershipRequestSchema,
+  WorkspaceSpaceMembershipSettleRequestSchema,
+  WorkspaceSpaceMutationResultSchema,
+  WorkspaceSpacePresentationRequestSchema,
+  WorkspaceSpaceReorderRequestSchema,
+  WorkspaceSpaceRequestSchema,
+  WorkspaceSpaceReserveRequestSchema,
+  type SpaceDefaultQueueMessage,
+  type WorkspaceChannelSpacesRequest,
+  type WorkspaceChannelSpacesResult,
+  type WorkspaceSpaceAudienceNoteRequest,
+  type WorkspaceSpaceBootstrapStatus,
+  type WorkspaceSpaceChannelPageRequest,
+  type WorkspaceSpaceChannelPageResult,
+  type WorkspaceSpaceDefaultRequest,
+  type WorkspaceSpaceDefaultResult,
+  type WorkspaceSpaceDirectoryResult,
+  type WorkspaceSpaceListRequest,
+  type WorkspaceSpaceMembersResult,
+  type WorkspaceSpaceMembershipPlanResult,
+  type WorkspaceSpaceMembershipRemovalRequest,
+  type WorkspaceSpaceMembershipRequest,
+  type WorkspaceSpaceMembershipSettleRequest,
+  type WorkspaceSpaceMutationResult,
+  type WorkspaceSpacePresentationRequest,
+  type WorkspaceSpaceReorderRequest,
+  type WorkspaceSpaceRequest,
+  type WorkspaceSpaceReserveRequest,
+} from "./workspace-space-protocol";
+import {
+  WORKSPACE_SPACE_SCHEMA_STATEMENTS,
+  WorkspaceSpaceStorage,
+} from "./workspace-space-storage";
+import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
 } from "./workspace-regional-effect-storage";
@@ -1036,6 +1090,29 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * directly, and two more cascade from `project_default_resources` beneath it.
  * Ordered parents-first so the list can be replayed as inserts.
  */
+/**
+ * How long a staged Space operation waits before the alarm republishes it.
+ *
+ * Bounds: how long an interrupted membership, audience change or archive can
+ *   sit half-applied before the activity Queue is asked to finish it.
+ * Without it: a request that died between staging an intent in WorkspaceDO and
+ *   applying it on the Channel leaves the Channel without the Space's audience
+ *   and the Space without a settled membership, and nothing ever notices —
+ *   the caller is gone and the Channel was never asked.
+ * Direction: a lower bound on the wait, so a healthy request that finishes in
+ *   the ordinary way settles its intent before this fires and nothing is
+ *   published at all.
+ * Trips: one `space_intent_resume` message per unsettled intent, re-run by the
+ *   consumer against the same fences, which converges rather than repeating.
+ * Derive from: how long the slowest healthy operation takes end to end — a
+ *   Space audience change walks every member Channel — against how long a
+ *   half-applied audience may persist. Thirty seconds is comfortably past the
+ *   first and short enough that a person retrying by hand has not given up,
+ *   but it is a guess only in the sense that nobody here has the first number
+ *   measured; it is the team's to set.
+ */
+const SPACE_INTENT_RESUME_DELAY_MS = 30_000;
+
 const PROJECT_CASCADE_DEPENDENTS = [
   "project_participants",
   "workspace_project_order",
@@ -3407,6 +3484,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE telemetry_operation_id IS NOT NULL`,
     ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
+}, {
+  version: 63,
+  description: "spaces: directory, membership, general, defaults, bootstrap",
+  statements: [...WORKSPACE_SPACE_SCHEMA_STATEMENTS],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3669,6 +3750,36 @@ function loadParticipantPreviews(
   return previews;
 }
 
+/**
+ * Every active Space each of these Channels sits in.
+ *
+ * One fan-in read rather than one per row: a directory page is up to 250
+ * Channels and each may be in several Spaces, and asking per row would put 250
+ * statements behind one sidebar paint.
+ */
+function loadSpaceIds(
+  sql: DurableObjectState["storage"]["sql"],
+  workstreamIds: readonly string[],
+): Map<string, string[]> {
+  const byWorkstream = new Map<string, string[]>();
+  for (const chunk of boundParameterChunks(workstreamIds)) {
+    for (const row of sql.exec<{ workstream_id: string; space_id: string }>(
+      `SELECT membership.workstream_id, membership.space_id
+         FROM space_channel_memberships membership
+         JOIN workspace_space_directory space ON space.space_id = membership.space_id
+        WHERE membership.state = 'active' AND space.archived_at IS NULL
+          AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
+        ORDER BY membership.workstream_id, membership.space_id`,
+      ...chunk,
+    ).toArray()) {
+      const existing = byWorkstream.get(row.workstream_id);
+      if (existing) existing.push(row.space_id);
+      else byWorkstream.set(row.workstream_id, [row.space_id]);
+    }
+  }
+  return byWorkstream;
+}
+
 function directoryWorkstream(
   row: WorkspaceDirectoryRow,
   workspaceId: string,
@@ -3676,6 +3787,7 @@ function directoryWorkstream(
     participantUserIds: [],
     participantExtraCount: 0,
   },
+  spaceIds: readonly string[] = [],
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
@@ -3724,6 +3836,7 @@ function directoryWorkstream(
       : null,
     pinPosition: row.pin_position,
     lastAccessedAt: iso(row.last_accessed_at),
+    spaceIds,
     ...participantPreview,
   });
 }
@@ -3737,7 +3850,10 @@ function mapDirectoryWorkstreams(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
   )];
   const previews = loadParticipantPreviews(sql, personalIds);
-  return rows.map((row) => directoryWorkstream(row, workspaceId, previews.get(row.workstream_id)));
+  const spaceIds = loadSpaceIds(sql, rows.map((row) => row.workstream_id));
+  return rows.map((row) => directoryWorkstream(
+    row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
+  ));
 }
 
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
@@ -4357,12 +4473,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
+    const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
+    const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),
+      ...(spacePublication === null ? [] : [spacePublication]),
+      ...(spaceIntent === null ? [] : [spaceIntent]),
       ...(search === null ? [] : [search]),
       ...(authorization === null ? [] : [authorization]),
       ...(searchAuthorization === null ? [] : [searchAuthorization]),
@@ -4397,6 +4517,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         } catch (error) {
           logWarn(this.env, "project_default_publication_failed", {
+            workspace_id: workspaceId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+      await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
+        try {
+          await publishSpaceDefaultTargets({
+            storage: this.spaceStorage(),
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "space_default_publication_failed", {
+            workspace_id: workspaceId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+      // An interrupted Space operation finishes here. Nothing else would: the
+      // request that staged the intent is gone, and the Channel it was about to
+      // reach was never told the operation existed.
+      await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
+        try {
+          await publishSpaceIntentResumes({
+            storage: this.spaceStorage(),
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "space_intent_resume_publication_failed", {
             workspace_id: workspaceId,
             reason: error instanceof Error ? error.message : "unknown",
           });
@@ -5819,6 +5976,494 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Every Space RPC starts here: an active Organization membership that is not
+   * a guest relationship.
+   *
+   * Stricter than `activeWorkspaceMember`, which the Project surface uses,
+   * because guest access to Spaces is deferred by the PRD's non-goal 3. A guest
+   * holds explicit Channel and Breakout grants and no Organization-wide
+   * discovery, so admitting one here would put every Organization-wide Space in
+   * their sidebar.
+   */
+  private async activeSpaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return Boolean(await this.env.DB.prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active'
+          AND access_class = 'member' LIMIT 1`,
+    ).bind(workspaceId, userId).first());
+  }
+
+  /**
+   * Allocate a Space and answer with it before its own object exists.
+   *
+   * The caller provisions `SpaceDO` next and calls `cancelSpaceReservation` if
+   * that fails. Nothing is published to a socket until the reservation is
+   * either provisioned or cancelled — the snapshot below is what a client
+   * applies, and a Space whose object never opened must not reach one.
+   */
+  async reserveSpace(input: WorkspaceSpaceReserveRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceReserveRequestSchema, input, "reserve_space");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = this.spaceStorage().reserve(request, uuidV7(), null);
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /** Undo a reservation whose Space object could not be opened. */
+  async cancelSpaceReservation(input: WorkspaceSpaceRequest): Promise<{ cancelled: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "cancel_space_reservation");
+    this.assertWorkspace(request.workspaceId);
+    return { cancelled: this.spaceStorage().cancelReservation(request.spaceId) };
+  }
+
+  /**
+   * The Organization's General Space, created once.
+   *
+   * Idempotent because three callers reach it — Organization creation, the
+   * cutover, and a retry of either — and the unique partial index on
+   * `system_role` is what makes a race between two of them produce one Space
+   * rather than two fallbacks. The caller still provisions the object; a
+   * `created: true` answer is what tells it to.
+   */
+  async ensureGeneralSpace(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceMutationResult & { created?: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "ensure_general_space");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    const existing = storage.generalSpaceId();
+    if (existing !== null) {
+      const space = storage.readable(request.userId, existing);
+      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+      storage.noteGeneralSpace(existing);
+      return { ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space }), created: false };
+    }
+    const space = storage.reserve({
+      workspaceId: request.workspaceId,
+      userId: request.userId,
+      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
+    }, uuidV7(), "general");
+    storage.noteGeneralSpace(space.id);
+    this.publishSpaceSnapshot();
+    return { ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space }), created: true };
+  }
+
+  async listSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_spaces");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    return WorkspaceSpaceDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.spaceStorage().list(request.userId),
+    });
+  }
+
+  async listInactiveSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_inactive_spaces");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    return WorkspaceSpaceDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.spaceStorage().listInactive(request.userId),
+    });
+  }
+
+  async reorderSpaces(input: WorkspaceSpaceReorderRequest): Promise<WorkspaceSpaceDirectoryResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceReorderRequestSchema, input, "reorder_spaces");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    const result = WorkspaceSpaceDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.spaceStorage().reorder(request.userId, request.order.spaceIds),
+    });
+    this.publishSpaceSnapshot();
+    return result;
+  }
+
+  async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "space_summary");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = this.spaceStorage().readable(request.userId, request.spaceId);
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  /** One page of the Channels this viewer can list in a Space. */
+  async listSpaceChannels(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceSpaceChannelPageResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_space_channels");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    const page = this.spaceStorage().channelPage(request.userId, request.spaceId, request.cursor);
+    return WorkspaceSpaceChannelPageResultSchema.parse(page === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, page });
+  }
+
+  /** Every Channel a Space holds, archived ones included; server-to-server. */
+  async listSpaceMembers(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMembersResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "list_space_members");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    const workstreamIds = this.spaceStorage().memberWorkstreamIds(request.userId, request.spaceId);
+    return WorkspaceSpaceMembersResultSchema.parse(workstreamIds === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, workstreamIds });
+  }
+
+  /** The active Spaces one Channel currently sits in. */
+  async channelSpaces(input: WorkspaceChannelSpacesRequest): Promise<WorkspaceChannelSpacesResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelSpacesRequestSchema, input, "channel_spaces");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return WorkspaceChannelSpacesResultSchema.parse({ spaceIds: [] });
+    }
+    return WorkspaceChannelSpacesResultSchema.parse({
+      spaceIds: this.spaceStorage().channelSpaceIds(request.workstreamId),
+    });
+  }
+
+  /** Record presentation the Space's own authority accepted. */
+  async noteSpacePresentation(input: WorkspaceSpacePresentationRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpacePresentationRequestSchema, input, "note_space_presentation");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = this.spaceStorage().applyPresentation(request);
+    if (space !== false) this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  /**
+   * Record the scope and participants the Space's own authority accepted, and
+   * advance the revision every staged membership is fenced on.
+   *
+   * General is refused a personal audience here rather than at the Space's own
+   * object: the Organization is what depends on General being reachable by
+   * everybody, and this is the object that knows it is General.
+   */
+  async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceAudienceNoteRequestSchema, input, "note_space_audience");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    if (request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId) {
+      return { ok: false, code: "space_protected", unreachableUserIds: [] };
+    }
+    const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
+      this.activeSpaceMember(request.workspaceId, userId)
+    )));
+    if (activeMembers.some((active) => !active)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = storage.applyAudience(request);
+    if (space !== false) this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  async prepareSpaceMembership(input: WorkspaceSpaceMembershipRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipRequestSchema, input, "prepare_space_membership");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
+      this.spaceStorage().prepareMembership(request),
+    );
+    if (result.ok) {
+      this.spaceStorage().recordIntent({
+        operationId: `${request.spaceId}:${request.workstreamId}:${result.membershipGeneration}`,
+        kind: "add",
+        spaceId: request.spaceId,
+        workstreamId: request.workstreamId,
+        spaceRevision: result.space.revision,
+        membershipGeneration: result.membershipGeneration,
+        deliveryGeneration: null,
+        requestedByUserId: request.userId,
+        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      });
+      await this.armNextAlarm();
+    }
+    return result;
+  }
+
+  async finalizeSpaceMembership(input: WorkspaceSpaceMembershipSettleRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    const space = storage.finalizeMembership(request);
+    if (space === "conflict") {
+      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [] };
+    }
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    // A Channel that has just joined inherits every current default. Staging
+    // here rather than in the service is what makes a Channel added while a
+    // default was being registered receive it exactly once.
+    const targets = storage.stageDefaultsForMember(
+      request.spaceId,
+      request.workstreamId,
+      request.membershipGeneration,
+      request.userId,
+    );
+    storage.settleIntent(
+      `${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`,
+      "membership_finalized",
+      true,
+    );
+    this.publishSpaceSnapshot();
+    await this.publishWorkstreamState(request.workstreamId);
+    if (targets.length > 0) await this.armNextAlarm();
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  async cancelSpaceMembership(input: WorkspaceSpaceMembershipSettleRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "cancel_space_membership");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    const space = storage.cancelMembership(request);
+    storage.cancelIntent(`${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`);
+    if (space !== false) this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  async prepareSpaceMembershipRemoval(
+    input: WorkspaceSpaceMembershipRemovalRequest,
+  ): Promise<WorkspaceSpaceMembershipPlanResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipRemovalRequestSchema, input, "prepare_space_membership_removal",
+    );
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
+      this.spaceStorage().prepareMembershipRemoval(request),
+    );
+    if (result.ok) {
+      this.spaceStorage().recordIntent({
+        operationId: `${request.spaceId}:${request.workstreamId}:${result.membershipGeneration}`,
+        kind: "remove",
+        spaceId: request.spaceId,
+        workstreamId: request.workstreamId,
+        spaceRevision: result.space.revision,
+        membershipGeneration: result.membershipGeneration,
+        deliveryGeneration: null,
+        requestedByUserId: request.userId,
+        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      });
+      this.publishSpaceSnapshot();
+      await this.armNextAlarm();
+    }
+    return result;
+  }
+
+  async finalizeSpaceMembershipRemoval(
+    input: WorkspaceSpaceMembershipSettleRequest,
+  ): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership_removal",
+    );
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    const space = storage.finalizeMembershipRemoval(request);
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    storage.settleIntent(
+      `${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`,
+      "membership_removed",
+      true,
+    );
+    this.publishSpaceSnapshot();
+    await this.publishWorkstreamState(request.workstreamId);
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /** Stage an archive, refusing one that would strand any member Channel. */
+  async prepareSpaceArchive(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "prepare_space_archive");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
+      this.spaceStorage().prepareArchive(request.userId, request.spaceId),
+    );
+    if (result.ok) {
+      this.spaceStorage().recordIntent({
+        operationId: `${request.spaceId}:archive:${result.membershipGeneration}`,
+        kind: "archive",
+        spaceId: request.spaceId,
+        workstreamId: null,
+        spaceRevision: result.space.revision,
+        membershipGeneration: null,
+        deliveryGeneration: null,
+        requestedByUserId: request.userId,
+        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      });
+      this.publishSpaceSnapshot();
+      await this.armNextAlarm();
+    }
+    return result;
+  }
+
+  async finalizeSpaceArchive(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "finalize_space_archive");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const storage = this.spaceStorage();
+    const space = storage.finalizeArchive(request.userId, request.spaceId);
+    if (space === "protected") {
+      return { ok: false, code: "space_protected", unreachableUserIds: [] };
+    }
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    storage.settleIntent(`${request.spaceId}:archive:${space.revision - 1}`, "archived", true);
+    this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  async restoreSpace(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "restore_space");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = this.spaceStorage().restore(request.userId, request.spaceId);
+    if (space !== false) this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  async addSpaceDefault(input: WorkspaceSpaceDefaultRequest): Promise<WorkspaceSpaceDefaultResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "add_space_default");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const result = WorkspaceSpaceDefaultResultSchema.parse(this.spaceStorage().addDefault(request));
+    if (result.ok) this.publishSpaceSnapshot();
+    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    return result;
+  }
+
+  async removeSpaceDefault(input: WorkspaceSpaceDefaultRequest): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "remove_space_default");
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+    }
+    const space = this.spaceStorage().removeDefault(request);
+    if (space !== false) this.publishSpaceSnapshot();
+    return WorkspaceSpaceMutationResultSchema.parse(space === false
+      ? { ok: false, code: "space_not_found" }
+      : { ok: true, space });
+  }
+
+  async spaceDefaultTargetCurrent(input: SpaceDefaultQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "space_default_target_current");
+    this.assertWorkspace(request.workspaceId);
+    return this.spaceStorage().defaultTargetCurrent(request);
+  }
+
+  async spaceDefaultTargetActors(input: SpaceDefaultQueueMessage): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "space_default_target_actors");
+    this.assertWorkspace(request.workspaceId);
+    return this.spaceStorage().defaultTargetActors(request);
+  }
+
+  async completeSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "complete_space_default_target");
+    this.assertWorkspace(request.workspaceId);
+    const completed = this.spaceStorage().completeDefaultTarget(request);
+    if (completed) this.publishSpaceSnapshot();
+    return completed;
+  }
+
+  async recordSpaceDefaultTargetFailure(input: SpaceDefaultQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "record_space_default_target_failure");
+    this.assertWorkspace(request.workspaceId);
+    return this.spaceStorage().recordDefaultTargetFailure(request, "space_default_apply_failed");
+  }
+
+  async failSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "fail_space_default_target");
+    this.assertWorkspace(request.workspaceId);
+    return this.spaceStorage().failDefaultTarget(request, "space_no_active_participant");
+  }
+
+  /** Where the Organization is in its one-time Space cutover. */
+  async spaceBootstrapStatus(input: { workspaceId: string }): Promise<WorkspaceSpaceBootstrapStatus> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: IdSchema }), input, "space_bootstrap_status",
+    );
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceSpaceBootstrapStatusSchema.parse(this.spaceStorage().bootstrapStatus());
+  }
+
+  /**
    * Accept one workspace-scoped connector event from the regional Queue.
    *
    * The ingress identifier names a delivery attempt. Provider identity and the
@@ -6874,26 +7519,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<WorkspaceDirectoryApplyResult> {
     await this.initialized;
     // A Space publishes the same `directory_common` and `directory_user`
-    // effects a Channel does, and this object has nowhere to put them yet: the
-    // Space directory arrives with the WorkspaceDO migration that introduces
-    // it. Storing them in `workspace_workstream_directory` would put a Space in
-    // the Channel sidebar; the schema below would refuse them as a `ZodError`,
-    // which reaches the Queue consumer as a bare `Error` with no issues and no
-    // field. So the refusal is named here, ahead of the parse. The consumer
-    // retries with backoff like any other throw, which is the behavior wanted:
-    // the effect stays on the Queue for the release that can apply it.
-    // Read defensively, because this runs *before* the parse that would make
-    // the shape safe: a null input or an `envelopes` that is not an array must
-    // reach the schema below and be refused by name there, not throw a
-    // shapeless `TypeError` out of this guard.
-    const envelopes = input && typeof input === "object"
-      ? (input as { envelopes?: unknown }).envelopes
-      : undefined;
-    if (Array.isArray(envelopes) && envelopes.some((envelope: unknown) =>
-      envelope !== null && typeof envelope === "object"
-        && (envelope as { parentKind?: unknown }).parentKind === "space")) {
-      throw new Error("space_directory_not_ready");
-    }
+    // effects a Channel does, and both land here. They are kept apart from this
+    // line on: a Space in `workspace_workstream_directory` would be a Space in
+    // the Channel sidebar, and the two directories answer different questions.
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);
     if (!this.workspaceId()) {
       this.ensureIdentity(
@@ -6902,6 +7530,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     this.assertWorkspace(request.workspaceId);
+    const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
+    const channelEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind !== "space");
     const userIds = [...new Set(request.envelopes.flatMap((envelope) => (
       envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
     )))];
@@ -6920,7 +7550,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const watchReconciliations = new Set<string>();
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
-    for (const envelope of request.envelopes) {
+    let spaceDirectoryChanged = false;
+    for (const envelope of spaceEnvelopes) {
+      spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
+        || spaceDirectoryChanged;
+      accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
+    }
+    for (const envelope of channelEnvelopes) {
       const applied = this.applyDirectoryEnvelope(envelope, activeUsers);
       directoryChanged = directoryChanged || applied.changed;
       // A replay reconciles as well as a first application, the way the watch
@@ -6987,6 +7623,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
       this.publishProjectSnapshot();
     }
+    // The same test for the Space directory, for the same reason: a Space
+    // counts the members it can show, so a Channel arriving in or leaving the
+    // archive changes what its Spaces say about themselves — and a Space
+    // directory at a waterline a client already holds is dropped as a replay,
+    // so the count would stay wrong until the next Space write or reconnect.
+    if (spaceDirectoryChanged
+      || (archivalChanges.size > 0
+        && this.spaceStorage().noteMemberArchivalChange([...archivalChanges]))) {
+      this.publishSpaceSnapshot();
+    }
     await Promise.all([...watchReconciliations].map((workstreamId) => (
       this.reconcileWorkstreamResourceRegistrations({
         workspaceId: request.workspaceId,
@@ -6998,7 +7644,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // cannot be reached is the only one that falls behind, and its next
     // occurrence finds the room archived through `authority` anyway.
     if (archivalChanges.size > 0) await this.notifyOwningRoomArchival(request.workspaceId, [...archivalChanges]);
-    if (commonChanges.size > 0 || request.envelopes.some((envelope) => envelope.effect.kind === "directory_common")) {
+    if (commonChanges.size > 0 || channelEnvelopes.some((envelope) => envelope.effect.kind === "directory_common")) {
       // Replays repair an arm lost after the directory commit, even when no
       // directory row changes this time. Always derive from current rows.
       // A `directory_common` effect is the only writer of
@@ -7007,7 +7653,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // wait for an unrelated target to reconcile before anything armed it.
       await this.refreshTerminalSchedule();
     }
-    if (request.envelopes.some((envelope) => (
+    if (channelEnvelopes.some((envelope) => (
       envelope.effect.kind === "directory_common"
       && (envelope.effect.resourceLinks?.length ?? 0) > 0
     ))) {
@@ -9795,6 +10441,78 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /**
+   * Apply one directory effect a Space published.
+   *
+   * The Channel branch's structure, against the Space tables: the receipt is
+   * checked first so a redelivery is a no-op rather than a second application,
+   * the row is fenced on generation-then-version, and a second payload claiming
+   * one version is a conflict rather than a silent overwrite.
+   *
+   * What it deliberately does *not* do is everything the Channel branch does
+   * besides the row — resource links, attachment reservations, watch
+   * reconciliation, terminal schedules. A Space has no feed and no resources of
+   * the Organization's; its hidden main conversation holds those, and nothing
+   * here is a sidebar row for it.
+   */
+  private applySpaceDirectoryEnvelope(
+    envelope: ParentEffectEnvelope,
+    activeUsers: ReadonlySet<string>,
+  ): boolean {
+    return this.state.storage.transactionSync(() => {
+      const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
+        `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()[0];
+      if (receipt) {
+        if (receipt.payload_hash !== envelope.payloadHash) {
+          throw new Error("workspace_directory_effect_idempotency_conflict");
+        }
+        return false;
+      }
+      const now = Date.now();
+      const storage = this.spaceStorage();
+      let changed = false;
+      if (envelope.effect.kind === "directory_common") {
+        const effect = envelope.effect;
+        changed = storage.applyDirectoryProjection({
+          spaceId: envelope.parentId,
+          authorityGeneration: envelope.generation,
+          sourceVersion: envelope.sourceVersion,
+          payloadHash: envelope.payloadHash,
+          title: effect.title,
+          description: effect.description,
+          scope: effect.scope,
+          appearance: effect.appearance
+            ? { iconKey: effect.appearance.icon, colorKey: effect.appearance.color }
+            : null,
+          archivedAt: epoch(effect.archivedAt),
+          createdByUserId: effect.createdByUserId ?? null,
+          sourceCreatedAt: epoch(effect.createdAt ?? effect.lastActivityAt) ?? now,
+          sourceUpdatedAt: epoch(effect.updatedAt ?? effect.lastActivityAt) ?? now,
+        }, now);
+      } else if (envelope.effect.kind === "directory_user") {
+        const effect = envelope.effect;
+        changed = storage.applyViewerProjection({
+          spaceId: envelope.parentId,
+          userId: effect.userId,
+          authorityGeneration: envelope.generation,
+          sourceVersion: envelope.sourceVersion,
+          payloadHash: envelope.payloadHash,
+          isParticipant: effect.isParticipant,
+        }, activeUsers.has(effect.userId), now);
+      }
+      insertWorkstreamEffectReceipt(
+        this.state.storage,
+        envelope.messageId,
+        envelope.parentId,
+        envelope.payloadHash,
+        now,
+      );
+      return changed;
+    });
+  }
+
   private applyDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,
@@ -10240,6 +10958,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const occurredAt = new Date().toISOString();
     // Viewer-independent: one query for every subscribed socket, not one per socket.
     const preview = loadParticipantPreviews(this.state.storage.sql, [workstreamId]).get(workstreamId);
+    const spaceIds = loadSpaceIds(this.state.storage.sql, [workstreamId]).get(workstreamId) ?? [];
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -10266,7 +10985,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonWaterline: stateVersion.commonWaterline,
           viewerWaterline: stateVersion.viewerWaterline,
         },
-        workstream: visible ? directoryWorkstream(row, attachment.workspaceId, preview) : null,
+        workstream: visible ? directoryWorkstream(row, attachment.workspaceId, preview, spaceIds) : null,
       }));
       try {
         socket.send(payload);
@@ -10302,6 +11021,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         waterline: 0, items: [], nextCursor: null,
       },
       projects: this.projectSnapshot(attachment.userId),
+      spaces: this.spaceSnapshot(attachment.userId),
+      spacesReady: this.spaceStorage().bootstrapStatus().ready,
     });
   }
 
@@ -10387,6 +11108,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
   }
 
+  /**
+   * Re-send both Space directories to every subscribed socket, shaped for its
+   * user.
+   *
+   * The Project snapshot's mechanism, kept because the reasons are unchanged:
+   * every Space write shares one waterline, personal-Space visibility and order
+   * are per viewer, and sending the complete pair means a participant removal
+   * is represented by *absence* for the person removed rather than by an event
+   * they have to interpret.
+   *
+   * `spacesReady` rides along because a Space write can be the write that
+   * finishes the cutover — a client holding `false` would otherwise keep
+   * showing the Organization-opening state until it reconnected.
+   */
+  private publishSpaceSnapshot(): void {
+    const occurredAt = new Date().toISOString();
+    const spacesReady = this.spaceStorage().bootstrapStatus().ready;
+    // An open workspace socket is the authorization. Access revocation closes
+    // it through the one shared revocation path; do not add a D1 read here.
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
+          type: "workspace_space_snapshot",
+          occurredAt,
+          spaces: this.spaceSnapshot(attachment.userId),
+          spacesReady,
+        })));
+      } catch {
+        // Reconnect receives this same snapshot in the subscribe payload.
+      }
+    }
+  }
+
+  private spaceSnapshot(userId: string): SpaceSnapshot {
+    return {
+      active: this.spaceStorage().list(userId),
+      inactive: this.spaceStorage().listInactive(userId),
+    };
+  }
+
   private async publishDirectorySync(workspaceId: string): Promise<void> {
     const placementAffinity = this.placementAffinity();
     if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
@@ -10399,6 +11162,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private projectStorage(): WorkspaceProjectStorage {
     return new WorkspaceProjectStorage(this.state.storage);
+  }
+
+  private spaceStorage(): WorkspaceSpaceStorage {
+    return new WorkspaceSpaceStorage(this.state.storage);
   }
 
   private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
