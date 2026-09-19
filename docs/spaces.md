@@ -577,6 +577,12 @@ staged. Refusing it on membership would leave an intent pending forever, and the
 alarm republishing it forever, whenever the person who started an operation
 later left the Organization.
 
+`spaceBootstrapStatus` is the other one, for a different reason: there is no
+person on the request at all. The cutover runs with nobody signed in and the
+workspace id is the whole address; what it answers is the cutover's own state,
+and the `spacesReady` a client sees comes off the socket shaped for that viewer
+rather than from here.
+
 ## Operations
 
 Migration 61 is visible through the existing Durable Object migration tracker.
