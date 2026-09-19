@@ -571,6 +571,21 @@ row holds and names the `get` that returns the rest, because a model reads an
 absent field as an empty one. The contract and the four rules that decide what a
 row may drop are principle 8 in [`agent-tools.md`](agent-tools.md).
 
+The single reads are declared the same way, as the matching list row plus what
+the read was for: `issues.get` adds the body and the milestone title,
+`pull_requests.get` adds those plus `merged`, `mergeable`, `mergeable_state`,
+`merge_commit_sha`, `merged_by.login`, `head.repo.full_name` and the counts that
+describe the change — comments, review comments, commits, additions, deletions
+and changed files — `actions.get_workflow_run` adds the workflow file path, the head commit
+and the two actors that differ on a re-run, and `repository.get` adds
+visibility, topics, licence, homepage and the counts. Composing them from the
+list rows rather than declaring them separately is deliberate: a field that
+earns a place on the list row cannot silently lose it on the read. The write
+tools that echo what they wrote — `issues.create`, `issues.update`,
+`pull_requests.create`, `issue_comments.create`, `pull_requests.create_review` —
+return the same records, so the shape of a created issue matches the shape of
+that issue read back one call later.
+
 Three rows carry a field that looks like an obvious cut and is not.
 `pull_requests.list_files` keeps `patch`, which is the answer the caller came
 for, under its own 12,000-character budget. `checks.list_for_ref` keeps
@@ -1321,6 +1336,30 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-19 — The GitHub single reads are declared too
+
+**What changed:** `repository.get`, `issues.get`, `pull_requests.get`,
+`actions.get_workflow_run` and the five write tools that echo what they wrote
+project onto declared records, composed as the matching list row plus the
+content and state the read was for.
+
+**Why:** Declaring the list rows left the reads as pass-through on the reasoning
+that one deliberate object per call was affordable. It is, for one call. A run
+lists thirty pull requests and opens six of them, and each `pull_requests.get`
+carried the `head.repo` and `base.repo` the list had just dropped, handing most
+of the saving back within the same run.
+
+**Considered and rejected:** Declaring each read independently of its list row,
+which lets the two drift and a field earn its place on one and lose it on the
+other. Leaving the write echoes alone, which would have made a created issue and
+the same issue read back a call later two different shapes.
+
+**What a future change has to respect:** The records compose from the list rows,
+so a field added to a list row appears on its read as well, and what a read adds
+over its row is what a caller opened it to see.
+
+PR follow-up to [#842](https://github.com/juno-ai-labs/avalon/pull/842).
 
 ### 2026-09-19 — GitHub list rows are declared, not passed through
 

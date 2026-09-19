@@ -1622,6 +1622,466 @@ describe("GitHub connector", () => {
     ]);
   });
 
+  it("returns declared records from the single reads, not GitHub's objects", async () => {
+    // "One deliberate object per call" is why these stayed pass-through when the
+    // lists were declared, and it holds for exactly one call. A run that lists
+    // thirty pull requests and opens six of them paid most of the old cost back,
+    // because `pull_requests.get` carried the same two complete repository
+    // records the list row had just been taught to drop.
+    const repository = {
+      id: 41,
+      full_name: "acme/widget",
+      archive_url: "https://api.github.com/repos/acme/widget/{archive_format}{/ref}",
+      owner: { login: "acme", id: 7, avatar_url: "https://avatars.github.com/u/7" },
+    };
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/widget/pulls/670") {
+        return jsonResponse({
+          number: 670,
+          title: "Bound the GitHub list rows",
+          state: "open",
+          draft: false,
+          created_at: "2026-09-10T09:00:00Z",
+          updated_at: "2026-09-12T11:30:00Z",
+          closed_at: null,
+          merged_at: null,
+          user: { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" },
+          head: { ref: "feature", sha: "9fceb02", repo: repository, user: { login: "octocat" } },
+          base: { ref: "main", sha: "abc1234", repo: repository },
+          labels: [{ id: 2, name: "bug", color: "d73a4a" }],
+          assignees: [{ login: "octocat", id: 1 }],
+          requested_reviewers: [{ login: "hubot", id: 3 }],
+          requested_teams: [{ id: 9, slug: "platform", name: "Platform" }],
+          milestone: { number: 3, title: "Context budget", state: "open", due_on: null },
+          html_url: "https://github.com/acme/widget/pull/670",
+          body: "The projection lives in provider-utils.",
+          merged: false,
+          mergeable: true,
+          rebaseable: true,
+          mergeable_state: "clean",
+          merge_commit_sha: "deadbee",
+          merged_by: null,
+          comments: 4,
+          review_comments: 9,
+          commits: 3,
+          additions: 1_057,
+          deletions: 28,
+          changed_files: 7,
+          _links: { self: { href: "https://api.github.com/x" } },
+          diff_url: "https://github.com/acme/widget/pull/670.diff",
+          author_association: "MEMBER",
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/actions/runs/9912345") {
+        return jsonResponse({
+          id: 9_912_345,
+          name: "CI",
+          display_title: "Bound the GitHub list rows",
+          path: ".github/workflows/ci.yml",
+          run_number: 412,
+          run_attempt: 2,
+          event: "pull_request",
+          status: "completed",
+          conclusion: "failure",
+          head_branch: "feature",
+          head_sha: "9fceb02",
+          created_at: "2026-09-12T11:00:00Z",
+          updated_at: "2026-09-12T11:20:00Z",
+          run_started_at: "2026-09-12T11:01:00Z",
+          html_url: "https://github.com/acme/widget/actions/runs/9912345",
+          pull_requests: [{ number: 670, head: { repo: repository } }],
+          actor: { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" },
+          triggering_actor: { login: "hubot", id: 3, avatar_url: "https://avatars.github.com/u/3" },
+          head_commit: {
+            id: "9fceb02",
+            message: "Bound the rows",
+            author: { name: "Octocat", email: "octocat@example.test" },
+            timestamp: "2026-09-12T10:00:00Z",
+          },
+          repository,
+          head_repository: repository,
+          workflow_id: 77,
+          logs_url: "https://api.github.com/repos/acme/widget/actions/runs/9912345/logs",
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/issues/412/comments") {
+        return jsonResponse({
+          id: 5_738_032_654,
+          user: { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" },
+          created_at: "2026-09-12T12:00:00Z",
+          updated_at: "2026-09-12T12:00:00Z",
+          body: "Filed as a follow-up.",
+          html_url: "https://github.com/acme/widget/issues/412#issuecomment-5738032654",
+          issue_url: "https://api.github.com/repos/acme/widget/issues/412",
+          reactions: { url: "https://api.github.com/x", total_count: 0 },
+          author_association: "MEMBER",
+          performed_via_github_app: null,
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/issues/412") {
+        return jsonResponse({
+          number: 412,
+          title: "Rows are too wide",
+          state: "open",
+          state_reason: null,
+          created_at: "2026-09-01T09:00:00Z",
+          updated_at: "2026-09-02T09:00:00Z",
+          closed_at: null,
+          user: { login: "octocat", id: 1, type: "User" },
+          labels: [{ id: 2, name: "bug", color: "d73a4a" }],
+          assignees: [{ login: "hubot", id: 3 }],
+          milestone: { number: 3, title: "Context budget", state: "open" },
+          comments: 4,
+          html_url: "https://github.com/acme/widget/issues/412",
+          body: "Every row carries two repository records.",
+          reactions: { url: "https://api.github.com/x", total_count: 2, "+1": 2 },
+          timeline_url: "https://api.github.com/repos/acme/widget/issues/412/timeline",
+          author_association: "MEMBER",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url.pathname}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([
+        GitHubCapabilities.pullRequestsRead,
+        GitHubCapabilities.actionsRead,
+        GitHubCapabilities.issuesRead,
+        GitHubCapabilities.issuesWrite,
+      ]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+
+    // The headline case: the same two repository records the list row drops.
+    expect((await adapter.executeTool("pull_requests.get", {
+      owner: "acme", repo: "widget", pullNumber: 670,
+    }, context)).output).toEqual({
+      number: 670,
+      title: "Bound the GitHub list rows",
+      state: "open",
+      draft: false,
+      created_at: "2026-09-10T09:00:00Z",
+      updated_at: "2026-09-12T11:30:00Z",
+      closed_at: null,
+      merged_at: null,
+      user: { login: "octocat" },
+      // The head repository's *name* survives; the record it came from does not.
+      head: { ref: "feature", sha: "9fceb02", repo: { full_name: "acme/widget" } },
+      base: { ref: "main", sha: "abc1234" },
+      labels: [{ name: "bug" }],
+      assignees: [{ login: "octocat" }],
+      requested_reviewers: [{ login: "hubot" }],
+      requested_teams: [{ slug: "platform" }],
+      milestone: { title: "Context budget" },
+      html_url: "https://github.com/acme/widget/pull/670",
+      // What a read adds over the list row.
+      body: "The projection lives in provider-utils.",
+      merged: false,
+      mergeable: true,
+      mergeable_state: "clean",
+      merge_commit_sha: "deadbee",
+      merged_by: null,
+      comments: 4,
+      review_comments: 9,
+      commits: 3,
+      additions: 1_057,
+      deletions: 28,
+      changed_files: 7,
+    });
+
+    expect((await adapter.executeTool("actions.get_workflow_run", {
+      owner: "acme", repo: "widget", runId: 9_912_345,
+    }, context)).output).toEqual({
+      id: 9_912_345,
+      name: "CI",
+      display_title: "Bound the GitHub list rows",
+      run_number: 412,
+      run_attempt: 2,
+      event: "pull_request",
+      status: "completed",
+      conclusion: "failure",
+      head_branch: "feature",
+      head_sha: "9fceb02",
+      created_at: "2026-09-12T11:00:00Z",
+      updated_at: "2026-09-12T11:20:00Z",
+      run_started_at: "2026-09-12T11:01:00Z",
+      pull_requests: [{ number: 670 }],
+      html_url: "https://github.com/acme/widget/actions/runs/9912345",
+      path: ".github/workflows/ci.yml",
+      // On a re-run these two differ, which is the whole reason both are here.
+      actor: { login: "octocat" },
+      triggering_actor: { login: "hubot" },
+      head_commit: { message: "Bound the rows", author: { name: "Octocat" } },
+    });
+
+    expect((await adapter.executeTool("issues.get", {
+      owner: "acme", repo: "widget", issueNumber: 412,
+    }, context)).output).toEqual({
+      number: 412,
+      title: "Rows are too wide",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-01T09:00:00Z",
+      updated_at: "2026-09-02T09:00:00Z",
+      closed_at: null,
+      user: { login: "octocat" },
+      labels: [{ name: "bug" }],
+      assignees: [{ login: "hubot" }],
+      comments: 4,
+      html_url: "https://github.com/acme/widget/issues/412",
+      body: "Every row carries two repository records.",
+      milestone: { title: "Context budget" },
+    });
+
+    // A write echoes its result, so it is the same boundary as a read.
+    expect((await adapter.executeTool("issue_comments.create", {
+      owner: "acme", repo: "widget", issueNumber: 412, body: "Filed as a follow-up.",
+    }, context)).output).toEqual({
+      id: 5_738_032_654,
+      user: { login: "octocat" },
+      created_at: "2026-09-12T12:00:00Z",
+      updated_at: "2026-09-12T12:00:00Z",
+      body: "Filed as a follow-up.",
+      html_url: "https://github.com/acme/widget/issues/412#issuecomment-5738032654",
+    });
+  });
+
+  it("declares the repository read and every write echo, not just the reads with bodies", async () => {
+    // The other half of the nine changed output routes. Without this,
+    // `repository.get` and the four write echoes could stay pass-through, or be
+    // handed the wrong row, and nothing would fail — which is exactly how the
+    // list rows shipped under-covered the first time.
+    const author = { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" };
+    const issue = {
+      number: 413,
+      title: "Declare the single reads",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-19T01:00:00Z",
+      updated_at: "2026-09-19T01:00:00Z",
+      closed_at: null,
+      user: author,
+      labels: [{ id: 2, name: "chore", color: "ededed" }],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      html_url: "https://github.com/acme/widget/issues/413",
+      body: "The gets still carry two repository records.",
+      node_id: "I_kwDOTpw9aM",
+      reactions: { url: "https://api.github.com/x", total_count: 0 },
+      timeline_url: "https://api.github.com/repos/acme/widget/issues/413/timeline",
+      author_association: "MEMBER",
+    };
+    const expectedIssue = {
+      number: 413,
+      title: "Declare the single reads",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-19T01:00:00Z",
+      updated_at: "2026-09-19T01:00:00Z",
+      closed_at: null,
+      user: { login: "octocat" },
+      labels: [{ name: "chore" }],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      html_url: "https://github.com/acme/widget/issues/413",
+      body: "The gets still carry two repository records.",
+    };
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/repos/acme/widget" && method === "GET") {
+        return jsonResponse({
+          id: 41,
+          node_id: "R_kgDOTpw9aA",
+          name: "widget",
+          full_name: "acme/widget",
+          owner: { login: "acme", id: 7, type: "Organization", avatar_url: "https://avatars.github.com/u/7" },
+          description: "The widget service",
+          homepage: "https://widget.acme.test",
+          topics: ["typescript", "workers"],
+          default_branch: "main",
+          private: true,
+          visibility: "internal",
+          fork: false,
+          archived: false,
+          language: "TypeScript",
+          license: { key: "mit", name: "MIT License", spdx_id: "MIT", url: "https://api.github.com/licenses/mit" },
+          open_issues_count: 12,
+          stargazers_count: 340,
+          forks_count: 21,
+          watchers_count: 340,
+          size: 88_120,
+          created_at: "2026-01-04T10:00:00Z",
+          updated_at: "2026-09-18T20:05:00Z",
+          pushed_at: "2026-09-18T20:00:00Z",
+          html_url: "https://github.com/acme/widget",
+          archive_url: "https://api.github.com/repos/acme/widget/{archive_format}{/ref}",
+          permissions: { admin: false, push: true, pull: true },
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/issues" && method === "POST") return jsonResponse(issue);
+      if (url.pathname === "/repos/acme/widget/issues/413") return jsonResponse(issue);
+      if (url.pathname === "/repos/acme/widget/pulls" && method === "POST") {
+        return jsonResponse({
+          number: 671,
+          node_id: "PR_kwDOTpw9aM",
+          title: "Declare the single reads",
+          state: "open",
+          draft: false,
+          created_at: "2026-09-19T01:05:00Z",
+          updated_at: "2026-09-19T01:05:00Z",
+          closed_at: null,
+          merged_at: null,
+          user: author,
+          head: {
+            ref: "reads",
+            sha: "0c55943",
+            // A fork, which is the case head.repo.full_name exists to make
+            // legible: `reads` does not resolve against acme/widget.
+            repo: { id: 99, full_name: "octocat/widget-fork", archive_url: "https://api.github.com/x{/ref}" },
+          },
+          base: { ref: "main", sha: "fedecf6", repo: { id: 41, full_name: "acme/widget", archive_url: "https://api.github.com/x{/ref}" } },
+          labels: [],
+          assignees: [],
+          requested_reviewers: [],
+          requested_teams: [],
+          milestone: null,
+          html_url: "https://github.com/acme/widget/pull/671",
+          body: "Follow-up to #842.",
+          merged: false,
+          mergeable: null,
+          mergeable_state: "unknown",
+          merge_commit_sha: null,
+          merged_by: null,
+          comments: 0,
+          review_comments: 0,
+          commits: 1,
+          additions: 371,
+          deletions: 19,
+          changed_files: 4,
+          _links: { self: { href: "https://api.github.com/y" } },
+          diff_url: "https://github.com/acme/widget/pull/671.diff",
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/pulls/671/reviews" && method === "POST") {
+        return jsonResponse({
+          id: 5_254_029_412,
+          node_id: "PRR_kwDOTpw9aM",
+          user: author,
+          state: "COMMENTED",
+          submitted_at: "2026-09-19T01:10:00Z",
+          commit_id: "0c55943",
+          body: "One note.",
+          html_url: "https://github.com/acme/widget/pull/671#pullrequestreview-5254029412",
+          pull_request_url: "https://api.github.com/repos/acme/widget/pulls/671",
+          _links: { html: { href: "https://github.com/z" } },
+          author_association: "MEMBER",
+        });
+      }
+      throw new Error(`Unexpected GitHub ${method} ${url.pathname}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([
+        GitHubCapabilities.metadataRead,
+        GitHubCapabilities.issuesWrite,
+        GitHubCapabilities.pullRequestsWrite,
+      ]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+
+    // `visibility` beside `private` is the point of the pair: this repository is
+    // `internal`, which the boolean alone cannot say.
+    expect((await adapter.executeTool("repository.get", { owner: "acme", repo: "widget" }, context)).output).toEqual({
+      full_name: "acme/widget",
+      name: "widget",
+      owner: { login: "acme" },
+      description: "The widget service",
+      homepage: "https://widget.acme.test",
+      topics: ["typescript", "workers"],
+      default_branch: "main",
+      private: true,
+      visibility: "internal",
+      fork: false,
+      archived: false,
+      language: "TypeScript",
+      license: { spdx_id: "MIT" },
+      open_issues_count: 12,
+      stargazers_count: 340,
+      forks_count: 21,
+      created_at: "2026-01-04T10:00:00Z",
+      updated_at: "2026-09-18T20:05:00Z",
+      pushed_at: "2026-09-18T20:00:00Z",
+      html_url: "https://github.com/acme/widget",
+    });
+
+    // A created issue and that issue read back a call later are one shape.
+    expect((await adapter.executeTool("issues.create", {
+      owner: "acme", repo: "widget", title: "Declare the single reads",
+    }, context)).output).toEqual(expectedIssue);
+
+    expect((await adapter.executeTool("issues.update", {
+      owner: "acme", repo: "widget", issueNumber: 413, title: "Declare the single reads",
+    }, context)).output).toEqual(expectedIssue);
+
+    expect((await adapter.executeTool("pull_requests.create", {
+      owner: "acme", repo: "widget", title: "Declare the single reads", head: "reads", base: "main",
+    }, context)).output).toEqual({
+      number: 671,
+      title: "Declare the single reads",
+      state: "open",
+      draft: false,
+      created_at: "2026-09-19T01:05:00Z",
+      updated_at: "2026-09-19T01:05:00Z",
+      closed_at: null,
+      merged_at: null,
+      user: { login: "octocat" },
+      // Without this the caller reads `reads` against acme/widget and gets an
+      // unexplainable 404; `base` needs no equivalent, being the repository the
+      // caller named in the request.
+      head: { ref: "reads", sha: "0c55943", repo: { full_name: "octocat/widget-fork" } },
+      base: { ref: "main", sha: "fedecf6" },
+      labels: [],
+      assignees: [],
+      requested_reviewers: [],
+      requested_teams: [],
+      milestone: null,
+      html_url: "https://github.com/acme/widget/pull/671",
+      body: "Follow-up to #842.",
+      merged: false,
+      // GitHub has not computed mergeability yet on a fresh pull request, and
+      // `null` is the honest answer rather than an absent key.
+      mergeable: null,
+      mergeable_state: "unknown",
+      merge_commit_sha: null,
+      merged_by: null,
+      comments: 0,
+      review_comments: 0,
+      commits: 1,
+      additions: 371,
+      deletions: 19,
+      changed_files: 4,
+    });
+
+    // A submitted review matches a listed one, because it reuses that row.
+    expect((await adapter.executeTool("pull_requests.create_review", {
+      owner: "acme", repo: "widget", pullNumber: 671, event: "COMMENT", body: "One note.",
+    }, context)).output).toEqual({
+      id: 5_254_029_412,
+      user: { login: "octocat" },
+      state: "COMMENTED",
+      submitted_at: "2026-09-19T01:10:00Z",
+      commit_id: "0c55943",
+      body: "One note.",
+      html_url: "https://github.com/acme/widget/pull/671#pullrequestreview-5254029412",
+    });
+  });
+
   it("refuses a list item that is not an object rather than passing it through", async () => {
     // The envelope's contract is that every item has the declared shape. A
     // primitive forwarded unchanged would be an undeclared value sitting in a
