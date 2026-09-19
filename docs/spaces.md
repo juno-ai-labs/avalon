@@ -410,6 +410,20 @@ twice, with one unread state, one running state and one destination. That is why
 the Organization's fact about the Channel, not the reader's, and WorkspaceDO
 republishes the row after every membership settlement.
 
+**That republication is at the waterline the row already had**, because a
+placement changes nothing the Channel's own authority projects — adding an
+already Organization-wide Channel to a second Organization-wide Space moves no
+audience. The client's versioned receiver reads an unadvanced waterline as a
+duplicate, so `applyVersionedWorkstreamState` takes the placements off a row it
+is otherwise rejecting, exactly as it fills an empty participant pile at a
+pinned waterline. Without that the Channel stayed under the Spaces it had for
+the session, and the local cache carried the stale row through a reload.
+
+The Space dashboard's own Channel page is the one thing on that screen the
+socket cannot replace, so it is refetched when the Space snapshot's
+`channelCount` moves — the Organization saying the membership changed somewhere
+else, which **Add to space** on a sidebar row and a drag both are.
+
 The sidebar holds one page of the Organization's Channels, so an expanded Space
 lists the placements this device has and says nothing about the rest. It does
 not print the Space's `channelCount`: that total is not viewer-scoped, so a
@@ -438,7 +452,10 @@ being attempted supplies its own sentence for a refusal that carried no code —
 "Spaces couldn't be reordered" also accounts for the row that snapped back.
 
 Each dashboard action reports into its own slot, so a refused rename stays with
-the name instead of appearing inside every modal that is opened afterwards.
+the name instead of appearing inside every modal that is opened afterwards. The
+slots are cleared when the screen changes Space: one component draws every
+Space, so a refusal about the Space somebody just left would otherwise be read
+as being about the one they just opened.
 
 While `spacesReady` is false the sidebar section and the dashboard show the
 Organization-opening card *instead of* the hierarchy, and the **New space**
@@ -1006,6 +1023,17 @@ after the create. The PRD requires a named Space to be established with the
 Channel or the creation to fail without publishing one, and a follow-up call is
 neither — so the launcher plumbs `spaceIds` and sends no Space until the
 creation contract carries one.
+
+Walking the acceptance flows in a real window found the other half of that
+claim missing. `spaceIds` reached the client and the client threw it away: a
+placement that implies no audience change republishes the Channel row at the
+waterline it already had, and the versioned receiver reads an unadvanced
+waterline as a duplicate — so the second placement never appeared, and the
+local cache then persisted the stale row through a reload. The receiver now
+takes placements off a row it is otherwise rejecting, the way it already fills
+an empty participant pile at a pinned waterline. The dashboard's paginated
+Channel page had the same gap from the other side and is refetched when the
+Space snapshot's `channelCount` moves.
 
 **Consequences:** `WorkstreamCreationFieldsSchema` still carries `projectId` and
 has no `spaceIds`, so a Channel started from a Space is not yet placed in it;

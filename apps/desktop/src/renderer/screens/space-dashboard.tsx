@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, FileText, FolderPlus, Plus, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import {
   type SpaceColorKey,
@@ -139,6 +139,24 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // not re-render when the socket replaces the list, so a Sidekick default
   // rendered as "Sidekick" until something unrelated on this screen changed.
   const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data ?? [];
+  // That page is the one thing on this screen the socket cannot replace, so it
+  // is the one thing that goes stale when the membership moves somewhere else
+  // — **Add to space** on a sidebar row, a drag, or another person's add. The
+  // Space snapshot that every settlement republishes carries the count, so the
+  // count moving is the Organization saying this page is out of date.
+  const membershipCount = spaces.data?.items.find((item) => item.id === spaceId)?.channelCount
+    ?? inactiveSpaces.data?.items.find((item) => item.id === spaceId)?.channelCount ?? null;
+  useEffect(() => {
+    if (spaceId === undefined || membershipCount === null) return;
+    void queryClient.invalidateQueries({ queryKey: ['space-channels', spaceId] });
+  }, [queryClient, spaceId, membershipCount]);
+  // A refusal belongs to the Space it was about. This screen is one component
+  // for every Space, so without this "That space no longer exists" followed
+  // the reader onto the next Space's dashboard and stayed there.
+  useEffect(() => {
+    setFailures({});
+    setBlockedChannelIds([]);
+  }, [spaceId]);
   if (spaces.data === undefined || inactiveSpaces.data === undefined) {
     return <LoadingState label="Opening space…" />;
   }
