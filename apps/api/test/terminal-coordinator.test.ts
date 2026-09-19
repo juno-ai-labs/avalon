@@ -412,6 +412,14 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "running");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.recoverSandbox).toHaveBeenCalledOnce();
+    // Recovery is a restore too — the failed-but-recoverable case is exactly
+    // the one the old fixed minute censored — so it is bounded like one.
+    // Asserting only the call count here left the argument unproved: deleting
+    // it from the coordinator kept the whole suite green.
+    expect(provider.recoverSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
