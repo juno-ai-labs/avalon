@@ -670,7 +670,14 @@ An explicit Terminal `load_plugin` starts and initializes the sandbox because
 the next model action is overwhelmingly likely to use one of its tools — in
 the background, so the model is not held behind it: measured across runs that
 use Terminal, the median run does 16.5s of unrelated work between activation
-and its first Terminal tool, against an ~18s median cold start. A
+and its first Terminal tool. Cold start was ~18s when that was measured; with
+the owned snapshot it is now **~3.3s p50** for a run that needs no repository
+(`sandbox_create` 1,483ms plus `sandbox_bootstrap` 1,773ms) and ~12.4s for one
+that checks out a repository, where `repository.bootstrap` adds 9,090ms p50.
+The background start still pays for itself on the repository path; on the bare
+path the margin is now the whole of the unrelated work.
+[`agent-latency-investigation-2026-09-19.md`](agent-latency-investigation-2026-09-19.md)
+carries the measurement, and the archived-restore mode that dominates it. A
 restored durable activation remains lazy so an unrelated later run does not
 allocate merely because an earlier run used Terminal. Reuse is scoped to one
 work stream. Five-minute warm stop reduces compute time, sixty-minute archive

@@ -1649,6 +1649,12 @@ work-stream URL into it. Nothing here mutates production; every step is a read.
    | --- | --- | --- |
    | Global | R2 SQL over Data Catalog bucket `avalon-global-inference-lakehouse` | `avalon-global-payloads` |
 
+The Iceberg table is **`avalon.llm_inference`**. `config/inference-lakehouse.json`
+owns that namespace and table name, and the namespace is `avalon` rather than
+`rally` because the infrastructure identifiers were deliberately not renamed —
+see [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md). Querying
+`rally.llm_inference` fails with `iceberg table not found`.
+
 Use Cloudflare's HTTP APIs, not the dashboard. Global uses R2 SQL. Its endpoint
 takes the **Data Catalog bucket name**, not a warehouse ID:
 
@@ -1713,7 +1719,7 @@ SELECT
   cost_microusd,
   response_bytes,
   payload_object_key
-FROM rally.llm_inference
+FROM avalon.llm_inference
 WHERE workstream_id = '<workstream-uuid>'
   AND substream_id = '0'
   AND captured_at >= '2026-08-24T19:00:00Z'
@@ -1776,7 +1782,7 @@ SELECT
   payload_object_key,
   payload_sha256,
   payload_bytes
-FROM rally.llm_inference
+FROM avalon.llm_inference
 WHERE inference_request_id = '<inference-request-id>'
 ORDER BY captured_at ASC
 LIMIT 10;
@@ -1802,7 +1808,7 @@ Interpret the pair rather than one row in isolation:
 
   ```sql
   SELECT event_id, COUNT(*) AS copies
-  FROM rally.llm_inference
+  FROM avalon.llm_inference
   WHERE inference_request_id = '<inference-request-id>'
   GROUP BY event_id
   HAVING COUNT(*) > 1;
