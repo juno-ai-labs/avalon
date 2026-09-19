@@ -152,6 +152,37 @@ describe('the Spaces sidebar section', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/spaces/${hiring.id}/workstreams/new`);
   });
 
+  // A deep link, a restore, Back and Forward all arrive as a route rather than
+  // a click, and each of them opens a Space's dashboard.
+  it('given a space dashboard opened by the route, then its row is expanded without a click', () => {
+    const placement = channel('00000000-0000-7000-8000-0000000000e5', 'Ship it', '2026-08-27T02:00:00.000Z', hiring.id);
+    render(
+      <Tooltip.Provider>
+        <MemoryRouter initialEntries={[`/spaces/${hiring.id}`]}>
+          <SpaceSidebarSection
+            inactiveSpaces={[]}
+            loading={false}
+            onAddChannel={async () => undefined}
+            onCreate={async () => hiring}
+            onReorder={async () => undefined}
+            onRestore={async () => undefined}
+            onRetry={() => undefined}
+            outOfDate={false}
+            ready
+            renderWorkstream={(workstream) => (
+              <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
+            )}
+            spaces={[hiring]}
+            workstreams={[placement]}
+          />
+        </MemoryRouter>
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Collapse Hiring' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Ship it' })).toBeVisible();
+  });
+
   it('given the new-space dialog, when choices are inspected, then blue is selected by default and all choices are named', () => {
     renderSection({ spaces: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New space' }));

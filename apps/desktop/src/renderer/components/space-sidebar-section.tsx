@@ -1,6 +1,6 @@
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Fragment, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   type CreateSpaceRequest,
@@ -103,7 +103,12 @@ export function SpaceSidebarSection({
 }: SpaceSidebarSectionProps): React.JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Expansion follows the route: a Space whose dashboard is open is expanded,
+  // however the route got there — a click, a deep link, a restore, Back or
+  // Forward. This map holds only the exceptions a reader made by hand, so a
+  // Space expanded without opening it stays open, and the open one they
+  // collapsed stays shut.
+  const [expansion, setExpansion] = useState<Record<string, boolean>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [name, setName] = useState('');
@@ -118,6 +123,13 @@ export function SpaceSidebarSection({
   const ordered = dragOrder
     ? dragOrder.flatMap((id) => spaces.find((space) => space.id === id) ?? [])
     : spaces;
+  const openSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
+  // Opening a Space's dashboard expands its row even if it was collapsed by
+  // hand the last time it was open: the exception was about that visit.
+  useEffect(() => {
+    if (openSpaceId === null) return;
+    setExpansion(({ [openSpaceId]: _collapsedLastVisit, ...rest }) => rest);
+  }, [openSpaceId]);
 
   const closeCreate = (): void => {
     if (saving) return;
@@ -135,7 +147,6 @@ export function SpaceSidebarSection({
     setModalFailure(null);
     try {
       const created = await onCreate({ name: name.trim(), iconKey, colorKey, scope });
-      setExpanded((current) => new Set(current).add(created.id));
       setSaving(false);
       closeCreate();
       void navigate(`/spaces/${created.id}`);
@@ -162,12 +173,8 @@ export function SpaceSidebarSection({
     }
   };
 
-  const toggle = (spaceId: string): void => setExpanded((current) => {
-    const next = new Set(current);
-    if (next.has(spaceId)) next.delete(spaceId);
-    else next.add(spaceId);
-    return next;
-  });
+  const setOpen = (spaceId: string, open: boolean): void =>
+    setExpansion((current) => ({ ...current, [spaceId]: open }));
 
   return (
     <>
@@ -200,8 +207,9 @@ export function SpaceSidebarSection({
               </div>
             )}
             {ordered.map((space, index) => {
-              const isExpanded = expanded.has(space.id);
               const destination = `/spaces/${space.id}`;
+              const active = location.pathname === destination || location.pathname.startsWith(`${destination}/`);
+              const isExpanded = expansion[space.id] ?? active;
               const placements = workstreams
                 .filter((workstream) => workstream.spaceIds.includes(space.id))
                 .sort(compareWorkstreamRecency);
@@ -211,7 +219,7 @@ export function SpaceSidebarSection({
               const unlisted = space.channelCount - placements.length;
               return (
                 <SpaceRow
-                  active={location.pathname === destination || location.pathname.startsWith(`${destination}/`)}
+                  active={active}
                   drag={{
                     onDragEnd: () => {
                       const ids = dragOrder ?? spaces.map((item) => item.id);
@@ -255,15 +263,10 @@ export function SpaceSidebarSection({
                   link={(
                     <NavLink
                       className={({ isActive }: { isActive: boolean }) => clsx('space-row-link', isActive && 'is-active')}
-                      onClick={() => setExpanded((current) => {
-                        const next = new Set(current);
-                        // Opening a Space selects its dashboard and expands its
-                        // row; clicking the row you are already on is the one
-                        // way to close it again.
-                        if (location.pathname === destination && next.has(space.id)) next.delete(space.id);
-                        else next.add(space.id);
-                        return next;
-                      })}
+                      // Opening a Space selects its dashboard, and the route
+                      // is what expands its row; clicking the row you are
+                      // already on is the one way to close it again.
+                      onClick={() => { if (active && isExpanded) setOpen(space.id, false); }}
                       to={destination}
                     >
                       <SpaceRowContent space={space} />
@@ -281,7 +284,7 @@ export function SpaceSidebarSection({
                     if (to < 0 || to >= spaces.length) return;
                     void commit(move(spaces.map((item) => item.id), space.id, to));
                   }}
-                  onToggleExpanded={() => toggle(space.id)}
+                  onToggleExpanded={() => setOpen(space.id, !isExpanded)}
                   space={space}
                 >
                   {isExpanded && (placements.length === 0 && unlisted <= 0
