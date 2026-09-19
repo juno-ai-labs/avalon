@@ -785,7 +785,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         const previous = access.directAudience();
         if (request.scope === "personal"
           && access.sources().some((source) => source.scope === "workspace")) {
-          return { ok: false as const, code: "space_audience_incompatible" as const };
+          return { ok: false as const, code: "channel_scope_locked_by_space" as const };
         }
         access.recordDirectScope(request.scope, now);
         return { ok: true as const, previousScope: previous.scope };
