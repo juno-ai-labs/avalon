@@ -210,8 +210,6 @@ describe("removing a room participant", () => {
     const service = new WorkstreamService(env, auth(OWNER, "owner"));
     vi.spyOn(service as unknown as { authoritativeClient: () => Promise<unknown> }, "authoritativeClient")
       .mockResolvedValue({ removeParticipant: removed });
-    vi.spyOn(service as unknown as { projectConstraints: () => Promise<unknown> }, "projectConstraints")
-      .mockResolvedValue({ activeProject: null });
 
     await service.removeParticipant(ROOM, MEMBER);
 

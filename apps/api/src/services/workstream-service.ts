@@ -52,6 +52,7 @@ import {
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
+import { ChannelAccessService, spaceAccessError } from "./channel-access-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -833,15 +834,32 @@ export class WorkstreamService {
   }
 
 
+  /**
+   * Change the Channel, recording an audience change as the Channel's *own*.
+   *
+   * A scope change goes through here rather than straight to the object client
+   * because `workstream_metadata.scope` stops being able to answer "what is
+   * this Channel's audience on its own account" the moment a Space widens it.
+   * Recording first and restoring on a refused update keeps the record from
+   * claiming an audience the Channel never took.
+   *
+   * The refusal it can raise replaces the Project one: a Channel that is
+   * Organization-wide through a Space cannot be made private, because the
+   * effective audience would stay Organization-wide and the record would then
+   * disagree with the Channel.
+   */
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
-    if (input.scope === "personal") {
-      const constraints = await this.projectConstraints(id);
-      if (constraints.requiresWorkspaceScope) {
-        throw new ApiError(409, "project_audience_managed_by_project", "Remove the work stream from its workspace project before making it private");
-      }
+    if (input.scope === undefined) return client.update(input);
+    const access = new ChannelAccessService(this.env, this.auth);
+    const recorded = await access.recordDirectScope(id, input.scope);
+    if (!recorded.ok) throw spaceAccessError(recorded.code, (await client.get()).title);
+    try {
+      return await client.update(input);
+    } catch (error) {
+      await access.restoreDirectScope(id, recorded.previousScope);
+      throw error;
     }
-    return client.update(input);
   }
 
   /** Main's read state, by hand, from the sidebar, where the row's dot is Main's. */
@@ -862,15 +880,30 @@ export class WorkstreamService {
     });
   }
 
+  /**
+   * Add a reader on the Channel's own account.
+   *
+   * The note is what makes the add *direct*: whichever Space seated this person
+   * first, the Channel has taken responsibility for them now, and a Space
+   * leaving must not take them with it.
+   */
   async addParticipant(id: string, userId: string) {
-    return (await this.authoritativeClient(id)).addParticipant(userId);
+    const participant = await (await this.authoritativeClient(id)).addParticipant(userId);
+    await new ChannelAccessService(this.env, this.auth).noteDirectReader(id, userId);
+    return participant;
   }
 
-  async removeParticipant(id: string, userId: string, options: { projectEffect?: boolean } = {}): Promise<void> {
+  /**
+   * Take a reader out of the Channel.
+   *
+   * The `projectEffect` flag this used to take is gone with the rule it
+   * selected: a Project owned its member work streams' audiences and had to
+   * exempt its own fan-out from them. A Space does not own a Channel's
+   * audience, it supplies one source of it, so a removal here is simply the
+   * direct source losing a reader.
+   */
+  async removeParticipant(id: string, userId: string): Promise<void> {
     const client = await this.authoritativeClient(id);
-    if (options.projectEffect !== true && (await this.projectConstraints(id)).activeProject) {
-      throw new ApiError(409, "project_audience_managed_by_project", "Change project participants before removing this person");
-    }
     await client.removeParticipant(userId);
     // The room closes its own sockets for the person it just removed. The
     // automations it owns admitted them through the room, and nothing in the
@@ -882,20 +915,6 @@ export class WorkstreamService {
       userId,
       sessionId: null,
       target: { scope: "workstream_automations", workstreamId: id },
-    });
-  }
-
-  private async projectConstraints(workstreamId: string) {
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-    );
-    return workspace.projectWorkstreamConstraints({
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      workstreamId: asWorkstreamId(workstreamId),
     });
   }
 
