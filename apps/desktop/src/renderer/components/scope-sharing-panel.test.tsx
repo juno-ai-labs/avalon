@@ -35,6 +35,10 @@ it.each(['0', '00000000-0000-4000-8000-000000000003'])('shares only conversation
     emails: ['ada@example.test', 'bob@example.test', 'carol@example.test', 'dave@example.test'],
     targets: [{ kind: 'conversation', workspaceId, parentId, substreamId }], completeWorkstream: false,
   });
+  // A created invitation leaves no confirmation behind: the emptied form is the
+  // whole of what a container that stays open shows.
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email addresses' })).toHaveValue(''));
+  expect(screen.queryByRole('status')).toBeNull();
   expect(options).not.toHaveBeenCalled();
   expect(invitations).not.toHaveBeenCalled();
   expect(grants).not.toHaveBeenCalled();
