@@ -25,6 +25,7 @@ const OWNER = asUserId("00000000-0000-7000-8000-0000000000d2");
 const MEMBER = asUserId("00000000-0000-7000-8000-0000000000d3");
 const SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000000d4");
 const CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000d5");
+const SECOND_CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000d6");
 
 function summary(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,6 +54,9 @@ interface WorkspaceDouble {
   reserveSpace: ReturnType<typeof vi.fn>;
   cancelSpaceReservation: ReturnType<typeof vi.fn>;
   recordSpaceIntentReceipt: ReturnType<typeof vi.fn>;
+  prepareSpaceArchive: ReturnType<typeof vi.fn>;
+  finalizeSpaceArchive: ReturnType<typeof vi.fn>;
+  restoreSpace: ReturnType<typeof vi.fn>;
 }
 
 function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDouble {
@@ -63,7 +67,74 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
     recordSpaceIntentReceipt: vi.fn(async () => ({ recorded: true })),
+    prepareSpaceArchive: vi.fn(async () => ({
+      ok: true, space: summary(), membershipGeneration: 3,
+    })),
+    finalizeSpaceArchive: vi.fn(async () => ({ ok: true, space: summary({ status: "archived" }) })),
+    restoreSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     ...overrides,
+  };
+}
+
+/**
+ * The Channel's own authorities, recording what order the Space reached them
+ * in and with which arguments.
+ *
+ * Both halves are needed for a fan-out to run at all:
+ * `ChannelAccessService` reads the conversation for the Channel's readers and
+ * then asks `WorkstreamDO` for the delta its provenance implies. The plans are
+ * empty on purpose — what this file can prove is which authority is asked,
+ * about which Channel, and in what order.
+ */
+function channelDoubles(log: string[]) {
+  const detail = (workstreamId: string) => ({
+    id: workstreamId,
+    workspaceId: WORKSPACE_ID,
+    title: "Member Channel",
+    titleStatus: "settled",
+    objective: "",
+    emailAddress: null,
+    createdByUserId: OWNER,
+    harnessStatus: "idle",
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: "2026-09-19T00:00:00.000Z",
+    createdAt: "2026-09-19T00:00:00.000Z",
+    updatedAt: "2026-09-19T00:00:00.000Z",
+    archivedAt: null,
+    scope: "workspace",
+    participants: [],
+    viewers: [],
+    resources: [],
+    connections: [],
+    openElicitations: [],
+    latestHarnessRunId: null,
+  });
+  return {
+    conversation: {
+      previewAudienceContainment: vi.fn(async () => true),
+      // Every product operation a retraction or an application reaches here is
+      // a read of the Channel; the detail is what both of them observe.
+      handleProductRequest: vi.fn(async () => ({
+        status: 200,
+        bodyJson: JSON.stringify(detail(CHANNEL_ID)),
+      })),
+    },
+    room: {
+      retractSpaceAccessSource: vi.fn(async (input: { parentId: string }) => {
+        log.push(`retract:${input.parentId}`);
+        return { ok: true, plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] } };
+      }),
+      applySpaceAccessSource: vi.fn(async (input: { parentId: string; membershipGeneration: number }) => {
+        log.push(`apply:${input.parentId}:${input.membershipGeneration}`);
+        return { ok: true, plan: { widenScope: false, seatUserIds: [] } };
+      }),
+      confirmSpaceAccessSource: vi.fn(async () => ({ ok: true, suppliedUserIds: [] })),
+    },
   };
 }
 
@@ -89,6 +160,7 @@ function namespaceDouble<
 function serviceEnv(input: {
   workspace: WorkspaceDouble;
   conversation?: object;
+  room?: object;
   batch?: () => Promise<unknown>;
 }): Env {
   const conversation = input.conversation ?? {
@@ -111,7 +183,7 @@ function serviceEnv(input: {
     SUBSTREAM_AGENTS: namespaceDouble<Env["SUBSTREAM_AGENTS"]>(conversation),
     SPACE_DOS: namespaceDouble<Env["SPACE_DOS"]>({}),
     AUTOMATION_DOS: namespaceDouble<Env["AUTOMATION_DOS"]>({}),
-    WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>({}),
+    WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>(input.room ?? {}),
   });
 }
 
@@ -168,6 +240,44 @@ describe("SpaceService audience changes", () => {
     })).rejects.toMatchObject({ code: "participant_removal_denied", status: 403 });
     expect(workspace.noteSpaceAudience).not.toHaveBeenCalled();
   });
+});
+
+describe("SpaceService lifecycle fan-out", () => {
+  it("given an archive, when it runs, then it stages, retracts from every reached Channel, then finalizes", async () => {
+    const log: string[] = [];
+    const workspace = workspaceDouble({
+      prepareSpaceArchive: vi.fn(async () => {
+        log.push("prepare");
+        return { ok: true, space: summary(), membershipGeneration: 3 };
+      }),
+      listSpaceMembers: vi.fn(async (input: { reach?: string }) => {
+        log.push(`members:${input.reach}`);
+        return { ok: true, workstreamIds: [CHANNEL_ID, SECOND_CHANNEL_ID] };
+      }),
+      finalizeSpaceArchive: vi.fn(async () => {
+        log.push("finalize");
+        return { ok: true, space: summary({ status: "archived" }) };
+      }),
+    });
+    const channels = channelDoubles(log);
+
+    await expect(new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).archive(SPACE_ID)).resolves.toMatchObject({ status: "archived" });
+
+    // `prepareSpaceArchive` flips every membership to `removing`, so the
+    // fan-out has to ask which Channels this Space still *reaches*. Asking for
+    // its active members here walks nothing and leaves the access source live
+    // on every Channel the Space had.
+    expect(log).toEqual([
+      "prepare",
+      "members:reaching",
+      `retract:${CHANNEL_ID}`,
+      `retract:${SECOND_CHANNEL_ID}`,
+      "finalize",
+    ]);
+  });
+
 });
 
 describe("SpaceService creation", () => {

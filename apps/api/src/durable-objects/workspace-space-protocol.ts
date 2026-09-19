@@ -173,6 +173,30 @@ export const WorkspaceSpaceChannelPageResultSchema = z.union([
 export type WorkspaceSpaceChannelPageResult = z.infer<typeof WorkspaceSpaceChannelPageResultSchema>;
 
 /**
+ * Which memberships a fan-out is asking about.
+ *
+ * `active` is what a surface means by a member. `reaching` also counts the ones
+ * a staged removal or a staged archive has already flipped to `removing`: this
+ * Space's access source is still on those Channels, and taking it off is
+ * exactly the work the staged operation has left to do. An archive's fan-out
+ * that asked for `active` would run over nothing, because the prepare it
+ * follows is what emptied that set.
+ */
+export const SpaceMembershipReachSchema = z.enum(["active", "reaching"]);
+export type SpaceMembershipReach = z.infer<typeof SpaceMembershipReachSchema>;
+
+export const WorkspaceSpaceMembersRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+  reach: SpaceMembershipReachSchema.default("active"),
+}).strict();
+/**
+ * The *input* side of the schema, because `reach` has a default: a caller that
+ * means the active members says nothing, and the parse is what supplies the
+ * word the storage branches on.
+ */
+export type WorkspaceSpaceMembersRequest = z.input<typeof WorkspaceSpaceMembersRequestSchema>;
+
+/**
  * Every Channel a Space holds, archived ones included.
  *
  * Separate from {@link WorkspaceSpaceChannelPageResultSchema} for the reason

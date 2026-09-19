@@ -29,6 +29,7 @@ import {
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
   type SpaceDefaultKind,
+  type SpaceMembershipReach,
   type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMutationResult,
 } from "../durable-objects/workspace-space-protocol";
@@ -332,7 +333,16 @@ export class SpaceService {
     }), plan.space.name);
   }
 
-  /** Archive a Space once no member Channel would be stranded by it. */
+  /**
+   * Archive a Space once no member Channel would be stranded by it.
+   *
+   * The fan-out asks for the Channels this Space still *reaches* rather than
+   * its active members, because `prepareSpaceArchive` is what takes them out of
+   * the active set: it flips every membership to `removing` before the first
+   * Channel is asked to withdraw anything. Reading the active set here would
+   * retract from nothing and leave this Space's access source live on every
+   * Channel it had, which is access nothing accounts for any more.
+   */
   async archive(spaceId: SpaceId): Promise<SpaceSummary> {
     const workspace = await this.workspace();
     const plan = this.planned(await workspace.prepareSpaceArchive({
@@ -341,7 +351,7 @@ export class SpaceService {
       spaceId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const workstreamId of await this.memberChannelIds(spaceId)) {
+    for (const workstreamId of await this.memberChannelIds(spaceId, "reaching")) {
       await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
     }
     return this.settled(await workspace.finalizeSpaceArchive({
@@ -446,12 +456,24 @@ export class SpaceService {
     }), space.name);
   }
 
-  /** Every Channel the Space holds, archived ones included. */
-  async memberChannelIds(spaceId: SpaceId): Promise<WorkstreamId[]> {
+  /**
+   * Every Channel the Space holds, archived ones included.
+   *
+   * `reach` is the difference between the Channels a surface would call members
+   * and the Channels this Space's access source is still on. A retraction
+   * fan-out runs *after* the prepare that staged it, and a prepare is what
+   * flips a membership out of `active` — so an archive that asked for the
+   * default set would walk nothing.
+   */
+  async memberChannelIds(
+    spaceId: SpaceId,
+    reach: SpaceMembershipReach = "active",
+  ): Promise<WorkstreamId[]> {
     const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
+      reach,
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.workstreamIds;
@@ -549,7 +571,11 @@ export class SpaceService {
       return;
     }
     if (intent.kind === "archive") {
-      for (const workstreamId of await this.memberChannelIds(intent.spaceId)) {
+      // `reaching`, for the reason `archive` uses it: the prepare that staged
+      // this intent already flipped every membership to `removing`, so the
+      // active set is empty and the Channels whose source is still live are
+      // exactly the ones this read names.
+      for (const workstreamId of await this.memberChannelIds(intent.spaceId, "reaching")) {
         await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
       }
       await workspace.finalizeSpaceArchive({
