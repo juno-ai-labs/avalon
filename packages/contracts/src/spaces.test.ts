@@ -215,6 +215,7 @@ describe("space contracts", () => {
       "space_bootstrap_pending",
       "space_conversation_unreachable",
       "space_authority_unreachable",
+      "space_cursor_invalid",
     ]);
     expect(SpaceErrorCodeSchema.safeParse("space_error").success).toBe(false);
   });

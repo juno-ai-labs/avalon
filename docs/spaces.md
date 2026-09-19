@@ -762,6 +762,17 @@ whose conversations are all stale says "Nothing here needs you right now",
 because telling somebody a Space with forty Channels in it is empty sends them
 looking for a bug.
 
+**A desktop build older than this change draws a breakout as a Channel.**
+`WorkstreamSchema` is a `z.object`, so a client that predates `kind` and
+`breakoutOf` strips both and is left with a row whose `id` is a substream id —
+which it links to `/workstreams/<substreamId>`, a Channel that does not exist.
+Nothing on the server can prevent that, because the row is only distinguishable
+by the fields the old client throws away. If desktop builds can lag the Worker
+by long enough to matter, the answer is to have the page leave breakouts out
+for a client that has not declared this contract version, the way
+`client-contract.test.ts` already decides what the cutover answers which
+builds — not to reshape the row.
+
 ### Breakouts reach the Organization
 
 `WorkstreamDO.aggregatesChildProjection` folds only the main conversation into

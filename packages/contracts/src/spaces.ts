@@ -428,5 +428,20 @@ export const SpaceErrorCodeSchema = z.enum([
    * member Channels, and retrying is the whole of what a person can do.
    */
   "space_authority_unreachable",
+  /**
+   * The page cursor this request carried is not one this Space issued.
+   *
+   * Its own code rather than `space_not_found`, which is what a malformed
+   * cursor used to be answered with: the two want opposite things from the
+   * caller — one says stop, the other says drop the cursor and read the first
+   * page — and "that space no longer exists" about a Space the reader is
+   * looking at is a diagnosis nobody can act on. The reason was in hand at the
+   * point of refusal, which is `CLAUDE.md`'s test for a generic code being a
+   * defect.
+   *
+   * A cursor is opaque and the ordering behind it is the authority's, so this
+   * is also what a client gets for one it constructed itself.
+   */
+  "space_cursor_invalid",
 ]);
 export type SpaceErrorCode = z.infer<typeof SpaceErrorCodeSchema>;
