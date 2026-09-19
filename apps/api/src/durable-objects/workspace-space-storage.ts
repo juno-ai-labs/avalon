@@ -507,6 +507,21 @@ export function spaceReachSql(space: string, viewer: string): string {
 }
 
 /**
+ * Whether a reach may *change* the Space: any of the three but
+ * `through_channel`.
+ *
+ * The rule as a function of the reach alone, so the one place that has already
+ * read the reach does not spell it a second time.
+ * {@link WorkspaceSpaceStorage.canEdit} is this plus "can see it at all", and
+ * {@link WorkspaceSpaceStorage.members} is this after telling the two refusals
+ * apart — a Space the caller cannot act on and a Space they cannot see are
+ * different answers and were losing that difference at the RPC.
+ */
+export function editableReach(reach: SpaceReach): boolean {
+  return reach !== "through_channel";
+}
+
+/**
  * The keyset seek for one arm of the conversation page.
  *
  * Rendered per arm rather than once over the union, because `kind` is a
@@ -1554,14 +1569,36 @@ export class WorkspaceSpaceStorage {
    * restarting the same pass from the top. Ordered by Channel id, so the
    * cursor is the id the page stopped at and a resumed walk continues from a
    * row rather than from an offset.
+   *
+   * **`canEdit`, and there is deliberately no viewer-scoped variant.** This
+   * answers the Space's whole membership with no viewer predicate in the
+   * query, because its callers — an audience walk, an archive, a restore, the
+   * containment preflight — are operations *on* the Space and have to reach
+   * every Channel it holds or they converge on nothing. A walk narrowed to
+   * what the caller can see would leave the rest of the Space half-applied,
+   * silently. So the answer stays the Organization's and the gate is the
+   * stronger one: somebody who reaches a Space only through a Channel in it is
+   * told its mark so that Channel can be drawn, and this would hand them the
+   * complete membership of a participants-only Space — the ids of Channels
+   * they cannot open, which is the disclosure the viewer-scoped
+   * {@link WorkspaceSpaceStorage.conversationPage} and `channelCount` exist to
+   * refuse.
+   *
+   * The two refusals are told apart because only this knows which one it made:
+   * `"not_editable"` is a Space the caller is looking at and may not act on,
+   * and `false` is one they cannot see at all. Collapsed into `false` the RPC
+   * would have to pick one word for both, and the word it picked was "no such
+   * Space" about a Space whose name is on that person's sidebar.
    */
   members(
     userId: string,
     spaceId: string,
     reach: SpaceMembershipReach = "active",
     cursor: string | null = null,
-  ): SpaceMemberPage | false {
-    if (!this.canRead(userId, spaceId)) return false;
+  ): SpaceMemberPage | "not_editable" | false {
+    const viewerReach = this.reach(userId, spaceId);
+    if (viewerReach === null) return false;
+    if (!editableReach(viewerReach)) return "not_editable";
     const after = cursor === null ? null : decodeChannelCursor(cursor);
     if (cursor !== null && after === null) return false;
     const rows = this.storage.sql.exec<{
@@ -3165,7 +3202,7 @@ export class WorkspaceSpaceStorage {
    */
   private canEdit(userId: string, spaceId: string, activeOnly = false): boolean {
     const reach = this.reach(userId, spaceId, activeOnly);
-    return reach !== null && reach !== "through_channel";
+    return reach !== null && editableReach(reach);
   }
 
   /**

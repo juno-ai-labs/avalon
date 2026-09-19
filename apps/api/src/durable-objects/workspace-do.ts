@@ -5996,7 +5996,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** One page of the Channels a Space holds, archived ones included; server-to-server. */
+  /**
+   * One page of the Channels a Space holds, archived ones included;
+   * server-to-server.
+   *
+   * The page is the Space's whole membership with no viewer predicate on it,
+   * so `WorkspaceSpaceStorage.members` gates it on the edit rule rather than
+   * on "may I see this Space" — see that method for why there is no
+   * viewer-scoped page to narrow to instead. `"not_editable"` is that refusal
+   * and gets the same word every other one does; `space_not_found` is left to
+   * a Space this caller cannot see at all, because it is a lie about a Space
+   * whose name is on their sidebar.
+   */
   async listSpaceMembers(input: WorkspaceSpaceMembersRequest): Promise<WorkspaceSpaceMembersResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembersRequestSchema, input, "list_space_members");
@@ -6006,6 +6017,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const page = this.spaceStorage().members(
       request.userId, request.spaceId, request.reach, request.cursor,
     );
+    if (page === "not_editable") return { ok: false, code: "space_access_denied" };
     return WorkspaceSpaceMembersResultSchema.parse(page === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, members: page.members, nextCursor: page.nextCursor });
