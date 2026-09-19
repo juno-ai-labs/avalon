@@ -473,15 +473,17 @@ export async function openGeneralSpaceForNewWorkspace(
 }
 
 /**
- * Give a connector-created Channel its home.
+ * Give a Channel its home when the creation coordinator did not.
  *
  * The Slack agent opens a Channel for a Slack member with no Rally identity,
  * and provisions the conversation itself rather than through the creation
- * coordinator — so it is the one creation path the coordinator's placement does
- * not cover, and PRD goal 4 covers connectors explicitly. Best effort and
- * never throws: the person's Slack message has already produced a Channel and
- * a run, and a placement that could not be made must not turn that into an
- * error they see.
+ * coordinator — PRD goal 4 covers connectors explicitly. The local development
+ * seed route is the other caller and is there for the same reason: it restores
+ * a captured fixture into objects it provisions under the fixture's own ids.
+ * Neither reaches `WorkstreamObjectCreationService`, and every non-deleted
+ * Channel still has to have a home. Best effort and never throws: the person's
+ * Slack message has already produced a Channel and a run, and a placement that
+ * could not be made must not turn that into an error they see.
  *
  * **A refusal reopens the cutover.** Saying so in a log and stopping there left
  * the Channel homeless for good: a `complete` Organization is never walked

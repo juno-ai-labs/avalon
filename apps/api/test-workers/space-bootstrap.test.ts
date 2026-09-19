@@ -33,6 +33,7 @@ import {
 } from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { devRoutes } from "../src/routes/dev";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace id: object storage resets per case, object names do not. */
@@ -56,6 +57,16 @@ function creationEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
       ? "workerd-test-email-address-key-0123456789"
+      : Reflect.get(current, property, receiver),
+  });
+}
+
+/** The two variables the dev-gated seed route refuses to run without. */
+function developmentEnv(): Env {
+  const creation = creationEnv();
+  return new Proxy(creation, {
+    get: (current, property, receiver) => property === "APP_ENV" ? "development"
+      : property === "RALLY_DEV_AUTH" ? "true"
       : Reflect.get(current, property, receiver),
   });
 }
@@ -443,5 +454,55 @@ describe("the Space cutover", () => {
       .toBe(false);
     expect(await membershipRows()).toEqual([]);
     void unplaced;
+  });
+});
+
+describe("the local development seed", () => {
+  it("places the Channels it restores in General, so the Organization opens ready", async () => {
+    // A Channel the Organization can already see, taken back out of every
+    // Space: the state a re-run of `pnpm db:open-authority` finds on a warm
+    // container, and the state the seed used to *leave* an Organization in.
+    // Built through the real creation path so the directory projection the
+    // placement reads — the scope, and the participants who may act on it —
+    // is the one an Organization actually holds.
+    const workstreamId = await createChannel("restored-fixture");
+    await forgetMembership(workstreamId);
+    expect(await membershipRows()).toEqual([]);
+
+    const response = await devRoutes.fetch(new Request("https://api.test/seed-product", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceId: WORKSPACE_ID,
+        workspaceTables: {},
+        automations: [],
+        workstreams: [{
+          id: workstreamId,
+          title: "Restored fixture",
+          objective: "What the captured workspace was about",
+          harnessStatus: "idle",
+          nextSequenceNumber: 4,
+          participants: [{ user_id: USER_ID, added_by_user_id: USER_ID, participation_reason: "creator" }],
+          harnessRuns: [],
+          toolInvocations: [],
+          resourceIds: [],
+          messages: [],
+        }],
+      }),
+    }), developmentEnv());
+    expect(response.status).toBe(200);
+
+    // The point of the change: the seed leaves no Channel outside a Space.
+    expect(await membershipRows()).toEqual([{ workstream_id: workstreamId, state: "active" }]);
+    expect(await generalCount()).toBe(1);
+
+    // And the Organization reaches the *real* ready state rather than one that
+    // happens to be true because nothing was ever placed. The seed reopened
+    // the cutover when it found the Channel homeless, so the walk is what
+    // closes it, and it can only close once every Channel has a home.
+    await runWholeCutover();
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ phase: "complete", ready: true, blockedWorkstreamIds: [] });
+    expect(await channelScope(workstreamId)).toBe("workspace");
   });
 });
