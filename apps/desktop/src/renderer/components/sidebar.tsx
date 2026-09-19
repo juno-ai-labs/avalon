@@ -672,10 +672,12 @@ function WorkstreamRow({
           // on every row the pointer crosses. See `useListMotion`.
           data-motion-hold={drag?.dragging ? '' : undefined}
           data-motion-key={`workstream:${workstream.id}`}
-          // Always: every Channel belongs to at least one Space, the Spaces
-          // section is drawn in every shell, and dropping a row on a Space is
-          // how it is placed in another one.
-          draggable
+          // A drag on this row is either a pinned reorder or a placement, so
+          // it is draggable exactly while one of the two is possible. With no
+          // Space to drop on — an Organization still opening, a shell without
+          // Space navigation, a system Channel — the gesture has nowhere to go
+          // and the row does not offer it.
+          draggable={drag !== undefined || addableSpaces.length > 0}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
@@ -1473,6 +1475,12 @@ export function Sidebar({
     void onAddChannelToSpace(spaceId, workstream.id).catch(() => setMenuFailure('add_to_space'));
   };
 
+  // Where a Channel could be placed from its row, which is nowhere until the
+  // Organization has finished opening: the section is showing its opening card
+  // instead of the hierarchy, and the server refuses the membership with
+  // `space_bootstrap_pending`. One decision for all three row sites.
+  const placementSpaces = spacesReady ? spaces : [];
+
   const workstreamRowActions = {
     onAddToSpace: addToSpace,
     onArchive: setArchiveWorkstreamTarget,
@@ -1489,7 +1497,7 @@ export function Sidebar({
       {...workstreamRowActions}
       debugEnabled={debugEnabled}
       pinPending={pinPendingWorkstreamId === workstream.id}
-      spaces={spaces}
+      spaces={placementSpaces}
       workspace={workspace}
       workstream={workstream}
     />
@@ -1824,7 +1832,7 @@ export function Sidebar({
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
                     pinPending={pinPendingWorkstreamId === pinned.id}
-                    spaces={spaces}
+                    spaces={placementSpaces}
                     workspace={workspace}
                     workstream={pinned}
                   />
@@ -1910,7 +1918,7 @@ export function Sidebar({
                         debugEnabled={debugEnabled}
                         key={item.id}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
-                        spaces={spaces}
+                        spaces={placementSpaces}
                         workspace={workspace}
                         workstream={item.workstream}
                       />
