@@ -747,9 +747,15 @@ describe('work-stream launch surface geometry', () => {
   // The header is the exception, and the only one. A grid track sized `auto`
   // cannot be animated, so the launching header states its own height as the
   // endpoint the animation grows to — which has to be the destination's row.
-  it('grows its header to exactly the work-stream header row', () => {
+  //
+  // The destination's row is the one that *applies*, not the one underneath it:
+  // every conversation renders `.grokbot-workstream-header`, whose `:has()` rule
+  // overrides the base row. Asserted against the base row, this test held at 55px
+  // while the screen it hands over to went to 44, and the 11px showed up as the
+  // optimistic turn stepping upward when the created conversation arrived.
+  it('grows its header to exactly the header row of the screen it becomes', () => {
     const launching = rule('.workstream-launch-screen.is-launching > .launch-header');
-    const destinationRows = rule('.workstream-screen');
+    const destinationRows = rule('.workstream-screen:has(> .grokbot-workstream-header)');
 
     // `rule()` returns null for a selector that is not in the file, and
     // `toContain` on null fails as "expected null to include …" — which names
@@ -758,8 +764,8 @@ describe('work-stream launch surface geometry', () => {
     // rule's contents below says first that the rule is there.
     expect(launching).not.toBeNull();
     expect(destinationRows).not.toBeNull();
-    expect(launching).toContain('height: 55px;');
-    expect(destinationRows).toContain('grid-template-rows: 55px minmax(0, 1fr) auto;');
+    expect(launching).toContain('height: 44px;');
+    expect(destinationRows).toContain('grid-template-rows: 44px minmax(0, 1fr) auto;');
   });
 
   // Everything else is inherited, so the launching state must state none of it.
@@ -781,6 +787,55 @@ describe('work-stream launch surface geometry', () => {
     for (const property of forbidden) {
       expect(declarations).not.toContain(`${property}:`);
     }
+  });
+
+  /**
+   * The substream launcher's column is the one place the surface is allowed to
+   * differ from its destination, and only while somebody is still typing: the
+   * branch turns are bottom-aligned so that what is being branched from sits
+   * nearest the words about to be written. Once `is-launching` lands, the
+   * optimistic turn is what the created substream will draw, and the created
+   * substream draws from the top — bottom-aligned through the launch, it sat
+   * above the dock and jumped a pane's height at the swap.
+   */
+  it('bottom-aligns the substream branch turns only while they are being composed', () => {
+    const column = rule('.substream-launch-column');
+    const composing = rule('.workstream-launch-screen:not(.is-launching) .substream-launch-column');
+
+    expect(column).not.toBeNull();
+    expect(composing).not.toBeNull();
+    expect(composing).toContain('justify-content: flex-end;');
+    // The unconditional rule is what both states take, so any alignment in it
+    // is one the launching state cannot shed.
+    expect(column).not.toContain('justify-content:');
+  });
+
+  /**
+   * Nothing eases the surface *into* the launching state, and that is the
+   * point: creation can finish before a 220ms transition does — `prepare`
+   * returns a prepared receipt without doing any work, so a retry lands in one
+   * round trip — and a header caught mid-growth hands over to the destination's
+   * 44px row. Anything animating the header on the way in therefore measures
+   * the jump rather than removing it. The transition belongs to the collapse
+   * back, which only the failure path takes, and nothing is racing it there.
+   */
+  it('eases the header closed but not open, so the swap cannot catch it growing', () => {
+    const shared = rule('.workstream-launch-screen > .launch-header');
+    const resting = rule('.workstream-launch-screen:not(.is-launching) > .launch-header');
+
+    expect(shared).not.toBeNull();
+    expect(resting).not.toBeNull();
+    // Stated on the state the surface leaves, never on the one both take: a
+    // transition here applies in both directions.
+    expect(shared).not.toContain('transition');
+    expect(resting).toContain('transition: height');
+    // The `.workstream-header` class this element borrows for its padding
+    // brings two things the destination does not have: a `min-height` that
+    // outranks both stated heights, and a hairline the destination zeroes. A
+    // header that keeps either hands over to a row that has neither.
+    expect(shared).toContain('min-height: 0;');
+    expect(shared).toContain('border-bottom-width: 0;');
+    expect(rule('.grokbot-workstream-header')).toContain('border-bottom: 0;');
   });
 
 });
@@ -1441,10 +1496,15 @@ describe('feed spacing is a step of the scale', () => {
    * outside `.virtual-message-row`, where the row rhythm cannot reach them
    * and the base rules now give a row no margin. Review found their rows
    * stacked flush; these are the gaps they state for themselves.
+   *
+   * The branch block and the opening turn are the one pair with no gap
+   * between them, because they are never both settled: the opening turn
+   * exists only while launching, and by then the block above it is closing.
    */
   it('spaces the launch surfaces\' rows, which sit outside the feed wrapper', () => {
     expect(rule('.substream-branch-context > * + *,\n.launch-arrival + .launch-arrival')).toContain('margin-top: var(--av-sys-space-block-gap);');
-    expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+    expect(rule('.substream-branch-context > .message-block + .message-block')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+    expect(preludes().filter((prelude) => /\.substream-branch-context(-slot)?\s*\+\s*\.launch-arrival/u.test(prelude))).toEqual([]);
   });
 
   /**

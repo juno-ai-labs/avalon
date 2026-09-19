@@ -169,6 +169,27 @@ describe('substream launch surface', () => {
     expect(await screen.findByText('pricing')).toBeInTheDocument();
   });
 
+  it('takes the branch point out of the surface once the substream is being created', () => {
+    // It says what is being branched *from*, which is a fact about composing
+    // this substream rather than about the substream. The created child draws
+    // its opening turn against the top of an empty transcript, so anything left
+    // above that turn here — collapsing, faded, or merely inert — is height the
+    // swap has to take back, and creation can finish before a transition does.
+    renderSurface({
+      launching: {
+        attachments: [],
+        createdAt: '2026-09-09T20:05:00.000Z',
+        startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
+        text: 'Compare it with last release',
+      },
+    });
+    expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Main turn 4')).not.toBeInTheDocument();
+    // The turn it is being replaced by is drawn, so this is the swap having
+    // happened rather than the surface having rendered nothing at all.
+    expect(screen.getByText('Compare it with last release')).toBeInTheDocument();
+  });
+
   it('says only what it is when there is no branch point to show', () => {
     renderSurface({ draft: { throughTurnId: null, provenance: [] } });
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();

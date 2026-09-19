@@ -6735,11 +6735,18 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    follows changes only the data. */
 
 /* The one thing the launching state does not take from `.workstream-screen` is
-   this template, and it cannot: that screen's header row is a fixed `55px`, and
+   this template, and it cannot: that screen's header row is a fixed height, and
    inheriting it would snap the row to full height on the frame the class lands,
    shoving the transcript down — the jump this whole block exists to remove. An
    `auto` row lets the header animate its own height into place instead, and at
-   rest the two resolve to the same 55px. */
+   rest the two resolve to the same number.
+
+   That number is 44px, not the `55px` written on `.workstream-screen` itself:
+   every conversation renders `.grokbot-workstream-header`, whose `:has()` rule
+   takes the track down to 44. Two numbers have to agree here — this row's
+   resting height, below, and the launching header's own — and both have to
+   follow the row that *applies* rather than the base one, which is the drift
+   `app.css.node.test.ts` now pins. */
 .workstream-launch-screen {
   display: grid;
   /* The column is stated because the rows alone leave an implicit `auto` one,
@@ -6756,27 +6763,53 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 }
 
 /* Collapsed rather than absent: a header that mounted at the swap would push
-   the transcript down by its own height on the frame it arrived. Only the
-   collapsed values are stated here — while launching the border and padding are
-   `.workstream-header`'s own. */
+   the transcript down by its own height on the frame it arrived.
+
+   Two of the things this element borrows from `.workstream-header` have to be
+   given back, and both are stated here because neither state wants them. Its
+   `min-height: 48px` outranks a stated `height` in both directions: it held the
+   collapsed header open at 48px, so the launcher reserved a header's worth of
+   empty pane it was supposed to have none of, and it pinned the launching
+   header at 48 where the row it hands over to is 44. Its `border-bottom` is a
+   hairline the destination does not draw — `.grokbot-workstream-header` states
+   `border-bottom: 0` — so a header left with it blinks a rule off at the swap;
+   the width is zeroed rather than the shorthand so the colour stays a token's
+   to name. Released here rather than dropping the shared class, which is also
+   where the padding comes from. The new-chat launcher restates its own border
+   for the recipient bar, at a specificity that still wins. */
 .workstream-launch-screen > .launch-header {
+  border-bottom-width: 0;
+  min-height: 0;
   overflow: hidden;
-  transition: height 220ms cubic-bezier(.32, .72, 0, 1);
 }
 
+/* The collapsed state, and the only direction that eases.
+   Composing → launching is not animated, deliberately: creation can finish
+   before a 220ms transition does — `prepare` returns a prepared receipt
+   without doing any work, so a retry lands in one round trip — and a header
+   caught mid-growth hands over to a 44px row, which is the jump measured in
+   pixels rather than removed. The header is at the row's height on the frame
+   the optimistic turn is first drawn, so there is no state of this surface in
+   which the turn is anywhere but where the created conversation draws it.
+   Launching → composing is the failure path, where nothing is racing the
+   transition and the header has somewhere to collapse back to. */
 .workstream-launch-screen:not(.is-launching) > .launch-header {
-  border-bottom-width: 0;
   height: 0;
   padding-bottom: 0;
   padding-top: 0;
+  transition: height 220ms cubic-bezier(.32, .72, 0, 1);
 }
 
-/* The single launching value this block states, and it is the animation's
-   endpoint rather than a style: a grid track sized `auto` cannot be animated,
-   so the header's own height is what grows. It has to equal the
-   `.workstream-screen` header row, and `app.css.node.test.ts` asserts that it does. */
+/* The single launching value this block states, and it is a destination rather
+   than a style: a grid track sized `auto` cannot be sized from the screen this
+   becomes, so the header states that screen's row as a number. It has to equal
+   the row `.grokbot-workstream-header` sizes — every conversation renders that
+   header. It was 55px, the base row's height, for as long as the newer header
+   has been 44px, and those 11px were the last thing still moving at the swap.
+   `app.css.node.test.ts` now asserts this against the row that applies rather
+   than the row underneath it. */
 .workstream-launch-screen.is-launching > .launch-header {
-  height: 55px;
+  height: 44px;
 }
 
 /* Both layers share one grid cell, so the home content can fade out over the
@@ -6805,12 +6838,15 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 /* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
    the row rhythm does not reach them and the base rules give a row no margin
    of its own; they state the same two gaps here. A turn after a turn (the
-   provenance turns, and the opening turn after them) takes the turn gap; a
-   row after the opening turn (the work timer) takes the turn-to-event gap. */
+   provenance turns) takes the turn gap; a row after the opening turn (the work
+   timer) takes the turn-to-event gap.
+
+   Nothing is stated between the branch turns and the opening turn: the opening
+   turn exists only while launching, and by then the block above it is on its
+   way out, so a gap to it would be a gap to nothing that never eased away. */
 .substream-branch-context > * + *,
 .launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
-.substream-branch-context > .message-block + .message-block,
-.substream-branch-context + .launch-arrival { margin-top: var(--av-sys-space-stack-gap); }
+.substream-branch-context > .message-block + .message-block { margin-top: var(--av-sys-space-stack-gap); }
 
 @keyframes launch-arrival {
   from { opacity: 0; transform: translateY(7px); }
@@ -6867,17 +6903,28 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 /* A substream is started inside the conversation it branches out of, so its
    launch surface is the block above, rendered into the work stream's own
    column. Only the two things a work stream's launcher has no equivalent of
-   are stated here: what the substream branches from, and the row that says so.
-
-   The composer sits where the conversation's composer sits, so the turns above
-   it are pushed to the bottom of the body rather than filling it from the top:
-   what is being branched from is the thing nearest the words about to be
-   written. */
+   are stated here: what the substream branches from, and the row that says so. */
 .substream-launch-column {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   min-height: 100%;
+}
+
+/* While composing, the turns above the composer are pushed to the bottom of the
+   body rather than filling it from the top: what is being branched from is the
+   thing nearest the words about to be written.
+
+   Only while composing. On submit this surface stops being a launcher and
+   starts being the substream: it draws the typed turn and the work timer the
+   created child carries on showing, and the created child draws them from the
+   top of its transcript like every other conversation. Stated bottom-aligned
+   through the launch, the optimistic turn sat just above the dock and jumped
+   the height of the pane at the swap — the one jump the whole hand-off exists
+   to remove. So the bottom alignment rides `:not(.is-launching)`, the same
+   split the dock and the header take, and the launching column states nothing:
+   it is `.transcript-column`'s own top-down flow, which is the destination. */
+.workstream-launch-screen:not(.is-launching) .substream-launch-column {
+  justify-content: flex-end;
 }
 
 /* The fade is the whole statement: these turns are where this came from, not
