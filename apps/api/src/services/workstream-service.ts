@@ -856,10 +856,17 @@ export class WorkstreamService {
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
     if (input.scope === undefined) return client.update(input);
+    // The conversation is asked before `WORKSTREAM_DOS` is addressed at all.
+    // It is the object that knows which parent kind this id belongs to, and a
+    // Space's hidden main conversation refuses a Channel product request by
+    // name; reaching the Channel authority first would materialise an empty
+    // `WorkstreamDO` for a Space id and record a direct scope on it. The title
+    // is what the refusals below need anyway.
+    const { title } = await client.get();
     const access = new ChannelAccessService(this.env, this.auth);
     if (input.scope === "personal") await access.narrowDirectScope(id);
     const recorded = await access.recordDirectScope(id, input.scope);
-    if (!recorded.ok) throw spaceAccessError(recorded.code, (await client.get()).title);
+    if (!recorded.ok) throw spaceAccessError(recorded.code, title);
     let result;
     try {
       result = await client.update(input);
