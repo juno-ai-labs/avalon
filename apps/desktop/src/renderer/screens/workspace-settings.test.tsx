@@ -1403,7 +1403,7 @@ describe('Organization settings', () => {
 
     fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
     expect(within(dialog).getByRole('heading', { name: 'Generate the key in Granola' })).toBeVisible();
     expect(within(dialog).getByText('Open the Granola desktop app as a workspace administrator.')).toBeVisible();
     expect(within(dialog).getByText('Go to Settings → Connectors → Workspace API keys.')).toBeVisible();
@@ -1411,10 +1411,10 @@ describe('Organization settings', () => {
     expect(within(dialog).getByText('Copy the new key, then paste it below.')).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Open Granola’s API key guide ↗' }));
     expect(openExternal).toHaveBeenLastCalledWith('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
-    const apiKeyInput = within(dialog).getByLabelText('Organization API key');
+    const apiKeyInput = within(dialog).getByLabelText('Workspace API key');
     expect(apiKeyInput).toHaveAttribute('type', 'password');
     expect(dialog).toHaveAccessibleDescription(
-      'An organization-wide Granola connection requires an Organization API key. Personal Granola connections use browser sign-in and do not need a key.',
+      'An organization-wide Granola connection requires a Granola Workspace API key. Personal Granola connections use browser sign-in and do not need a key.',
     );
 
     // A paste that cannot be a Granola key says so, rather than leaving a dead
@@ -1442,14 +1442,14 @@ describe('Organization settings', () => {
     openSettingsSection('Connections');
     const granolaCard = (await screen.findByText('Granola')).closest('article');
     fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
     api.createGranolaWorkspaceConnection.mockRejectedValue(new Error('Response lost'));
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000018', connectorType: 'granola', scope: 'workspace',
       displayName: 'Granola organization events', capabilities: ['granola.workspace.read'], status: 'error',
     }]);
     api.connectorInstallation.mockResolvedValue({ installation: null });
-    fireEvent.change(within(dialog).getByLabelText('Organization API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
+    fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
     await screen.findByRole('dialog', { name: 'Organization events' });
     expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
@@ -2821,12 +2821,12 @@ describe('Closing the settings window with Escape', () => {
 
     const granolaCard = (await screen.findByText('Granola')).closest('article');
     fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for organization'));
-    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola organization' });
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
 
     // Radix closes the dialog on this keystroke itself. The window listener sees
     // the same event, and closing over a confirmation is exactly what the guard
     // on dismissable layers exists to prevent.
-    fireEvent.keyDown(within(dialog).getByLabelText('Organization API key'), { key: 'Escape' });
+    fireEvent.keyDown(within(dialog).getByLabelText('Workspace API key'), { key: 'Escape' });
 
     expect(close).not.toHaveBeenCalled();
   });

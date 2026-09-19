@@ -2486,7 +2486,7 @@ export function WorkspaceSettingsScreen({
         {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
         {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
         <Modal
-          description="An organization-wide Granola connection requires an Organization API key. Personal Granola connections use browser sign-in and do not need a key."
+          description="An organization-wide Granola connection requires a Granola Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(
             <>
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
@@ -2505,7 +2505,7 @@ export function WorkspaceSettingsScreen({
             if (!open && !createGranolaWorkspaceConnection.isPending) setGranolaWorkspaceApiKey('');
           }}
           open={granolaWorkspaceModalOpen}
-          title="Connect Granola organization"
+          title="Connect Granola workspace"
         >
           <section aria-labelledby="granola-key-guide-title" className="granola-key-guide">
             <h3 id="granola-key-guide-title">Generate the key in Granola</h3>
@@ -2523,7 +2523,7 @@ export function WorkspaceSettingsScreen({
             help="Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook."
             id="granola-workspace-api-key"
             inputClassName="connector-key-input"
-            inputLabel="Organization API key"
+            inputLabel="Workspace API key"
             label={<SettingLabel setting={settings.granolaKey} />}
             onChange={setGranolaWorkspaceApiKey}
             provider="granola"
