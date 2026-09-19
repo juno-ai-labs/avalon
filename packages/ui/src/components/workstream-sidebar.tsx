@@ -35,7 +35,7 @@ function ConversationRowMenu({ actions, children, target }: {
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
         {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
-          <Globe2 aria-hidden="true" size={16} /> Make public to workspace
+          <Globe2 aria-hidden="true" size={16} /> Make public to organization
         </ContextMenu.Item>}
         {actions.onRename && <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename?.(target)}>
           <Pencil aria-hidden="true" size={16} /> Rename
@@ -44,11 +44,11 @@ function ConversationRowMenu({ actions, children, target }: {
           <IconShare2 aria-hidden="true" size={16} stroke={1.8} /> Share
         </ContextMenu.Item>}
         {actions.onCopyLink && <ContextMenu.Item className="menu-item" onSelect={() => actions.onCopyLink?.(target)}>
-          <Copy aria-hidden="true" size={16} /> {main ? 'Copy work stream link' : 'Copy substream link'}
+          <Copy aria-hidden="true" size={16} /> {main ? 'Copy channel link' : 'Copy breakout link'}
         </ContextMenu.Item>}
         {actions.onArchive && <><ContextMenu.Separator className="menu-separator" />
         <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => actions.onArchive?.(target)}>
-          <Archive aria-hidden="true" size={16} /> {main ? 'Archive work stream' : 'Archive substream'}
+          <Archive aria-hidden="true" size={16} /> {main ? 'Archive channel' : 'Archive breakout'}
         </ContextMenu.Item></>}
       </ContextMenu.Content>
     </ContextMenu.Portal>
@@ -172,7 +172,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
    */
   const currentSubstreamId = publishedReserved ?? selectedSubstreamId;
   return (
-    <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
+    <aside aria-label="Channel sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
       <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
         {mainVisible && <ConversationRowMenu actions={mainActions}
@@ -198,7 +198,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             const row = (
               <button
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
-                aria-label={`Go to substream: ${child.title}`}
+                aria-label={`Go to breakout: ${child.title}`}
                 className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === child.substreamId && 'is-current')}
                 onClick={() => onSelectSubstream?.(child.substreamId)}
                 title={child.title}
@@ -235,7 +235,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 'workstream-context-row workstream-conversation-row workstream-pending-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
               )}
-              title="Rally is creating this substream"
+              title="Rally is creating this breakout"
             >
               <span aria-hidden="true" className="workstream-context-mark">
                 <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
@@ -246,7 +246,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   off the screen. Every other row survives that because its name
                   is an `aria-label` on the button; this one has no button to
                   carry one, so the text sits on the row itself. */}
-              <span className="sr-only">Rally is creating this substream</span>
+              <span className="sr-only">Rally is creating this breakout</span>
               {/* Decorative from here: a pulsing bar standing in for a title
                   nothing has chosen yet, with the skeleton's own label
                   suppressed so the row is not announced twice. */}
@@ -263,17 +263,17 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             // starts the next substream.
             <button
               aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream ? 'page' : undefined}
-              aria-label="New substream"
+              aria-label="New breakout"
               className={clsx(
                 'workstream-context-row workstream-new-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
               onClick={onNewSubstream}
-              title="New substream"
+              title="New breakout"
               type="button"
             >
               <span aria-hidden="true" className="workstream-context-mark"><IconPlus size={22} stroke={1.5} /></span>
-              <span className="workstream-context-copy"><span>New substream</span></span>
+              <span className="workstream-context-copy"><span>New breakout</span></span>
             </button>
           )}
         </div>
@@ -283,9 +283,9 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             conversation that has only just started. */}
         <ResourceSection label="Artifacts" resources={artifacts} onOpen={onOpenArtifact} />
         {onOpenResource && <ResourceSection label="Resources" resources={workstream.resources.filter((item) => item.direction !== 'artifact')} onOpen={onOpenResource} />}
-        <section aria-label="Work-stream participants" className="workstream-context-section">
+        <section aria-label="Channel participants" className="workstream-context-section">
           <h2>Participants</h2>
-          <button className="workstream-context-row" aria-label="Manage work-stream participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
+          <button className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
             {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
           </button>
         </section>
@@ -297,10 +297,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
       <div className="sidebar-collapse-footer">
         <IconButton
           className="window-no-drag"
-          label={compact ? 'Expand work-stream sidebar' : 'Collapse work-stream sidebar'}
+          label={compact ? 'Expand channel sidebar' : 'Collapse channel sidebar'}
           aria-expanded={!compact}
           disabled={narrow}
-          title={narrow ? 'Widen the window to expand the work-stream sidebar' : undefined}
+          title={narrow ? 'Widen the window to expand the channel sidebar' : undefined}
           onClick={() => {
             saveCollapsed(!collapsed);
           }}
@@ -317,7 +317,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
       >
         <div
           role="separator"
-          aria-label="Resize work-stream sidebar"
+          aria-label="Resize channel sidebar"
           aria-orientation="vertical"
           aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
           aria-valuemax={MAX_SIDEBAR_WIDTH}

@@ -28,7 +28,7 @@ describe('SidekicksLibraryScreen', () => {
     expect(await screen.findByRole('link', { name: /Daily brief/ })).toHaveAttribute('href', '/sidekicks/personal');
     expect(screen.getByRole('region', { name: 'Your Sidekicks' })).toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Sidekick count' })).toHaveTextContent('2 Sidekicks');
-    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Organization' }));
     expect(screen.queryByRole('link', { name: /Daily brief/ })).toBeNull();
     expect(screen.getByRole('link', { name: /Team brief/ })).toBeInTheDocument();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search Sidekicks' }), { target: { value: 'morning' } });

@@ -355,15 +355,15 @@ export function StatusDot({
 const socketStateCopy: Record<SocketState, { label: string; description: string }> = {
   idle: {
     label: 'Live updates are loading',
-    description: 'Live updates are waiting for this work stream to load.',
+    description: 'Live updates are waiting for this channel to load.',
   },
   connecting: {
     label: 'Connecting to live updates',
-    description: 'Rally is connecting to live work-stream updates.',
+    description: 'Rally is connecting to live channel updates.',
   },
   connected: {
     label: 'Live updates connected',
-    description: 'Live work-stream updates are connected.',
+    description: 'Live channel updates are connected.',
   },
   reconnecting: {
     label: 'Reconnecting live updates',
@@ -605,7 +605,7 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
 export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
   return (
     <span className={clsx('title-skeleton', className)}>
-      <span className="sr-only">Rally is naming this work stream</span>
+      <span className="sr-only">Rally is naming this channel</span>
     </span>
   );
 }

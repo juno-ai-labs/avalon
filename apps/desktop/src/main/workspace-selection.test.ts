@@ -8,7 +8,7 @@ const activeSession = {
   workspace: { id: workspaceId, region: 'global' as const },
 };
 
-describe('claiming the active workspace for a link', () => {
+describe('claiming the active organization for a link', () => {
   it('returns the active session and takes a selection intent when the link names it', () => {
     const nextSelectionIntent = vi.fn(() => 4);
 
@@ -24,7 +24,7 @@ describe('claiming the active workspace for a link', () => {
   });
 
   it.each([
-    { name: 'another workspace', target: { region: 'global' as const, workspaceId: '00000000-0000-7000-8000-000000000002' } },
+    { name: 'another organization', target: { region: 'global' as const, workspaceId: '00000000-0000-7000-8000-000000000002' } },
     { name: 'the same id in another region', target: { region: 'enterprise' as const, workspaceId } },
   ])('yields to platform activation for $name without taking an intent', ({ target }) => {
     const nextSelectionIntent = vi.fn(() => 5);

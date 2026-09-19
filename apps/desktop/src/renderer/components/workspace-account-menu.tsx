@@ -70,8 +70,8 @@ function attentionLabel(attention: WorkspaceAttention): string | null {
     return attention.waitingReason === 'mentioned'
       ? `${count} mention${plural} waiting for you`
       : attention.waitingReason === 'needs_input'
-        ? `${count} work stream${plural} waiting for your input`
-        : `${count} new work stream${plural} you have not opened`;
+        ? `${count} channel${plural} waiting for your input`
+        : `${count} new channel${plural} you have not opened`;
   }
   return attention.hasUnreadActivity ? 'Unread activity' : null;
 }
@@ -140,8 +140,8 @@ export function WorkspaceAccountMenu({
   }) : [];
   const backgroundHasAttention = backgroundAttention.some((value) => attentionLabel(value) !== null);
   const backgroundAttentionDescription = backgroundAttention.some((value) => value.waitingForYou > 0)
-    ? 'attention in another workspace'
-    : backgroundHasAttention ? 'unread activity in another workspace' : null;
+    ? 'attention in another organization'
+    : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
 
   useEffect(() => {
@@ -172,7 +172,7 @@ export function WorkspaceAccountMenu({
       setWorkspaceName('');
     }, (error: unknown) => {
       if (!current() || error instanceof AccountSignInSupersededError) return;
-      setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
+      setActionError(actionErrorMessage(error, 'The organization could not be created.'));
     }).finally(() => {
       if (!current()) return;
       setActionPending(false);
@@ -227,7 +227,7 @@ export function WorkspaceAccountMenu({
             )}
             {enabled && (
               <>
-                <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
+                <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
                 {workspaces.map((workspace) => {
                   const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
@@ -276,7 +276,7 @@ export function WorkspaceAccountMenu({
                       {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                       {switching && (
                         <LoaderCircle
-                          aria-label={signingIn ? 'Waiting for sign-in' : 'Opening workspace'}
+                          aria-label={signingIn ? 'Waiting for sign-in' : 'Opening organization'}
                           className="spin"
                           size={14}
                         />
@@ -315,7 +315,7 @@ export function WorkspaceAccountMenu({
                     setActionError(null);
                     setCreating(true);
                   }}>
-                    <Plus size={14} /> Create a workspace
+                    <Plus size={14} /> Create an organization
                   </DropdownMenu.Item>
                 )}
                 {staleAt && (
@@ -339,7 +339,7 @@ export function WorkspaceAccountMenu({
               <>
                 <DropdownMenu.Label className="menu-label">
                   <span>{currentUser.email}</span>
-                  <small>Workspace</small>
+                  <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item asChild className="menu-item">
@@ -416,7 +416,7 @@ export function WorkspaceAccountMenu({
           }
         }}
         open={invitation !== null}
-        title={invitation ? `Join ${invitation.workspaceName}` : 'Join workspace'}
+        title={invitation ? `Join ${invitation.workspaceName}` : 'Join organization'}
       >
         {actionError && <p className="inline-error">{actionError}</p>}
       </Modal>
@@ -434,7 +434,7 @@ export function WorkspaceAccountMenu({
               className="button-primary"
               disabled={(actionPending && !creationSigningIn) || workspaceName.trim().length < 2}
               onClick={submitWorkspaceCreation}
-            >Create workspace</Button>
+            >Create organization</Button>
           </>
         )}
         onOpenChange={(open) => {
@@ -444,10 +444,10 @@ export function WorkspaceAccountMenu({
         }}
         initialFocusRef={workspaceNameInput}
         open={creating}
-        title="Create a workspace"
+        title="Create an organization"
       >
         <label className="form-field">
-          <span>Workspace name</span>
+          <span>Organization name</span>
           <input
             maxLength={120}
             onChange={(event) => setWorkspaceName(event.target.value)}

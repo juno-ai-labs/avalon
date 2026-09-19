@@ -137,7 +137,7 @@ export function RegionOnboarding(): React.JSX.Element {
       await finishWorkspaceSetup(name, selected, operationId);
       createOperation.current = null;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Rally could not create this workspace.');
+      setError(caught instanceof Error ? caught.message : 'Rally could not create this organization.');
     } finally {
       setWorking(false);
     }
@@ -148,12 +148,12 @@ export function RegionOnboarding(): React.JSX.Element {
       <section className="onboarding-card workspace-setup-card window-no-drag" aria-labelledby="workspace-heading">
         <RallyMark className="signin-mark" />
         <div className="onboarding-copy">
-          <h1 id="workspace-heading">Create your workspace</h1>
+          <h1 id="workspace-heading">Create your organization</h1>
           <p>A shared home for your team and Rally.</p>
         </div>
 
         <label className="onboarding-field">
-          <span>Workspace name</span>
+          <span>Organization name</span>
           <span className="onboarding-input-wrap">
             <Building2 aria-hidden="true" size={16} />
             <input
@@ -176,7 +176,7 @@ export function RegionOnboarding(): React.JSX.Element {
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
-          Create workspace
+          Create organization
         </Button>
         {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
@@ -233,7 +233,7 @@ export function InvitationOnboarding({
     <main className="onboarding-shell signin-shell window-drag">
       <section className="signin-card invitation-card window-no-drag" aria-labelledby="invitation-heading">
         <span className="invitation-icon"><RallyMark /></span>
-        <p className="eyebrow">Workspace invitations</p>
+        <p className="eyebrow">Organization invitations</p>
         <h1 id="invitation-heading">Choose where to join</h1>
         <p>Signed in as <strong>{session?.user.email}</strong>. Accept an invitation or decline it to continue.</p>
         <div className="invitation-choice-list">

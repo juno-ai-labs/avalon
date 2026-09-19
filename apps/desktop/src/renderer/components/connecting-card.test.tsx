@@ -12,20 +12,20 @@ describe('ConnectingCard', () => {
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toBeEmptyDOMElement();
 
-    rerender(<ConnectingCardSlot><ConnectingCard name="Release notes" state="connecting" subject="work stream" /></ConnectingCardSlot>);
+    rerender(<ConnectingCardSlot><ConnectingCard name="Release notes" state="connecting" subject="channel" /></ConnectingCardSlot>);
     expect(status).toHaveTextContent('Connecting to Release notes…');
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('falls back to the kind of thing when it has no name yet', () => {
-    render(<ConnectingCard name={null} state="offline" subject="substream" />);
+    render(<ConnectingCard name={null} state="offline" subject="breakout" />);
 
-    expect(document.querySelector('.connecting-card')).toHaveTextContent('Waiting for a connection to this substream…');
+    expect(document.querySelector('.connecting-card')).toHaveTextContent('Waiting for a connection to this breakout…');
   });
 
   it('says what waits for the connection under the sentence, and keeps saying it when the connection fails', () => {
     const { rerender } = render(
-      <ConnectingCard detail="Sending is available once Rally connects" name="Release notes" state="connecting" subject="work stream" />,
+      <ConnectingCard detail="Sending is available once Rally connects" name="Release notes" state="connecting" subject="channel" />,
     );
 
     expect(document.querySelector('.connecting-card')).toHaveTextContent('Connecting to Release notes…');
@@ -37,7 +37,7 @@ describe('ConnectingCard', () => {
         error="The live connection timed out after 3 attempts."
         name="Release notes"
         state="failed"
-        subject="work stream"
+        subject="channel"
       />,
     );
     // The moment the connection gives up is the moment someone tries to send;

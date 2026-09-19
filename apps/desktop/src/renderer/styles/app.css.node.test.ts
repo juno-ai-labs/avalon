@@ -372,7 +372,7 @@ describe('sidebar collapse motion', () => {
       .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width; ');
   });
 
-  it('transitions the work-stream sidebar on the one property that sizes it', () => {
+  it('transitions the channel sidebar on the one property that sizes it', () => {
     expect(rule('.workstream-context-sidebar'))
       .toContain('transition: flex-basis var(--sidebar-collapse-motion)');
     expect(rule('.workstream-context-sidebar.is-resizing')).toContain('transition: none');
@@ -382,7 +382,7 @@ describe('sidebar collapse motion', () => {
   // copy has to travel on the same interval as the `flex-basis` that draws it.
   // Registered as a length, or it reaches its final value in one frame and the
   // inspector's width steps while the sidebar beside it is still moving.
-  it('moves the width the work-stream sidebar publishes with the width it draws', () => {
+  it('moves the width the channel sidebar publishes with the width it draws', () => {
     expect(stylesheet).toMatch(/@property --workstream-sidebar-width \{\n {2}syntax: '<length>';/u);
     expect(rule('@property --workstream-sidebar-width')).toContain('initial-value: 0px;');
     expect(stylesheet).toContain('var(--workstream-sidebar-width, 0px)');
@@ -450,7 +450,7 @@ describe('sidebar layout motion', () => {
   // The work-stream sidebar restates the interval and travels the same way,
   // with the substream's two marks stacked in one cell so they can cross-fade
   // and nothing centred by `justify-content`, which cannot travel.
-  it('travels the work-stream sidebar\'s contents on the same interval', () => {
+  it('travels the channel sidebar\'s contents on the same interval', () => {
     expect(rule('.workstream-context-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
     expect(rule('.workstream-context-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
     for (const selector of [
@@ -509,13 +509,13 @@ describe('sidebar layout motion', () => {
   });
 });
 
-describe('work-stream context sidebar layout', () => {
+describe('channel context sidebar layout', () => {
   // The colour is the substance of the mark, not a detail of it: the arrow is
   // the only thing on a substream row that says the row is a substream, and
   // the 10% sidebar-border token this rule used to carry left it a smudge
   // beside a title drawn in full ink. Naming the rejected token as well as the
   // required one is what makes the revert fail here rather than in a window.
-  it('draws the substream arrow in muted text rather than the sidebar rule token', () => {
+  it('draws the breakout arrow in muted text rather than the sidebar rule token', () => {
     expect(rule('.workstream-substream-arrow')).toContain('color: var(--av-sys-color-text-muted);');
     expect(rule('.workstream-substream-arrow')).not.toContain('var(--av-cmp-sidebar-border)');
   });
@@ -622,7 +622,7 @@ describe('clipped scroll edges on both navigation rails', () => {
     return declarations!;
   }
 
-  it('fades the work-stream scrollers from their own block overflow', () => {
+  it('fades the channel scrollers from their own block overflow', () => {
     const fade = fadeRule(BLOCK_SCROLLERS);
 
     expect(fade).toContain('scroll-padding-block: 24px;');
@@ -743,7 +743,7 @@ function elementsIn(prelude: string): string[] {
  * both states render the same DOM, and the drift only shows up as a jump on a
  * real screen, months later, in whichever change restyled the destination.
  */
-describe('work-stream launch surface geometry', () => {
+describe('channel launch surface geometry', () => {
   // The header is the exception, and the only one. A grid track sized `auto`
   // cannot be animated, so the launching header states its own height as the
   // endpoint the animation grows to — which has to be the destination's row.
@@ -753,7 +753,7 @@ describe('work-stream launch surface geometry', () => {
   // overrides the base row. Asserted against the base row, this test held at 55px
   // while the screen it hands over to went to 44, and the 11px showed up as the
   // optimistic turn stepping upward when the created conversation arrived.
-  it('grows its header to exactly the header row of the screen it becomes', () => {
+  it('grows its header to exactly the channel header row of the screen it becomes', () => {
     const launching = rule('.workstream-launch-screen.is-launching > .launch-header');
     const destinationRows = rule('.workstream-screen:has(> .grokbot-workstream-header)');
 
@@ -1133,7 +1133,7 @@ describe('dictation button recording state', () => {
 // and source rules below are dead until something fills those tracks again; the
 // geometry is asserted whole because the template is what keeps the chevrons on
 // one right edge. See docs/workstream-markers.md.
-describe('Work-stream row geometry', () => {
+describe('Channel row geometry', () => {
   it('keeps the marker dot at its size, and clips a label the track cannot hold', () => {
     // The dot is a flex item beside the label, so it is what gives way when a
     // label outgrows the row's fixed first column. Four of the nine labels
@@ -1293,7 +1293,7 @@ describe('sidebar project rows', () => {
     expect(reveal).toContain('opacity: 1;');
   });
 
-  it('starts nested work-stream rows where the accordion control ends', () => {
+  it('starts nested channel rows where the accordion control ends', () => {
     expect(rule('.sidebar-row.project-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
     expect(rule('.project-accordion-control')).toContain('width: 18px;');
     expect(rule('.project-sidebar-workstreams')).toContain('padding-left: 18px;');
@@ -1326,7 +1326,7 @@ describe('sidebar automation rows', () => {
   });
 });
 
-describe('work-stream participant presence', () => {
+describe('channel participant presence', () => {
   it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
     expect(ping).not.toBeNull();
@@ -1481,7 +1481,7 @@ describe('feed spacing is a step of the scale', () => {
    * 24px one: the collapse chevrons hang 20px outside the column and their
    * focus ring reaches 3px further, so anything under 23px clips them.
    */
-  it('keeps the narrow column padding on the work stream at the 24px step', () => {
+  it('keeps the narrow column padding on the channel at the 24px step', () => {
     // Anchored on the rule's own comment: the work stream's column rule outside
     // the media query shares the selector, and matching by selector alone finds
     // that one first.
@@ -2016,7 +2016,7 @@ describe('message header meta typography', () => {
    * action row, reading the token, came out inset by the shared 14px against an
    * 18px corner.
    */
-  it('lets the work-stream theme move the corner by the token rather than by a literal', () => {
+  it('lets the channel theme move the corner by the token rather than by a literal', () => {
     const themed = rule('.workstream-screen .human-message');
     expect(themed).not.toBeNull();
     expect(themed).toContain('--turn-bubble-radius:');
@@ -2206,7 +2206,7 @@ describe('window-control gutter while the sidebar is a drawer', () => {
  * so no component test can tell a footer that divides a fixed body from one
  * that extends the modal; both render the same DOM.
  */
-describe('workspace search modal geometry', () => {
+describe('organization search modal geometry', () => {
   it('divides one fixed body between the list and its pagination footer', () => {
     const body = rule('.rally-search-body');
     const results = rule('.rally-search-results');

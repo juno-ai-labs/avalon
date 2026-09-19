@@ -74,7 +74,7 @@ describe('setCachedWorkstreams', () => {
     ]);
   });
 
-  it('evicts every per-work-stream cache family after access revocation', () => {
+  it('evicts every per-channel cache family after access revocation', () => {
     const queryClient = new QueryClient();
     const workstreamId = summary().id;
     const other = { ...summary(), id: '00000000-0000-7000-8000-000000000002' };
@@ -295,7 +295,7 @@ describe('eviction reaches the disk', () => {
     cachedAt: '',
   });
 
-  it('forgets every remembered conversation under an evicted work stream, in every scope', async () => {
+  it('forgets every remembered conversation under an evicted channel, in every scope', async () => {
     await clearAllLocalCache();
     for (const substreamId of ['0', 'child-a']) {
       await conversationSlice.write(scope, conversationCacheKey(parentId, substreamId), row(), parentId);
