@@ -9,28 +9,12 @@ import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "./workstream-do-schema";
 
 /**
  * What a `WorkstreamDO` instance *is*, fixed at construction and never read
- * from data.
+ * from data. Every field is a behavior the base class reads; nothing here is
+ * advisory.
  *
- * A Space is the same primitive as a Channel — the same presentation,
- * participants, resources, Sidekick recommendations, receipts, and lifecycle —
- * with a different relationship to the product: nothing opens its feed, nothing
- * runs an agent in it, and its grants are not discoverable. Rally has one
- * implementation of that primitive and configures it, rather than a second
- * class that overrides a dozen methods.
- *
- * The alternative that was rejected is the obvious one: `class SpaceDO extends
- * WorkstreamDO` with `override acceptSocket`, `override forwardsChildEffect`,
- * `override migrationPlan`, and so on. It fails on the thing subclassing is
- * usually chosen for. A base method that hard-codes `env.WORKSTREAM_DOS` or
- * `workstreamDOName` is *silently* wrong for the subclass rather than visibly
- * absent, so every such site would have to be found by reading the class — and
- * the four that mattered (self-registration, the migration component, the eager
- * child wake, and the grant-directory writer) are spread across three hundred
- * lines and two base classes. Making them fields of a role turns "did we cover
- * every difference" into a question this file answers in one screen, and turns
- * adding a difference into an addition here rather than an override there.
- *
- * Every field is a behavior the base class reads. Nothing here is advisory.
+ * Why a role rather than `class SpaceDO extends WorkstreamDO`, and what the
+ * role does and does not change: `docs/workstream-durable-object.md`, "A Space
+ * is this class under a role".
  */
 export interface ConversationParentRole {
   /**
