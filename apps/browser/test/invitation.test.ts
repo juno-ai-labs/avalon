@@ -7,7 +7,9 @@ const parent = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const child = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 it("carries an opaque token whole and names no deployment of its own", () => {
-  const token = "inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2";
+  // Shaped like a minted token but deliberately low-entropy: a plausible
+  // 256-bit fixture reads as a leaked key to the repository's secret scan.
+  const token = `inv_${"this-is-not-a-real-token".padEnd(43, "0")}`;
   expect(invitationFromFragment(token)).toEqual({ region: null, credential: { link: token } });
   expect(invitationFromFragment("")).toBeNull();
 });
