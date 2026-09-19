@@ -1071,6 +1071,132 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
     });
 
+    /**
+     * The production ordering, through the real drain rather than its parts.
+     *
+     * The cases above call the two repair helpers directly, which proves each
+     * one works and proves nothing about whether `drainPersistentLoop` calls
+     * them. Removing either call site left every one of them green. This drives
+     * a failing run through the real catch block and asserts what it leaves
+     * behind, so the wiring and its order are covered too.
+     */
+    it("settles the batch, terminalizes, and closes the open receipt in one failed drain", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const receipts = new WorkstreamToolReceiptStorage(state.storage);
+        receipts.seedDevelopmentReceipt({
+          effectIntentId: "drain-open-effect",
+          runId: RUN_ID,
+          toolPosition: 0,
+          toolCallId: `${LOOP_ID}:turn:1:tool:0`,
+          toolName: "web_fetch",
+          mode: "read",
+          requestHash: "request-hash",
+          status: "executing",
+          connectionId: null,
+          inputJson: "{}",
+          outputSummary: null,
+          executionPlanJson: JSON.stringify({ capability: "web.fetch", mode: "read" }),
+          startedAt: Date.now(),
+          settledAt: null,
+        });
+        // Expire the loop lease so the drain's recovery branch adopts this
+        // execution, which is how it reaches the failure path at all.
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = 1, revision = revision + 1,
+                  updated_at = MAX(updated_at, ?) WHERE id = 1`,
+          Date.now(),
+        );
+
+        const resident = instance as unknown as {
+          executeAgentRun: (input: WorkstreamWorkflowInput) => Promise<unknown>;
+          drainPersistentLoop: (ownsDrain: () => boolean) => Promise<void>;
+        };
+        // The run throws where a real one does: inside the execution, after the
+        // assistant batch was accepted and before its results were.
+        resident.executeAgentRun = () =>
+          Promise.reject(new Error("tool_receipt_persistence_failed"));
+
+        await resident.drainPersistentLoop(() => true);
+      });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // Settled before the release, so the projection is a shape Bind accepts.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toBeNull();
+        expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)
+          .map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+        // Released, because the batch was settled first.
+        expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({ status: "idle" });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "failed", terminalized_at: expect.any(Number) });
+        // And the card the failed run had open is closed, with the marker that
+        // keeps the bounded sweep from rescanning it.
+        expect(state.storage.sql.exec<{ status: string } & Record<string, SqlStorageValue>>(
+          `SELECT status FROM tool_effects WHERE effect_intent_id = 'drain-open-effect'`,
+        ).one().status).toBe("failed");
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM run_lifecycle_events
+            WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
+          RUN_ID,
+        ).one().count).toBe(1);
+      });
+    });
+
+    it.each([
+      { status: "pending", answerable: true },
+      { status: "cancelled", answerable: false },
+    ])("treats a $status question as answerable=$answerable when the batch is withheld", async ({
+      status,
+      answerable,
+    }) => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const now = Date.now();
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // The withheld call is this loop's turn-1 tool 0, addressed the way
+        // `pendingBindToolBatch` derives a receipt coordinate.
+        state.storage.sql.exec(
+          `INSERT INTO elicitation_requests
+             (elicitation_id, run_id, prompt, response_type, options_json,
+              minimum_selections, maximum_selections, target_user_id, status,
+              answer_json, answered_by_user_id, external_actor_json,
+              created_at, answered_at, tool_call_id)
+           VALUES (?, ?, 'Which one?', 'select', '[]', 1, 1, ?, ?,
+                   NULL, NULL, NULL, ?, NULL, ?)`,
+          `elicitation-${status}`,
+          RUN_ID,
+          USER_ID,
+          status,
+          now,
+          `${LOOP_ID}:turn:1:tool:0`,
+        );
+
+        // A question somebody can still answer is not withheld work: the room
+        // releases itself when they reply, so the release is allowed and the
+        // answer is admissible. A cancelled one has no answer coming, so the
+        // batch is the host's to settle and the release must be refused —
+        // reading `cancelled` as open is how the queue used to park for ever
+        // on an input nobody would ever send.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toEqual(
+          answerable ? null : expect.objectContaining({ turnId: `${LOOP_ID}:turn:1` }),
+        );
+      });
+    });
+
     it("closes the tool cards a failed run left open", async () => {
       const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
