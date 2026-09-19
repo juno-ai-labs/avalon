@@ -1171,6 +1171,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private ensurePersistentLoop() {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
+    // A Space's hidden conversation is its participant and resource authority
+    // and nothing else: no composer reaches it, no socket opens it, and no
+    // agent runs in it. This is the one place a loop is minted, so it is the
+    // one place that has to say so — every other branch that excludes a Space
+    // from a run path is excluding something that could not have started.
+    if (identity.parentKind === "space") throw new Error("substream_loop_space_parent_refused");
     const substreamId = this.externalSubstreamId();
     const loopId = substreamLoopId(asWorkstreamId(identity.parentId), substreamId);
     const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
@@ -5143,8 +5149,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : null;
     // An automation's conversations are named by the automation, not by a
     // naming pass over their transcripts, and nothing outside Rally is
-    // waiting on a run's outcome the way Slack waits on a room's.
-    if (input.parentKind !== "automation") {
+    // waiting on a run's outcome the way Slack waits on a room's. A Space's
+    // hidden conversation has no surface that shows a title or a description at
+    // all, so it is excluded for the stronger version of the same reason —
+    // positively, `=== "workstream"`, so a fourth parent kind has to opt in.
+    if (input.parentKind === "workstream") {
       // Addressed at the conversation that ran, not at its parent. A private
       // child is named from its own transcript now that it is created with an
       // instruction and starts in `naming`; before that it was born settled,
@@ -5235,7 +5244,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return settlementDiagnosticCode;
     }
 
-    if (input.parentKind === "automation") return settlementDiagnosticCode;
+    // Only a Channel's run has a Slack thread waiting on its outcome.
+    if (input.parentKind !== "workstream") return settlementDiagnosticCode;
     const slack = new SlackAgentService(this.env);
     await slack.deliverWorkstreamOutcome(
       input.workspaceId,
