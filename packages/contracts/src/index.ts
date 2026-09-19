@@ -21,7 +21,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
+import { PersonalOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -2326,6 +2326,20 @@ export const WorkspaceSidebarSchema = z.strictObject({
    */
   spaces: SpaceSnapshotSchema.optional(),
   /**
+   * Every list this viewer has arranged by hand, whatever contains it.
+   *
+   * Beside the Space directories rather than inside one, because it is the
+   * *viewer's* preference about three different containers — the Organization,
+   * a Space, a Channel — and only the first of those is a Space fact at all. It
+   * rides this payload because it is per viewer, it is small, and it has to
+   * reach the screen in the same frame as the lists it orders.
+   *
+   * Optional for the reason `spaces` is: a client reading a payload from a
+   * server that predates it draws every list in its natural order rather than
+   * failing the connect.
+   */
+  ordering: PersonalOrderSchema.optional(),
+  /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.
    *
@@ -2471,6 +2485,16 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
   type: z.literal("workspace_space_snapshot"),
   occurredAt: TimestampSchema,
   spaces: SpaceSnapshotSchema,
+  /**
+   * Every list this viewer has arranged by hand, in full.
+   *
+   * The whole ordering rather than the container that just moved, for the
+   * reason the directories are whole: this is the one message a viewer's other
+   * windows get, and a delta would make each of them keep a copy to apply it
+   * to. Required here and optional on the connect payload, because a server
+   * that sends this event is a server that has the ordering.
+   */
+  ordering: PersonalOrderSchema,
   spacesReady: z.boolean(),
 });
 
