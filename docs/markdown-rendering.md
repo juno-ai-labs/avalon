@@ -27,7 +27,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
-| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
+| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
@@ -553,9 +553,37 @@ sets `list-style: none` on every `ul` and `ol`; the group takes that back, and
 restates the browser's own `disc → circle → square` progression, counting depth
 in list ancestors of either kind so that an `ol` holding a `ul` is a second level.
 
+Every paint in that group is a substitution rather than a token reference:
+`.markdown-body` declares a dozen rule-local properties — `--markdown-ink` and
+its quieter steps, `--markdown-wash`, `--markdown-surface`, `--markdown-rule`,
+`--markdown-quote-bar`, `--markdown-border`, and the two link roles — from the
+appearance's own tokens, and every element rule reads one of those.
+
+The indirection is there because not every markdown surface sits on the
+appearance's canvas. A person's turn is drawn on a filled bubble, near-black by
+default or the sender's profile colour, carrying whichever of the two absolute
+palette inks that fill takes. A ramp step knows nothing about that fill, and the
+bubble had been patching over the consequences one element at a time: two rules
+forced `p`, `strong`, `em`, `code` and `a` to the bubble's foreground and left
+the chip behind `.markdown-inline-code` on `neutral-4`, so a `/goal` in a
+message was a near-white word on a near-white chip. The heading, the quote bar,
+a table's cells and a thematic break each had a quieter version of the same
+problem, and a code fence had the loudest: the highlighter's palette is tuned
+for the appearance's code surface, and in the light appearance `syntax-plain` is
+near-black, so a pasted fence on a near-black bubble was black on black.
+
+So a surface that fills itself re-points the group — `.human-message-bubble
+.markdown-body` does, from `currentColor`, alongside the `syntax` roles the
+highlighter names — instead of restating element rules. Percentages of the
+bubble's own ink contrast by construction whichever fill is underneath, which is
+what the mention chip and the in-flight sweep on the same bubble already do, and
+an element added to the group is painted correctly on every surface the day it
+lands.
+
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Two surfaces take the exemption: a note reads as a document
+markdown element, and it paints by re-pointing the group rather than by naming
+an element. Two surfaces take the exemption: a note reads as a document
 page and steps its headings 22/17/14, the meeting briefing sits in a narrow
 rail beside a transcript and holds every level at 15px. Compact resource rows
 no longer contain a markdown glance or its heading override.
@@ -592,8 +620,17 @@ written this way is a sign it is not a typography override.
 - **A host may override typography, not elements.** The distinction is whether
   the declaration describes the surface or the markdown. A heading scale and a
   measure describe the surface; a list indent, a code background, and a table
-  border describe the markdown. Text colour is on neither list, because it is
-  not a host's to set at all — see the failure modes below.
+  border describe the markdown. Text colour is on neither list: a surface that
+  needs different paint re-points the group below, and one that does not fill
+  itself has no business changing it — see the failure modes below.
+- **Markdown paint is a group, and only a surface with a fill of its own
+  re-points it.** Every element rule reads `--markdown-*`, never a ramp step, so
+  the whole of markdown can be moved onto another ground in one block. The
+  bubble's block is that block; a host copying it without filling itself is
+  restyling markdown with extra steps. Re-point the whole group when you do it:
+  half a group is how the inline-code chip stayed on the neutral ramp under ink
+  the bubble had already forced to near-white, and it is what
+  `app.css.node.test.ts` compares the two sets of names to catch.
 - **A host override wins on specificity, not source order.** Name
   `.markdown-body` in the selector. Anything relying on being further down the
   file is a regression waiting for the next person who splits a stylesheet, and
@@ -752,14 +789,25 @@ needs it should parse rather than widen the pattern again.
   never widens the page, which matters most in the meeting rail, the narrowest
   surface that renders one.
 - **A `color` set on a host does not reach the markdown.** `.markdown-body`
-  declares its own, and a declaration beats an inherited value, so the colour
-  stops at the wrapper. This is the one override that fails by doing nothing at
+  declares its own — now `var(--markdown-ink)` — and a declaration beats an
+  inherited value, so the colour stops at the wrapper. Re-pointing
+  `--markdown-ink` is how a surface says it meant it; inside a filled bubble
+  that value is `currentColor`, which is the one spelling that does resolve back
+  to the host's ink. This is the one override that fails by doing nothing at
   all rather than by losing a cascade fight, which makes it the one most likely
   to be met with `!important` or a second `.markdown-body` rule — the divergence
   the rest of this document exists to prevent. A surface that genuinely needs a
   different body colour has to restate it inside the wrapper, and should say why
   in the same breath. `.note-detail-article` carried a dead `color` of this kind
   until 2026-08-12.
+- **A Mermaid diagram inside a filled bubble is drawn in the appearance's
+  colours, not the bubble's.** `readMermaidThemeConfig` resolves its tokens
+  against `document.documentElement`, one render for the whole window, so the
+  paint group above does not reach it: a diagram in a person's own message is a
+  themed panel on their fill. Nobody has written one into a message — the
+  fences that render as diagrams are a model's — and giving Mermaid a
+  per-surface mapping means deriving its whole role set, surfaces through chart
+  series, from one ink. Named rather than half-done.
 - **A `resource://` target that is malformed, unknown, or invisible to the
   viewer** renders as the citation's label text — no chip, no card, no anchor.
 - **A footnote reference whose definition never arrived** renders literally on a
@@ -903,6 +951,55 @@ order. Sizing the icon under one em of the pill's own reduced type is what keeps
 it inside the existing line box; a larger one would resize the plate and part
 the two markers. A future surface that wants a host's icon takes the hook rather
 than reimplementing the lifetime.
+
+### 2026-09-19 — Markdown paint is a group a filled surface re-points
+
+**What changed:** Every colour in the `.markdown-body` group is now a
+substitution. `.markdown-body` declares a dozen rule-local `--markdown-*`
+properties from the same appearance tokens the element rules used to name
+directly, and each rule reads one of them. `.human-message-bubble .markdown-body`
+re-points all of them, plus the ten `syntax` roles `markdownCodeTheme` hands the
+highlighter, as percentages of `currentColor` — the bubble's own ink. The two
+rules that forced `p`, `strong`, `em`, `code` and `a` to the bubble's foreground
+are gone, and the bubble's fill and ink are stated on the bubble alone.
+Computed paint on every other markdown surface is byte-identical, checked
+element by element in a real window before and after.
+
+**Why:** A person's turn is the one markdown surface whose ground is not the
+appearance's canvas: it is near-black, or the sender's profile colour, under
+whichever of the two absolute palette inks that fill carries. An absolute ramp
+step cannot be right on a ground the ramp has never seen, and the symptom was
+routine — a `/goal` in a message was near-white text on a `neutral-4` chip,
+because the bubble had forced the ink and nothing had moved the chip under it.
+Patching each element as somebody notices it is how that state was reached, and
+the elements nobody had noticed yet — a heading, a quote bar, a table's cells, a
+thematic break, and a code fence painted black on black in the light appearance
+— were sitting there in the same bubble.
+
+**Considered and rejected:** Adding a third element override to the pair the
+bubble already had, which is the fix that produced the bug and does nothing for
+the next element. Promoting the group to registry tokens, which the appearance
+files cannot express: what a theme has an opinion about is which colours exist,
+not which of them a surface that paints its own fill should be using instead, so
+these sit beside `--sweep-ink` and `--turn-bubble-radius` in the stylesheet's
+own namespace. Keeping the code fence on the appearance's surface so the
+highlighter's palette stayed valid, which would have left a light panel of
+another surface's colours inside a coloured bubble; a person's own message is
+read rather than worked on, so it is reduced to the bubble's ink at three
+strengths, where comments recede and punctuation sits between.
+
+**Consequences:** A new element rule in this group names a `--markdown-*`
+property, not a token, or it is wrong on the first filled surface it reaches. A
+role added to the group has to be re-pointed in the bubble's block, and a role
+added to `markdownCodeTheme` too; `app.css.node.test.ts` compares both sets of
+names and fails when one runs ahead. Highlighting inside a person's bubble is
+monochrome by design — the same reduction the exported card already makes for
+its own fixed ground. The mixes are percentages of the ink rather than fixed
+values, so a palette colour added to the product needs no rule here; it was
+checked in both appearances against the default near-black fill, a dark
+profile fill and a light one, which are the two ink cases the palette can
+produce. Nothing outside a bubble moved.
+
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 
