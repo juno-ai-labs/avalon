@@ -855,6 +855,35 @@ describe('Grok Bot mention-chip geometry', () => {
   });
 });
 
+describe('inline icons inside prose', () => {
+  // Both of these sit inside a sentence, and both lose to `.markdown-body img`
+  // — `margin: var(--space-4) 0`, `max-width: 100%` — on source order unless
+  // they name the host the way the card preview below does. The cost is not a
+  // misplaced icon: an 18px block margin on an inline image grows the line box
+  // of every line in the paragraph, which no DOM assertion can see.
+  it('keeps the citation marker icon inside the line it is set in', () => {
+    const icon = rule('.markdown-body .citation-pill-favicon img');
+
+    expect(icon).not.toBeNull();
+    expect(icon).toContain('margin: 0;');
+    expect(icon).toContain('max-width: none;');
+    // Under one em of the pill's own reduced type, so the plate keeps the
+    // asterisk's height and the two markers stay one mechanism.
+    expect(icon).toContain('height: 0.95em;');
+    expect(icon).toContain('width: 0.95em;');
+  });
+
+  it('keeps the link favicon inside the line it is set in', () => {
+    const icon = rule('.markdown-body img.markdown-link-favicon');
+
+    expect(icon).not.toBeNull();
+    expect(icon).toContain('margin: 0 0.3em 0 0;');
+    expect(icon).toContain('max-width: none;');
+    expect(icon).toContain('height: 1em;');
+    expect(icon).toContain('width: 1em;');
+  });
+});
+
 describe('citation card image preview', () => {
   it('fills its box from the center without distorting the image', () => {
     // The shared `.markdown-body img` sets `height: auto` and a prose margin.

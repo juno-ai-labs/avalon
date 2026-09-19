@@ -1038,9 +1038,9 @@ const NO_MENTIONS: MessageMention[] = [];
 const EMPTY_DEFINITION_BLOCKS: string[] = [];
 
 function MarkdownLinkFavicon({ href }: { href: string | undefined }): React.JSX.Element | null {
-  const source = useHostFavicon(href);
+  const { onError, source } = useHostFavicon(href);
   return source
-    ? <img alt="" aria-hidden="true" className="markdown-link-favicon" src={source} />
+    ? <img alt="" aria-hidden="true" className="markdown-link-favicon" onError={onError} src={source} />
     : <span aria-hidden="true" className="markdown-link-favicon-sentinel" />;
 }
 
