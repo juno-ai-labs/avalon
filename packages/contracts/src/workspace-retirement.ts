@@ -13,14 +13,20 @@ export const WorkspaceRetirementResultSchema = z.strictObject({
   workspaceId: IdSchema,
   complete: z.boolean(),
   remaining: z.number().int().nonnegative(),
-  /** Every work stream and automation in the workspace, over all passes. */
+  /** Every work stream, automation and Space in the workspace, over all passes. */
   parents: z.number().int().nonnegative(),
   /** Closed by the pass that answered; a resumed pass closes what the last left. */
   retiredParents: z.number().int().nonnegative(),
   retiredChildren: z.number().int().nonnegative(),
   retainedOutbox: z.number().int().nonnegative(),
   failed: z.array(z.strictObject({
-    parentKind: z.enum(["workstream", "automation"]),
+    /**
+     * An independent copy of `ConversationParentKindSchema`, not an import.
+     * This contract crosses to Ace and is parsed on both sides; the two lists
+     * are kept in step by hand so widening the conversation vocabulary is a
+     * deliberate decision about what an operator is told, not a transitive one.
+     */
+    parentKind: z.enum(["workstream", "automation", "space"]),
     parentId: z.string().min(1),
     error: z.string().min(1),
   })),

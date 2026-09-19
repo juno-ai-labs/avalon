@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   CreateProjectRequestSchema,
-  PALETTE_INK,
-  PALETTE_KEYS,
-  PALETTE_RETIRED,
   PROJECT_COLOR_KEYS,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_ICON_KEYS,
@@ -12,6 +9,10 @@ import {
   ProjectSnapshotSchema,
   ProjectSummarySchema,
 } from "./projects";
+// The appearance registry lives with Spaces now; `projects.ts` re-exports it.
+// These assertions stay here because they are what proves the alias still
+// answers for everything a Project stored.
+import { PALETTE_INK, PALETTE_KEYS, PALETTE_RETIRED } from "./spaces";
 
 describe("project contracts", () => {
   it("given the V1 picker, when its registries are read, then it exposes exactly 25 icons and 12 colors", () => {
