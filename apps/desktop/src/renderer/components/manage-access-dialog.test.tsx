@@ -84,6 +84,19 @@ describe('Manage access', () => {
     expect(screen.getByText('Everyone in the organization, through this space.')).toBeVisible();
   });
 
+  // The directory is the Spaces this viewer can see, and a source may come from
+  // one they cannot. Dropping the unnameable one would leave the sentence
+  // saying only the people in the channel can read it.
+  it('still says a channel is public when the space that makes it public is not in the directory', async () => {
+    renderDialog({
+      direct: { scope: 'personal', participantUserIds: [person] },
+      spaces: [{ spaceId: '00000000-0000-7000-8000-0000000000f9', scope: 'workspace', participantUserIds: [] }],
+      spaceIds: ['00000000-0000-7000-8000-0000000000f9'],
+    });
+
+    expect(await screen.findByText(/public through a space/u)).toBeVisible();
+  });
+
   it('offers the public scope change on a channel whose own source is personal', async () => {
     const onChangeScope = vi.fn(async () => undefined);
     renderDialog({
