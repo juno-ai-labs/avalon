@@ -423,36 +423,60 @@ const ProductAuthSchema = z.strictObject({
   // only by server code; `IdentityAuthContext.principal` says why.
   principal: z.enum(["connector", "demo_seed"]).optional(),
 });
+/**
+ * One product operation, with the two fields every one of them carries.
+ *
+ * `parentKind` is which authority the caller believes owns this conversation's
+ * parent, and `runProductRequest` refuses a request whose answer disagrees with
+ * the object's own identity. It is needed because a conversation is addressed
+ * by *id*: `WorkstreamObjectClient` derives the object name from the id alone,
+ * so without this a Space's hidden main conversation — which the PRD gives no
+ * product surface at all, no feed, no transcript, no search result — is
+ * reachable through `/workstreams/:id` by anybody holding a Space id, and every
+ * member is handed every Space id on the workspace socket. A Space id is not a
+ * secret; what it must not be is an address for a Channel operation.
+ *
+ * Defaulted to `workstream` so the wire shape is unchanged for every existing
+ * caller, all of which mean a Channel.
+ */
+function productOperation<Shape extends z.ZodRawShape>(shape: Shape) {
+  return z.strictObject({
+    auth: ProductAuthSchema,
+    parentKind: ConversationParentKindSchema.default("workstream"),
+    ...shape,
+  });
+}
+
 const ProductRequestSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("initialize"),
     input: InitializeWorkstreamObjectInputSchema }),
-  z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("search_links"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("get") }),
+  productOperation({ operation: z.literal("boot") }),
+  productOperation({ operation: z.literal("search_links"),
     links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
-  z.strictObject({ operation: z.literal("search_link"), auth: ProductAuthSchema, turnId: TranscriptTurnIdSchema, linkId: z.string() }),
-  z.strictObject({ operation: z.literal("search_turns"), auth: ProductAuthSchema, turnIds: z.array(TranscriptTurnIdSchema) }),
-  z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
-  z.strictObject({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }),
-  z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
+  productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
+  productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
+  productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
+  productOperation({ operation: z.literal("mark_unread") }),
+  productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
   // `spaceSourceId` names the Space a participant change is being made on
   // behalf of. It changes nothing about admission — the same roster or grant
   // row is written either way — only where the resulting grant is published,
   // and it is carried here because nothing downstream can infer it.
-  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema,
+  productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
     operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
   // The appearance write over the product request. A Space admits no feed
   // socket, so the socket command that carries this for a Channel cannot reach
   // it; the write itself is the same one.
-  z.strictObject({ operation: z.literal("set_appearance"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("set_appearance"),
     operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
-  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema,
+  productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
     operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
 ]);
 /**
@@ -498,6 +522,12 @@ interface AuthRoleRow {
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
+/**
+ * What a caller puts on the wire, where `parentKind` may be absent because the
+ * parse supplies `workstream`. Every existing caller means a Channel and says
+ * nothing; the Space authority is the one that has to say so.
+ */
+export type SubstreamProductRequestInput = z.input<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
 export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
@@ -1811,7 +1841,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * caller's by async context. The flag only decides whether to open them.
    */
   async handleProductRequest(
-    input: SubstreamProductRequest,
+    input: SubstreamProductRequestInput,
     traced = false,
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
@@ -3260,6 +3290,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     request: SubstreamProductRequest,
     span: FlowSpan,
   ): Promise<Response> {
+    // The parent kind first, before the session read and before any other
+    // object is addressed. A conversation is reached by *id*, so this is the
+    // only place that can tell a Channel's main conversation from a Space's
+    // hidden one — and a Space's has no product surface to offer: no feed, no
+    // transcript, no archive, no scope. Every member holds every Space id off
+    // the workspace socket, so without this `PATCH /workstreams/<spaceId>`
+    // archives General or makes it personal behind the Space authority's back.
+    //
+    // Ahead of authentication deliberately. This is a statement about the
+    // address rather than about the caller — the answer is the same for
+    // everybody — and running it first keeps a misaddressed request from
+    // costing a D1 round trip. `not found` rather than a refusal that confirms
+    // the id: the caller asked a question about a Channel, and there is no
+    // Channel here.
+    const identity = this.objectStore.identity();
+    if (identity && identity.parentKind !== request.parentKind) {
+      span.setError("conversation_parent_kind_mismatch");
+      return jsonResponse({
+        error: "conversation_parent_kind_mismatch",
+        message: "Work stream not found",
+      }, 404);
+    }
     // Two principals, two verifications. A login session is re-verified against
     // its `sessions` row, which is what makes a revoked or expired login stop
     // working mid-flight. A connector principal has no `sessions` row to check
@@ -3363,7 +3415,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           }),
         });
       }
-      const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
