@@ -72,16 +72,6 @@ serves it through `rally-font://`.
   below removed the re-point; a future accent that wants a row back gives that
   row a token of its own rather than re-pointing the one everything shares, and
   `palette.css.node.test.ts` fails if it comes back.
-- **A rule may re-point a token group, and two do.** `html[data-personal-color]`
-  rewrites the accent group above; `.human-message-bubble .markdown-body`
-  rewrites the `sys.color.syntax.*` group onto the bubble's own ink, because the
-  highlighter reaches the markup as inline references to those tokens and a
-  person's turn is drawn on a fill the appearance has never seen — in the light
-  appearance `syntax-plain` is near-black, on a near-black bubble. Both are
-  scoped rewrites of a whole group, never of one member of one, and
-  [`markdown-rendering.md`](markdown-rendering.md) owns the second. Everything
-  else a surface needs to re-point is rule-local and outside the `--av-`
-  namespace, which is what the markdown paint group beside it is.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.

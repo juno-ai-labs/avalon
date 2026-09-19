@@ -3312,23 +3312,13 @@ pre {
    element, and it is the weight that separates who from when. */
 .message-block time,
 .message-block .message-work-summary { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-feed-byline-font-size); font-weight: var(--av-cmp-feed-byline-time-weight); }
-/* Markdown's paint, named as a group so a surface can re-point all of it at
-   once. The values below are the appearance's own, and every markdown rule
-   that follows reads one of these rather than a ramp step directly.
-
-   The indirection exists because not every markdown surface sits on the
-   appearance's canvas. A person's turn is drawn on a filled bubble — near-black
-   by default, or the sender's profile colour — and a ramp step knows nothing
-   about that fill: `.markdown-inline-code` painted a neutral-4 chip under ink
-   the bubble had already forced to near-white, so a `/goal` in a message came
-   out white-on-white and the word inside the chip was gone. Headings, the quote
-   bar, a table and a thematic break each had a quieter version of the same
-   problem.
-
-   A surface that fills itself re-points this group — see the person's bubble
-   below — instead of restating the element rules, so an element added here is
-   painted correctly on every surface the day it lands rather than the day
-   somebody notices it on one of them. */
+/* Markdown's paint, as a group a surface can re-point in one block. Every
+   markdown rule below reads one of these rather than a ramp step, because not
+   every markdown surface sits on the appearance's canvas — a person's turn is
+   drawn on a fill the ramp knows nothing about, which is where a `/goal` in a
+   message became a near-white word on a near-white chip.
+   [`docs/markdown-rendering.md`](../../../../docs/markdown-rendering.md) owns
+   the contract, what a surface may re-point, and why the fence opts out. */
 .markdown-body {
   --markdown-ink: var(--av-ref-color-neutral-13);
   --markdown-ink-strong: var(--av-ref-color-neutral-14);
@@ -3804,22 +3794,29 @@ pre {
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
-/* A block that rendered a diagram takes the appearance's paint back, whatever
-   surface it is on. Mermaid's palette is resolved by `readMermaidThemeConfig`
-   against `document.documentElement` — once per window, deliberately, because a
-   diagram's colours are the appearance's rather than any one surface's — so the
-   ground under it has to come from the same place. On a filled bubble the group
-   would otherwise hand the block a wash of the sender's ink and leave the
-   appearance's labels and connectors sitting on top of it: dark on dark in the
-   light appearance on a near-black bubble. The header goes with it, or its
-   language and copy control would be the bubble's near-white ink on the
-   appearance's near-white surface.
+/* A fenced block is an island of the appearance, whatever surface it sits on:
+   it takes the whole paint group back to the appearance's tokens, so its
+   ground, its header and its ink come from the same place its contents do.
 
-   Scoped with `:has()` so it follows the diagram and not the fence: a Mermaid
-   parse that fails falls back to highlighted source, which is code again and
-   belongs to the surface it sits on. Everywhere outside a filled bubble every
-   line below is the value the group already carries. */
-.markdown-body .markdown-code-block:has(.markdown-mermaid-diagram) {
+   Both kinds of contents are resolved from the root and cannot follow a
+   surface. `markdownCodeTheme` hands the highlighter inline references to the
+   `syntax` group, and `readMermaidThemeConfig` resolves a diagram's labels,
+   lines and fills against `document.documentElement` once per window, because
+   a code palette is the appearance's rather than any one surface's.
+
+   Leaving the panel on the group instead is what this rule was written for. A
+   ground washed toward the surface's own ink has *less* headroom for that ink
+   than the appearance's own ground does, and the fence is where the quietest
+   roles live: on the dark appearance's default bubble a language label went
+   from 4.14:1 to 2.93:1, and on a saturated profile fill to 2.00:1, where
+   before this group existed both were the appearance's own panel. Everything
+   outside the fence — the inline chip, a table, the quote bar — is full or
+   near-full ink and keeps following its surface.
+
+   So a code panel inside a coloured bubble reads as a panel from elsewhere.
+   That is the trade this rule takes deliberately, and it is the arrangement
+   that shipped before this group existed. */
+.markdown-body .markdown-code-block {
   --markdown-ink: var(--av-ref-color-neutral-13);
   --markdown-ink-quiet: var(--av-ref-color-neutral-11);
   --markdown-ink-faint: var(--av-ref-color-neutral-9);
@@ -5329,7 +5326,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .agent-message .markdown-body {
-  color: var(--av-ref-color-neutral-13);
   font-size: 14.5px;
   line-height: 1.62;
 }
@@ -5559,20 +5555,16 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 5px;
 }
 
-/* A person's turn is the one markdown surface with a fill of its own: near-black
-   in the work stream, or the sender's profile colour, carrying whichever of the
-   two absolute inks the palette picked for it. The appearance's ramp has no
-   opinion about that fill, so the whole markdown paint group is re-pointed onto
-   the bubble's own ink — one block of substitutions, and no element rules, which
-   is what the pair of `:is(p, strong, em, code, a)` overrides that used to live
-   further down this file had become.
+/* A person's turn is the one markdown surface with a fill of its own, so it
+   re-points the whole group onto that surface's ink — one block of
+   substitutions, no element rules, in place of the two `:is(p, strong, em,
+   code, a)` overrides this replaced.
 
-   The percentages are of `currentColor`, like the mention chip and the in-flight
-   sweep beside them: ink is light on a dark or coloured bubble and dark on a
-   light one, so one set of mixes contrasts by construction on every fill a
-   member can choose, and nothing here has to know which fill is underneath.
-   Absolute steps could not: a neutral-4 chip under near-white ink is where a
-   `/goal` in a message went white-on-white. */
+   Percentages of `currentColor`, like the mention chip and the in-flight sweep
+   on the same bubble: ink is light on a dark or coloured fill and dark on a
+   light one, so one set of mixes contrasts on every fill a member can pick.
+   They compound where a parent is already a tint — a chip inside a blockquote
+   is 14% of 82% — which is a quote receding as a whole and is intended. */
 .human-message-bubble .markdown-body {
   --markdown-ink: currentColor;
   --markdown-ink-strong: currentColor;
@@ -5597,26 +5589,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
      tick's own glyph is the user agent's to contrast. */
   --markdown-mark: currentColor;
   --markdown-scrollbar-thumb: color-mix(in srgb, currentColor 38%, transparent);
-  /* The highlighter's palette reaches the markup as inline references to the
-     `syntax` token group, tuned for the appearance's own code surface, so it
-     fails here the way the chip did: in the light appearance `syntax-plain` is
-     near-black, and a pasted fence on a near-black bubble was black on black,
-     with `=` and half the identifiers simply gone. A person's own
-     message is reduced to their bubble's ink at three strengths — comments
-     recede, punctuation sits between, everything else is the ink — which keeps
-     the structure readable on any fill a member can pick. A palette of fixed
-     hues cannot promise that, and this is a message being re-read rather than
-     code being worked on. */
-  --av-sys-color-syntax-plain: var(--markdown-ink);
-  --av-sys-color-syntax-comment: var(--markdown-ink-faint);
-  --av-sys-color-syntax-punctuation: var(--markdown-ink-quiet);
-  --av-sys-color-syntax-operator: var(--markdown-ink-quiet);
-  --av-sys-color-syntax-tag: var(--markdown-ink);
-  --av-sys-color-syntax-number: var(--markdown-ink);
-  --av-sys-color-syntax-string: var(--markdown-ink);
-  --av-sys-color-syntax-keyword: var(--markdown-ink);
-  --av-sys-color-syntax-function: var(--markdown-ink);
-  --av-sys-color-syntax-variable: var(--markdown-ink);
   font-size: calc(var(--av-sys-font-size-prose) - 0.5px);
   line-height: calc(var(--av-sys-font-leading-prose) - 0.14);
 }
