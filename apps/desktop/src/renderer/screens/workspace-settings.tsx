@@ -1,8 +1,9 @@
+import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { ServerCog } from 'lucide-react';
-import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
+import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
@@ -104,6 +105,7 @@ function hasWorkspaceInstallationSurface(connectorType: string): boolean {
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'ashby',
+  'canva',
   'fireflies',
   'google',
   'github',
@@ -676,13 +678,12 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
       }
-      const authorization = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
-      await desktopBridge().openExternal(authorization.url);
+      const authorization = await startConnectorAuthorization(api!, input.provider, input.scope, input.capabilities);
       return { kind: 'oauth' as const, authorization, provider: input.provider };
     },
     onSuccess: (result) => {
@@ -773,6 +774,10 @@ export function WorkspaceSettingsScreen({
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
+      if (connection.connectorType === 'canva') {
+        const authorization = await startConnectorAuthorization(api!, 'canva', connection.scope, connection.capabilities ?? []);
+        return { authorization, provider: 'canva' as const };
+      }
       const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
         ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
         : undefined;
@@ -1704,6 +1709,7 @@ export function WorkspaceSettingsScreen({
                           <p>{provider.description}</p>
                           {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
                           {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
+                          {provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}
                           {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}.</p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">

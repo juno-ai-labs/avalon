@@ -1,3 +1,4 @@
+import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
 import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, ParticipantTransferRequestSchema,
@@ -4815,6 +4816,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     emitCorrelatedRunOutcome(executionEnv, input);
+    const canvaCleanupDiagnostic = await cleanupCanvaTransactions(executionEnv, input);
 
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
@@ -4841,7 +4843,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workstreamId: input.parentId,
       });
     }
-    return settlementDiagnosticCode;
+    return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
   }
 
   private async deliverAgentRunResult(

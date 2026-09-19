@@ -127,6 +127,55 @@ function admission(effectIntentId: string, toolCallId: string): Record<string, u
 }
 
 describe("tool-receipt authority on real workerd", () => {
+  it("cleans only known open Canva transactions and preserves uncertain commits across eviction", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    const fence = { runId: RUN, attemptId: ATTEMPT, owner: OWNER };
+    const admit = (id: string, operation: string, input = {}) => receipt(stub, "admit", {
+      ...admission(id, id), mode: "write", connectionId: "canva-connection", inputJson: JSON.stringify(input),
+      executionPlanJson: JSON.stringify({ mode: "write", capability: "canva.personal.mcp", canonicalToolName: operation }),
+    });
+    const complete = (id: string, transactionId: string) => receipt(stub, "complete", {
+      effectIntentId: id, checkpointIndex: 1, outputRef: id, outputSummary: "Canva transaction",
+      providerOperationId: transactionId, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now(),
+    });
+    for (const id of ["open", "committed", "uncertain"]) {
+      await admit(id, "start-editing-transaction");
+      await complete(id, `transaction-${id}`);
+    }
+    expect((await receipt(stub, "canvaTransactionOwned", { runId: RUN, connectionId: "canva-connection", transactionId: "transaction-open" })).value).toBe(true);
+    expect((await receipt(stub, "canvaTransactionOwned", { runId: "another-run", connectionId: "canva-connection", transactionId: "transaction-open" })).value).toBe(false);
+    expect((await receipt(stub, "canvaCleanupForRun", { runId: RUN })).value).toEqual([]);
+    await admit("commit-completed", "commit-editing-transaction", { transaction_id: "transaction-committed" });
+    await complete("commit-completed", "transaction-committed");
+    await admit("commit-uncertain", "commit-editing-transaction", { transaction_id: "transaction-uncertain" });
+    await receipt(stub, "fail", { effectIntentId: "commit-uncertain", status: "ambiguous", phase: "ambiguous_external_write",
+      errorJson: '{"code":"ambiguous_external_write"}', payloadJson: "{}", fence, now: Date.now() });
+    for (const transactionId of ["transaction-committed", "transaction-uncertain"]) {
+      expect((await receipt(stub, "canvaTransactionOwned", { runId: RUN, connectionId: "canva-connection", transactionId })).value).toBe(false);
+    }
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET status = 'cancelled', terminalized_at = ? WHERE run_id = ?", Date.now(), RUN);
+    });
+    expect((await receipt(stub, "canvaTransactionOwned", { runId: RUN, connectionId: "canva-connection", transactionId: "transaction-open" })).value).toBe(false);
+    expect((await receipt(stub, "canvaCleanupForRun", { runId: RUN })).value).toEqual([
+      { effectIntentId: "open", connectionId: "canva-connection", transactionId: "transaction-open", state: "open" },
+      { effectIntentId: "committed", connectionId: "canva-connection", transactionId: "transaction-committed", state: "closed" },
+      { effectIntentId: "uncertain", connectionId: "canva-connection", transactionId: "transaction-uncertain", state: "uncertain" },
+    ]);
+    expect((await receipt(stub, "claimCanvaCleanup", { runId: RUN, effectIntentId: "uncertain" })).value).toBeNull();
+    const claim = z.object({ checkpointIndex: z.number() }).parse((await receipt(stub, "claimCanvaCleanup", { runId: RUN, effectIntentId: "open" })).value);
+    await evictDurableObject(stub);
+    await boot(stub);
+    // A lost cancellation response is retained, never dispatched a second time.
+    expect((await receipt(stub, "claimCanvaCleanup", { runId: RUN, effectIntentId: "open" })).value).toBeNull();
+    await receipt(stub, "settleCanvaCleanup", { runId: RUN, effectIntentId: "open", checkpointIndex: claim.checkpointIndex, cancelled: true });
+    expect((await receipt(stub, "canvaCleanupForRun", { runId: RUN })).value).toContainEqual({
+      effectIntentId: "open", connectionId: "canva-connection", transactionId: "transaction-open", state: "closed",
+    });
+  });
+
   it("keeps page IDs durable, receipt-owned, scoped and single-consumer across eviction", async () => {
     // No inference: exercise the actual tool wrapper, endpoint and storage.
     const stub = agent();

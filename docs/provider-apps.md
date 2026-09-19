@@ -39,6 +39,16 @@ A connector review therefore asks whether each ingestion, read, and retention pa
 is purpose-bound, authorization-preserving, and bounded — not whether the
 implementation literally stores zero copies.
 
+### Canva personal OAuth
+
+Canva uses DCR with backend-held client credentials while the server callback
+application is pending. `CANVA_CONNECTOR_ENABLED` is off by default.
+`CANVA_LOOPBACK_ENABLED` enables only Electron's ephemeral 127.0.0.1 callback;
+public arbitrary callback overrides remain forbidden. The registered server
+callback is `https://api.rallywith.ai/connections/canva/callback`.
+Provider approval and live acceptance are separate from a successful local probe.
+See [Canva integration](canva-integration.md) for the implementation and remaining gates.
+
 ### Ashby personal OAuth and workspace API keys
 
 Workspace event setup independently uses an administrator-provided API key with
@@ -432,6 +442,15 @@ repository. What can be:
 - The manual provider acceptance flows in [`e2e.md`](e2e.md) are the only check
   that a registration's redirect URIs, permissions, and event subscriptions match
   what this document says. A change here that is not exercised there is unverified.
+
+## Changelog
+
+### 2026-09-19 — Keep Canva registration and launch approval distinct
+
+DCR creates the interim native client; the submitted provider application covers
+Rally's server callback. Neither success is treated as blanket production policy
+approval. Keeping both runtime gates off avoids enabling an unverified connector
+merely because dynamic registration succeeds.
 
 ### 2026-09-12 — Ashby metadata and independent webhook management
 

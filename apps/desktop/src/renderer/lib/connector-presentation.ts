@@ -60,6 +60,10 @@ const CATALOG: Readonly<Record<string, CatalogEntry>> = {
     name: 'Ashby',
     description: cardDescription('ashby'),
   },
+  canva: {
+    name: 'Canva',
+    description: cardDescription('canva'),
+  },
   fireflies: {
     name: 'Fireflies',
     description: cardDescription('fireflies'),

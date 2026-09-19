@@ -948,4 +948,45 @@ describe("workspace schema migration in workerd", () => {
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
     });
   });
+  it("admits Canva after v61 while preserving installations, OAuth pointers and personal uniqueness", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v61-canva-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 61),
+        component: "workspace_do", workerVersionId: "v61", now: 1_000 });
+      state.storage.sql.exec(`INSERT INTO workspace_identity
+        VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`);
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id, created_at, updated_at)
+        VALUES ('existing', 'workspace-1', 'ashby', 'personal', 'user-1', 'Existing', 'existing-plugin', 'now', 'now')`);
+      state.storage.sql.exec(`INSERT INTO connector_installations
+        (connection_id, workspace_id, attempt_id, user_id, input_hash, generation, document_json)
+        VALUES ('existing', 'workspace-1', 'attempt-existing', 'user-1', 'hash', 3, '{"state":"current"}')`);
+      state.storage.sql.exec(`INSERT INTO connector_oauth_attempts
+        (id, region, provider, user_id, workspace_id, status, connection_id, expires_at, created_at, updated_at)
+        VALUES ('attempt-existing', 'global', 'ashby', 'user-1', 'workspace-1', 'succeeded', 'existing', 'later', 'now', 'now')`);
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do", workerVersionId: "current", now: 2_000 });
+      expect(state.storage.sql.exec(`SELECT connection_id, generation, document_json FROM connector_installations`).one())
+        .toEqual({ connection_id: "existing", generation: 3, document_json: '{"state":"current"}' });
+      expect(state.storage.sql.exec(`SELECT connection_id FROM connector_oauth_attempts WHERE id = 'attempt-existing'`).one())
+        .toEqual({ connection_id: "existing" });
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id, created_at, updated_at)
+        VALUES ('canva', 'workspace-1', 'canva', 'personal', 'user-1', 'Canva', 'canva-plugin', 'now', 'now')`);
+      state.storage.sql.exec(`INSERT INTO connector_oauth_attempts
+        (id, region, provider, user_id, workspace_id, status, connection_id, expires_at, created_at, updated_at)
+        VALUES ('attempt-canva', 'configured-region', 'canva', 'user-1', 'workspace-1', 'succeeded', 'canva', 'later', 'now', 'now')`);
+      const insertAnother = () => state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id, created_at, updated_at)
+        VALUES ('canva-2', 'workspace-1', 'canva', 'personal', 'user-1', 'Canva', 'canva-plugin-2', 'now', 'now')`);
+      expect(insertAnother).toThrow();
+      state.storage.sql.exec(`UPDATE connector_connections SET status = 'disabled' WHERE id = 'canva'`);
+      insertAnother();
+      expect(() => state.storage.sql.exec(`UPDATE connector_connections SET workspace_id = 'other' WHERE id = 'canva-2'`)).toThrow();
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+    });
+  });
+
 });

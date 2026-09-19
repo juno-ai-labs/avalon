@@ -1,3 +1,4 @@
+import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { ConversationAdmissionProvider } from '../lib/conversation-admission';
 import { AccountProfileEditor } from '../lib/account-profile-editor';
 import { settings } from '../settings/registry';
@@ -15,7 +16,7 @@ import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
-import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
+import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 
 const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
@@ -265,13 +266,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     <label className="guided-search"><Search size={19} /><input aria-label="Search connectors" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
     <div className={configuring ? 'guided-connector-grid' : 'guided-connector-grid is-picking'}>{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
       const connected = connections.data?.some((connection) => connection.connectorType === provider.provider && connection.scope === connectorScope && connection.status === 'healthy' && (connection.scope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities).every((capability) => connection.capabilities?.includes(capability)));
-      return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(`${connectorScope}:${provider.id}`)} onClick={() => setSelected((values) => values.includes(`${connectorScope}:${provider.id}`) ? values.filter((value) => value !== `${connectorScope}:${provider.id}`) : [...values, `${connectorScope}:${provider.id}`])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(`${connectorScope}:${provider.id}`)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p><div className="guided-connection-actions">{connected ? <span>Connected</span> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
+      return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(`${connectorScope}:${provider.id}`)} onClick={() => setSelected((values) => values.includes(`${connectorScope}:${provider.id}`) ? values.filter((value) => value !== `${connectorScope}:${provider.id}`) : [...values, `${connectorScope}:${provider.id}`])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(`${connectorScope}:${provider.id}`)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p>{provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}<div className="guided-connection-actions">{connected ? <span>Connected</span> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
         if (provider.provider === 'x') { await api!.createXConnection([...provider.capabilities]); await connections.refetch(); return; }
         if (provider.provider === 'custom_mcp' || provider.provider === 'generic_webhook' || (ConnectorInstallationProviders.includes(provider.provider as (typeof ConnectorInstallationProviders)[number]) && scope === 'workspace')) { await desktopBridge().openSettings('connections'); return; }
         const capabilities = scope === 'you' && 'personalCapabilities' in provider ? [...provider.personalCapabilities] : [...provider.capabilities];
-        const authorization = await api!.startProviderConnection(provider.provider, scope, capabilities);
+        const authorization = await startConnectorAuthorization(api!, provider.provider, scope, capabilities);
         setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
-        await desktopBridge().openExternal(authorization.url);
+
       })}>{scope === 'you' ? PERSONAL_CONNECT_LABEL : 'Connect for workspace'}</Button>)}</div></>}</div>;
     })}</div>{connectors.isLoading && <p>Loading available connectors…</p>}{(error ?? connectors.error?.message ?? connections.error?.message) && <InlineError>{error ?? connectors.error?.message ?? connections.error?.message}</InlineError>}
   </OnboardingPage>;

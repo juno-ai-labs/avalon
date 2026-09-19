@@ -1,3 +1,4 @@
+import { startCanvaConnection } from './canva-loopback';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -3390,6 +3391,41 @@ function registerIpc(): void {
     // of the person is contending with.
     void settingsWindowController.prewarm();
     return pendingDeepLinks.splice(0);
+  });
+  ipcMain.handle('canva:connect', async (event, rawOperationId: unknown) => {
+    assertTrustedIpcSender(event);
+    const operationId = rawOperationId === undefined ? undefined : IdSchema.parse(rawOperationId);
+    const owner = await loadStoredAuth();
+    if (!owner) throw new Error('Sign in to Rally before connecting Canva');
+    return startCanvaConnection({
+      request: async (path, body) => {
+        const pinnedAuth = async () => {
+          const current = await loadStoredAuth();
+          if (!current || current.binding.userId !== owner.binding.userId || current.binding.workspaceId !== owner.binding.workspaceId
+            || current.binding.region !== owner.binding.region) throw new Error('The Rally session changed');
+          return current;
+        };
+        const send = async () => {
+          const current = await pinnedAuth();
+          return net.fetch(`${apiBaseForAuth(current)}${path}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${current.accessToken}`,
+              ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}) },
+            body: JSON.stringify(body), signal: AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS),
+          });
+        };
+        let response = await send();
+        if (response.status === 401) {
+          await response.body?.cancel();
+          await pinnedAuth();
+          await coalescedRefreshSession();
+          response = await send();
+        }
+        if (!response.ok) throw await responseError(response);
+        return readJsonBody(response);
+      },
+      openExternal: (url) => shell.openExternal(url),
+      onClose: (close) => event.sender.once('destroyed', close),
+    });
   });
   ipcMain.handle('system:open-external', async (event, rawUrl: unknown) => {
     assertTrustedIpcSender(event);

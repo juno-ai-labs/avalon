@@ -21,7 +21,7 @@ export const HOSTED_MCP_PROTOCOL_VERSION = "2025-06-18";
 
 const HOSTED_MCP_CLIENT_NAME = "Rally";
 const HOSTED_MCP_CLIENT_VERSION = "1.0.0";
-const HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+export const HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 /** The shared hosted-MCP response ceiling, for callers reading a catalog directly. */
 export const HOSTED_MCP_DEFAULT_RESPONSE_BYTES = 2_000_000;
 const DEFAULT_RESPONSE_BYTES = HOSTED_MCP_DEFAULT_RESPONSE_BYTES;
@@ -41,6 +41,7 @@ const AuthorizationServerMetadataSchema = z.looseObject({
   authorization_endpoint: HttpsUrlSchema,
   token_endpoint: HttpsUrlSchema,
   registration_endpoint: HttpsUrlSchema,
+  revocation_endpoint: HttpsUrlSchema.optional(),
   scopes_supported: z.array(z.string().min(1)).optional(),
   code_challenge_methods_supported: z.array(z.string()).optional(),
   token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
@@ -104,6 +105,7 @@ export interface HostedMcpOAuthState extends Record<string, unknown> {
   resource: string;
   authorizationEndpoint: string;
   tokenEndpoint: string;
+  revocationEndpoint?: string;
   clientId: string;
   clientSecret?: string;
   tokenEndpointAuthMethod: "none" | "client_secret_post" | "client_secret_basic";
@@ -114,6 +116,10 @@ export interface HostedMcpOAuthConfig {
   providerName: string;
   serverUrl: string;
   redirectUri: string;
+  /** Explicit native-app exception; ordinary callbacks remain HTTPS-only. */
+  allowLoopbackRedirect?: boolean;
+  /** Provider-declared resource identifier when it differs from the MCP endpoint. */
+  resourceUrl?: string;
   clientName?: string;
   clientUri?: string;
   /** Exact origins trusted to receive OAuth requests and client credentials. */
@@ -462,10 +468,10 @@ export async function beginHostedMcpAuthorization(
   );
   const protectedMetadata = ProtectedResourceMetadataSchema.parse(await discoverOAuthMetadata(
     fetcher,
-    protectedResourceMetadataUrls(serverUrl),
+    protectedResourceMetadataUrls(config.resourceUrl ?? serverUrl),
     maxResponseBytes,
   ));
-  if (normalizeHttpsUrl(protectedMetadata.resource) !== serverUrl) {
+  if (normalizeHttpsUrl(protectedMetadata.resource) !== normalizeHttpsUrl(config.resourceUrl ?? serverUrl)) {
     throw new ConnectorError("invalid_configuration", `${config.providerName} MCP advertised an unexpected protected resource`);
   }
   const authorizationServer = normalizeHttpsUrl(protectedMetadata.authorization_servers[0]!);
@@ -482,7 +488,7 @@ export async function beginHostedMcpAuthorization(
     authorizationServerMetadataUrls(authorizationServer),
     maxResponseBytes,
   ));
-  for (const endpoint of [metadata.authorization_endpoint, metadata.token_endpoint, metadata.registration_endpoint]) {
+  for (const endpoint of [metadata.authorization_endpoint, metadata.token_endpoint, metadata.registration_endpoint, ...(metadata.revocation_endpoint ? [metadata.revocation_endpoint] : [])]) {
     if (!allowedOrigins.has(new URL(endpoint).origin)) {
       throw new ConnectorError("invalid_configuration", `${config.providerName} MCP advertised an untrusted OAuth endpoint`);
     }
@@ -514,7 +520,7 @@ export async function beginHostedMcpAuthorization(
       body: JSON.stringify({
         client_name: config.clientName ?? HOSTED_MCP_CLIENT_NAME,
         ...(config.clientUri ? { client_uri: config.clientUri } : {}),
-        redirect_uris: [normalizeHttpsUrl(config.redirectUri)],
+        redirect_uris: [normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect)],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: requestedAuthMethod,
@@ -529,9 +535,10 @@ export async function beginHostedMcpAuthorization(
     throw new ConnectorError("provider_error", `${config.providerName} OAuth registration omitted its client secret`);
   }
   const authorizationState: HostedMcpOAuthState = {
-    resource: normalizeHttpsUrl(protectedMetadata.resource),
+    resource: protectedMetadata.resource,
     authorizationEndpoint: normalizeHttpsUrl(metadata.authorization_endpoint),
     tokenEndpoint: normalizeHttpsUrl(metadata.token_endpoint),
+    ...(metadata.revocation_endpoint ? { revocationEndpoint: normalizeHttpsUrl(metadata.revocation_endpoint) } : {}),
     clientId: registered.client_id,
     ...(registered.client_secret ? { clientSecret: registered.client_secret } : {}),
     tokenEndpointAuthMethod,
@@ -540,7 +547,7 @@ export async function beginHostedMcpAuthorization(
   const url = new URL(authorizationState.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", authorizationState.clientId);
-  url.searchParams.set("redirect_uri", normalizeHttpsUrl(config.redirectUri));
+  url.searchParams.set("redirect_uri", normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect));
   url.searchParams.set("state", input.state);
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
@@ -551,7 +558,7 @@ export async function beginHostedMcpAuthorization(
 }
 
 export async function exchangeHostedMcpAuthorizationCode(
-  config: Pick<HostedMcpOAuthConfig, "providerName" | "redirectUri" | "fetch" | "maxResponseBytes">,
+  config: Pick<HostedMcpOAuthConfig, "providerName" | "redirectUri" | "allowLoopbackRedirect" | "fetch" | "maxResponseBytes">,
   state: HostedMcpOAuthState,
   input: { code: string; codeVerifier: string },
 ): Promise<HostedMcpTokenResponse> {
@@ -559,7 +566,7 @@ export async function exchangeHostedMcpAuthorizationCode(
     grant_type: "authorization_code",
     code: input.code,
     code_verifier: input.codeVerifier,
-    redirect_uri: normalizeHttpsUrl(config.redirectUri),
+    redirect_uri: normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect),
     resource: state.resource,
   });
 }
@@ -577,20 +584,49 @@ export async function refreshHostedMcpAuthorization(
   }, signal);
 }
 
+/** RFC 7009: a successful revocation may have an empty response body. */
+export async function revokeHostedMcpAuthorization(
+  config: Pick<HostedMcpOAuthConfig, "providerName" | "fetch">,
+  state: HostedMcpOAuthState,
+  token: string,
+  tokenTypeHint: "access_token" | "refresh_token",
+  signal: AbortSignal,
+): Promise<void> {
+  if (!state.revocationEndpoint) {
+    throw new ConnectorError("unsupported_capability", `${config.providerName} did not advertise token revocation`);
+  }
+  const form = new URLSearchParams({ token, token_type_hint: tokenTypeHint, client_id: state.clientId });
+  const headers = new Headers({ "content-type": "application/x-www-form-urlencoded" });
+  if (state.tokenEndpointAuthMethod !== "none" && !state.clientSecret) {
+    throw new ConnectorError("invalid_configuration", `${config.providerName} OAuth client secret is unavailable`);
+  }
+  if (state.tokenEndpointAuthMethod === "client_secret_post") form.set("client_secret", state.clientSecret!);
+  if (state.tokenEndpointAuthMethod === "client_secret_basic") {
+    headers.set("authorization", `Basic ${base64(`${state.clientId}:${state.clientSecret}`)}`);
+  }
+  const response = await (config.fetch ?? globalThis.fetch)(state.revocationEndpoint, {
+    method: "POST", headers, body: form, signal, redirect: "error",
+  });
+  await response.body?.cancel();
+  if (!response.ok) throw new ConnectorError("provider_error", `${config.providerName} refused token revocation`, { status: response.status });
+}
+
 export function parseHostedMcpOAuthState(value: unknown): HostedMcpOAuthState {
   const parsed = z.object({
     resource: HttpsUrlSchema,
     authorizationEndpoint: HttpsUrlSchema,
     tokenEndpoint: HttpsUrlSchema,
+    revocationEndpoint: HttpsUrlSchema.optional(),
     clientId: z.string().min(1),
     clientSecret: z.string().min(1).nullable().optional(),
     tokenEndpointAuthMethod: z.enum(["none", "client_secret_post", "client_secret_basic"]),
     scope: z.string(),
   }).parse(value);
   return {
-    resource: normalizeHttpsUrl(parsed.resource),
+    resource: parsed.resource,
     authorizationEndpoint: normalizeHttpsUrl(parsed.authorizationEndpoint),
     tokenEndpoint: normalizeHttpsUrl(parsed.tokenEndpoint),
+    ...(parsed.revocationEndpoint ? { revocationEndpoint: normalizeHttpsUrl(parsed.revocationEndpoint) } : {}),
     clientId: parsed.clientId,
     ...(parsed.clientSecret ? { clientSecret: parsed.clientSecret } : {}),
     tokenEndpointAuthMethod: parsed.tokenEndpointAuthMethod,
@@ -768,7 +804,10 @@ async function fetchMcp(
   if (session.id) headers.set("mcp-session-id", session.id);
   let response: Response;
   try {
-    response = await input.fetch(input.serverUrl, {
+    // Workers' native fetch rejects an arbitrary receiver. Keep the injected
+    // function a plain call, rather than binding it to this request object.
+    const fetcher = input.fetch;
+    response = await fetcher(input.serverUrl, {
       method,
       headers,
       ...(request ? { body: JSON.stringify(request) } : {}),
@@ -944,6 +983,15 @@ async function discoverOAuthMetadata(
     }
   }
   throw missing ?? new ConnectorError("provider_error", "OAuth metadata is unavailable");
+}
+
+/** Only the fixed IPv4 loopback callback used by Rally's native listener. */
+export function normalizeHostedMcpRedirect(value: string, allowLoopback = false): string {
+  const url = new URL(value);
+  if (allowLoopback && url.protocol === "http:" && url.hostname === "127.0.0.1"
+    && url.port && url.pathname === "/callback" && !url.username && !url.password
+    && !url.search && !url.hash) return url.toString();
+  return normalizeHttpsUrl(value);
 }
 
 function normalizeHttpsUrl(value: string): string {

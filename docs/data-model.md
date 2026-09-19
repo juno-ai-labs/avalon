@@ -1070,6 +1070,26 @@ read through typed RPC. See [Apple push](push-notifications.md).
 
 ## Changelog
 
+### 2026-09-19 — Admit Canva in persisted connector vocabularies
+
+WorkspaceDO migration 62 rebuilds connector connections and OAuth attempts to
+admit Canva and enforces one active personal Canva connection per member. The
+real Electron login reached an older SQL CHECK despite the TypeScript vocabulary
+already accepting the provider. Editing old migrations would invalidate receipts,
+so this is a forward rebuild. It holds and restores every connector dependent,
+including installations and OAuth connection pointers, retains the existing
+indexes and identity fences, and preserves configured deployment identifiers.
+A populated workerd upgrade test covers preservation and Canva admission.
+
+### 2026-09-19 — Separate Canva access material from resource metadata
+
+WorkspaceDO migration 61 adds `resources.protected_access_json`. The versioned
+envelope is bound to the workspace, connection and design identity; it is excluded
+from public resource representations and revision metadata. A separate field is
+necessary because Canva share URLs may carry authorization, so treating every
+provider URL as ordinary navigation would disclose credentials. Resource deletion
+removes the envelope with its owner row.
+
 ### 2026-09-16 — Separate guest relationship from administrative role
 
 Migration 0109 adds workspace-specific access class, membership incarnation and

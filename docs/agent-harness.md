@@ -1345,6 +1345,22 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-09-19 — Close abandoned Canva transactions from durable receipts
+
+The terminal run's external-settlement lane now cancels known open Canva editing
+transactions. The start tool records its provider transaction ID with its normal
+successful receipt; cleanup claims and outcomes are append-only checkpoints on
+that receipt. A separate transaction table or timer would duplicate the existing
+run lifecycle and could cancel while editing is still underway. Other runs cannot
+spend the transaction, and cleanup begins only after terminalization.
+
+A dispatched commit without a completed receipt is uncertain and is never
+cancelled or replayed. A lost cleanup response also remains uncertain rather than
+repeating a mutation. The post-run diagnostic retains this state for reconciliation;
+Canva exposes no verified transaction-status lookup, so automatic reconciliation
+is not claimed. Cleanup rechecks the personal owner, active membership and stored
+connection, and uses the same credential door and MCP deadline as normal calls.
+
 ### 2026-09-18 — JEV is three primitives, and addressing is one of its callers
 
 **What changed:** the TypeSafe endpoint, the response envelope, the owned
