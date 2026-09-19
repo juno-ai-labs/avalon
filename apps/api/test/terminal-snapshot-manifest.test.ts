@@ -236,6 +236,14 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain('GIT_SSL_CAINFO="$CURL_CA_BUNDLE" git ls-remote');
   });
 
+  it("builds every sandbox at the size the team set", () => {
+    // Pinned as a literal rather than read from the constant: this is the team's
+    // number, and the only thing that should be able to change it is a diff a
+    // reviewer sees. Everything else in this file derives its expectations from
+    // the constant, so a manifest edited to 2 / 4 / 7 would otherwise go green.
+    expect(TERMINAL_SNAPSHOT_RESOURCES).toEqual({ cpu: 2, memory: 4, disk: 8 });
+  });
+
   it("accepts a built snapshot only when every resource field comes back as requested", () => {
     const { cpu, memory, disk } = TERMINAL_SNAPSHOT_RESOURCES;
     expect(terminalSnapshotResourceMismatches({ cpu, mem: memory, disk })).toEqual([]);
