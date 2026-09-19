@@ -3337,6 +3337,14 @@ describe("agent harness", () => {
     // less, and the 400 that came back said exactly which limit was crossed —
     // which Rally then discarded, reporting `harness_execution_failed`: its
     // own defect, no remedy, "copy the request ID for support".
+    //
+    // `openai/gpt-5.6-sol` rather than a bound model with the ordered default,
+    // because the route policy decides which arm the terminal catch reaches.
+    // This model is registered `{ mode: "only", provider: "azure" }`, so the
+    // plan terminates on Azure and the error classified is the
+    // `AzureOpenAIError`. An ordered model would traverse to OpenRouter, and
+    // `routeProviderTurn` throws the *last* attempt's cause — so the assertion
+    // would pass on an `OpenRouterError` and the Azure arm would never run.
     const azureUrls: string[] = [];
     const azureFetcher = vi.fn(async (request: RequestInfo | URL) => {
       azureUrls.push(String(request));
@@ -3354,7 +3362,7 @@ describe("agent harness", () => {
     // that Rally never names its own request as the provider's still holds.
     // The code changes what a reader is told went wrong, not who owns it.
     await expect(runHarness(runInput(azureFetcher, {
-      primaryModel: "x-ai/grok-4.6",
+      primaryModel: "openai/gpt-5.6-sol",
       azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
       transportRetries: 2,
       workspaceId: "workspace-azure-context-length",
@@ -3362,20 +3370,16 @@ describe("agent harness", () => {
       status: "failed",
       failure: { kind: "context", code: "context_length_exceeded" },
     });
-    // A rejection Rally owns still traverses: another endpoint for the same
-    // model may have a larger window, and one that does is a recovery rather
-    // than a failure. The code is what is left when every candidate has
-    // refused, which is why it is read from the last attempt's error and not
-    // raised the moment the first 400 arrives.
+    // Azure-only: one endpoint, so the classified error is the one this case
+    // exists to cover.
     expect(azureUrls).toEqual([
       "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
-      "https://openrouter.ai/api/v1/chat/completions",
     ]);
 
     // OpenRouter does not adopt the upstream code: it reports its own numeric
-    // 400 and forwards the endpoint's envelope inside `metadata.raw`, so the
-    // machine code survives only as an escaped JSON pair. Reading it there is
-    // what keeps the same failure from staying generic on the other transport.
+    // 400 and forwards the endpoint's envelope inside `metadata.raw`. That
+    // envelope is parsed, not pattern-matched, because `providerError.detail`
+    // holds the whole response body rather than `metadata.raw` alone.
     const openRouterFetcher = vi.fn(async () => Response.json({
       error: {
         message: "Provider returned error",
@@ -3400,6 +3404,30 @@ describe("agent harness", () => {
 
     expect(memberSafeHarnessFailureMessage("context_length_exceeded"))
       .toBe("This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support");
+  });
+
+  it("does not read a context-length refusal out of a provider's prose", async () => {
+    // The whole response body is what `providerError.detail` holds, so a
+    // substring search for the machine code would also see `message` — and a
+    // provider that quotes the rejected request back, or names codes in prose,
+    // would have its unrelated 400 relabelled as a context failure and told a
+    // member to start a new work stream over a schema fault. Only a machine
+    // code in `error.code`, or in the envelope OpenRouter forwards, counts.
+    const fetcher = vi.fn(async () => Response.json({
+      error: {
+        message: "Invalid schema for function 'table_query': unsupported keyword. Unrelated to context_length_exceeded.",
+        type: "invalid_request_error",
+        code: "invalid_function_parameters",
+      },
+    }, { status: 400 })) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      transportRetries: 0,
+      workspaceId: "workspace-context-length-prose-only",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
   });
 
   it("spends no retry when the budget is zero or the run has no room for one", async () => {
