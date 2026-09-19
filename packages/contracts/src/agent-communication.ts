@@ -43,6 +43,17 @@ export const AgentExchangeSchema = z.strictObject({
   senderAgentId: AgentIdSchema,
   /** Absent on a model-authored message, which is every message but two. */
   notice: AgentExchangeNoticeSchema.optional(),
+  /**
+   * The terminal diagnostic behind a `failed` notice.
+   *
+   * Carried as a field rather than left in the prose because the feed's row is
+   * now the reader's whole record of the failure: it does not show the message
+   * body, so a row reading only "1 background agent failed" would name no
+   * reason and no worker — the generic code `CLAUDE.md` calls a defect rather
+   * than a fallback. Absent on every other message, the `finished_without_reply`
+   * notice included, which has no reason to give.
+   */
+  noticeReason: z.string().min(1).max(200).optional(),
 });
 export type AgentExchange = z.infer<typeof AgentExchangeSchema>;
 
@@ -214,4 +225,22 @@ export function agentMessageNotice(
   if (!isAgentMessageContent(structuredContent)) return null;
   const parsed = AgentExchangeNoticeSchema.safeParse(structuredContent?.["notice"]);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The diagnostic behind a `failed` notice, or null.
+ *
+ * Sanitized to the character class a code is written in rather than passed
+ * through: the value reaches a row in the feed, and an adapter's own text can
+ * end up in a terminal diagnostic. Formatting, not redaction — the reason is
+ * the host's own computed code, which is exactly what the reader needs named.
+ */
+export function agentMessageNoticeReason(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+): string | null {
+  if (agentMessageNotice(structuredContent) !== "failed") return null;
+  const raw = structuredContent?.["noticeReason"];
+  if (typeof raw !== "string") return null;
+  const code = raw.trim().toLowerCase().replace(/[^a-z0-9_]+/gu, "_").replace(/^_+|_+$/gu, "");
+  return code.length === 0 ? null : code.slice(0, 80);
 }

@@ -198,6 +198,29 @@ export const AGENT_WORKERS_FAILED_GROUP: PluginGroup = {
 };
 
 /**
+ * The failed group for one diagnostic.
+ *
+ * A failure row is the reader's whole record of it — the feed does not show
+ * the notice body — so a row reading only "1 background agent failed" names
+ * nothing anybody can act on, which is the generic code `CLAUDE.md` calls a
+ * defect rather than a fallback. The reason rides in the key as well as the
+ * phrase, so two failures for one reason still collapse into a row while two
+ * different reasons stay two rows: aggregating them would have to drop one of
+ * the two reasons to do it.
+ */
+export function agentWorkersFailedGroup(reason: string | null): PluginGroup {
+  if (!reason) return AGENT_WORKERS_FAILED_GROUP;
+  return {
+    key: `${AGENT_WORKERS_FAILED_GROUP.key}:${reason}`,
+    name: AGENT_WORKERS_FAILED_GROUP.name,
+    icon: AGENT_WORKERS_FAILED_GROUP.icon,
+    activeVerb: AGENT_WORKERS_FAILED_GROUP.activeVerb,
+    completedVerb: `1 background agent failed: ${reason}`,
+    countPhrase: (count) => `${workerCount(count)} failed: ${reason}`,
+  };
+}
+
+/**
  * The counted groups by key, so a row rebuilt from a stored `groupKey` can find
  * the phrasing its total needs without the projection carrying a function
  * around on the message.
@@ -212,7 +235,14 @@ const COUNTED_GROUPS: ReadonlyMap<string, PluginGroup> = new Map([
 
 /** The group a counted row belongs to, or nothing for the timed majority. */
 export function countedGroup(groupKey: string): PluginGroup | undefined {
-  return COUNTED_GROUPS.get(groupKey);
+  const known = COUNTED_GROUPS.get(groupKey);
+  if (known) return known;
+  // A failure group carries its diagnostic in its key, so it is one group per
+  // reason rather than an entry the map could hold.
+  if (groupKey.startsWith(`${AGENT_WORKERS_FAILED_GROUP.key}:`)) {
+    return agentWorkersFailedGroup(groupKey.slice(AGENT_WORKERS_FAILED_GROUP.key.length + 1));
+  }
+  return undefined;
 }
 
 const AUTOMATIONS_GROUP: PluginGroup = {

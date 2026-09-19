@@ -5,9 +5,9 @@ import type { ElicitationData, Message, MessageMention, PluginActivityData, Thou
 import {
   AGENT_MESSAGES_INBOUND_GROUP,
   AGENT_MESSAGES_OUTBOUND_GROUP,
-  AGENT_WORKERS_FAILED_GROUP,
   AGENT_WORKERS_FINISHED_GROUP,
   AGENT_WORKERS_STARTED_GROUP,
+  agentWorkersFailedGroup,
   countedGroup,
   pluginGroup,
   type PluginGroup,
@@ -17,6 +17,7 @@ import {
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
   agentMessageNotice,
+  agentMessageNoticeReason,
   connectorConnectionCardInputFromToolEvent,
   isAgentMessageContent,
   isAgentMessageSendWireName,
@@ -396,20 +397,9 @@ export function orderedTranscriptMessages(
           // plugin's calls do. It also stops closing the plugin run around it,
           // which is the same judgement: a message arriving is not something a
           // person read.
-          if (isAgentMessageContent(structured)) {
+          const agentMessage = agentMessageActivity(structured);
+          if (agentMessage) {
             rememberOrder(block.blockId);
-            // The host writes two of these on a run's behalf, and they are not
-            // messages: one says a worker failed, the other that it finished
-            // with nothing to say. Counting them among a teammate's own
-            // messages would bury the only two ends of a worker's life the
-            // transcript records — and until `notice` existed, nothing here
-            // could tell them apart.
-            const notice = agentMessageNotice(structured);
-            const group = notice === 'failed'
-              ? AGENT_WORKERS_FAILED_GROUP
-              : notice === 'finished_without_reply'
-                ? AGENT_WORKERS_FINISHED_GROUP
-                : AGENT_MESSAGES_INBOUND_GROUP;
             return {
               ...base,
               id: block.blockId,
@@ -419,11 +409,18 @@ export function orderedTranscriptMessages(
               // routes on the type, and this keeps the two answers agreeing.
               authorType: 'agent',
               messageType: 'plugin_activity',
-              // No ordinal, for the reason a plugin group row carries none: it
-              // is machinery, and a row scrolling into view must not
-              // acknowledge an answer still below the fold.
-              attentionSequenceNumber: null,
-              pluginActivity: countedActivity(group, false),
+              // `base` keeps the turn's attention ordinal, and that is
+              // deliberate — this row is NOT the plugin-group case. A grouped
+              // plugin row carries no ordinal because the tool turns behind it
+              // never had one; an admitted agent message is a non-tool turn, so
+              // the server allocates it one and the room's unread waterline
+              // moves with it. Nulling it here left no row carrying that
+              // ordinal at all, so `highestVisibleAttentionSequence` could
+              // never observe it and the unread dot could not be cleared by
+              // reading — only by sending. The row is also the whole of what
+              // there is to read for this turn, so acknowledging it on scroll
+              // is honest in a way acknowledging a tool row is not.
+              pluginActivity: agentMessage,
             };
           }
           const imported = ImportedMessageProvenanceSchema.safeParse(structured);
@@ -876,6 +873,36 @@ export function pendingTranscriptInputOverlay(
   }>,
 ): TranscriptOverlay {
   const elicitation = pendingInputElicitation(input.block);
+  // An agent message is machinery before it is promoted as much as after, and
+  // `hydratePendingTranscriptInput` carries its structured content through, so
+  // the same row is available here. It also keeps the message off the composer
+  // queue: a queued row is something a person wrote and can reorder, and a
+  // teammate's message is neither.
+  const agentMessage = agentMessageActivity(input.block.structuredContent);
+  if (agentMessage) {
+    return {
+      identity: input.clientMessageId
+        ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
+        : { type: 'loop_input', inputId: input.inputId, futureTurnId: input.futureTurnId },
+      provenance,
+      position: {
+        afterTranscriptSequence: input.afterTranscriptSequence,
+        eventSequence: provenance.source === 'socket_event'
+          ? provenance.eventSequence
+          : input.inputSequence,
+      },
+      message: {
+        id: input.futureTurnId,
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        workstreamId,
+        sequenceNumber: 0,
+        authorType: 'agent',
+        messageType: 'plugin_activity',
+        pluginActivity: agentMessage,
+        createdAt: input.admittedAtUtc,
+      },
+    };
+  }
   return {
     identity: input.clientMessageId
       ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -1182,6 +1209,35 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
 }
 
 /**
+ * The counted row an agent message gets, or null when the block is not one.
+ *
+ * Shared by the canonical projection and the pending-input overlay. A message
+ * reaches its recipient through the mailbox first and can sit there until the
+ * next safe execution boundary, which for a busy recipient is a whole step —
+ * so a projection that only the canonical path had left the raw agent-to-agent
+ * prose on screen for exactly that window, then swapped it for a counted row
+ * on promotion. One message drawn two contradictory ways depending on when it
+ * was looked at, and the wall of prose this change exists to remove still
+ * being drawn for the length of a step.
+ */
+function agentMessageActivity(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+): PluginActivityData | null {
+  if (!isAgentMessageContent(structuredContent)) return null;
+  // The host writes two of these on a run's behalf, and they are not messages:
+  // one says a worker failed, the other that it finished with nothing to say.
+  // Counting them among a teammate's own messages would bury the only two ends
+  // of a worker's life the transcript records.
+  const notice = agentMessageNotice(structuredContent);
+  const group = notice === 'failed'
+    ? agentWorkersFailedGroup(agentMessageNoticeReason(structuredContent))
+    : notice === 'finished_without_reply'
+      ? AGENT_WORKERS_FINISHED_GROUP
+      : AGENT_MESSAGES_INBOUND_GROUP;
+  return countedActivity(group, false);
+}
+
+/**
  * The counted group a tool call belongs to instead of its plugin's row, or
  * null when it stays on that row.
  *
@@ -1357,6 +1413,18 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
      * the one loop that decides where every row in this feed sits.
      */
     count: number;
+    /**
+     * The highest ordinal among contributions that are turns in their own
+     * right, for a counted group; null for the timed majority.
+     *
+     * The highest rather than the first: this is one row standing for several
+     * messages, so the divider belongs above it whenever *any* of them is
+     * unread, and acknowledging the row has to acknowledge all of them or the
+     * waterline stalls inside the group. Only rows with no `toolEvent`
+     * contribute — a tool row's ordinal is its turn's, shared with that turn's
+     * text, which is the ordinal a group row must not carry.
+     */
+    attentionSequenceNumber: number | null;
     monotonicStartedAt: number[];
     upperBound: boolean;
     /**
@@ -1409,6 +1477,7 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         toolDurationKnown: true,
         sawActivity: false,
         count: 0,
+        attentionSequenceNumber: null,
         monotonicStartedAt: [],
         upperBound: false,
         activitySpans: [],
@@ -1438,6 +1507,12 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     }
     group.active ||= contribution.activity.active;
     group.count += 1;
+    if (message.toolEvent === undefined && message.attentionSequenceNumber != null) {
+      group.attentionSequenceNumber = Math.max(
+        group.attentionSequenceNumber ?? message.attentionSequenceNumber,
+        message.attentionSequenceNumber,
+      );
+    }
     // One unknown piece makes the whole total unknowable rather than smaller:
     // adding up only the parts that reported would understate the work by
     // exactly the part that did not, and present the result as certain.
@@ -1475,6 +1550,11 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     if (counted?.countPhrase) {
       rows[group.row] = {
         ...row,
+        // An agent message is a turn of its own and the server gave it an
+        // ordinal; the row standing for it has to carry one or the room's
+        // unread waterline can never move past it. Null where no contribution
+        // had one, which is every counted group built from tool calls.
+        attentionSequenceNumber: group.attentionSequenceNumber,
         // The row was spread from its first contribution and carries that one's
         // spans, which stand for a fraction of what it now says. A counted row
         // reports no interval at all rather than that fraction: a message is an

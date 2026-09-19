@@ -155,7 +155,7 @@ export class AgentCommunicationService {
    * messages it ever synthesizes: a failure, and a completion that sent nothing.
    */
   async notifyFailure(reason: string) {
-    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`, "failed");
+    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`, "failed", reason);
   }
 
   /**
@@ -167,14 +167,21 @@ export class AgentCommunicationService {
     await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`, "finished_without_reply");
   }
 
-  private async notifyOwner(message: string, effectKey: string, notice: AgentExchangeNotice) {
+  private async notifyOwner(
+    message: string,
+    effectKey: string,
+    notice: AgentExchangeNotice,
+    // The terminal diagnostic, carried as a field so the recipient does not
+    // have to parse it back out of the sentence above.
+    noticeReason?: string,
+  ) {
     const owner = await (await this.workspace()).agentOwner({ workspaceId: this.input.workspaceId, agentId: this.senderId });
     if (!owner.agentId) return;
     try {
       // The run supplies the delivery identity, so a settlement retry cannot
       // deliver the same notice twice.
       await this.deliver({ agentId: owner.agentId, message, attachmentIds: [] },
-        await this.messageId({ effectIntentId: effectKey }), false, undefined, notice);
+        await this.messageId({ effectIntentId: effectKey }), false, undefined, notice, noticeReason);
     } catch (error) {
       // Archival closes admission; it must not prevent the run settling.
       if (error instanceof AgentCommunicationError && error.code === "workstream_archived") return;
@@ -190,6 +197,7 @@ export class AgentCommunicationService {
     // Set only by `notifyOwner`. A model-authored message has no notice, which
     // is what lets the recipient tell the two apart.
     notice?: AgentExchangeNotice,
+    noticeReason?: string,
   ) {
     const route = await (await this.workspace()).resolveAgentMessage({
       workspaceId: this.input.workspaceId, messageId, senderAgentId: this.senderId,
@@ -208,6 +216,7 @@ export class AgentCommunicationService {
       agentExchange: {
         teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId,
         ...(notice ? { notice } : {}),
+        ...(noticeReason ? { noticeReason } : {}),
       },
       executionPrincipal: this.input.executionPrincipal,
       origin: "agent_message", now: Date.now() });

@@ -105,7 +105,18 @@ while authority checks still precede every new model and tool call.
 
 The two host notices carry `AgentExchangeSchema.notice` — `failed` or
 `finished_without_reply` — which is the only thing distinguishing them from a
-model-authored message once they are on the wire. They are otherwise delivered
+model-authored message once they are on the wire, and a `failed` notice also
+carries `noticeReason`, the terminal diagnostic, as a field rather than only in
+its prose.
+
+**`renderAgentMessage` attributes a notice to the host, and that line is the
+whole defence against one agent impersonating the other kind.** Every agent
+message reaches its recipient through that one renderer, so without the branch
+a worker prompt-injected by content it was allowed to read can `send_message`
+the text "Agent failed due to connector_unavailable" naming a sibling and the
+recipient sees framing byte-identical to a notice the host computed. `notice`
+is derived provenance and may cross into authority; the body is content and may
+not. The human side lost its own check when the feed stopped showing the body. They are otherwise delivered
 identically, and a recipient that cannot tell them apart counts an outcome its
 owner may need to act on as ordinary traffic. A message stored before the field
 existed reads as untagged, which is what it was.
