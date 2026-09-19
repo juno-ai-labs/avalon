@@ -26,8 +26,19 @@ export function orderByStoredIds<T>(
 ): T[] {
   if (storedIds.length === 0) return [...items];
   const byId = new Map(items.map((item) => [idOf(item), item]));
-  const ordered = storedIds.flatMap((id) => byId.get(id) ?? []);
-  const seen = new Set(ordered.map((item) => idOf(item)));
+  const seen = new Set<string>();
+  const ordered: T[] = [];
+  // A stored id named twice draws its row once. Nothing can send one today —
+  // the authority writes a deduplicated list and `moveWithin` cannot duplicate
+  // — but this is the function every list in the app is drawn by, and the
+  // failure it would otherwise have is a row that exists twice with one
+  // identity, which React keys and the drag both read as one row in two places.
+  for (const id of storedIds) {
+    const item = byId.get(id);
+    if (item === undefined || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(item);
+  }
   return [...ordered, ...items.filter((item) => !seen.has(idOf(item)))];
 }
 

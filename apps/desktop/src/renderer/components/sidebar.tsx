@@ -500,8 +500,12 @@ export interface WorkstreamRowDrag {
    * A release over this list. True when the list took it, which stops the
    * event reaching whatever is above — a Space row, whose meaning for the same
    * drop is "put this Channel here" rather than "put it in this position".
+   *
+   * Required rather than optional: every list that draws this row sits under
+   * something, or will, and the answer is the list's to give rather than a
+   * default to fall through to.
    */
-  onDrop?: () => boolean;
+  onDrop: () => boolean;
   position: string;
 }
 
@@ -762,7 +766,7 @@ function WorkstreamRow({
               // rows that are not in its list, and those must let the drop
               // through to the Space underneath — which is the placement the
               // reader meant.
-              if (drag.onDrop?.()) event.stopPropagation();
+              if (drag.onDrop()) event.stopPropagation();
             }
             : undefined}
           onContextMenu={closePreview}
