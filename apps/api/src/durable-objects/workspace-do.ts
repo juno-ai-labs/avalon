@@ -5938,7 +5938,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A Channel that has just joined inherits every current default. Staging
     // here rather than in the service is what makes a Channel added while a
     // default was being registered receive it exactly once.
-    const targets = storage.stageDefaultsForMember(
+    storage.stageDefaultsForMember(
       request.spaceId,
       request.workstreamId,
       request.membershipGeneration,
@@ -5951,7 +5951,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.publishSpaceSnapshot();
     await this.publishWorkstreamState(request.workstreamId);
-    if (targets.length > 0) await this.armNextAlarm();
+    // Unconditionally, not only when this settlement staged a default of its
+    // own. The matching `prepareSpaceMembership` armed a wake
+    // `SPACE_INTENT_RESUME_DELAY_MS` out for the intent this line has just
+    // settled, and `armNextAlarm` is an exact re-derive — it deletes the alarm
+    // when nothing is left. Skipping it on the ordinary path left every
+    // Channel creation with one WorkspaceDO wake thirty seconds later that
+    // found nothing due and re-armed nothing.
+    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
