@@ -685,16 +685,19 @@ ago and has been read wants nothing.
 
 **The predicate is defined once and mirrored once.** `conversationNeedsViewer`
 in `@rally/contracts` is a pure function over the four summary fields
-(`harnessStatus`, `hasUnread`, `unseen`, `youAreMentioned`); the desktop calls
-it where it draws. WorkspaceDO's page query renders the same decision in SQL,
-through `liveForViewerSql`, once per table alias. **The SQL is the authority**,
+(`harnessStatus`, `hasUnread`, `unseen`, `youAreMentioned`). WorkspaceDO's page
+query renders the same decision in SQL, through `liveForViewerSql`, once per
+table alias. **The SQL is the authority**,
 because the SQL is what decides the page: a client-side filter over a
 server-ordered page would hand back arbitrarily short pages and a cursor that
 had already skipped rows. Nothing in the type system makes the two agree —
 what does is
 `apps/api/test-workers/space-conversation-page.test.ts`, which walks every
 combination of harness status × unread × unseen × mentioned and asserts the
-query and the function reach the same answer. That test is the contract; if it
+query and the function reach the same answer. **Nothing on the client calls
+`conversationNeedsViewer`** — the desktop draws the rows the server has already
+filtered — so it is the definition the page query is held to rather than a
+second implementation in use. That test is the contract; if it
 is deleted the two implementations start drifting the same day.
 
 **One page query, one order, one cursor.** `conversationPage` is a `UNION ALL`
