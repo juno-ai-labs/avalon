@@ -4564,11 +4564,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           : classification === "not_run"
             ? "Rally did not run this tool after recovering the interrupted turn"
             : durableError.message ?? "The interrupted tool did not produce an accepted result";
+        // The model gets the same account the member does, and for the same
+        // reason the cycle no longer stops here: continuing is only defensible
+        // if the reader who could repeat the write is told not to. This
+        // carried `{ code, recovery }` alone — a code with no tool name, no
+        // reason, and no instruction — which is the generic-code defect
+        // `AGENTS.md` names, on a path holding all three. A receipt coordinate
+        // is per turn, so nothing downstream stops a blind repeat; this text
+        // is what stands between an unconfirmed write and a second one.
         result = {
           success: false,
           kind: classification === "ambiguous" ? "ambiguous_external_write" : "external",
           error: code,
-          data: { code, recovery: classification },
+          data: {
+            code,
+            recovery: classification,
+            ...(receipt ? { toolName: receipt.toolName } : {}),
+            ...(classification === "ambiguous" && ambiguityReason ? { reason: ambiguityReason } : {}),
+            ...(classification === "ambiguous"
+              ? {
+                  instruction: `Rally could not confirm whether ${receipt?.toolName ?? "this call"} reached the far side, so it may already have taken effect. Do not repeat it. Read back the thing it would have changed, say what you found, and only then decide.`,
+                }
+              : {}),
+          },
         };
         participantSafeResult = participantError;
       }

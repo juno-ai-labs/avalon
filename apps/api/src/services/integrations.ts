@@ -6778,6 +6778,28 @@ export async function reenterInterruptedWriteForRecovery(
   if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
     return { outcome: "unknown", reason: "not_a_recoverable_write" };
   }
+  // Re-entry is a tool call, and a tool call proves current authority first.
+  // The live path does this in `beforeToolCall` for every dispatch; this path
+  // bypasses that hook entirely, so without the check a principal who lost
+  // workspace membership — or whose work stream was archived — between the
+  // interruption and the repair would still have their interrupted write
+  // executed by the replacement attempt. The snapshot argument is omitted
+  // deliberately: there is no earlier reading of this run's authority to hold
+  // the repair to, and re-reading it is the whole point.
+  //
+  // `beforeToolCall` also resolves the call against the run's tool registry,
+  // which the repair path has no way to build. The plugin below stands in for
+  // it: it is constructed from this run's own `(env, input)`, so it is the
+  // plugin this run would have had, and `reenterInterruptedWrite` then refuses
+  // any tool whose live name, capability, mode, or class disagrees with what
+  // the receipt recorded. What is not reproduced here is the Sidekick
+  // authority assertion, which exists only as a closure inside a running
+  // harness.
+  try {
+    await assertRunAuthorityStillValid(env, input);
+  } catch (error) {
+    return { outcome: "unknown", reason: diagnosticErrorCode(error, "run_authority_lost") };
+  }
   let plugin: HarnessPlugin | null;
   try {
     plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
