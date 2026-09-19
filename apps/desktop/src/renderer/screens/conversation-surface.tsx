@@ -2135,8 +2135,9 @@ export function ConversationSurface({
   const loadSidekickOptions = (): void => {
     // A failed removal remains visible until the person next engages with
     // Sidekick management. At that point it describes the previous action,
-    // while the fresh options read owns any new failure of its own.
-    removeSidekick.reset();
+    // while the fresh options read owns any new failure of its own. A pending
+    // removal remains observed so its eventual failure is not lost.
+    if (removeSidekick.isError) removeSidekick.reset();
     void recommendationOptions.refetch();
   };
   const discoveredResources = [...new Map(
