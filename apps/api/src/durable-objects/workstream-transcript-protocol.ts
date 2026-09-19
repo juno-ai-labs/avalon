@@ -29,6 +29,10 @@ type LocalOnlyTranscriptOperation =
   // Reads the queue against the live Bind projection to say which input can
   // start the next cycle; only the object holding the loop can act on it.
   | "nextActivationInput"
+  // Says whether the loop still owes Bind tool results, and so whether it may
+  // be released to `idle`. Answered against the live projection for the two
+  // release paths that hold the loop; nothing off-object may ask it.
+  | "unsettledToolBatchBlockingRelease"
   | "appendPreparedParticipantMessageAtSequence"
   | "pendingTranscriptInputs"
   | "pendingTranscriptInput"
