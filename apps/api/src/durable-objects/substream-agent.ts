@@ -4281,6 +4281,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const recoveredToolBatch = interruptedReservation
         ? null
         : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease);
+      // Only when nothing is waiting on a person: `recoverInterruptedToolBatch`
+      // reports `waiting_for_input` ahead of `ambiguous`, so this arm is the
+      // repaired-and-continuing case rather than every batch that held one.
       if (recoveredToolBatch === "ambiguous") {
         // Recorded, then carried on. The repair has already written every
         // call's outcome into the protocol transcript — the ambiguous one as a
@@ -4463,12 +4466,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             providerIdempotencyKey: receipt.providerIdempotencyKey,
           },
           lease,
-          // No deadline of this repair's own. The tools reached here carry
-          // their own provider budgets, and a ceiling invented here would be a
-          // number nobody has measured — the one it replaces being the run's,
-          // which has already ended. See
+          // The attempt authority, so the re-entry can hold its lease open and
+          // abort the moment it cannot. No ceiling of this repair's own beyond
+          // that: the tools reached here carry their own provider budgets, and
+          // a number invented on top would be one nobody has measured. See
           // `docs/adding-security-defensive-and-other-limits.md`.
-          new AbortController().signal,
+          createHarnessRunObjectPort(
+            executionEnv,
+            input.workspaceId,
+            input.parentId,
+            undefined,
+            input.substreamId ?? "0",
+          ),
           this.localRuntimeResourceAttacher(input.workspaceId, input.parentId),
         );
         if (reentry.outcome === "completed") {
@@ -4478,7 +4487,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           classification = "ambiguous";
           ambiguityReason = reentry.reason;
         }
-        logWarn(this.env, "harness_interrupted_write_recovered", {
+        // Named for the attempt rather than the outcome, which travels in
+        // `recovery`. The previous name asserted recovery on both branches, so
+        // counting repairs by grepping it over-counted by every failure — and
+        // the failure is the line worth finding.
+        logWarn(this.env, "harness_interrupted_write_reentry", {
           workspace_id: input.workspaceId,
           workstream_id: input.parentId,
           substream_id: this.externalSubstreamId(),
@@ -4640,11 +4653,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     await this.flushSemanticRealtimeOutboxBestEffort();
-    // A residual ambiguity no longer stops the cycle, and `ambiguous` is
-    // reported so the caller can say so without acting on it.
-    return ambiguous
-      ? "ambiguous"
-      : hasWithheldElicitation ? "waiting_for_input" : "recovered";
+    // A withheld elicitation outranks a residual ambiguity, and the order is
+    // load-bearing rather than cosmetic. While `ambiguous` failed the cycle
+    // outright the two could not collide; now that it continues, reporting it
+    // over `waiting_for_input` would discard the one state this repair
+    // deliberately declines to settle — the elicitation's protocol result is
+    // still withheld pending a human answer, so the assistant turn has a tool
+    // call with no result, and entering the harness there hands the provider
+    // exactly that. The ambiguity is already recorded either way: on the
+    // receipt, in the transcript, and in the per-call line above.
+    return hasWithheldElicitation
+      ? "waiting_for_input"
+      : ambiguous ? "ambiguous" : "recovered";
   }
 
   /**

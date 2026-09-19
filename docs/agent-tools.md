@@ -430,10 +430,12 @@ JSON Schema cannot represent must also be exposed through the `HarnessTool`
 to update” model-actionable. If both declared and refined input are valid, the
 Zod failure came from downstream data. A read or provider-idempotent call may
 invite one retry, but a `record_before_execute` write becomes
-`ambiguous_external_write`: the provider mutation may already have succeeded, so
-retry guidance could duplicate it. The run itself continues — the ambiguity
-reaches the model as a failed tool result naming the call and telling it to
-check before repeating — and only that one call's receipt is terminal. Do not catch and stringify
+`ambiguous_external_write` and **stops the run**: the provider mutation may
+already have succeeded, so retry guidance could duplicate it. That is this
+path — a validation failure inside an active turn. Crash repair of an
+interrupted batch is the one that continues instead, handing the model a failed
+tool result that names the call and says to check before repeating; the two are
+not the same path and only the second one keeps the run alive. Do not catch and stringify
 either Zod error inside the tool, which would restore the raw issue tree and
 defeat that distinction.
 

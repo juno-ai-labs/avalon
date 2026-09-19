@@ -1404,20 +1404,41 @@ provider key all match the call asking to run is resumed rather than settled
 ambiguous. And a residual ambiguity no longer fails the cycle — the repair
 finishes the protocol array and the run continues.
 
-Three things were wrong in the first cut of this change and are recorded because
-the reasoning that produced them was plausible. Re-entry did not revalidate run
-authority, because it looked like a continuation of an authorized call rather
-than a new one; it is a tool call, and `beforeToolCall` proves authority on
-every other one. The model-facing result for a residual ambiguity carried the
-bare code while the tool name and the instruction went only to the participant
-lifecycle, which is the generic-code defect on the one path where continuing
-instead of stopping depends on the reader being told. And `publish_resource` was
-declared re-enterable on the strength of its matching-digest branch alone: it
-returns the stored document untouched when the bytes agree, but *swaps* the
-content when they do not, so re-entering it blind was a second write whenever
-the sandbox file had moved on, and could overwrite a newer document somebody
-else published in the window. That last one is why `reconcileEffect` exists
-rather than a comment admitting the gap.
+Six things were wrong in the first cut and are recorded because the reasoning
+that produced each was plausible, and because together they say what this kind
+of change costs to get right.
+
+Three were about the re-entry itself. It did not revalidate run authority,
+because it looked like the continuation of an authorized call rather than a new
+one; it is a tool call, and `beforeToolCall` proves authority on every other
+one. It ran under a signal that never aborted, on the theory that the tools
+reached carry their own budgets — but a claim holds a 300-second lease and
+`run_command` may run for 900, so the re-entry could outlive the lease its own
+settlement is fenced on; it now holds that lease open and aborts when it cannot.
+And it built Terminal without the publication scope `loadHarnessTools` freezes,
+which for a work-stream scoped Sidekick resolves `publish_resource` under the
+Sidekick's own conversation instead of the room that owns it — the reconciler
+would then look for the interrupted publication at a path identity it was never
+written to.
+
+Two were about what the repair says. The model-facing result for a residual
+ambiguity carried the bare code while the tool name and the instruction went
+only to the participant lifecycle: the generic-code defect, on the one path
+where continuing instead of stopping depends on the reader being told. And the
+settlement failure was caught with the re-entry, so a tool that *answered* and
+whose answer could not be written to R2 reported "could not confirm" while
+holding the confirmation — the same defect one line further down, now
+`reentry_result_not_durable`.
+
+The last was the ordering. Removing the failing arm from the caller let
+`ambiguous` outrank `waiting_for_input`, and while an ambiguity failed the cycle
+the two could never collide. A batch holding both a withheld elicitation and an
+unaskable write would have started the harness on an assistant turn whose
+question had no result. Pending human input now outranks everything.
+
+`publish_resource`'s own correction is above: it was declared re-enterable on
+the strength of its matching-digest branch alone, and `reconcileEffect` exists
+because that branch is not the whole behaviour.
 
 **Why:** On 2026-09-19 a `SubstreamAgent` isolate was replaced two seconds into
 a `publish_resource` call. The repair found the receipt `executing`, read
@@ -1460,11 +1481,17 @@ and the repair path bypasses the hook entirely, so it calls
 membership between the interruption and the repair would still have their write
 executed. Next, a `null` idempotency class — an
 unparseable plan, or a receipt written before the class was read back — is
-treated as `record_before_execute`, the class that assumes least. A settled
-receipt is never re-entered: `completed` has a durable result to replay and
-`failed` may already have been read. And the re-entry runs under no deadline of
-its own; the tools reached carry their own provider budgets, and a ceiling here
-would be a number nobody has measured.
+treated as `record_before_execute`, the class that assumes least. A `completed`
+or `failed` receipt is never re-entered: the first has a durable result to
+replay and the second may already have been read. An `ambiguous` one *is*, and
+that is not an exception to a rule about settled receipts — it is what the state
+is for, being what a previous re-entry attempt left behind, and
+`findCompletedToolResult` reaches it deliberately through
+`allowAmbiguousReconciliation`. And the re-entry holds the attempt lease open
+while it runs, aborting the moment it cannot renew it: the tools reached carry
+their own provider budgets and a ceiling on top would be a number nobody has
+measured, but `run_command`'s 900 seconds outlives a 300-second claim, so the
+lease is the bound that has to be real.
 
 **Left undone:** `resume_write` applies to every `provider_key` write, and that
 is safe because every one of them in this tree — memory `add`/`update`
