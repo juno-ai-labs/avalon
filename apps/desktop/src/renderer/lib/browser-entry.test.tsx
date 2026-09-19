@@ -214,7 +214,8 @@ it('does not publish an old account workspace list after focus restores another 
 });
 
 it('fills the invited mailbox into the sign-in form and accepts by the opaque token alone', async () => {
-  const sealed = 'inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2';
+  // Token-shaped, not token-like: a high-entropy fixture trips the secret scan.
+  const sealed = `inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`;
   history.replaceState(null, '', `/invite#${sealed}`);
   const bodies = new Map<string, unknown>();
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
