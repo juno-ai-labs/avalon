@@ -322,6 +322,147 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
+### 2026-09-19 — The cutover has no audience pass, because placing a Channel in General is the widening
+
+**Decided:** The cutover's phases are `general` → `preflight` → `memberships` →
+`finalize`. There is no separate pass that makes formerly personal Channels
+Organization-wide after they are placed: applying General's Organization-wide
+source through `ChannelAccessService` *is* that change, and it runs inside the
+placement. The read-only `preflight` pass takes the slot such a pass would have
+had, walking the same page and cursor and writing nothing.
+
+**Why:** A separate audience pass running after the memberships would have
+given every fenced Channel a membership row first and only then discovered it
+could not be widened — a partial mutation the Existing Organizations section
+forbids. Running the containment preflight in front of the placement instead
+means a fenced Channel gets no membership row and no mutation at all. And the
+Organization-level preflight had to exist for its own reason: rollout step 3
+asks for every blocker to be identified *before* promotion, and a walk that
+discovered blockers one placement at a time left every Channel ahead of the
+fenced one already Organization-wide.
+
+**Changes:** Nothing in the agreed goals. Rollout step 4's single walk becomes
+two passes over the same machinery, and `memberships` is reachable only from a
+`preflight` that recorded nothing.
+
+### 2026-09-19 — A Space audience change composes as retract-then-apply
+
+**Decided:** Changing an active Space's audience converges each member Channel
+by withdrawing that Space's source and applying the new one, rather than
+re-applying a smaller roster. The retraction carries the Space revision it was
+staged against and is refused `space_revision_conflict` when the source it is
+about to delete is newer; a removal and an archive withdraw without a revision,
+because no newer application exists for them to lose to. The retraction plan
+seats every surviving reader before it narrows anything.
+
+**Why:** Design decision 4's composition rule is a union, so
+`audienceSourceApplicationPlan` only ever widens and seats — a source that could
+narrow would be able to revoke access another source still supplies. Re-applying
+a shrunken roster would therefore leave the readers it no longer names seated
+with nothing accounting for them. The revision on the retraction is not
+symmetry: the retraction deletes the source row that the application and its
+confirmation fence on, so an older audience change interleaved behind a newer
+one would otherwise find nothing to be refused by and install its stale roster
+unfenced.
+
+**Changes:** Nothing in the agreed goals. The Data model's "Space audience
+changes" row is implemented as a retraction followed by an application rather
+than as one recomputation.
+
+### 2026-09-19 — The old-client refusal is a declared client contract, not an `Origin` check
+
+**Decided:** `GET /workspace/socket` and `GET /workstreams` — the two surfaces
+whose payloads changed — answer `426 client_update_required` when the request
+carries no `x-rally-client-contract` header or one below
+`MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` is not the gate: it only separates a
+browser context from a native one, so a request carrying neither header is
+admitted.
+
+**Why:** There was no version signal at all, and the desktop renderer is the
+only client whose payload schemas are strict — it rejects an object carrying a
+field it has never heard of rather than ignoring it, so a pre-cutover build
+renders an empty sidebar and keeps asking for one. iOS and the desktop main
+process decode with schemas that ignore unknown keys, so a blanket refusal would
+break working clients to protect them from a problem they do not have.
+
+**What it does not distinguish**, stated plainly: it does not identify a build,
+a platform or a version beyond that one integer, and it does not know whether a
+given client would actually drop the payload — a browser-context request with no
+contract header is refused on the assumption that it is a pre-cutover renderer.
+Nor is `426` an update prompt: no build shipped before this release knows the
+code, so a pre-cutover desktop shows whatever it shows for a transport failure.
+The prompt belongs to builds shipped *after* this, which declare a contract and
+can read the answer. Rollout step 6's "explicit update-required response rather
+than a malformed or partial payload" is met by refusing, not by what the old
+build draws.
+
+**Changes:** Nothing in the agreed goals. Rollout step 6 gains a header and two
+constants — what this tree speaks and the oldest a Worker still answers —
+because the Worker deploys first and a Worker requiring the newest client would
+refuse every shipped build for the length of a rollout.
+
+### 2026-09-19 — The Slack workspace creation path places its own Channel in General
+
+**Decided:** `SlackWorkspaceWorkstreamService` calls
+`placeConnectorChannelInGeneral` for the Channel it provisions, before the
+opening message, so the audience is settled when that message lands. It is best
+effort and never throws, and a refusal reopens the Organization's cutover so the
+ordinary walk reaches the Channel.
+
+**Why:** Goal 4 names connectors explicitly. The Slack agent opens a Channel for
+a Slack member who has no Rally identity and provisions the conversation itself
+rather than through `WorkstreamObjectCreationService`, so it is the one
+production creation path the coordinator's placement does not cover. Best effort
+because the person's Slack message has already produced a Channel and a run, and
+a placement that could not be made must not turn that into an error they see —
+but logging and stopping would have left the Channel homeless for good, since a
+`complete` Organization is never walked again and this path has no page behind
+it.
+
+**Changes:** Nothing in the agreed goals. It is the second path, beside
+`openGeneralSpaceForNewWorkspace`, that takes a cutover step outside a page.
+
+### 2026-09-19 — The cutover keeps no receipt table; the membership row is the receipt
+
+**Decided:** `space_bootstrap_receipts` is deleted. What a redelivered page
+skips is decided by the `space_channel_memberships` row itself, and the
+`space_bootstrap` row carries the phase, the cursor, the retry gate and the
+blocked Channels.
+
+**Why:** The table recorded one row per placed Channel per phase and nothing
+ever read it back. `bootstrapPage` decides what is already done from the
+membership row, which is the state a placement actually produces and therefore
+cannot disagree with; a second record of the same fact is a second thing to keep
+in step. It also could not be the completion gate: a Channel created by the
+ordinary creation path while the cutover is running is placed without a receipt,
+so counting receipts against the directory would hold every such Organization
+one short of complete.
+
+**Changes:** The Data model's "resumable bootstrap receipts" are the
+`space_bootstrap` row and the membership rows rather than a receipts table. The
+PRD's idempotency requirement is unchanged and is met by the same state.
+
+### 2026-09-19 — The Project audience fence was removed inside this branch, ahead of the tables
+
+**Decided:** The Project rules in `WorkstreamObjectProductService.update` and
+`removeParticipant` — and the `projectEffect` exemption that went with them —
+were deleted in the change that introduced `ChannelAccessService`, several
+phases before migration 62 drops the Project tables. The Space rule replaced
+them in the same change: a Channel that is Organization-wide through a Space
+cannot be made private.
+
+**Why:** The branch ships as one unflagged cutover (Rollout), so there is never
+a deployed build in which both authorities decide a Channel's audience. Keeping
+the Project fence alive until the tables went would have meant two rules
+competing over the same narrowing for the length of the branch, and the Project
+one exists because a Project *owned* its members' audiences and had to exempt
+its own fan-out — an exemption that is wrong for a Space, which supplies one
+source of an audience it does not own.
+
+**Changes:** Nothing in the agreed goals. Rollout steps 2 and 7 describe
+draining and deleting Project *data*; this records that the Project audience
+*rule* went earlier, with the code that superseded it.
+
 ### 2026-09-19 — A Channel created without a named Space is born Organization-wide
 
 **Decided:** Empty `spaceIds` means General, General is Organization-wide, and
