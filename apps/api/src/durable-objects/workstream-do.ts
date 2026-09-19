@@ -348,9 +348,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (!metadata) throw new Error("scope_grant_directory_parent_missing");
       this.state.storage.transactionSync(() => {
         const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
+        // Through the role's writer, like every other publication. Enqueueing
+        // here directly is how a Space's grants would reach the shared
+        // directory from the one path that does not go through `mutate`.
+        const publish = this.grantDirectoryWriter();
         for (const { grant } of store.pendingDeliveries()) {
-          const scopeKey = grant.target.kind === "workstream" ? "workstream" : `conversation:${grant.target.substreamId}`;
-          this.enqueueProjection(`grant:${grant.userId}:${scopeKey}`, { kind: "scope_grant_directory", grant }, Date.now());
+          publish(grant, Date.now());
           store.acknowledgeDelivery(grant.revision);
         }
       });
@@ -623,7 +626,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (request.method === "GET" && path === "/health") {
       return json({
         ok: true,
-        role: "workstream-control",
+        role: `${this.role.kind}-control`,
         databaseBytes: this.state.storage.sql.databaseSize,
       });
     }
@@ -759,7 +762,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const metadata = this.metadataRow();
     if (metadata) {
       const legacy = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
-      for (const { grant } of legacy.pendingDeliveries()) this.enqueueGrantDirectory(grant, Date.now());
+      const publish = this.grantDirectoryWriter();
+      for (const { grant } of legacy.pendingDeliveries()) publish(grant, Date.now());
     } else if (this.parentSql.exec("SELECT 1 FROM scope_grant_deliveries LIMIT 1").toArray().length) {
       throw new Error("scope_grant_directory_parent_missing");
     }
@@ -2192,7 +2196,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return {
       workspace_id: metadata?.workspace_id ?? null,
       workstream_id: metadata?.workstream_id ?? null,
-      parent_kind: "workstream",
+      // The role, not the class. Every log line a Space writes through this
+      // base class would otherwise claim to come from a Channel, which is the
+      // one field that tells the two apart in a log search.
+      parent_kind: this.role.kind,
     };
   }
 
