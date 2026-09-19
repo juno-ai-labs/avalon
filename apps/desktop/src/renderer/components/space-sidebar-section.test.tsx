@@ -42,7 +42,6 @@ const general = space('00000000-0000-7000-8000-0000000000f0', 'General', {
   systemRole: 'general',
 });
 const hiring = space('00000000-0000-7000-8000-0000000000f2', 'Hiring');
-const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000fa';
 
 function channel(id: string, title: string, lastActivityAt: string, ...spaceIds: string[]): WorkstreamSummary {
   return { id, title, lastActivityAt, spaceIds } as WorkstreamSummary;
@@ -95,7 +94,6 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
             <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
           )}
           spaces={[hiring]}
-          workspaceId={WORKSPACE_ID}
           workstreams={[]}
           {...props}
         />
@@ -132,7 +130,6 @@ function CreateFlowHarness({
           <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
         )}
         spaces={spaces}
-        workspaceId={WORKSPACE_ID}
         workstreams={[]}
       />
       <Location />
@@ -203,7 +200,6 @@ describe('the Spaces sidebar section', () => {
               <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
             )}
             spaces={[hiring]}
-            workspaceId={WORKSPACE_ID}
             workstreams={[placement]}
           />
         </MemoryRouter>
@@ -311,7 +307,7 @@ describe('the Spaces sidebar section', () => {
     fireEvent.keyDown(screen.getByRole('link', { name: /Second/u }), { altKey: true, key: 'ArrowUp' });
 
     await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
-      container: { kind: 'organization', id: WORKSPACE_ID },
+      container: { kind: 'organization' },
       itemIds: [second.id, first.id],
     }));
   });
@@ -337,7 +333,7 @@ describe('the Spaces sidebar section', () => {
     fireEvent.dragEnd(rows[1]!, { dataTransfer });
 
     await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
-      container: { kind: 'organization', id: WORKSPACE_ID },
+      container: { kind: 'organization' },
       itemIds: [second.id, first.id],
     }));
   });

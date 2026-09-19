@@ -236,6 +236,17 @@ and `channel`; `container_id` is the workspace id, the Space id, or the Channel
 id, so a row says what it is about without the object it is stored in being part
 of its key.
 
+**On the wire, `organization` carries no id at all.** A request is already
+addressed to one Organization — the authority takes the workspace from the
+caller's session — so an id there is a second answer to a settled question, and
+a wrong one used to be accepted: `writeOrder` ignored it and the result echoed
+it back, which is the key the desktop then filed the answer under. The request
+shape is a discriminated union, so the field only exists where there is a
+container to name; the *stored* row still keys on the workspace id, because a
+row wants to say what it is about. `sameContainer` in `personal-order.ts` is the
+one comparison every client reader goes through, for the same reason: a caller
+writing it by hand would either read an id that is not there or invent one.
+
 **What may be in each list is the only thing that differs by kind**, and each
 answer is one this object already holds:
 
@@ -995,7 +1006,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
-| `packages/contracts/src/spaces.test.ts` | The closed schemas and the appearance registry. |
+| `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |

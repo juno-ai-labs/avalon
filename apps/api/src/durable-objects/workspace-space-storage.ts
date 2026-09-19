@@ -711,11 +711,14 @@ export class WorkspaceSpaceStorage {
       const existing = byContainer.get(key);
       if (existing) existing.itemIds.push(row.item_id);
       else {
+        // The stored row keys on the workspace id for the Organization, because
+        // a row should say what it is about; the wire shape does not carry it,
+        // because a request is already addressed to one Organization.
+        // `container_kind` is narrowed by the table's own CHECK — the parse is
+        // the shape the reader is owed rather than a check it can fail.
+        const kind = OrderedContainerKindSchema.parse(row.container_kind);
         byContainer.set(key, {
-          container: {
-            kind: OrderedContainerKindSchema.parse(row.container_kind),
-            id: row.container_id,
-          },
+          container: kind === "organization" ? { kind } : { kind, id: row.container_id },
           itemIds: [row.item_id],
         });
       }
