@@ -4,6 +4,8 @@ import {
   EngineeringArtifactTargetLookupSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
+  EngineeringSpaceListLookupSchema,
+  EngineeringSpaceTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
@@ -16,6 +18,7 @@ import {
 import {
   ArtifactIdSchema,
   AutomationIdSchema,
+  SpaceIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -172,6 +175,19 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return found.value;
   }));
 
+  server.registerTool("list_spaces", {
+    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; it is a WorkstreamDO under the space role and has no message feed.",
+    inputSchema: { workspaceId: WorkspaceIdSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSpaces({ workspaceId })));
+    const found = oneRegionalResult(
+      results.map((result) => EngineeringSpaceListLookupSchema.parse(result)),
+      `Workspace ${workspaceId}`,
+    );
+    return found.value;
+  }));
+
   server.registerTool("list_artifacts", {
     description: "List every live web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
@@ -286,6 +302,34 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Sidekick ${sidekickId}`);
+    },
+  ));
+
+  server.registerTool("run_space_sql", {
+    description: "Run arbitrary SQLite against a SpaceDO — a Space's own object, not its hidden conversation. It runs the work-stream schema under the `space_do` migration component. The workspace ID is required because it is part of the Durable Object name. Statements may mutate production state.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      spaceId: SpaceIdSchema,
+      ...sqlInputSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, ({ workspaceId, spaceId, sql, bindings = [] }) => tool(
+    principal,
+    "run_space_sql",
+    { workspace_id: workspaceId, space_id: spaceId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSpace({ workspaceId, spaceId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringSpaceTargetLookupSchema.parse(result)),
+        `Space ${spaceId}`,
+      );
+      return executedSql(await resolved.binding.runSpaceSql({
+        workspaceId,
+        spaceId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Space ${spaceId}`);
     },
   ));
 
