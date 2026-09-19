@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createDaytonaTerminalProvider,
@@ -435,81 +435,77 @@ describe("Daytona Terminal provider", () => {
     expect(remove).toHaveBeenCalledWith(60, true);
   });
 
-  it("charges its own sandbox lookup against the caller's deadline", async () => {
-    const sandbox = {
-      id: "sandbox-1",
-      name: "avalon-ws-stream",
-      state: "stopped",
-      domainAllowList: "github.com",
-      start: vi.fn(async () => undefined),
-      recover: vi.fn(async () => undefined),
-    };
-    let wallClock = 1_000_000_000_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => wallClock);
-    // The lookup ahead of the SDK call is a provider round trip, and the time
-    // it takes is the caller's deadline being spent. A wait computed before it
-    // would let the restore outlive the deadline by exactly this much.
-    const get = vi.fn(async () => {
-      wallClock += 20_000;
-      return sandbox;
+  describe("deadline conversion", () => {
+    // Installed and restored in hooks rather than the test body, per
+    // docs/testing.md: a restore a throwing assertion can skip is not a
+    // restore, and this one spans every case below.
+    const WALL_CLOCK_BASE = 1_000_000_000_000;
+    let wallClock = WALL_CLOCK_BASE;
+
+    beforeEach(() => {
+      wallClock = WALL_CLOCK_BASE;
+      vi.spyOn(Date, "now").mockImplementation(() => wallClock);
     });
-    const provider = createDaytonaTerminalProvider({
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const deadlineProvider = (get: () => Promise<unknown>) => createDaytonaTerminalProvider({
       capability: "supported",
       apiKey: "secret",
       apiUrl: "https://app.daytona.io/api",
       target: "us",
       snapshot: "snapshot",
       emergencyDisabled: false,
-    }, () => ({ create: vi.fn(), get }));
+    }, () => ({ create: vi.fn(), get: vi.fn(get) }) as never);
 
-    try {
-      await provider.startSandbox("sandbox-1", { deadlineAtMs: wallClock + 90_000 });
-    } finally {
-      nowSpy.mockRestore();
-    }
+    it("charges its own sandbox lookup against the caller's deadline", async () => {
+      const sandbox = {
+        id: "sandbox-1",
+        name: "avalon-ws-stream",
+        state: "stopped",
+        domainAllowList: "github.com",
+        start: vi.fn(async () => undefined),
+        recover: vi.fn(async () => undefined),
+      };
+      // The lookup ahead of the SDK call is a provider round trip, and the
+      // time it takes is the caller's deadline being spent. A wait computed
+      // before it would let the restore outlive the deadline by this much.
+      const provider = deadlineProvider(async () => {
+        wallClock += 20_000;
+        return sandbox;
+      });
 
-    expect(sandbox.start).toHaveBeenCalledWith(70);
-  });
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 90_000 });
 
-  it("rounds a deadline down to Daytona's seconds and never asks it to wait forever", async () => {
-    const sandbox = {
-      id: "sandbox-1",
-      name: "avalon-ws-stream",
-      state: "stopped",
-      domainAllowList: "github.com",
-      start: vi.fn(async () => undefined),
-      recover: vi.fn(async () => undefined),
-    };
-    const wallClock = 1_000_000_000_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => wallClock);
-    const provider = createDaytonaTerminalProvider({
-      capability: "supported",
-      apiKey: "secret",
-      apiUrl: "https://app.daytona.io/api",
-      target: "us",
-      snapshot: "snapshot",
-      emergencyDisabled: false,
-    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+      expect(sandbox.start).toHaveBeenCalledWith(70);
+    });
 
-    try {
+    it("rounds a deadline down to Daytona's seconds and never asks it to wait forever", async () => {
+      const sandbox = {
+        id: "sandbox-1",
+        name: "avalon-ws-stream",
+        state: "stopped",
+        domainAllowList: "github.com",
+        start: vi.fn(async () => undefined),
+        recover: vi.fn(async () => undefined),
+      };
+      const provider = deadlineProvider(async () => sandbox);
+
       // Down, not up: 94.5s left may not become a 95s wait, or the wait
       // outlives the instant it was given.
-      await provider.startSandbox("sandbox-1", { deadlineAtMs: wallClock + 94_500 });
-      await provider.recoverSandbox("sandbox-1", { deadlineAtMs: wallClock + 94_500 });
-      // A deadline already reached still asks Daytona to start the sandbox, so
-      // the next tool call finds a restore under way. Zero is the one value
-      // that must not reach the SDK: it reads it as "wait forever", which
-      // would hold the request open with nobody waiting for it. One second is
-      // the smallest finite wait the SDK accepts, so sub-second overshoot here
-      // is the floor's cost, not a grace anyone chose.
-      await provider.startSandbox("sandbox-1", { deadlineAtMs: wallClock });
-      await provider.startSandbox("sandbox-1", { deadlineAtMs: wallClock - 30_000 });
-    } finally {
-      nowSpy.mockRestore();
-    }
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 94_500 });
+      await provider.recoverSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 94_500 });
+      // A deadline already reached still sends the start, so the next tool
+      // call finds a restore that has at least been requested. Zero is the one
+      // value that must not reach the SDK: it reads it as "wait forever".
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE });
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE - 30_000 });
 
-    expect(sandbox.start.mock.calls).toEqual([[94], [1], [1]]);
-    expect(sandbox.recover).toHaveBeenCalledWith(94);
+      expect(sandbox.start.mock.calls).toEqual([[94], [1], [1]]);
+      expect(sandbox.recover).toHaveBeenCalledWith(94);
+    });
   });
 
   it("looks up ambiguous creates by stable name and delegates explicit lifecycle changes", async () => {
