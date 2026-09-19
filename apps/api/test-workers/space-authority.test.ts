@@ -951,6 +951,18 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
       .resolves.toMatchObject({ ok: true, directory: { items: [] } });
 
+    // And only the reservation this caller made. `source_version = 0` is a
+    // window every Space passes through between being reserved and its first
+    // projection, so a cancel that named only the id let any member delete
+    // whatever anybody else was in the middle of creating.
+    const mine = await reserve("Mine", "workspace", MEMBER);
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: mine,
+    })).resolves.toEqual({ cancelled: false });
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: mine,
+    })).resolves.toEqual({ cancelled: true });
+
     // Only a row nothing has projected onto: once the Space's own object has
     // published a version, cancelling would delete a Space that exists.
     const second = await reserve("Real");
