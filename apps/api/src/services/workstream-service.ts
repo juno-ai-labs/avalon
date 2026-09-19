@@ -864,7 +864,7 @@ export class WorkstreamService {
     try {
       result = await client.update(input);
     } catch (error) {
-      await access.restoreDirectScope(id, recorded.previousScope);
+      await access.restoreDirectScope(id, recorded.previousScope, recorded.previousObserved);
       throw error;
     }
     // The room closes its own sockets for somebody it was told about, and a

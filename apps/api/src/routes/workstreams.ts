@@ -265,7 +265,9 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
 // stored scope is the effective audience and no longer says what the Channel
 // would be without that Space.
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
+  // No authority read here: the service opens the object client itself, which
+  // is the read. A second one is a D1 round trip on the front of every audience
+  // change that can only ever answer what the first did.
   const result = await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"));
   return c.json(WorkstreamSchema.parse(result));
 });
@@ -312,7 +314,6 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
 // Channel taking responsibility for this reader, so no Space's departure takes
 // them with it.
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const participant = await new WorkstreamService(c.env, getAuth(c))
     .addParticipant(c.req.valid("param").id, c.req.valid("json").userId);
   return c.json(ParticipantSchema.parse(participant), 201);
