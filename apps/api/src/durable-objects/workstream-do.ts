@@ -1425,7 +1425,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     }
     const result = ScopeGrantMutationResultSchema.parse(useCurrentRevision
       ? store.mutateCurrent(ParticipantGrantMutationSchema.parse({ operationId:request.operationId,actorUserId:request.actorUserId,
-        userId:request.userId,target:request.target,active:request.active }), recipient?.incarnation ?? null)
+        userId:request.userId,target:request.target,active:request.active,
+        // Provenance travels with the mutation, and the rebuild above is the
+        // one place it can be lost. Dropped here, every grant a Space seats on
+        // a Channel under grant authority is written `direct` and published to
+        // the shared scope-grant directory, which is what PRD acceptance 18
+        // forbids. Spread rather than passed as `undefined`: the schema is
+        // strict and the field is optional.
+        ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) }), recipient?.incarnation ?? null)
       : store.mutate(request, recipient?.incarnation ?? null));
     await this.armNextAlarm();
     return result;
