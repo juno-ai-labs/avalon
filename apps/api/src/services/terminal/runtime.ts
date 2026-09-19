@@ -10,7 +10,6 @@ import {
 import type {
   TerminalCommandOutput,
   TerminalImportResourceOutput,
-  TerminalPatchOutput,
   TerminalPublishedBranchAndPrOutput,
   TerminalPublishedResourceOutput,
   TerminalPublishOutput,
@@ -20,6 +19,7 @@ import type {
   TerminalWriteFileOptions,
 } from "./tools";
 import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import { APPLY_PATCH_SCRIPT, parsePatch } from "./patch-format";
 import {
   assertKindTransitionAllowed,
   bundleArchive,
@@ -57,6 +57,8 @@ const FILE_NOT_REGULAR_EXIT_CODE = 45;
 const FILE_NOT_UTF8_EXIT_CODE = 49;
 const FILE_TOO_LARGE_EXIT_CODE = 50;
 const FILE_LINE_TOO_LARGE_EXIT_CODE = 51;
+/** The `*** Begin Patch` applier's one dependency could not be imported or installed. */
+const PATCH_TOOLING_UNAVAILABLE_EXIT_CODE = 53;
 const COUNT_UTF8_LINES_PYTHON = "import pathlib, sys; text = pathlib.Path(sys.argv[1]).read_bytes().decode('utf-8'); print(0 if not text else len(text.split('\\n')) - int(text.endswith('\\n')))";
 export const TERMINAL_READ_TEXT_PAGE_PYTHON = [
   "import json, os, pathlib, sys",
@@ -194,6 +196,27 @@ function containmentCommands(): string[] {
   ];
 }
 
+/**
+ * The command that applies a `*** Begin Patch` patch with the vendored
+ * reference applier, written into the sandbox beside the patch.
+ *
+ * Every path the patch names is contained in its own right first, because the
+ * applier follows symlinks and `git apply` is not there to refuse them. The
+ * applier's one dependency, `pydantic`, is imported from a Rally-owned
+ * directory and installed there from PyPI only when that import fails, so the
+ * system site is untouched and a sandbox pays the install once.
+ */
+function openAiApplyCommand(script: string, patch: string, touched: readonly string[]): string {
+  const lib = `${ROOT}/.rally/pylib`;
+  return [
+    `trap 'rm -f -- ${shellQuote(patch)} ${shellQuote(script)}' EXIT`,
+    ...touched.flatMap((path) => [`target=${shellQuote(absolutePath(path))}`, ...containmentCommands()]),
+    `lib=${shellQuote(lib)}`,
+    `PYTHONPATH="$lib" python3 -c 'import pydantic' 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$lib" pydantic >/dev/null 2>&1 || exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}`,
+    `PYTHONUTF8=1 PYTHONPATH="$lib" python3 ${shellQuote(script)} < ${shellQuote(patch)}`,
+  ].join("\n");
+}
+
 function pathOutsideRootError(): TerminalToolError {
   return new TerminalToolError(
     "path_outside_root",
@@ -245,57 +268,6 @@ function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommand
     ...(task.outputResourceId ? { outputResourceId: task.outputResourceId } : {}),
     startedAt: isoAt(task.startedAt),
     completedAt: isoAt(task.completedAt),
-  };
-}
-
-function parsePatch(patch: string): TerminalPatchOutput {
-  const files = new Map<string, { path: string; previousPath?: string; operation: "created" | "edited" | "renamed" | "deleted"; additions: number; deletions: number }>();
-  let current: ReturnType<typeof files.get>;
-  for (const line of patch.split("\n")) {
-    const header = /^(---|\+\+\+)\s+(.+?)(?:\t.*)?$/u.exec(line);
-    let headerPath: string | undefined;
-    if (header) {
-      const rawPath = header[2]!;
-      try {
-        headerPath = rawPath.startsWith('"') ? JSON.parse(rawPath) as string : rawPath;
-      } catch {
-        throw new TerminalToolError("patch_invalid", "A patch file header is malformed. Regenerate the unified patch and retry.");
-      }
-      if (headerPath !== "/dev/null") headerPath = headerPath.replace(/^[ab]\//u, "");
-    }
-    if (header?.[1] === "---") {
-      const oldPath = headerPath!;
-      current = { path: oldPath, operation: "edited", additions: 0, deletions: 0 };
-    } else if (header?.[1] === "+++") {
-      const newPath = headerPath!;
-      if (!current) throw new TerminalToolError("patch_invalid", "The patch is missing a --- file header. Regenerate a unified patch and retry.");
-      if (newPath === "/dev/null") {
-        current.operation = "deleted";
-      } else if (current.path === "/dev/null") {
-        current.path = newPath;
-        current.operation = "created";
-      } else if (current.path !== newPath) {
-        current.previousPath = current.path;
-        current.path = newPath;
-        current.operation = "renamed";
-      }
-      if (current.path.startsWith("/") || current.path.split("/").includes("..")) {
-        throw new TerminalToolError("path_outside_root", "A patch path leaves the Terminal workspace. Regenerate it using relative paths only.");
-      }
-      files.set(current.path, current);
-    } else if (current && line.startsWith("+") && !line.startsWith("+++")) {
-      current.additions += 1;
-    } else if (current && line.startsWith("-") && !line.startsWith("---")) {
-      current.deletions += 1;
-    }
-  }
-  if (files.size === 0) throw new TerminalToolError("patch_invalid", "No unified file changes were found. Include --- and +++ headers and retry.");
-  if (files.size > 100) throw new TerminalToolError("limit_exceeded", "A patch may change at most 100 files. Split it into smaller patches.");
-  const outputFiles = [...files.values()];
-  return {
-    files: outputFiles,
-    additions: outputFiles.reduce((total, file) => total + file.additions, 0),
-    deletions: outputFiles.reduce((total, file) => total + file.deletions, 0),
   };
 }
 
@@ -829,28 +801,64 @@ export function createDaytonaTerminalRuntime(
     },
 
     async applyPatch(context, patch) {
-      const parsed = parsePatch(patch);
+      const { format, output: parsed } = parsePatch(patch);
       const sandbox = await acquire(context);
-      const temporary = `${ROOT}/.rally/tmp/${newId()}.patch`;
-      await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(patch), context.signal);
+      const stem = `${ROOT}/.rally/tmp/${newId()}`;
+      const temporary = `${stem}.patch`;
+      // The reference applier reads its envelope from the first byte, so a
+      // blank line a model puts before `*** Begin Patch` is dropped here.
+      const script = format === "openai" ? `${stem}.apply_patch.py` : null;
+      const text = script ? patch.replace(/^(?:[ \t]*\n)+/u, "") : patch;
+      const temporaries = script ? [temporary, script] : [temporary];
+      await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(text), context.signal);
+      if (script) await provider.writeFile(sandbox.providerSandboxId, script, new TextEncoder().encode(APPLY_PATCH_SCRIPT), context.signal);
       let result: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
         result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
           operation: "file.apply_patch",
-          // Check, then apply: a patch that would not apply is reported as such
-          // before anything changes.
-          command: [
-            `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
-            `git apply --check -- ${shellQuote(temporary)} || exit $?`,
-            `git apply -- ${shellQuote(temporary)}`,
-          ].join("\n"),
+          command: script
+            ? openAiApplyCommand(script, temporary, [...new Set(parsed.files.flatMap((file) =>
+              file.previousPath ? [file.path, file.previousPath] : [file.path]))])
+            // Check, then apply: a patch that would not apply is reported as
+            // such before anything changes.
+            : [
+              `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
+              `git apply --check -- ${shellQuote(temporary)} || exit $?`,
+              `git apply -- ${shellQuote(temporary)}`,
+            ].join("\n"),
           cwd: ROOT,
           timeoutMs: 60_000,
           signal: context.signal,
         });
       } catch (error) {
-        await cleanupTemporaryFile(sandbox.providerSandboxId, temporary);
+        await Promise.all(temporaries.map((path) => cleanupTemporaryFile(sandbox.providerSandboxId, path)));
         throw error;
+      }
+      if (script) {
+        if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+        if (result.exitCode === PATCH_TOOLING_UNAVAILABLE_EXIT_CODE) {
+          throw new TerminalToolError(
+            "patch_tooling_unavailable",
+            "The *** Begin Patch applier needs the pydantic package and the sandbox could not import or install it. Send the same change as a unified diff, or retry later.",
+            { reason: "Install pydantic in the sandbox, or send a unified diff." },
+          );
+        }
+        // The reference applier prints `Done!` on success, prints a rejected
+        // patch's reason on stdout, and exits 0 either way; the last line of
+        // stdout is the only signal, and the first line of a reason is its
+        // classification (the rest is patch content).
+        const printed = result.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+        if (result.exitCode !== 0 || printed.at(-1) !== "Done!") {
+          const reason = sanitizeTerminalOutput(
+            printed.find((line) => line !== "Done!") ?? result.stderr.trim().split("\n")[0] ?? "the applier gave no reason",
+          ).slice(0, 120);
+          throw new TerminalToolError(
+            "patch_does_not_apply",
+            `The patch could not be applied (${reason}). Re-read the affected files, regenerate the patch from their current contents, and retry.`,
+            { reason: "Re-read every affected file and regenerate the patch from current contents." },
+          );
+        }
+        return parsed;
       }
       if (result.exitCode !== 0) {
         throw new TerminalToolError(
