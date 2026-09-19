@@ -222,7 +222,7 @@ describe('the Space dashboard', () => {
     expect(within(dialog).getByText(/A channel whose only space is this one has to be moved first/u)).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
 
-    expect(await screen.findByText('This is the channel\u2019s only space, and every channel needs one. Add it to another space first.'))
+    expect(await screen.findByText('Every channel needs a space, and this would leave one with none. Add it to another space first.'))
       .toBeVisible();
     expect(screen.queryByText(/belongs to no other Space/u)).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive space?' })).toBeVisible();
