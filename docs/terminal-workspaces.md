@@ -659,7 +659,9 @@ from a snapshot inherits whatever that snapshot was built with. Builds request
 `TERMINAL_SNAPSHOT_RESOURCES` from `snapshot-manifest.ts`, 2 vCPU / 4 GiB / 8 GiB,
 and fail naming each field Daytona reports back differently, because an
 under-sized image passes every capability probe the acceptance gate runs and
-surfaces only as a work stream the kernel killed. Changing the size is therefore
+surfaces only as a work stream the kernel killed. A rejected candidate is
+deleted before the build throws, so a run that keeps failing does not leave one
+unusable snapshot per attempt under the organization's quota. Changing the size is therefore
 a rebuild and an adoption merge like any other, existing sandboxes keep the size
 they were created at, and the number belongs in the checked-in manifest: the
 weekly job builds from the repository, so a size set as a GitHub variable is one
@@ -791,9 +793,10 @@ update lag before changing the default.
 **What changed:** `TERMINAL_SNAPSHOT_RESOURCES` in `snapshot-manifest.ts` gives
 the Rally-owned snapshot 2 vCPU, 4 GiB of memory, and 8 GiB of disk, and
 `build-terminal-snapshot.ts` requests it and fails the build when Daytona's
-create response reports a different `cpu`, `mem`, or `disk`. Nothing about how a
-sandbox is created changes; the weekly rebuild carries the size into the next
-adoption pull request.
+create response reports a different `cpu`, `mem`, or `disk`, deleting the
+rejected candidate first so repeated failures do not accumulate unusable
+snapshots. Nothing about how a sandbox is created changes; the weekly rebuild
+carries the size into the next adoption pull request.
 
 **Why:** Every Terminal sandbox had been running at 1 vCPU / 1 GiB / 3 GiB — not
 a decision, but Daytona's default for a build that passes no `resources`, which

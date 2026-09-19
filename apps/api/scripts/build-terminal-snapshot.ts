@@ -86,9 +86,25 @@ const created = await daytona.snapshot.create(
 // kernel killed, so the build fails here instead, naming each field that differs.
 const mismatches = terminalSnapshotResourceMismatches(created);
 if (mismatches.length > 0) {
-  throw new Error(
+  const rejection = new Error(
     `Daytona built ${created.name} with resources Rally did not request: ${mismatches.join(", ")}`,
   );
+  // The candidate is registered on the provider even though nothing may adopt
+  // it, and every build takes a name of its own — the weekly job's is minute
+  // stamped — so failing without deleting it leaves one dead snapshot per
+  // attempt against the organization's quota. A failed delete must not lose the
+  // reason the build stopped, so both reasons travel in the message the operator
+  // reads, with the delete failure itself as the cause.
+  try {
+    await daytona.snapshot.delete(created);
+  } catch (error) {
+    throw new Error(
+      `${rejection.message}. Deleting the rejected snapshot failed too, so ${created.name} `
+      + `has to be removed by hand: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  throw rejection;
 }
 
 process.stdout.write(
