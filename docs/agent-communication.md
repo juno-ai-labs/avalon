@@ -103,12 +103,27 @@ stop request to owned conversations; independently owned Sidekicks continue.
 As approved on 2026-09-15, liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
+The two host notices carry `AgentExchangeSchema.notice` — `failed` or
+`finished_without_reply` — which is the only thing distinguishing them from a
+model-authored message once they are on the wire. They are otherwise delivered
+identically, and a recipient that cannot tell them apart counts an outcome its
+owner may need to act on as ordinary traffic. A message stored before the field
+existed reads as untagged, which is what it was.
+
+**A run that replied gets no notice, so no completion is recorded for it.** That
+is deliberate: the reply is the completion, and a second message saying so would
+cost the owner an inference and a turn of context for a fact it already has. The
+consequence is that the transcript records only two of a worker's endings, which
+is why the feed has no general "finished" row. Changing it means accepting a
+model-visible message per completed run.
+
 In the feed, a delivered message is machinery rather than a note to the room:
-`AGENT_MESSAGE_CONTENT_KIND` and `isAgentMessageSendWireName` (both in
-`packages/contracts/src/agent-communication.ts`) are what the client reads to
-draw it as a counted row beside the plugin rows, and
-[`plugin-activity-rows.md`](plugin-activity-rows.md) owns that row. Renaming
-either without the other silently returns the message to an anonymous system
+`AGENT_MESSAGE_CONTENT_KIND`, `agentMessageNotice` and the wire-name lists (all
+in `packages/contracts/src/agent-communication.ts`, which is also where the API
+now takes `AGENT_MESSAGE_TOOL_NAMES` and `AGENT_HANDOFF_TOOL_NAMES` from) are
+what the client reads to draw the counted rows beside the plugin rows, and
+[`plugin-activity-rows.md`](plugin-activity-rows.md) owns those rows. Renaming
+one without the other silently returns the message to an anonymous system
 note.
 
 Model-authored agent-to-agent communication is explicit through `send_message` or `reply_to_message`,

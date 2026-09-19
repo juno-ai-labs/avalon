@@ -6,12 +6,14 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  *
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
  * no company owns: the two virtual groups, the mail mark an agent-to-agent
- * message wears, multimodal generation, automations, the public web, an
- * unbranded webhook, and the plug a connector with no mark of its own falls
- * back to.
+ * message wears and the two a worker's outcome does, multimodal generation,
+ * automations, the public web, an unbranded webhook, and the plug a connector
+ * with no mark of its own falls back to.
  */
 export type PluginGroupIcon =
   | PluginBrandMark
+  | 'agent-failed'
+  | 'agent-finished'
   | 'agent-messages'
   | 'automations'
   | 'background-agents'
@@ -146,6 +148,55 @@ export const AGENT_MESSAGES_OUTBOUND_GROUP: PluginGroup = {
   countPhrase: (count) => `${messageCount(count)} sent to a background agent`,
 };
 
+/** "1 background agent", "2 background agents" — the noun the three rows below count. */
+function workerCount(count: number): string {
+  return `${count} background agent${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * A worker being started, and the two ends the transcript records.
+ *
+ * These wear the agents' own marks rather than the mail one: the subject is the
+ * worker, not what was said to it. Starting keeps the stack the Background
+ * agents row has always drawn, because it is the one of the three that is still
+ * Rally reaching for that plugin; the two outcomes take marks of their own,
+ * since a row a reader may have to act on should not look like the row above it
+ * that only says work was handed out.
+ *
+ * **There is no row for a worker that finished normally**, and there is nothing
+ * to build one from: the host writes a notice only when a run fails or ends
+ * without a word, because a run that replied has already said it is done in the
+ * message it sent — which is the "messages from a background agent" row. A row
+ * claiming to be general completion would be silent for exactly the workers
+ * that did their job.
+ */
+export const AGENT_WORKERS_STARTED_GROUP: PluginGroup = {
+  key: 'agent-workers:started',
+  name: 'Background agents',
+  icon: 'background-agents',
+  activeVerb: 'Starting a background agent',
+  completedVerb: '1 background agent started',
+  countPhrase: (count) => `${workerCount(count)} started`,
+};
+export const AGENT_WORKERS_FINISHED_GROUP: PluginGroup = {
+  key: 'agent-workers:finished',
+  name: 'Background agents',
+  icon: 'agent-finished',
+  activeVerb: 'A background agent is finishing',
+  completedVerb: '1 background agent finished without replying',
+  // Not "finished". A worker that replied also finished and gets no row here,
+  // so the short word would read as the general case and be wrong for it.
+  countPhrase: (count) => `${workerCount(count)} finished without replying`,
+};
+export const AGENT_WORKERS_FAILED_GROUP: PluginGroup = {
+  key: 'agent-workers:failed',
+  name: 'Background agents',
+  icon: 'agent-failed',
+  activeVerb: 'A background agent is failing',
+  completedVerb: '1 background agent failed',
+  countPhrase: (count) => `${workerCount(count)} failed`,
+};
+
 /**
  * The counted groups by key, so a row rebuilt from a stored `groupKey` can find
  * the phrasing its total needs without the projection carrying a function
@@ -154,6 +205,9 @@ export const AGENT_MESSAGES_OUTBOUND_GROUP: PluginGroup = {
 const COUNTED_GROUPS: ReadonlyMap<string, PluginGroup> = new Map([
   [AGENT_MESSAGES_INBOUND_GROUP.key, AGENT_MESSAGES_INBOUND_GROUP],
   [AGENT_MESSAGES_OUTBOUND_GROUP.key, AGENT_MESSAGES_OUTBOUND_GROUP],
+  [AGENT_WORKERS_STARTED_GROUP.key, AGENT_WORKERS_STARTED_GROUP],
+  [AGENT_WORKERS_FINISHED_GROUP.key, AGENT_WORKERS_FINISHED_GROUP],
+  [AGENT_WORKERS_FAILED_GROUP.key, AGENT_WORKERS_FAILED_GROUP],
 ]);
 
 /** The group a counted row belongs to, or nothing for the timed majority. */

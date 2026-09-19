@@ -5,6 +5,8 @@ import {
   IconBrain,
   IconDeviceDesktop,
   IconImageGeneration,
+  IconAlertTriangle,
+  IconCircleCheck,
   IconKeyframes,
   IconMailAi,
   IconPlug,
@@ -2061,6 +2063,12 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  * from `PLUGIN_BRAND_MARKS` instead.
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
+  // The two ends of a worker's life the transcript records. They take marks of
+  // their own rather than the stack above them, because a reader may have to
+  // act on either and neither should look like the row that merely says work
+  // was handed out.
+  'agent-failed': IconAlertTriangle,
+  'agent-finished': IconCircleCheck,
   // Mail, not the agent stack: this row counts what was said between agents,
   // while `background-agents` stands for the agents themselves and still marks
   // starting, listing and stopping one.
