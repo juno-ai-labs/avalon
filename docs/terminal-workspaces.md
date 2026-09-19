@@ -514,7 +514,10 @@ personless; it is not duplicated into these product events.
   conversation the holder ran in; the claim SQL reads liveness from `runs` only
   for a holder that ran here, and the coordinator and the lifecycle sweep ask
   the holder's conversation before taking over or stopping. Treating a missing
-  run row as a yielded run would let two runs hold one sandbox.
+  run row as a yielded run would let two runs hold one sandbox. Inside the
+  object, such a holder is live while its lease is or while a command of its
+  own on the generation is unsettled, since a command may outrun the lease and
+  only the run that submitted it can settle it.
 - **A published document's identity is the owning work stream plus its
   normalized publish path, and that derivation is frozen once documents
   exist.** "Owning" is the room for a work-stream-scoped Sidekick and the run's
@@ -1356,7 +1359,10 @@ to this object's own tables (schema 65), so a background agent's command
 records its task in its owner's object. Composition catches an unresolved
 authority and takes only Terminal away, logged as
 `terminal_authority_unresolved`. A failed release is attempted once more and
-then logged.
+then logged. A holder from another conversation counts as live, for the
+fences that settle and renew its own command, while that command is
+unsettled, not only while its lease is: a command may run longer than the
+sixteen-minute lease, and only the run that submitted it can settle it.
 
 **Why:** Terminal was documented as one sandbox per work stream, but its rows
 had followed the conversation into the object: a background agent's Terminal
