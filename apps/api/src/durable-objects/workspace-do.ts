@@ -5855,7 +5855,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * The republication is what makes the order the *person's* rather than the
    * window's: every socket this member holds is re-sent their whole ordering,
-   * so a second window follows a drag made in the first without a reload.
+   * so a second window follows a drag made in the first without a reload. It
+   * goes to those sockets and no others. An arrangement is one person's view
+   * preference and no part of it is visible to anybody else, while a snapshot
+   * costs a `list()` transaction and a full directory serialization per socket
+   * — so an Organization-wide fan-out would charge every member for it, and a
+   * held Alt+Arrow would charge them once per step.
+   *
+   * The Organization-wide waterline still advances, because there is one and
+   * these rows are behind it. That is what the actor's *other* sessions test
+   * the snapshot against, and a snapshot they had already passed is one they
+   * would drop. Everybody else re-applies a directory that did not change for
+   * them the next time anything at all republishes — which is a comparison,
+   * not a redraw, and is the price of one waterline rather than one per person.
    */
   async reorderContainer(input: WorkspaceContainerOrderRequest): Promise<WorkspaceContainerOrderResult> {
     await this.initialized;
@@ -5867,7 +5879,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ok: true,
       order: this.spaceStorage().writeOrder(request.workspaceId, request.userId, request.order),
     });
-    this.publishSpaceSnapshot();
+    this.publishSpaceSnapshot(request.userId);
     return result;
   }
 
@@ -11193,14 +11205,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `spacesReady` rides along because a Space write can be the write that
    * finishes the cutover — a client holding `false` would otherwise keep
    * showing the Organization-opening state until it reconnected.
+   *
+   * `onlyUserId` narrows the audience to one person's own sessions, for a write
+   * that changed nothing anybody else can see. Everything here is per viewer
+   * and costs a `list()` transaction plus a full directory serialization per
+   * socket, so a change to one person's view preference published to all of
+   * them is that work times the Organization — for a snapshot identical to the
+   * one every other person already holds.
    */
-  private publishSpaceSnapshot(): void {
+  private publishSpaceSnapshot(onlyUserId?: string): void {
     const occurredAt = new Date().toISOString();
     // An open workspace socket is the authorization. Access revocation closes
     // it through the one shared revocation path; do not add a D1 read here.
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
+      if (onlyUserId !== undefined && attachment.userId !== onlyUserId) continue;
       try {
         socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
           type: "workspace_space_snapshot",
