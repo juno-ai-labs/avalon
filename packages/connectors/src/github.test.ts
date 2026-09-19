@@ -1403,6 +1403,63 @@ describe("GitHub connector", () => {
     }]);
   });
 
+  it("keeps a failed check's diagnostics, which nothing else in this plugin can read", async () => {
+    // The widest field on the check row is also the only one that says why a
+    // check failed. This plugin has no check-run get, no annotations tool and no
+    // job-log tool, and `details_url` is the reporting app's own page rather than
+    // anything this connector can fetch — so dropping `output.text` would leave a
+    // run able to report a failure and unable to explain it.
+    const fetcher: FetchLike = async (input) => {
+      expect(requestUrl(input).pathname).toBe("/repos/acme/widget/commits/main/check-runs");
+      return jsonResponse({
+        total_count: 1,
+        check_runs: [{
+          id: 77,
+          name: "verify / lint",
+          status: "completed",
+          conclusion: "failure",
+          started_at: "2026-09-12T11:00:00Z",
+          completed_at: "2026-09-12T11:04:00Z",
+          output: {
+            title: "1 error",
+            summary: "eslint found 1 error",
+            text: "x".repeat(45_000),
+            annotations_count: 1,
+            annotations_url: "https://api.github.com/repos/acme/widget/check-runs/77/annotations",
+          },
+          app: { id: 15_368, slug: "github-actions", name: "GitHub Actions" },
+          details_url: "https://github.com/acme/widget/actions/runs/1/job/2",
+          html_url: "https://github.com/acme/widget/runs/77",
+          check_suite: { id: 99 },
+          pull_requests: [{ number: 670, base: { repo: { id: 41 } } }],
+        }],
+      });
+    };
+    const listed = await githubAdapter(fetcher).executeTool("checks.list_for_ref", {
+      owner: "acme",
+      repo: "widget",
+      ref: "main",
+    }, {
+      connection: personalConnection([GitHubCapabilities.checksRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    const [check] = (listed.output as { checkRuns: { output: { text: string } }[] }).checkRuns;
+    expect(check?.output.text).toHaveLength(40_000);
+    expect(check?.output.text).toMatch(/\[truncated: 45000 characters exceeds the 40000-character limit\]$/u);
+    expect(check).toMatchObject({
+      id: 77,
+      conclusion: "failure",
+      output: { title: "1 error", summary: "eslint found 1 error" },
+      app: { slug: "github-actions" },
+      details_url: "https://github.com/acme/widget/actions/runs/1/job/2",
+    });
+    // The embedded repository beside it still goes.
+    expect(check).not.toHaveProperty("pull_requests");
+    expect(check).not.toHaveProperty("check_suite");
+  });
+
   it("pages issues by what GitHub served rather than by what survives the pull-request filter", async () => {
     // `issues.list` drops the pull requests GitHub's issues endpoint returns, so
     // the page it shows is shorter than the page it was served. Paging on the

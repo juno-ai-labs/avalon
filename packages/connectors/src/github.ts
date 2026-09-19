@@ -479,13 +479,18 @@ const WORKFLOW_RUN_ROW: FieldProjection = [
   "html_url",
 ];
 
-// `output.text` is dropped and `details_url` kept in its place: the text field
-// is an entire continuous-integration log, unbounded in practice, and the page
-// it would have inlined is one click away for whoever needs it.
+// `output.text` stays, against the instinct to drop it. It is the widest field
+// on this row — a whole continuous-integration log in the worst case — and it is
+// also the only failure diagnostic this plugin can read at all: there is no
+// check-run get, no annotations tool, and no job-log tool, and `details_url`
+// points at the reporting app's own page rather than at anything this connector
+// can fetch. Dropping it would leave a run able to say a check failed and unable
+// to say why. It is clamped like every other string here, and now says so where
+// it is cut.
 const CHECK_RUN_ROW: FieldProjection = [
   "id", "name", "status", "conclusion",
   "started_at", "completed_at",
-  "output.title", "output.summary",
+  "output.title", "output.summary", "output.text",
   "app.slug",
   "details_url", "html_url",
 ];
@@ -540,7 +545,7 @@ export const githubTools: ToolDefinition[] = [
   tool("pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
   tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. Each run row is a summary: id to pass to actions_get_workflow_run, name, display_title, run_number, run_attempt, event, status, conclusion, head_branch, head_sha, timestamps, the numbers of any pull requests it ran for, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs; on a later page it only means the earlier pages held everything.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
   tool("actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
-  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. Each check row is a summary: id, name, status, conclusion, timestamps, the app that reported it, output.title, output.summary, and details_url, which is where the full log lives rather than in this result. A finished check reports its verdict in conclusion, not in status. An empty page 1 with no narrowing entries in appliedFilters means no check has reported on that ref, which is not the same as a passing one; with checkName, status, or filter in appliedFilters it means those matched nothing, and an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
+  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. Each check row is a summary: id, name, status, conclusion, timestamps, the app that reported it, output.title, output.summary, output.text where the check reported one, and details_url. A failed check says why in output.text, bounded and marked where it was cut; details_url is the reporting app's own page and is not readable through this connector. A finished check reports its verdict in conclusion, not in status. An empty page 1 with no narrowing entries in appliedFilters means no check has reported on that ref, which is not the same as a passing one; with checkName, status, or filter in appliedFilters it means those matched nothing, and an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
 ];
 
 export const GitHubAgentPluginDescriptor = defineConnectorAgentPlugin({
