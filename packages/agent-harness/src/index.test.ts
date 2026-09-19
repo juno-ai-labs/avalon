@@ -2837,6 +2837,32 @@ describe("agent harness", () => {
     expect(outcome.usage?.cost_cents).toBe(0.0585);
   });
 
+  /**
+   * The column this change exists to make trustworthy must not be manufactured
+   * by the path that reports it. A provider that returns usage without `cost`
+   * has reported nothing, which is a different fact from a free call, and
+   * `inference-lakehouse.ts` writes the column whenever the attempt carries a
+   * number.
+   */
+  it("omits the attempt's cost when the provider reported none", async () => {
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async () => streamResponse([
+      { choices: [{ delta: { content: "unpriced" }, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } },
+    ])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { workspaceId: "workspace-openrouter-unpriced" }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "unpriced" });
+    expect(attempts[0]?.inputTokens).toBe(120);
+    expect(attempts[0]).not.toHaveProperty("costCents");
+    // The run's own total is arithmetic and still defaults to zero.
+    expect(outcome.usage?.cost_cents).toBe(0);
+  });
+
   it("routes GPT-5.6 Sol through its Azure deployment", async () => {
     const urls: string[] = [];
     const bodies: Array<Record<string, unknown>> = [];
