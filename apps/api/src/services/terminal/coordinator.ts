@@ -23,7 +23,10 @@ import type { ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
-import { TERMINAL_OUTPUT_ROOT } from "./contract";
+import {
+  terminalAcquisitionDeadlineAt,
+  TERMINAL_OUTPUT_ROOT,
+} from "./contract";
 import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,
@@ -32,12 +35,14 @@ import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
   deleteTerminalSandbox,
+  observeTerminalSandbox,
   stopTerminalSandbox,
   isTerminalSandboxLost,
   assertTerminalSandboxReady,
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
+  type TerminalSandboxWaitOptions,
 } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 
@@ -194,6 +199,17 @@ export class TerminalSandboxCoordinator {
 
   async acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
     const acquisitionStartedAt = Date.now();
+    /**
+     * The instant every provider wait below must not outlive: the same budget
+     * the calling tool's own deadline was sized from. Policy loading,
+     * authority replacement and network reconciliation all run before a
+     * sandbox is started and all spend it, as do the provider RPC hop and the
+     * adapter's sandbox lookup — so what is left is subtracted where it is
+     * spent, and this end point stays fixed for the whole acquisition.
+     */
+    const waitBudget: TerminalSandboxWaitOptions = {
+      deadlineAtMs: terminalAcquisitionDeadlineAt(acquisitionStartedAt),
+    };
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
@@ -253,6 +269,7 @@ export class TerminalSandboxCoordinator {
         policy.revision,
         domains,
         now,
+        waitBudget,
       );
       telemetryAction = "start_fresh";
       localFilesRetained = false;
@@ -274,7 +291,7 @@ export class TerminalSandboxCoordinator {
       }
 
       if (!row.sandboxId) {
-        row = await this.createReservedSandbox(context, row, domains, now);
+        row = await this.createReservedSandbox(context, row, domains, now, waitBudget);
       } else {
         const resumed = await this.resumeProviderSandbox(
           context,
@@ -284,6 +301,7 @@ export class TerminalSandboxCoordinator {
           policy.revision,
           domains,
           now,
+          waitBudget,
         );
         row = resumed.row;
         telemetryAction = resumed.action ?? telemetryAction;
@@ -577,6 +595,7 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<TerminalSandboxRecord> {
     let created: TerminalSandboxSnapshot;
     try {
@@ -606,7 +625,26 @@ export class TerminalSandboxCoordinator {
     }
     if (created.state !== "running") {
       if (created.state === "stopped" || created.state === "archived") {
-        await this.provider.startSandbox(created.id);
+        try {
+          await this.provider.startSandbox(created.id, waitBudget);
+        } catch {
+          // The same reasoning `resumeProviderSandbox` documents, and this
+          // call site now needs it for the same reason: the wait is bounded by
+          // the caller's deadline rather than a fixed minute, so running out
+          // of it is an ordinary outcome rather than a provider fault. A raw
+          // Daytona error escaping here would reach the model as an
+          // unclassified tool failure instead of a retryable
+          // `sandbox_unavailable` with guidance.
+          //
+          // The generation is deliberately not failed. The sandbox exists and
+          // is most likely still starting, and it is reachable by its stable
+          // name — the ambiguous-create reconcile above adopts it on the next
+          // attempt. Failing the generation here would discard a live sandbox
+          // over a wait that merely ran out.
+          const settled = await observeTerminalSandbox(this.provider, created.id)
+            .catch(() => undefined);
+          if (settled?.state !== "running") throw providerStateError(settled?.state ?? "unknown");
+        }
       } else {
         throw providerStateError(created.state);
       }
@@ -681,6 +719,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<{
     row: TerminalSandboxRecord;
     action: TerminalAcquisitionObservation["action"] | null;
@@ -697,6 +736,7 @@ export class TerminalSandboxCoordinator {
         networkRevision,
         domains,
         now,
+        waitBudget,
       ),
       action: "start_fresh",
     });
@@ -720,8 +760,8 @@ export class TerminalSandboxCoordinator {
       throw providerStateError(observed.state);
     }
     try {
-      if (recover) await this.provider.recoverSandbox(sandboxId);
-      else await this.provider.startSandbox(sandboxId);
+      if (recover) await this.provider.recoverSandbox(sandboxId, waitBudget);
+      else await this.provider.startSandbox(sandboxId, waitBudget);
     } catch (error) {
       // A start that throws has not said what became of the sandbox. Ask,
       // rather than treating every failure as a lost workspace: a restore that
@@ -787,6 +827,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<TerminalSandboxRecord> {
     logStructuredEvent(this.env, "warn", "terminal_sandbox_replaced_after_loss", {
       workspace_id: context.workspaceId,
@@ -805,7 +846,7 @@ export class TerminalSandboxCoordinator {
       ...deadlines(this.clock.now()),
       now,
     });
-    return this.createReservedSandbox(context, replaced, domains, now);
+    return this.createReservedSandbox(context, replaced, domains, now, waitBudget);
   }
 
   private async replaceForAuthority(

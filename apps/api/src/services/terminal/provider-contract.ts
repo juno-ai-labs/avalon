@@ -71,12 +71,43 @@ export interface CreateTerminalSandboxInput {
   environment: Record<string, string>;
 }
 
+/**
+ * How long a caller that is itself on a deadline will wait for a sandbox to
+ * report running.
+ *
+ * Starting an archived sandbox is a filesystem restore, and the provider call
+ * that asks for it also waits for it. The two are separable: the request is
+ * what makes Daytona restore, and the wait is only how long this caller stays
+ * to watch. A wait that runs out therefore never means the sandbox is lost —
+ * `resumeProviderSandbox` re-reads provider state precisely because the
+ * restore is still on its way — so the bound belongs to whoever holds the
+ * deadline, not to the adapter.
+ */
+export interface TerminalSandboxWaitOptions {
+  /**
+   * The wall-clock instant, in epoch milliseconds, the wait must not outlive.
+   *
+   * An instant rather than a duration because this crosses the provider RPC
+   * hop and then waits on the adapter's own sandbox lookup before it reaches
+   * the SDK: a duration would already be stale by then, and the wait would
+   * outrun the deadline by however long those took. Whoever spends it
+   * subtracts `Date.now()` at the point of use.
+   *
+   * Omitted leaves the Daytona SDK's own default in place. Only the lifecycle
+   * alarm does that now, and not because it lacks a deadline — it is simply
+   * not a restore path: it never starts an archived sandbox, so it cannot
+   * reach the restore measurement this deadline exists to keep readable. Every
+   * caller that *can* start an archived sandbox passes one.
+   */
+  deadlineAtMs?: number;
+}
+
 export interface TerminalSandboxProvider {
   createSandbox(input: CreateTerminalSandboxInput): Promise<TerminalSandboxSnapshot>;
   prepareSandbox?(idOrName: string, expectedDomainAllowList: string[]): Promise<TerminalSandboxSnapshot>;
   getSandbox(idOrName: string): Promise<TerminalSandboxSnapshot>;
-  startSandbox(idOrName: string): Promise<void>;
-  recoverSandbox(idOrName: string): Promise<void>;
+  startSandbox(idOrName: string, options?: TerminalSandboxWaitOptions): Promise<void>;
+  recoverSandbox(idOrName: string, options?: TerminalSandboxWaitOptions): Promise<void>;
   stopSandbox(idOrName: string): Promise<void>;
   archiveSandbox(idOrName: string): Promise<void>;
   deleteSandbox(idOrName: string): Promise<void>;
