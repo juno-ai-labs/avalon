@@ -210,11 +210,13 @@ export type SpaceMembershipReach = z.infer<typeof SpaceMembershipReachSchema>;
 export const WorkspaceSpaceMembersRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   reach: SpaceMembershipReachSchema.default("active"),
+  /** Where the walk got to; `null` starts it at the first Channel. */
+  cursor: z.string().min(1).nullable().default(null),
 }).strict();
 /**
- * The *input* side of the schema, because `reach` has a default: a caller that
- * means the active members says nothing, and the parse is what supplies the
- * word the storage branches on.
+ * The *input* side of the schema, because `reach` and `cursor` have defaults: a
+ * caller that means the first page of active members says neither, and the
+ * parse is what supplies the words the storage branches on.
  */
 export type WorkspaceSpaceMembersRequest = z.input<typeof WorkspaceSpaceMembersRequestSchema>;
 
@@ -235,16 +237,24 @@ export const SpaceMemberSchema = z.strictObject({
 export type SpaceMember = z.infer<typeof SpaceMemberSchema>;
 
 /**
- * Every Channel a Space holds, archived ones included.
+ * One page of the Channels a Space holds, archived ones included.
  *
  * Separate from {@link WorkspaceSpaceChannelPageResultSchema} for the reason
  * `listProjectMembers` is separate from `ProjectSummary.workstreamIds`: a page
  * is what a surface can list, and an archived member is not that — while an
- * audience change still has to reach it. Server-to-server, and unpaginated,
- * because every caller is a fan-out that needs the whole set to be correct.
+ * audience change still has to reach it. Server-to-server, and paged for the
+ * reason every read in this object is: the answer grows with the Organization,
+ * and every caller is a fan-out that spends several cross-object awaits per
+ * row, so an unbounded one is an operation that can never finish rather than a
+ * slow one. The caller follows `nextCursor` and records it on the intent, so
+ * an interrupted walk resumes from the page it reached.
  */
 export const WorkspaceSpaceMembersResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), members: z.array(SpaceMemberSchema) }),
+  z.strictObject({
+    ok: z.literal(true),
+    members: z.array(SpaceMemberSchema),
+    nextCursor: z.string().min(1).nullable(),
+  }),
   SpaceFailureSchema,
 ]);
 export type WorkspaceSpaceMembersResult = z.infer<typeof WorkspaceSpaceMembersResultSchema>;
@@ -327,6 +337,15 @@ export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema.nullable(),
   spaceRevision: z.number().int().positive(),
   membershipGeneration: z.number().int().positive().nullable(),
+  /**
+   * Where the operation's member walk got to, so the resume continues it.
+   *
+   * Without this the resume re-read the whole member list and started again at
+   * the first Channel, which for a Space past one invocation's budget is a pass
+   * that can never finish — every redelivery doing the same prefix again and
+   * dying in the same place.
+   */
+  cursor: z.string().min(1).nullable(),
   requestedByUserId: UserIdSchema,
 }).strict();
 export type SpaceIntentResumeQueueMessage = z.infer<typeof SpaceIntentResumeQueueMessageSchema>;
@@ -450,10 +469,17 @@ export type WorkspaceSpaceBootstrapFinalizeResult =
  * `settled` is what stops the alarm republishing it. A step that finished part
  * of the work writes a receipt without settling, so a resume knows what not to
  * do again; the last step settles.
+ *
+ * `cursor` is what a *paged* step writes: the Channel id its page stopped at,
+ * or `null` once the walk is exhausted. Omitting it leaves the intent's cursor
+ * alone, which is what every single-Channel operation does. It is the field a
+ * resume actually reads — a receipt string says a page happened, the cursor
+ * says where the next one starts.
  */
 export const WorkspaceSpaceIntentReceiptRequestSchema = SpaceActorSchema.extend({
   operationId: IdSchema,
   receipt: z.string().min(1).max(200),
   settled: z.boolean(),
+  cursor: z.string().min(1).nullable().optional(),
 }).strict();
 export type WorkspaceSpaceIntentReceiptRequest = z.infer<typeof WorkspaceSpaceIntentReceiptRequestSchema>;

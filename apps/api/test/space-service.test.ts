@@ -63,7 +63,7 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
   return {
     spaceSummary: vi.fn(async () => ({ ok: true, space: summary() })),
     listSpaceMembers: vi.fn(async () => ({
-      ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }],
+      ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }], nextCursor: null,
     })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
@@ -258,6 +258,7 @@ describe("SpaceService lifecycle fan-out", () => {
             { workstreamId: CHANNEL_ID, membershipGeneration: 4 },
             { workstreamId: SECOND_CHANNEL_ID, membershipGeneration: 2 },
           ],
+          nextCursor: null,
         };
       }),
       finalizeSpaceArchive: vi.fn(async () => {
@@ -296,7 +297,11 @@ describe("SpaceService restore", () => {
       }),
       listSpaceMembers: vi.fn(async (input: { reach?: string }) => {
         log.push(`members:${input.reach}`);
-        return { ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 6 }] };
+        return {
+          ok: true,
+          members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 6 }],
+          nextCursor: null,
+        };
       }),
     });
     const channels = channelDoubles(log);
@@ -323,7 +328,7 @@ describe("SpaceService intent resumption", () => {
       // change accepted while this one was half way through its walk.
       spaceSummary: vi.fn(async () => ({ ok: true, space: summary({ revision: 9 }) })),
       listSpaceMembers: vi.fn(async () => ({
-        ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }],
+        ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }], nextCursor: null,
       })),
       recordSpaceIntentReceipt: vi.fn(async (input: { receipt: string }) => {
         log.push(`receipt:${input.receipt}`);
@@ -341,6 +346,7 @@ describe("SpaceService intent resumption", () => {
       workstreamId: null,
       spaceRevision: 4,
       membershipGeneration: null,
+      cursor: null,
     });
 
     // The interrupted walk left some Channels on the old roster and some on

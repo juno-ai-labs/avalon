@@ -53,6 +53,9 @@ const INTENT: WorkspaceSpaceIntentClaim = {
   workstreamId: null,
   spaceRevision: 5,
   membershipGeneration: null,
+  // Where the interrupted walk got to. It travels on the message because the
+  // resume continues the walk rather than restarting it.
+  cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
   requestedByUserId: OWNER,
 };
 
@@ -157,6 +160,7 @@ describe("republishing unsettled Space intents", () => {
       workstreamId: null,
       spaceRevision: 5,
       membershipGeneration: null,
+      cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
       requestedByUserId: OWNER,
     } }]);
   });
