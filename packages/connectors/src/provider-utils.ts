@@ -507,79 +507,118 @@ export type FieldProjection = readonly string[];
  * backstop for a provider field that is declared and enormous, such as a patch
  * or a body.
  *
- * What is present stays present. A declared field the provider sent as `null`
- * is kept as `null`, at any depth, because `merged_at: null` is the answer to
- * "was it merged" and an absent key is not. A declared field the provider did
- * not send at all is absent from the result, because inventing a `null` for it
- * would claim the provider answered a question it was never asked.
+ * Four rules decide the result, and each is a test in
+ * `provider-utils.test.ts`:
+ *
+ * - **What is present stays present.** A declared field the provider sent as
+ *   `null` is kept as `null`, at any depth, because `merged_at: null` is the
+ *   answer to "was it merged" and an absent key is not. A declared field the
+ *   provider did not send at all is absent from the result, because inventing a
+ *   `null` for it would claim the provider answered a question it was never
+ *   asked.
+ * - **A container appears only when something declared was found beneath it.**
+ *   `["user.login"]` against `{ user: { id: 1 } }` is `{}`, not `{ user: {} }`:
+ *   an empty object standing where a field was asked for reads as a value that
+ *   came back blank, which is a different answer from one that was never sent.
+ * - **A declared array keeps its positions.** One output element per source
+ *   element, so the count and the order stay true even where an element carries
+ *   none of the declared fields. A present but empty array is kept as `[]`,
+ *   because "there are none" is a complete answer rather than a missing one.
+ * - **The narrower declaration wins.** Declaring both `"head"` and `"head.ref"`
+ *   yields `{ head: { ref } }`. The paths compile to a trie before the source is
+ *   read, so an over-specified projection resolves to the reading that cannot
+ *   retain an undeclared field, in either declaration order, rather than to
+ *   whichever path happened to be applied last.
+ *
+ * A declared leaf is kept by reference, so a caller that intends to mutate the
+ * result clones it first. Every caller in this package passes the result
+ * straight to a bounding walk that rebuilds it.
  */
 export function projectFields(
   source: Record<string, unknown>,
   projection: FieldProjection,
 ): Record<string, unknown> {
-  const projected: Record<string, unknown> = {};
-  for (const path of projection) copyProjectedPath(source, projected, path.split("."));
-  return projected;
+  return projectNode(source, compileProjection(projection)).value;
 }
 
-function copyProjectedPath(
-  source: Record<string, unknown>,
-  target: Record<string, unknown>,
-  segments: string[],
-): void {
-  const [segment, ...rest] = segments;
-  if (segment === undefined) return;
-  const mapsElements = segment.endsWith("[]");
-  const key = mapsElements ? segment.slice(0, -2) : segment;
-  // `in` would walk the prototype chain, so a row declaring a field a provider
-  // happens not to send would copy `Object.prototype`'s member of that name
-  // instead of reporting the field as absent.
-  if (!Object.hasOwn(source, key)) return;
-  const value = source[key];
+/**
+ * One node per declared path segment. A node with no children is a leaf, which
+ * is what makes the narrower declaration win without a separate flag: adding
+ * `"head.ref"` gives `head` a child, and a node with children is never read as
+ * a leaf again however `"head"` was declared.
+ */
+interface ProjectionNode {
+  mapsElements: boolean;
+  children: Map<string, ProjectionNode>;
+}
 
-  if (rest.length === 0) {
-    target[key] = value;
-    return;
-  }
-  if (value === null) {
-    target[key] = null;
-    return;
-  }
-
-  if (mapsElements) {
-    if (!Array.isArray(value)) return;
-    const elements = projectedElements(target, key, value.length);
-    for (const [index, element] of value.entries()) {
-      const row = elements[index];
-      if (row && isRecord(element)) copyProjectedPath(element, row, rest);
+function compileProjection(projection: FieldProjection): ProjectionNode {
+  const root: ProjectionNode = { mapsElements: false, children: new Map() };
+  for (const path of projection) {
+    let node = root;
+    for (const segment of path.split(".")) {
+      const mapsElements = segment.endsWith("[]");
+      const key = mapsElements ? segment.slice(0, -2) : segment;
+      const existing = node.children.get(key);
+      if (existing) {
+        existing.mapsElements ||= mapsElements;
+        node = existing;
+        continue;
+      }
+      const child: ProjectionNode = { mapsElements, children: new Map() };
+      node.children.set(key, child);
+      node = child;
     }
-    return;
   }
-
-  if (!isRecord(value)) return;
-  copyProjectedPath(value, projectedRecord(target, key), rest);
+  return root;
 }
 
-/** The record several paths sharing this prefix all write into. */
-function projectedRecord(target: Record<string, unknown>, key: string): Record<string, unknown> {
-  const existing = target[key];
-  if (isRecord(existing)) return existing;
-  const created: Record<string, unknown> = {};
-  target[key] = created;
-  return created;
-}
+/**
+ * `copied` is what keeps an absent field from becoming an empty container: a
+ * nested object is attached to its parent only after something inside it was
+ * actually found.
+ */
+function projectNode(
+  source: Record<string, unknown>,
+  node: ProjectionNode,
+): { value: Record<string, unknown>; copied: boolean } {
+  const value: Record<string, unknown> = {};
+  let copied = false;
+  for (const [key, child] of node.children) {
+    // `Object.hasOwn` rather than `in`, which would walk the prototype chain and
+    // copy `Object.prototype`'s member of a name the provider did not send.
+    if (!Object.hasOwn(source, key)) continue;
+    const field = source[key];
 
-/** One row per source element, so `labels[].name` and `labels[].color` merge. */
-function projectedElements(
-  target: Record<string, unknown>,
-  key: string,
-  length: number,
-): Record<string, unknown>[] {
-  const existing = target[key];
-  if (Array.isArray(existing) && existing.length === length && existing.every(isRecord)) return existing;
-  const created = Array.from({ length }, () => ({}) as Record<string, unknown>);
-  target[key] = created;
-  return created;
+    if (child.children.size === 0) {
+      value[key] = field;
+      copied = true;
+      continue;
+    }
+    if (field === null) {
+      value[key] = null;
+      copied = true;
+      continue;
+    }
+
+    if (child.mapsElements) {
+      if (!Array.isArray(field)) continue;
+      const elements = field.map((element) => (isRecord(element)
+        ? projectNode(element, child)
+        : { value: {}, copied: false }));
+      if (field.length > 0 && !elements.some((element) => element.copied)) continue;
+      value[key] = elements.map((element) => element.value);
+      copied = true;
+      continue;
+    }
+
+    if (!isRecord(field)) continue;
+    const nested = projectNode(field, child);
+    if (!nested.copied) continue;
+    value[key] = nested.value;
+    copied = true;
+  }
+  return { value, copied };
 }
 
 export function base64(value: string): string {

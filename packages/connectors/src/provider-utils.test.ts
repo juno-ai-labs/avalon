@@ -66,6 +66,40 @@ describe("declared rows", () => {
     )).toEqual({ state: "open", merged_at: null, milestone: null });
   });
 
+  it("attaches a container only when something declared was found beneath it", () => {
+    // An empty object standing where a field was asked for reads as a value that
+    // came back blank, which is a different answer from one that was never sent.
+    // The projection used to return `{ user: {} }` here and `{ labels: [{}] }`
+    // below, contradicting its own stated contract.
+    expect(projectFields({ user: { id: 1 } }, ["user.login"])).toEqual({});
+    expect(projectFields({ labels: [{ color: "d73a4a" }] }, ["labels[].name"])).toEqual({});
+    expect(projectFields({ user: { id: 1, login: "octocat" } }, ["user.login"]))
+      .toEqual({ user: { login: "octocat" } });
+  });
+
+  it("keeps an array's positions, and keeps a present empty one", () => {
+    // The count and the order are part of the answer: dropping the element that
+    // carries none of the declared fields would report two labels as one. An
+    // array the provider sent empty is a complete answer rather than a missing
+    // one, so it survives where an absent array does not.
+    expect(projectFields(
+      { labels: [{ name: "bug" }, { color: "000000" }], assignees: [], reviewers: [] },
+      ["labels[].name", "assignees[].login"],
+    )).toEqual({ labels: [{ name: "bug" }, {}], assignees: [] });
+  });
+
+  it("lets the narrower declaration win in either order", () => {
+    // Declaring an ancestor and a descendant used to keep the whole provider
+    // object, in *both* orders — the ancestor copied it by reference and the
+    // descendant then wrote into that same copy. For a primitive whose contract
+    // is that nothing undeclared survives, that is the failure that matters:
+    // `head.repo` is exactly the embedded record this exists to remove.
+    const source = { head: { ref: "feature", repo: { id: 41, archive_url: "big" } } };
+
+    expect(projectFields(source, ["head", "head.ref"])).toEqual({ head: { ref: "feature" } });
+    expect(projectFields(source, ["head.ref", "head"])).toEqual({ head: { ref: "feature" } });
+  });
+
   it("ignores a declared path whose parent is not the shape it expects", () => {
     // A provider is free to change a shape under us. Dropping the path is the
     // only honest reading: there is no field there to report.
