@@ -505,8 +505,9 @@ oversubscription: two sessions on this box is ~32 worker threads on four cores,
 three is ~48. Every fixed budget in the suites — the 15s in
 `packages/db`, `apps/api`, `apps/desktop`, `packages/agent-harness`,
 `packages/connectors`, `apps/ace` and `apps/site`, and the 30s in
-`apps/api/vitest.workers.config.ts` — is a floor sized for contention from
-sibling suites, not a ceiling.
+`apps/api/vitest.workers.config.ts` and `apps/browser/vitest.config.ts` (the
+same workerd pool) — is a floor sized for contention from sibling suites, not a
+ceiling.
 
 The lever is `VITEST_MAX_WORKERS`, which Vitest applies *after* the config
 resolves and therefore overrides an explicit `maxWorkers`:
