@@ -440,10 +440,10 @@ const PULL_REQUEST_ROW: FieldProjection = [
   "number", "title", "state", "draft",
   "created_at", "updated_at", "closed_at", "merged_at",
   "user.login",
-  "head.ref", "head.sha", "base.ref",
+  "head.ref", "head.sha", "base.ref", "base.sha",
   "labels[].name",
   "assignees[].login",
-  "requested_reviewers[].login",
+  "requested_reviewers[].login", "requested_teams[].slug",
   "html_url",
 ];
 
@@ -492,6 +492,11 @@ const CHECK_RUN_ROW: FieldProjection = [
   "started_at", "completed_at",
   "output.title", "output.summary", "output.text",
   "app.slug",
+  // Both URLs, which duplicate each other for a GitHub Actions check and do not
+  // for anything else: `details_url` is the reporting app's own page, off GitHub
+  // entirely for a third-party integration, and `html_url` is the check's page
+  // on GitHub. Keeping one would silently drop a human's only followable link
+  // for whichever kind of check it was not chosen for.
   "details_url", "html_url",
 ];
 
@@ -529,15 +534,15 @@ export const githubTools: ToolDefinition[] = [
   tool("repositories.list", "List installation-authorized repositories, ordered by pinned status and then recent activity. Returns totalCount, page, perPage, and hasMore. Each repository row carries full_name along with the name and owner.login to pass to every other tool here, plus description, default_branch, private, archived, language, pushed_at, html_url, pinned, and access.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
   tool("repositories.search", "Search installation-authorized repositories by case-insensitive repository name or owner/name. Results are ordered by pinned status and then recent activity, and carry the same row as repositories.list.", GitHubCapabilities.metadataRead, "read", repositoriesSearchSchema),
   tool("repository.get", "Read bounded metadata for one accessible GitHub repository.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
-  tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated. Each entry carries its path, type, sha, and size, and a directory entry also carries its name.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
+  tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated. Each entry carries its path, type, sha, and size; a tree entry also carries its Git mode, and a directory entry its name.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
   tool("contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned; only a successful contents.get call counts as code-file evidence.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
-  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. Each commit row is a summary: sha, message, author name and date, whether the signature verified, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits; on a later page it only means the earlier pages held everything.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
+  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. Each commit row is a summary: sha, message, the commit author name and date, the GitHub account that authored it as author.login, whether the signature verified, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits; on a later page it only means the earlier pages held everything.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
   tool("issues.list", "List issues in an accessible GitHub repository. Returns issues, count, page, perPage, hasMore, and appliedFilters. Each issue row is a summary: number, title, state, state_reason, author, labels, assignees, comment count, timestamps, and html_url; read an issue body with issues.get. Pull requests are excluded, so this is narrower than the repository's open-issue count, which GitHub counts pull requests in; list those with pull_requests.list. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no issues; on a later page it only means the earlier pages held everything.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
   tool("issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
   tool("issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
   tool("issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
   tool("issue_comments.create", "Create a comment on a GitHub issue.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
-  tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. Each pull request row is a summary: number, title, state, draft, author, head and base branch, head sha, labels, assignees, requested reviewers, timestamps, and html_url; read a pull request body with pull_requests.get. To list every open pull request, send only owner and repo: head and base are narrowing filters, and on page 1 an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests. On a later page an empty list only means the earlier pages held everything.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
+  tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. Each pull request row is a summary: number, title, state, draft, author, head and base branch, head and base sha, labels, assignees, requested reviewers as requested_reviewers and requested teams as requested_teams, timestamps, and html_url; read a pull request body with pull_requests.get. To list every open pull request, send only owner and repo: head and base are narrowing filters, and on page 1 an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests. On a later page an empty list only means the earlier pages held everything.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
   tool("pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
   tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request. Returns files, count, page, perPage, and hasMore. Each file row carries filename, status, additions, deletions, changes, previous_filename when the file was renamed, and the patch itself.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. Each review row carries id, author, state, submitted_at, commit_id, body, and html_url. An empty page 1 means nobody has reviewed it yet; an empty later page only means the earlier pages held every review.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
@@ -2213,7 +2218,12 @@ function githubCountedListPage(
  * review body — rather than standing in for a decision nobody had made.
  */
 function boundGitHubRow(item: unknown, row: FieldProjection): unknown {
-  return isRecord(item) ? boundGitHubValue(projectFields(item, row)) : boundGitHubValue(item);
+  // A non-record element cannot be projected, and forwarding it unchanged would
+  // put an undeclared value in a list whose contract is that every item has the
+  // declared shape. GitHub does not do this; if it ever does, saying so beats
+  // emitting one row the model cannot read among twenty-nine it can.
+  if (!isRecord(item)) throw new ConnectorError("provider_error", "GitHub returned a list item that is not an object");
+  return boundGitHubValue(projectFields(item, row));
 }
 
 function boundGitHubValue(value: unknown, depth = 0, key = ""): unknown {
