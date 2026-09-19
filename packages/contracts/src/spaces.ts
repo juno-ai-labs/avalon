@@ -311,7 +311,7 @@ export type SpaceRefusalDetails = z.infer<typeof SpaceRefusalDetailsSchema>;
  *
  * Closed, and closed for the reason `docs/naming-a-schema-failure.md` gives: a
  * refusal that reaches a log, an operator, or the far side of an RPC hop has to
- * name what it rejected. A generic `space_error` would make the eleven distinct
+ * name what it rejected. A generic `space_error` would make the twelve distinct
  * remediations below indistinguishable in a log line.
  */
 export const SpaceErrorCodeSchema = z.enum([
@@ -349,5 +349,25 @@ export const SpaceErrorCodeSchema = z.enum([
    * request path's half of the same reading.
    */
   "space_conversation_unreachable",
+  /**
+   * The Space's *own* hidden conversation did not answer an operation the
+   * Space authority needs from it.
+   *
+   * The far end of {@link SpaceErrorCode} `space_conversation_unreachable`,
+   * which is about a *member Channel's* conversation failing the containment
+   * question. This one is the Space's own participant and resource authority
+   * — the object a scope change, a rename, an appearance, a participant and a
+   * resource default are all written on — failing in a way that is not itself
+   * a refusal: a broken recovery, a mis-addressed object, a storage error
+   * crossing the Durable Object RPC hop as a bare `Error`.
+   *
+   * It exists because that failure had nothing to be called. It reached the
+   * client as `internal_error`, which is the same word the Worker uses for
+   * every unhandled failure it has, so a log line could not tell a Space whose
+   * authority is unreachable from anything else — and the remediation is
+   * particular: nothing is wrong with the request, the Organization, or the
+   * member Channels, and retrying is the whole of what a person can do.
+   */
+  "space_authority_unreachable",
 ]);
 export type SpaceErrorCode = z.infer<typeof SpaceErrorCodeSchema>;
