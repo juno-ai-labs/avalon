@@ -10,7 +10,7 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
-  ChannelAccessSourcesSchema,
+  ChannelAccessSchema,
   CreateWorkstreamRequestSchema,
   asUserId,
   asWorkspaceId,
@@ -347,7 +347,7 @@ workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
     userId: asUserId(auth.userId),
     workstreamId: asWorkstreamId(workstreamId),
   });
-  return c.json(ChannelAccessSourcesSchema.parse({ ...sources, spaceIds: memberships.spaceIds }));
+  return c.json(ChannelAccessSchema.parse({ ...sources, spaceIds: memberships.spaceIds }));
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");
