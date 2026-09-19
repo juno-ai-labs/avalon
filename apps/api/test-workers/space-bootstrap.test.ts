@@ -27,6 +27,7 @@ import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { SpaceBootstrapService, spaceBootstrapDriver } from "../src/services/space-bootstrap-service";
+import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -281,6 +282,33 @@ describe("the Space cutover", () => {
     });
     expect(String((blocked.rows[0] as { blocked_json: string }).blocked_json))
       .toContain("space_membership_content_fence");
+  });
+
+  it("closes once the blocked Channel has a home the fence admits", async () => {
+    const fenced = await createChannel("fenced-personal", [await personalSpace()]);
+    await fenceRetainedContent(fenced);
+    await forgetSpaces();
+
+    await runWholeCutover();
+    expect((await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID })).blockedWorkstreamIds)
+      .toEqual([fenced]);
+
+    // The remediation an operator has: the fence is immutable and General is
+    // Organization-wide, so the Channel can never enter General — what it can
+    // have is a home whose audience the fence already admits. Once it has one
+    // the hierarchy invariant is true of it, and the walk stops counting it.
+    await new SpaceService(creationEnv(), AUTH)
+      .addChannel(await personalSpace(), asWorkstreamId(fenced));
+
+    await runWholeCutover();
+
+    // The whole point of B1: a blocker used to be permanent, because the only
+    // writer that clears one is a pass that reaches the Channel and a
+    // `finalize` that answered `blocked` never ran another.
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ phase: "complete", ready: true, blockedWorkstreamIds: [] });
+    // Remediated, not bypassed: the Channel is in a Space and still personal.
+    expect(await channelScope(fenced)).toBe("personal");
   });
 
   it("is idempotent: a pass interrupted after its placements makes no second General and no second membership", async () => {

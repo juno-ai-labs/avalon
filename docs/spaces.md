@@ -255,13 +255,29 @@ row, and the fence is a product decision rather than a migration's to make. A
 `preflight` page also reports the Channels it found *clear*, which takes their
 blockers off the row: it is the pass that notices a remediation.
 
-`finalizeSpaceBootstrap` is the close, and it refuses three ways. `blocked`
-leaves the phase at `finalize` for the retry gate to republish. `unplaced` — a
-Channel that arrived after the walk passed its id, which a late directory
-projection can do — sends the phase back to `general` so the walk runs again
-rather than the Organization waiting forever. `project_effects_pending` is the
-cutover gate the retirement needed and is described under
-[Operations](#operations).
+`finalizeSpaceBootstrap` is the close, and it refuses three ways. Both
+refusals that leave the cutover open send it **back to the walk**, because the
+walk is the only thing that changes any of the facts it refused on. `unplaced`
+— a Channel that arrived after the walk passed its id, which a late directory
+projection can do — is new work, so the pass restarts with its gate cleared.
+`blocked` re-walks through `reopenBootstrap`, which keeps the claim's retry
+gate: the preflight reports the Channels it now finds clear, a still-fenced one
+is re-recorded, and an Organization nobody remediates re-walks on
+`scheduledAlarmRetryDelay`'s interval — about once a minute — rather than
+spinning. Leaving the phase at `finalize` instead, which is what this did
+first, made a blocked Organization permanent: nothing else takes a Channel off
+`blocked_json`, so `spacesReady` stayed false and the opening card stayed up
+however the Channel was remediated. `project_effects_pending` is the cutover
+gate the retirement needed and is described under [Operations](#operations).
+
+**What remediating a fence actually means.** The fence is immutable and General
+is Organization-wide, so a fenced Channel can never enter General — adding it
+to an Organization-wide Space is the same widening and is refused by the same
+fence. What clears the blocker is giving the Channel a home whose audience the
+fence already admits (a personal Space whose participants it allows) or
+deleting the Channel: the invariant the cutover closes on is that every Channel
+has *a* Space, not that every Channel is in General.
+[`runbook.md`](runbook.md) holds the operator's version.
 
 Two paths place a Channel outside a page, and both are the same step a page
 would take. `openGeneralSpaceForNewWorkspace` runs inline on the path that

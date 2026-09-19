@@ -1980,6 +1980,56 @@ export class WorkspaceSpaceStorage {
       ).toArray().length > 0;
   }
 
+  /**
+   * Send the cutover back to the pass that re-walks the directory, keeping the
+   * retry gate the claim advanced.
+   *
+   * The one way an Organization that has stopped moving starts again, and it
+   * has two callers because it answers two questions with the same state. A
+   * `finalize` that refused has to re-walk or the refusal is permanent: the
+   * only writer that takes a Channel off `blocked_json` is a pass that reaches
+   * it, so an Organization whose fence somebody has since remediated would
+   * otherwise sit at `finalize` forever. And a `complete` Organization that
+   * turns out to hold a Channel in no Space has to re-walk for the same reason
+   * — the hierarchy invariant is false of it until something places that
+   * Channel.
+   *
+   * **The gate is kept rather than cleared**, which is the difference between
+   * re-walking on `scheduledAlarmRetryDelay`'s interval and spinning: a
+   * permanently blocked Organization re-walks about once a minute, and each
+   * page of that walk clears the gate itself because a page is progress.
+   *
+   * Idempotent: an Organization already on the walk is left where it is. The
+   * answer is whether this took one out of `complete`, which is the only
+   * transition a client can see — `spacesReady` goes false, so the directory
+   * waterline advances and the caller republishes.
+   */
+  reopenBootstrap(now = Date.now()): boolean {
+    if (!this.ready()) return false;
+    return this.storage.transactionSync(() => {
+      const row = this.storage.sql.exec<{
+        phase: WorkspaceSpaceBootstrapStatus["phase"];
+        general_space_id: string | null;
+      } & Record<string, SqlStorageValue>>(
+        "SELECT phase, general_space_id FROM space_bootstrap WHERE id = 1",
+      ).one();
+      // Without General there is nothing to place a Channel in, so the walk
+      // starts one step earlier. `ensureGeneral` is idempotent either way.
+      const next = row.general_space_id === null ? "general" : "preflight";
+      if (row.phase === next) return false;
+      this.storage.sql.exec(
+        `UPDATE space_bootstrap
+            SET phase = ?, cursor = NULL, completed_at = NULL, updated_at = ?
+          WHERE id = 1`,
+        next,
+        now,
+      );
+      if (row.phase !== "complete") return false;
+      this.advanceWaterline(now);
+      return true;
+    });
+  }
+
   /** Close the cutover, or say why it cannot close yet. */
   completeBootstrap(now = Date.now()): "complete" | "blocked" | "unplaced" {
     if (this.blockedEntries().length > 0) return "blocked";
