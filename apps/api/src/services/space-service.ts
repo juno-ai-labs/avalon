@@ -166,6 +166,28 @@ export class SpaceService {
     }), "");
   }
 
+  /**
+   * The Space an operation is about, refused when it is not this person's to
+   * change.
+   *
+   * Four operations write on the Space's *own* object before WorkspaceDO's
+   * gate ever sees them — a rename, an appearance, an audience and a default —
+   * and that object answers a non-participant of a personal conversation
+   * `workstream_not_found`. It is the wrong authority saying the wrong word:
+   * the caller is looking at the Space, they were refused because they may not
+   * change it, and `docs/naming-a-schema-failure.md` is about exactly this.
+   * Everything else (an add, a removal, an archive, a restore) addresses
+   * WorkspaceDO first and is named there.
+   *
+   * The reach is on the summary this already reads, so this costs nothing over
+   * the read each of those four was making anyway.
+   */
+  private async editable(spaceId: SpaceId): Promise<SpaceSummary> {
+    const space = await this.summary(spaceId);
+    if (space.reach === "through_channel") throw spaceRefusal("space_access_denied", space.name);
+    return space;
+  }
+
   async listChannels(spaceId: SpaceId, cursor: string | null): Promise<SpaceChannelPage> {
     const result = WorkspaceSpaceChannelPageResultSchema.parse(
       await (await this.workspace()).listSpaceChannels({
@@ -259,7 +281,7 @@ export class SpaceService {
 
   /** Presentation belongs to the Space's own authority; this is its door. */
   async updatePresentation(spaceId: SpaceId, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
-    const current = await this.summary(spaceId);
+    const current = await this.editable(spaceId);
     const client = this.spaceConversation(spaceId);
     await this.throughSpaceAuthority(spaceId, current.name, "presentation", async () => {
       await client.update({ title: input.name });
@@ -293,7 +315,7 @@ export class SpaceService {
    * retraction plan seats every surviving reader before it narrows anything.
    */
   async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
-    const current = await this.summary(spaceId);
+    const current = await this.editable(spaceId);
     const currentParticipants = new Set<string>(current.participants.map((participant) => participant.userId));
     const requested = new Set<string>(input.participantUserIds);
     const removed = [...currentParticipants].filter((userId) => !requested.has(userId));
@@ -533,7 +555,7 @@ export class SpaceService {
    * default that fails that test must not be published at all.
    */
   async addDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
-    const space = await this.summary(spaceId);
+    const space = await this.editable(spaceId);
     if (kind === "resource") {
       await new ResourceService(this.env, this.auth).get(targetId);
       await this.assertResourceAudience(space, targetId);
@@ -572,7 +594,7 @@ export class SpaceService {
    * next Channel inheriting it.
    */
   async removeDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
-    const space = await this.summary(spaceId);
+    const space = await this.editable(spaceId);
     if (kind === "sidekick") {
       await this.throughSpaceAuthority(spaceId, space.name, "detach_default_sidekick", async () =>
         (await this.spaceParent(spaceId)).setSidekickRecommendation({

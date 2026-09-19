@@ -5865,16 +5865,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The gate every Space RPC passes, and the one place both halves are decided.
+   * The gate every Space RPC passes, and the one place all three halves are
+   * decided.
    *
-   * An active non-guest Organization membership, and — for anything that
-   * writes — Space tables that exist. The second half is why this is a function
-   * rather than two lines at each call site: an Organization held at schema 57
-   * by the meeting-notes retirement has no Space tables at all, and a write
-   * that reached storage would abort with `no such table` instead of a code a
-   * route can render. A *read* needs no entry here: every Space read answers
-   * its own empty state through `WorkspaceSpaceStorage.ready`, so a client on a
-   * pending Organization sees no Spaces rather than a failed connect.
+   * An active non-guest Organization membership; for anything that writes,
+   * Space tables that exist; and, for a write *named against a Space*, a
+   * relationship with that Space stronger than having read a Channel in it.
+   * The second half is why this is a function rather than two lines at each
+   * call site: an Organization held at schema 57 by the meeting-notes
+   * retirement has no Space tables at all, and a write that reached storage
+   * would abort with `no such table` instead of a code a route can render. A
+   * *read* needs no entry here: every Space read answers its own empty state
+   * through `WorkspaceSpaceStorage.ready`, so a client on a pending
+   * Organization sees no Spaces rather than a failed connect.
+   *
+   * The third half is what a Space's reach costs. A person who can read one
+   * Channel placed in a participants-only Space is now told that Space's mark
+   * and name, so the Channel has somewhere to be drawn — and every storage
+   * predicate that decides *may I see this* admits them. Each of those used to
+   * be the whole of the check on a write, so the write is named here instead,
+   * with the code that already means "you may not edit this Space":
+   * `space_access_denied`. `space_not_found` would be the lie — they are
+   * looking at the row.
+   *
+   * `spaceId` is deliberately omitted by two writes. A creation has no Space
+   * to name yet, and `reorderContainer` is a person arranging *their own*
+   * view of a list — the Organization's Spaces, a Space's Channels, a
+   * Channel's Breakouts — which is theirs to arrange whatever their reach is.
    *
    * Returns the code to refuse with, or null to proceed. The result shapes
    * differ across these RPCs — some failures carry `unreachableUserIds` and
@@ -5885,9 +5902,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     userId: string,
     intent: "read" | "write",
+    spaceId?: string,
   ): Promise<SpaceErrorCode | null> {
     if (!await this.activeSpaceMember(workspaceId, userId)) return "space_access_denied";
-    if (intent === "write" && !this.spaceStorage().ready()) return "space_bootstrap_pending";
+    if (intent !== "write") return null;
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return "space_bootstrap_pending";
+    if (spaceId !== undefined && storage.reach(userId, spaceId) === "through_channel") {
+      return "space_access_denied";
+    }
     return null;
   }
 
@@ -5922,7 +5945,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "cancel_space_reservation");
     this.assertWorkspace(request.workspaceId);
-    if (await this.spaceRefusalCode(request.workspaceId, request.userId, "write")) {
+    if (await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId)) {
       return { cancelled: false };
     }
     return { cancelled: this.spaceStorage().cancelReservation(request.spaceId, request.userId) };
@@ -5978,6 +6001,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * kept behind the same gate on purpose — the rows live in this object, they
    * ride the Space snapshot, and a second authorization rule for one of three
    * kinds is a second thing to get wrong.
+   *
+   * It is the one write that does **not** name its Space to that gate. An
+   * arrangement is this person's own view preference, read by nobody else, so
+   * a Space they reach only through a Channel in it is theirs to arrange
+   * exactly like any other row in their sidebar — and the Channels under it
+   * are the Channels they can already read. What may be in each list is still
+   * filtered per kind, by the same reads that decide what they are shown.
    *
    * The republication is what makes the order the *person's* rather than the
    * window's: every socket this member holds is re-sent their whole ordering,
@@ -6138,7 +6168,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpacePresentationRequestSchema, input, "note_space_presentation");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().applyPresentation(request);
     if (space !== false) this.publishSpaceSnapshot();
@@ -6159,7 +6189,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceAudienceNoteRequestSchema, input, "note_space_audience");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     if (request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId) {
@@ -6240,7 +6270,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembershipRequestSchema, input, "prepare_space_membership");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
       this.spaceStorage().prepareMembership(request),
@@ -6266,7 +6296,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeMembership(request);
@@ -6309,7 +6339,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "cancel_space_membership");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.cancelMembership(request);
@@ -6326,7 +6356,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "prepare_space_membership_removal");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
       this.spaceStorage().prepareMembershipRemoval(request),
@@ -6355,7 +6385,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership_removal");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeMembershipRemoval(request);
@@ -6379,7 +6409,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "prepare_space_archive");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMutationResultSchema.parse(
       this.spaceStorage().prepareArchive(request.userId, request.spaceId),
@@ -6406,7 +6436,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeArchive(request.userId, request.spaceId);
@@ -6438,7 +6468,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "restore_space");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.restore(request.workspaceId, request.userId, request.spaceId);
@@ -6469,7 +6499,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "add_space_default");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceDefaultResultSchema.parse(this.spaceStorage().addDefault(request));
     if (result.ok) this.publishSpaceSnapshot();
@@ -6481,7 +6511,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "remove_space_default");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().removeDefault(request);
     if (space !== false) this.publishSpaceSnapshot();
