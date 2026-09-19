@@ -1767,7 +1767,8 @@ describe("GitHub connector", () => {
       closed_at: null,
       merged_at: null,
       user: { login: "octocat" },
-      head: { ref: "feature", sha: "9fceb02" },
+      // The head repository's *name* survives; the record it came from does not.
+      head: { ref: "feature", sha: "9fceb02", repo: { full_name: "acme/widget" } },
       base: { ref: "main", sha: "abc1234" },
       labels: [{ name: "bug" }],
       assignees: [{ login: "octocat" }],
@@ -1936,8 +1937,14 @@ describe("GitHub connector", () => {
           closed_at: null,
           merged_at: null,
           user: author,
-          head: { ref: "reads", sha: "0c55943", repo: { id: 41, archive_url: "https://api.github.com/x{/ref}" } },
-          base: { ref: "main", sha: "fedecf6", repo: { id: 41, archive_url: "https://api.github.com/x{/ref}" } },
+          head: {
+            ref: "reads",
+            sha: "0c55943",
+            // A fork, which is the case head.repo.full_name exists to make
+            // legible: `reads` does not resolve against acme/widget.
+            repo: { id: 99, full_name: "octocat/widget-fork", archive_url: "https://api.github.com/x{/ref}" },
+          },
+          base: { ref: "main", sha: "fedecf6", repo: { id: 41, full_name: "acme/widget", archive_url: "https://api.github.com/x{/ref}" } },
           labels: [],
           assignees: [],
           requested_reviewers: [],
@@ -2034,7 +2041,10 @@ describe("GitHub connector", () => {
       closed_at: null,
       merged_at: null,
       user: { login: "octocat" },
-      head: { ref: "reads", sha: "0c55943" },
+      // Without this the caller reads `reads` against acme/widget and gets an
+      // unexplainable 404; `base` needs no equivalent, being the repository the
+      // caller named in the request.
+      head: { ref: "reads", sha: "0c55943", repo: { full_name: "octocat/widget-fork" } },
       base: { ref: "main", sha: "fedecf6" },
       labels: [],
       assignees: [],
