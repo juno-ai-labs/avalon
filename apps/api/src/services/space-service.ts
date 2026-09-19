@@ -357,10 +357,16 @@ export class SpaceService {
    */
   async archive(spaceId: SpaceId): Promise<SpaceSummary> {
     const workspace = await this.workspace();
-    const plan = this.planned(await workspace.prepareSpaceArchive({
+    // One id, minted here and carried to both halves. The settlement has to
+    // name the intent the preflight staged, and deriving it from the Space
+    // revision — which the archive itself advances — made the two halves agree
+    // by arithmetic over writes in two objects rather than by saying so.
+    const operationId = uuidV7();
+    const plan = this.settled(await workspace.prepareSpaceArchive({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
+      operationId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
     for (const workstreamId of await this.memberChannelIds(spaceId, "reaching")) {
@@ -370,7 +376,8 @@ export class SpaceService {
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-    }), plan.space.name);
+      operationId,
+    }), plan.name);
   }
 
   /**
@@ -594,6 +601,7 @@ export class SpaceService {
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         userId: asUserId(this.auth.userId),
         spaceId: intent.spaceId,
+        operationId: intent.operationId,
       });
       return;
     }
