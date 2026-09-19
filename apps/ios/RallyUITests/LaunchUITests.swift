@@ -32,7 +32,7 @@ final class LaunchUITests: XCTestCase {
     func testIntroAndSignInChrome() throws {
         let app = XCUIApplication()
         app.launch()
-        if app.tabBars.buttons["Work streams"].waitForExistence(timeout: 3) {
+        if app.tabBars.buttons["Channels"].waitForExistence(timeout: 3) {
             return // already signed in from a prior local session
         }
         dismissIntro(in: app)
@@ -66,12 +66,12 @@ final class LaunchUITests: XCTestCase {
             app.buttons["Use local development account"].tap()
         }
 
-        let workStreams = app.tabBars.buttons["Work streams"]
+        let workStreams = app.tabBars.buttons["Channels"]
         XCTAssertTrue(workStreams.waitForExistence(timeout: 20), "Local session should land in the tab shell")
         XCTAssertTrue(app.tabBars.buttons["Sidekicks"].exists)
         XCTAssertFalse(app.tabBars.buttons["Projects"].exists)
         XCTAssertFalse(app.tabBars.buttons["Notes"].exists)
-        XCTAssertTrue(app.buttons["Workspace and settings"].waitForExistence(timeout: 6))
+        XCTAssertTrue(app.buttons["Organization and settings"].waitForExistence(timeout: 6))
         XCTAssertFalse(app.buttons["History"].exists)
         XCTAssertFalse(app.buttons["New chat"].exists)
         XCTAssertFalse(app.searchFields["Search"].exists)
@@ -81,7 +81,7 @@ final class LaunchUITests: XCTestCase {
             firstStream.tap()
             XCTAssertTrue(
                 app.navigationBars.firstMatch.waitForExistence(timeout: 6),
-                "Selecting a work stream should push the substream list"
+                "Selecting a channel should push the breakout list"
             )
             let main = app.descendants(matching: .any)["Main"]
             if main.waitForExistence(timeout: 4) {
@@ -92,8 +92,8 @@ final class LaunchUITests: XCTestCase {
 
         app.tabBars.buttons["Sidekicks"].tap()
         XCTAssertFalse(app.buttons["New Sidekick"].exists)
-        app.tabBars.buttons["Work streams"].tap()
-        XCTAssertTrue(app.buttons["Workspace and settings"].waitForExistence(timeout: 4))
+        app.tabBars.buttons["Channels"].tap()
+        XCTAssertTrue(app.buttons["Organization and settings"].waitForExistence(timeout: 4))
         XCTAssertFalse(app.buttons["New chat"].exists)
     }
 }
