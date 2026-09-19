@@ -53,9 +53,17 @@ function environment(input: {
   calls: string[];
   apply?: ApplyResult;
   retract?: RetractResult;
+  sources?: {
+    direct: { scope: "personal" | "workspace"; participantUserIds: string[] };
+    spaces: Array<{ spaceId: string; scope: "personal" | "workspace"; participantUserIds: string[] }>;
+  };
 }): Env {
   const stub = {
     readManagementAccess: async () => ({ allowed: true, writable: true, grantIds: [], workspaceMemberAccess: false }),
+    readAccessSources: async () => {
+      input.calls.push("object:sources");
+      return input.sources ?? { direct: { scope: "personal", participantUserIds: [] }, spaces: [] };
+    },
     applySpaceAccessSource: async () => {
       input.calls.push("object:apply");
       return input.apply ?? { ok: true, plan: { widenScope: false, seatUserIds: [] } };
@@ -103,8 +111,11 @@ function detail(scope: "personal" | "workspace", participantIds: string[]): Work
   } as WorkstreamDetail;
 }
 
-function stubCanonicalOperations(calls: string[], options: { addParticipantThrows?: Error } = {}): void {
-  vi.spyOn(WorkstreamObjectClient.prototype, "get").mockResolvedValue(detail("personal", [OWNER]));
+function stubCanonicalOperations(
+  calls: string[],
+  options: { addParticipantThrows?: Error; detail?: WorkstreamDetail } = {},
+): void {
+  vi.spyOn(WorkstreamObjectClient.prototype, "get").mockResolvedValue(options.detail ?? detail("personal", [OWNER]));
   vi.spyOn(WorkstreamObjectClient.prototype, "update").mockImplementation(async (patch) => {
     calls.push(`canonical:update(${patch.scope})`);
     return {} as never;
@@ -211,6 +222,76 @@ describe("applying a Space access source", () => {
       code: "space_revision_conflict",
     } satisfies Partial<ApiError>);
     expect(calls).toEqual(["object:apply"]);
+  });
+});
+
+describe("narrowing the Channel's own scope", () => {
+  it("given a Space applied while everybody could read, when the Channel narrows, then its readers are seated and attributed first", async () => {
+    const calls: string[] = [];
+    // Organization-wide with one participant: the Space's readers were never
+    // seated, because everybody could already read.
+    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER]) });
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        sources: {
+          direct: { scope: "workspace", participantUserIds: [OWNER] },
+          spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER, OTHER] }],
+        },
+      }),
+      auth,
+    );
+
+    expect(await service.narrowDirectScope(CHANNEL)).toEqual([READER, OTHER]);
+
+    // Seated through the canonical add, carrying the Space, and attributed to
+    // it in one confirmation — without which the next retraction of that Space
+    // reads them as the Channel's own and leaves them behind.
+    expect(calls).toEqual([
+      "object:sources",
+      `canonical:add(${READER}:space)`,
+      `canonical:add(${OTHER}:space)`,
+      `object:confirm(${READER},${OTHER})`,
+    ]);
+  });
+
+  it("given a Space that is still Organization-wide, when the Channel narrows, then nobody is seated", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER]) });
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        sources: {
+          direct: { scope: "workspace", participantUserIds: [OWNER] },
+          spaces: [{ spaceId: SPACE, scope: "workspace", participantUserIds: [READER] }],
+        },
+      }),
+      auth,
+    );
+
+    // The audience stays Organization-wide whatever the Channel records, so
+    // seating anybody would claim this source supplied access it did not, and
+    // `recordDirectScope` refuses the narrowing a moment later anyway.
+    expect(await service.narrowDirectScope(CHANNEL)).toEqual([]);
+    expect(calls).toEqual(["object:sources"]);
+  });
+
+  it("given a reader the Channel already seats, when it narrows, then nothing is added for them", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER, READER]) });
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        sources: {
+          direct: { scope: "workspace", participantUserIds: [OWNER] },
+          spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER] }],
+        },
+      }),
+      auth,
+    );
+
+    expect(await service.narrowDirectScope(CHANNEL)).toEqual([]);
+    expect(calls).toEqual(["object:sources"]);
   });
 });
 
