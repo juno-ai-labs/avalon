@@ -377,6 +377,8 @@ export interface OpenRouterInferencePayload {
   messages: ModelMessage[];
   stream: true;
   stream_options: { include_usage: true };
+  /** Usage accounting. Absent on providers Rally prices itself. */
+  usage?: { include: true };
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
   parallel_tool_calls?: true;
@@ -491,6 +493,8 @@ export type StructuredModelDiagnostic = {
   outputTokens?: number;
   reasoningTokens?: number;
   cachedInputTokens?: number | null;
+  /** Provider-reported spend for this one call, in cents. */
+  costCents?: number;
   success?: boolean;
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
@@ -796,7 +800,28 @@ export class OpenRouterClient {
           | "outputTokens"
           | "reasoningTokens"
           | "cachedInputTokens"
+          | "costCents"
         >> | undefined;
+        /**
+         * A response that triggers repair is the terminal state of *this*
+         * `inferenceRequestId`: the retry runs under a new one. Without this
+         * the lakehouse keeps the `model_request` row and never receives a
+         * matching attempt, so a call that was billed is recorded nowhere and
+         * the request/attempt pair operators join on dangles.
+         */
+        const emitRepairedTerminal = (failureKind: string): Promise<void> => emitDiagnostic({
+          stage: "complete",
+          schemaName: input.schemaName,
+          model,
+          attempt,
+          fallbackAttempt,
+          repairAttempt,
+          inferenceRequestId,
+          success: false,
+          failureKind,
+          ...(responseMetrics ?? {}),
+          ...(responsePayload ? { responsePayload } : {}),
+        });
         try {
           const builtTracePayload = this.config.traceContext
             ? buildOpenRouterTracePayload(this.config.traceContext, {
@@ -882,6 +907,7 @@ export class OpenRouterClient {
           const outputTokens = providerUsageNumber(normalizedUsage, "completion_tokens");
           const reasoningTokens = providerUsageNumber(normalizedUsage, "reasoning_tokens");
           const cachedInputTokens = providerCachedTokens(normalizedUsage);
+          const costCents = providerCostCents(normalizedUsage);
           responseMetrics = {
             latencyMs: Date.now() - startedAt,
             responseBytes: new TextEncoder().encode(content).byteLength,
@@ -889,6 +915,7 @@ export class OpenRouterClient {
             ...(outputTokens === undefined ? {} : { outputTokens }),
             ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
             ...(cachedInputTokens === null ? {} : { cachedInputTokens }),
+            ...(costCents === undefined ? {} : { costCents }),
           };
           await emitDiagnostic({
             stage: "model_response",
@@ -926,6 +953,7 @@ export class OpenRouterClient {
                 inferenceRequestId,
                 validationIssues,
               });
+              await emitRepairedTerminal("invalid_json");
               attempt -= 1;
               continue;
             }
@@ -973,6 +1001,7 @@ export class OpenRouterClient {
                 inferenceRequestId,
                 validationIssues,
               });
+              await emitRepairedTerminal("validation_error");
               attempt -= 1;
               continue;
             }
@@ -1006,6 +1035,10 @@ export class OpenRouterClient {
             repairAttempt,
             inferenceRequestId,
             latencyMs: Date.now() - startedAt,
+            // A failure after the response arrived was still billed, and the
+            // response's own latency, tokens and cost are the accurate ones;
+            // the elapsed figure above stands only when nothing came back.
+            ...(responseMetrics ?? {}),
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
             ...(responsePayload ? { responsePayload } : {}),
@@ -1479,7 +1512,17 @@ function serializeOpenRouterChatRequest(input: {
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.trace ? { trace: input.trace } : {}),
     };
-    return JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>;
+    return {
+      ...JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>,
+      // OpenRouter reports `usage.cost` only when the request opts into usage
+      // accounting; without this the usage object arrives complete in every
+      // respect except the one Rally bills on, and the reported cost is a
+      // structurally sound zero all the way into `cost_microusd`. It is set
+      // after the SDK serializer rather than through it because this SDK
+      // release has no typed field for it and drops unknown keys. Azure is
+      // priced from Rally's own rate card and never reaches this function.
+      usage: { include: true },
+    };
   } catch (error) {
     if (error instanceof OpenRouterRequestError) throw error;
     throw new OpenRouterRequestError("Invalid OpenRouter chat request");
@@ -1949,6 +1992,21 @@ async function readJsonResponse<T>(response: Response): Promise<{ value: T | nul
 function providerUsageNumber(usage: Record<string, number> | null, key: string): number | undefined {
   const value = usage?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The one reader of provider-reported spend, in cents; `cost` arrives in
+ * dollars. It returns `undefined` rather than `0` when the provider said
+ * nothing, because those are different facts and the whole point of the
+ * column is that they stay different — a caller that needs a number for
+ * arithmetic applies its own default. Exported so the streamed path shares
+ * it: two implementations of `usage.cost * 100` differing only in their
+ * default is how one surface came to report a structural zero beside real
+ * measurements.
+ */
+export function providerCostCents(usage: Record<string, number> | null): number | undefined {
+  const dollars = usage?.cost;
+  return typeof dollars === "number" && Number.isFinite(dollars) ? dollars * 100 : undefined;
 }
 
 function providerCachedTokens(usage: Record<string, number> | null): number | null {

@@ -71,6 +71,7 @@ import {
   buildOpenRouterTracePayload,
   canonicalToolInputHash,
   modelMessageWithoutProvenance,
+  providerCostCents,
   type HarnessEvent,
   type HarnessFailure,
   type HarnessOutcome,
@@ -2240,6 +2241,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             messages: requestMessages,
             stream: true as const,
             stream_options: { include_usage: true as const },
+            // Mirrors what the OpenRouter client actually serializes, so the
+            // recorded request is the request. Azure is priced from Rally's
+            // own rate card and takes no accounting flag.
+            ...(candidate.providerId === OPENROUTER_PROVIDER
+              ? { usage: { include: true as const } }
+              : {}),
             ...(wireTools.length > 0
               ? {
                   tools: wireTools,
@@ -2320,6 +2327,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             rawResult,
             azurePricing.get(candidate.canonicalModelId),
           );
+          const reportedCostCents = providerCostCents(result.usage);
           const defect = detectCompletionDefect({
             content: result.content || null,
             tool_calls: result.toolCalls,
@@ -2349,7 +2357,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             outputTokens: numberFromUsage(result.usage, "completion_tokens"),
             reasoningTokens: numberFromUsage(result.usage, "reasoning_tokens"),
             cachedInputTokens: cachedTokens(result.usage),
-            costCents: costCents(result.usage),
+            // Omitted, not zeroed, when the provider reported no cost.
+            ...(reportedCostCents === undefined ? {} : { costCents: reportedCostCents }),
             responseBytes: result.responseBytes,
             response: {
               content: result.content,
@@ -3912,9 +3921,14 @@ function cachedTokens(usage: Record<string, number> | null): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * The run's own running total, which is arithmetic and so needs a number. An
+ * attempt's *reported* spend is `providerCostCents` and may be absent; do not
+ * substitute this for it, or an unreported cost becomes a zero the lakehouse
+ * cannot tell from a free call.
+ */
 function costCents(usage: Record<string, number> | null): number {
-  const dollars = usage?.cost;
-  return typeof dollars === "number" && Number.isFinite(dollars) ? dollars * 100 : 0;
+  return providerCostCents(usage) ?? 0;
 }
 
 function usageRecord(state: ToolLoopState): Record<string, number> {

@@ -30,7 +30,7 @@ describe("Daytona Terminal provider", () => {
       target: "us", snapshot: "snapshot", emergencyDisabled: false,
     }, () => ({ create: vi.fn(), get }), {
       now: vi.fn(() => times.shift()!),
-      observeRequest: (measurement) => measurements.push(measurement),
+      observeRequest: (measurement) => { measurements.push(measurement); },
     });
 
     await expect(provider.runUtilityCommand("sandbox-utility", {

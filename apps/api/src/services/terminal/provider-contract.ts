@@ -59,7 +59,19 @@ export interface TerminalProviderOperationMeasurement {
 export interface TerminalProviderInstrumentation {
   now?: () => number;
   observe?: (measurement: TerminalProviderOperationMeasurement) => void;
-  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void;
+  /**
+   * Awaited by the provider before the request it describes is allowed to
+   * complete. A caller that reports across a Worker boundary needs that
+   * ordering: deferred delivery let a tool log its own totals before its last
+   * request had been counted.
+   */
+  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void | Promise<void>;
+  /**
+   * Whether `observeRequest` has anyone to report to right now. A caller whose
+   * `observeRequest` is a fixed routing function rather than a listener
+   * supplies this so measurement work is skipped when nothing is listening.
+   */
+  requestObserved?: () => boolean;
 }
 
 export interface CreateTerminalSandboxInput {
