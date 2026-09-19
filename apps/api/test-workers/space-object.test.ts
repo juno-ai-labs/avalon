@@ -32,8 +32,10 @@ import type { ScopeGrantMutation, ScopeGrantMutationResult } from "@rally/contra
 
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
+import { latestMigrationVersion } from "../src/durable-objects/migration-reporting";
 import { spaceDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import { consumeEffectBodies } from "./helpers/conversation-effects";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -202,18 +204,23 @@ describe("a Space's Durable Object", () => {
     // The role's migration identity, not the class it extends. A plan that
     // reported `workstream_do` would file every Space's schema version under
     // the Channel rollup, and one that reported `WorkstreamDO` would make this
-    // object refuse the command the tracker sends it.
-    expect(result).toMatchObject({ className: "SpaceDO", component: "space_do", schemaVersion: 2 });
+    // object refuse the command the tracker sends it. The *ledger* is the
+    // Channel's, which is why the version is the Channel's head.
+    expect(result).toMatchObject({
+      className: "SpaceDO",
+      component: "space_do",
+      schemaVersion: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+    });
 
     await runInDurableObject(space(), (_instance, state) => {
-      // A ledger shorter than the Channel's by an order of magnitude, and the
-      // same shape: version 1 renders what the Channel ledger's first
-      // seventeen versions end at, and each later version is the one the
-      // Channel ledger gained, so an inherited method never meets a missing
-      // table.
+      // Every version the Channel ledger holds, receipted under this object's
+      // own component. A Space replays history it never had — the version-17
+      // grant-directory retirement among it — because one array applied twice
+      // is what keeps a table added for a Channel from having to be written a
+      // second time for a Space.
       expect(state.storage.sql.exec<{ version: number }>(
         "SELECT version FROM _sql_schema_migrations ORDER BY version",
-      ).toArray()).toEqual([{ version: 1 }, { version: 2 }]);
+      ).toArray()).toEqual(WORKSTREAM_DO_SCHEMA_MIGRATIONS.map(({ version }) => ({ version })));
       for (const table of ["scope_grants", "conversation_children", "durable_outbox", "object_retirement"]) {
         expect(state.storage.sql.exec(
           "SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
