@@ -4358,7 +4358,12 @@ pre {
 .attachment-file-icon.is-audio,
 .attachment-file-icon.is-pdf { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 
-.attachment-lightbox-overlay { backdrop-filter: blur(1px); background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
+/* The lightbox covers the window without hiding it: a half-strength wash of the
+   surface colour, with the window behind it blurred enough to stop competing for
+   attention and not so much that a person loses where they were. The wash used
+   to be `scrim.solid`, which is opaque in practice, and the 1px blur under it
+   was invisible. */
+.attachment-lightbox-overlay { backdrop-filter: blur(6px); background: var(--av-sys-color-scrim-veil); inset: 0; position: fixed; z-index: 1000; }
 .attachment-lightbox { inset: 0; position: fixed; z-index: 1001; }
 .attachment-lightbox-a11y-title { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
 .attachment-lightbox.is-media-viewer { background: transparent; display: block; }

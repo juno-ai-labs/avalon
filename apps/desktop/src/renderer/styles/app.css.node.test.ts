@@ -1516,6 +1516,20 @@ describe('attachment lightbox', () => {
     expect(text).not.toBeNull();
     expect(text).toContain('font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;');
   });
+
+  /*
+    The wash and the blur only work as a pair. `scrim.solid` is 0.98 in both
+    appearances, so for as long as the overlay took it the window behind was
+    hidden outright and the blur under it drew nothing — which is why a blur
+    radius sat there at 1px, doing nothing, without anyone noticing.
+  */
+  it('shows the window behind it through a half-strength wash, blurred', () => {
+    const overlay = rule('.attachment-lightbox-overlay');
+
+    expect(overlay).not.toBeNull();
+    expect(overlay).toContain('background: var(--av-sys-color-scrim-veil);');
+    expect(overlay).toContain('backdrop-filter: blur(6px);');
+  });
 });
 
 /**

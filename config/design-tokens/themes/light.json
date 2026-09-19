@@ -98,6 +98,7 @@
     "sys.color.scrim.default": "rgba(38, 36, 30, 0.34)",
     "sys.color.scrim.subtle": "rgba(38, 36, 30, 0.18)",
     "sys.color.scrim.solid": "rgba(246, 245, 241, 0.98)",
+    "sys.color.scrim.veil": "rgba(246, 245, 241, 0.5)",
     "sys.color.focus.default": "#0c64c1",
     "sys.color.focus.quiet": "#0c64c1",
     "sys.color.selection.background": "rgba(210, 130, 44, 0.22)",
