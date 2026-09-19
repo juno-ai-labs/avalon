@@ -2333,8 +2333,8 @@ export function ElicitationPanel({
     setError(null);
     try {
       await onAnswer(answer, customResponse);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Your response could not be saved.');
+    } catch {
+      setError('Your response couldn’t be saved. Try again.');
     } finally {
       setSubmitting(false);
     }
@@ -2345,8 +2345,8 @@ export function ElicitationPanel({
     setError(null);
     try {
       await onAnswer(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'This question could not be skipped.');
+    } catch {
+      setError('This question couldn’t be skipped. Try again.');
     } finally {
       setSubmitting(false);
     }
@@ -2513,7 +2513,7 @@ interface MessageBlockProps {
   /** Creates the automation a proposal card names. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
-  acceptDraftFailed?: boolean | undefined;
+  acceptDraftFailureFor?: string | null;
   /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
   connectorConnectionCards?: boolean;
   connectedConnectorSelections?: ReadonlySet<string>;
@@ -2533,7 +2533,7 @@ export function MessageBlock({
   rowDisclosure,
   onAcceptDraft,
   acceptingDraftFor,
-  acceptDraftFailed,
+  acceptDraftFailureFor,
   connectorConnectionCards = false,
   connectedConnectorSelections,
   onConnectorConnected,
@@ -2649,7 +2649,7 @@ export function MessageBlock({
       <DraftProposedCard
         accepting={acceptingDraftFor === message.draftProposed.automationId}
         detail={message.draftProposed}
-        failed={acceptDraftFailed}
+        failed={acceptDraftFailureFor === message.draftProposed.automationId}
         messageId={message.id}
         {...(onAcceptDraft ? { onAccept: onAcceptDraft } : {})}
       />
