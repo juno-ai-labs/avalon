@@ -26,7 +26,7 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/durable-objects/substream-agent.ts` | The authoritative create, opening turn/run, feed snapshot, and synchronous child-effect drain used by the route-activation fence. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `workspace-do.ts` | Aggregate the child's metadata, commit the authoritative workspace directory row, and prove it exists before the D1 route becomes active. |
 | `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
-| `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, verified-to-active route transition, hierarchy drain, and email activation. |
+| `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, the Space memberships the new Channel is born with, verified-to-active route transition, hierarchy drain, and email activation. |
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
@@ -63,9 +63,9 @@ the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
 The launcher starts with focus in the opening-message text input, including
-when opened from a project. The composer is keyed by its draft identity so
-switching between project launchers also restores initial focus; that key stays
-stable throughout the launch hand-off. The sidebar lists existing work streams without a
+when opened from a Space. The composer is keyed by its draft identity — which
+carries the Space it was opened from — so switching between Space launchers also
+restores initial focus; that key stays stable throughout the launch hand-off. The sidebar lists existing work streams without a
 placeholder row for the unsent draft. Recipient selection remains available
 when the person chooses the recipient field.
 
@@ -96,8 +96,8 @@ them to the work stream about to be created, because `POST /workstreams` carries
 participant ids and no mention spans: a name that only reached the text would
 arrive with nobody attached to it. The dialog is still one click away on the
 participant row above the composer, and remains the place a participant is
-removed. A personal project's row is not that picker: it is a label whose
-tooltip says participants are managed by the project, and the faces in it do
+removed. A personal Space's row is not that picker: it is a label whose
+tooltip says participants are managed by the Space, and the faces in it do
 not open their own name tooltips — two tooltips on the same hover is the
 native-`title` problem `AvatarStack` exists to avoid.
 
@@ -175,6 +175,51 @@ Workflows round trip to `waitUntil` was built, reviewed, and taken back out. The
 changelog below records why. The wait is not what the person who pressed enter
 experiences — the launch surface above is — so buying it back with a durability
 risk was the wrong trade.
+
+### The Space a Channel is born in
+
+Every Channel belongs to at least one Space, and creation is where that becomes
+true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
+means General** — `SpaceService.ensureGeneral` makes the Organization's General
+Space if this is the first thing that ever needed it.
+
+The audience the Channel opens with is derived from those Spaces rather than
+taken from the request. `resolveSpaceWorkstreamStart` runs the same
+`effectiveChannelAudience` algebra the rest of the Space module uses over the
+named Spaces plus the caller's own request: if any of them is Organization-wide
+the Channel opens `workspace` and the requested participants are kept as
+participants; otherwise it opens personal over the union of the Spaces' rosters
+and the caller's. A requested participant who is in none of the named Spaces'
+rosters is refused with `409 space_audience_incompatible` rather than silently
+seated — the Channel would otherwise open with a reader the Space that holds it
+cannot account for. The Spaces' `defaultResourceIds` are unioned with the
+caller's origin resources, so a Channel started in a Space begins with what that
+Space hands down.
+
+**The memberships settle before the main conversation is reserved.** That order
+is load-bearing and is not an implementation detail: reserving the child arms
+the parent's recovery alarm, and `drainParentOutboxWithCreationFence` delivers
+the deferred provisional directory row itself if it wins the race with the
+coordinator. A settlement any later would therefore publish, on any failure in
+between, a Channel that is Organization-wide and in no Space at all. Settled
+first, the row carries its placement whichever path publishes it. The Channel's
+own record of *which* Space reaches it is written after the reservation — the
+Channel's authority asserts a parent identity the reservation is what writes —
+and before `initialize`, because which Space reaches a Channel is true of it
+whether or not anybody ever opened it.
+
+A failure before the settlement cancels every staged membership: a `joining` row
+no list shows and no alarm finishes is a placement that would never become one.
+A failure after it leaves an active membership for a Channel whose conversation
+may never open, which is the residue to prefer — a retry under the same create
+key reuses the same id, and the settlement is idempotent at the generation it
+already has. A replayed receipt reconciles through
+`reconcileReplayedSpaceMembership` rather than staging a second placement.
+
+The one creation path that does not go through here is the Slack agent's, which
+opens a Channel for a Slack member with no Rally identity and provisions the
+conversation itself; it calls `placeConnectorChannelInGeneral` for the same
+step. [`spaces.md`](spaces.md) owns both.
 
 The one saving kept is that the participant and attachment checks run
 concurrently. Both are no-ops when there is nothing to check, so it costs
@@ -444,6 +489,47 @@ launcher's header now appears rather than opening; what motion the hand-off has
 left is the dock's participant row and the transcript's own arrival. "Dressed
 exactly as the screen it is about to become" is true of the border too, which it
 had not been: the rule blinked off at the swap, at 55px and at 44px alike.
+
+### 2026-09-19 — A Channel is born in a Space, and settles it before it can be seen
+
+**What changed:** `WorkstreamCreationFields` carries `spaceIds` in place of
+`projectId`, and an empty list means General. The audience is derived from the
+named Spaces through `resolveSpaceWorkstreamStart` rather than taken from the
+request; a requested participant outside every named Space's roster is refused
+with `space_audience_incompatible`. The staged memberships now settle **before**
+the main conversation is reserved, and the Channel's Space sources are recorded
+between the reservation and `initialize`. `apps/api/test-workers/space-creation.test.ts`
+covers both halves on real workerd.
+
+**Why:** Every Space invariant is written about every Channel in the
+Organization, and a Channel that could be created outside one made all of them
+conditional. Deriving the audience is the same requirement from the other side:
+a Channel started in an Organization-wide Space is readable by the Organization
+the moment it exists, and a creation that opened it personal and let a later
+membership widen it would have published a narrower Channel first and disclosed
+it second.
+
+The ordering was a bug this change found rather than a design it started with.
+The settlement used to run after `initialize` and before the directory flush, on
+the reasoning that the flush is what makes a Channel visible. It is not the only
+thing that does: reserving the main conversation arms the parent's recovery
+alarm, which delivers the deferred provisional directory row itself if it wins
+the race. The new workerd case saw exactly that — a failed creation's Channel
+listed with `scope: "workspace"` and `spaceIds: []`.
+
+**Considered and rejected:** Placing the Channel with a follow-up call after the
+create returns. The PRD requires a named Space to be established with the
+Channel or the creation to fail without publishing one, and a second call is
+neither. Also rejected: keeping the settlement last and making the recovery
+alarm skip a Channel with no placement. That would have made the alarm's
+correctness depend on a Space fact it has no reason to know, and left the same
+race for anything else that drains a parent outbox.
+
+**Consequences:** A future change must keep the settlement ahead of
+`reserveChild`. The residue swapped with the order: a failure after the
+settlement now leaves an active membership for a Channel whose conversation may
+never open, which the retry under the same create key reuses, and which the
+cutover's receipts skip.
 
 ### 2026-09-17 — Keep grant handoff off ordinary creation
 

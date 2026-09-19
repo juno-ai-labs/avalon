@@ -97,11 +97,13 @@ Retirement runs in this order, and the order is the design:
    writes. From this instant no session into the workspace authenticates
    (`401 session_revoked` on its next request) and the workspace leaves every
    member's discovery.
-2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads both
-   directories while they still answer, writes each parent into
-   `workspace_retirement_graph`, and writes the tombstone. Doing this in one call
-   is what leaves no window in which a caller writes into a half-closed
-   workspace.
+2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads the
+   work-stream and automation directories and the Space ids while they still
+   answer, writes each parent into `workspace_retirement_graph` under its kind,
+   and writes the tombstone. Doing this in one call is what leaves no window in
+   which a caller writes into a half-closed workspace. Archived Spaces are
+   enumerated too: what is being closed is an object, not a product surface, and
+   an archived Space is still a `SpaceDO` holding a hidden main conversation.
 3. **Clear every wake reason, and close every socket.** The same transaction
    deletes `_internal_durable_alarms`, the platform alarm is deleted immediately
    after, and every socket the object holds is closed with `1008`, the code the
@@ -429,6 +431,29 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-09-19 — Spaces are enumerated, and the walk knows which namespace to ask
+
+**What changed:** `beginWorkspaceRetirement` writes a `parent_kind = 'space'`
+node for every Space in the Organization, archived ones included, and
+`retireWorkspaceGraph` resolves a `space` node through `spaceDOName` against the
+work-stream namespace. That closes the gap the entry below named as known.
+
+**Why:** The widened CHECK admitted a kind nothing produced, so an Organization
+with Spaces still reported complete with every `SpaceDO` open and answering — a
+retirement that is not one. A Space is `WorkstreamDO` under a role and lives in
+the same namespace, so the only thing the walk needed was the right object
+*name*; the children-before-parents order already handles its hidden main
+conversation, because a Space is the same class.
+
+**Considered and rejected:** Enumerating only active Spaces, on the reading that
+an archived Space is already closed. It is not: archiving is a product state
+that leaves the object and its conversation intact, and a graph that skipped
+them would have moved the gap rather than closed it.
+
+**Consequences:** An Organization's node count now scales with its Spaces as
+well as its Channels and Sidekicks. Nothing else changes — a Space node is
+retired, receipted and resumed exactly like a Channel node.
 
 ### 2026-09-19 — The graph admits a third parent kind, and gets a changelog heading
 
