@@ -169,16 +169,20 @@ export function SpaceSidebarSection({
   // arranged here anyway: it is what makes a drag something this component can
   // show before the server has answered, and what makes all three hand-ordered
   // lists one rule rather than one rule and one convention.
-  const storedSpaceIds = orderByStoredIds(
+  const storedSpaces = orderByStoredIds(
     spaces,
     storedOrderFor(ordering, spaceContainer),
     (space) => space.id,
-  ).map((space) => space.id);
+  );
+  const storedSpaceIds = storedSpaces.map((space) => space.id);
   // Two orders, and the difference between them is what a drop commits: the
   // one the server last confirmed, and the one the pointer is building on top
   // of it. Comparing a finished drag against the second would compare it with
-  // itself and conclude nothing moved.
-  const ordered = orderByStoredIds(spaces, dragOrder ?? storedSpaceIds, (space) => space.id);
+  // itself and conclude nothing moved. The rule is applied once — running it
+  // again over its own output is idempotent and reads as a second rule.
+  const ordered = dragOrder === null
+    ? storedSpaces
+    : orderByStoredIds(spaces, dragOrder, (space) => space.id);
   const openSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   // Opening a Space's dashboard expands its row even if it was collapsed by
   // hand the last time it was open: the exception was about that visit.
@@ -247,7 +251,11 @@ export function SpaceSidebarSection({
       // windows are showing.
       setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder));
     } finally {
-      setDragOrder(null);
+      // Only while this call's arrangement is the one on screen. Two moves in
+      // quick succession overlap — two Alt+Arrows on a focused row is one
+      // gesture to a reader — and clearing unconditionally would flash the
+      // list back to an order the second has already moved past.
+      setDragOrder((current) => current === ids ? null : current);
     }
   };
 
@@ -283,6 +291,11 @@ export function SpaceSidebarSection({
         event before it reaches here.
       */}
       <section
+        // On the section rather than on the list `div` under it, which has no
+        // role: a description hung on a `generic` element is one a screen
+        // reader is free to ignore, and a `<section>` with a name is a
+        // `region`. The pinned section says its own hint the same way.
+        aria-describedby="spaces-reorder-help"
         aria-labelledby="spaces-heading"
         className="sidebar-section spaces-section"
         onDragOver={(event) => {
@@ -310,7 +323,7 @@ export function SpaceSidebarSection({
         ) : spaces.length === 0 ? (
           <p className="sidebar-empty">No spaces yet</p>
         ) : (
-          <div aria-describedby="spaces-reorder-help" className="sidebar-list">
+          <div className="sidebar-list">
             {/* Said once for the whole section rather than on every row: as a
                 per-row description it lands inside each link's accessible
                 name, so somebody arrowing through hears the instruction again
@@ -340,15 +353,17 @@ export function SpaceSidebarSection({
               // commits: the one the server last confirmed, and the one the
               // pointer is building on top of it. Comparing a finished drag
               // against the second would compare it with itself and conclude
-              // nothing moved.
-              const stored = orderByStoredIds(
+              // nothing moved. The rule is applied once — running it again
+              // over its own output is idempotent and reads as a second rule.
+              const storedPlacements = orderByStoredIds(
                 natural,
                 storedOrderFor(ordering, { kind: 'space', id: space.id }),
                 (workstream) => workstream.id,
-              ).map((workstream) => workstream.id);
+              );
+              const stored = storedPlacements.map((workstream) => workstream.id);
               const placements = placementOrder?.spaceId === space.id
                 ? orderByStoredIds(natural, placementOrder.ids, (workstream) => workstream.id)
-                : orderByStoredIds(natural, stored, (workstream) => workstream.id);
+                : storedPlacements;
               const placementIds = placements.map((workstream) => workstream.id);
               const placementRowDrag = (
                 workstream: WorkstreamSummary,
@@ -459,6 +474,14 @@ export function SpaceSidebarSection({
                       // release anywhere else on a Space is a placement. A
                       // Channel dropped on a Space it is already in is neither
                       // — it is a drag that changed nothing.
+                      //
+                      // `placementIds` is what this device has loaded, so a
+                      // Channel already in the Space but outside that page
+                      // falls through and is added again. That costs a round
+                      // trip and nothing else: `prepareMembership` answers an
+                      // already-active membership with its own generation
+                      // rather than staging a second, and an order write
+                      // merges rather than replacing.
                       if (placementIds.includes(workstreamId)) return;
                       void onAddChannel(space.id, workstreamId).catch((cause: unknown) => {
                         setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.add_channel));

@@ -27,6 +27,16 @@ describe('the arrangement every hand-ordered list is drawn by', () => {
     expect(ids(orderByStoredIds(list, ['gone', 'b'], (item) => item.id))).toEqual(['b', 'a']);
   });
 
+  // Not reachable today — the authority writes a deduplicated list and
+  // `moveWithin` cannot make one — but a row drawn twice under one identity is
+  // what React keys and the drag would both then be reading as one row in two
+  // places, and this is the function every list in the app goes through.
+  it('draws a row once however many times the arrangement names it', () => {
+    const list = [row('a'), row('b')];
+
+    expect(ids(orderByStoredIds(list, ['b', 'b', 'a'], (item) => item.id))).toEqual(['b', 'a']);
+  });
+
   // The identity, and the state every list is in until somebody drags
   // something: the natural order stands, whatever it is.
   it('leaves a list nobody has arranged exactly as it is', () => {

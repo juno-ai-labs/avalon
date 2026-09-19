@@ -244,6 +244,13 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             // only that these are substreams, not which is which. The first
             // letter is the only part of the title a 36px mark can hold.
             const initial = [...child.title.trim()][0]?.toUpperCase();
+            // In the row's `aria-label` rather than in an `sr-only` span
+            // beside its title, which is how the sidebar's own rows carry it.
+            // The difference is forced: compact hides the title with
+            // `visibility: hidden`, so this row's accessible name cannot come
+            // from its contents, and a label set that way wins over anything
+            // inside it. Both say the position as part of the name; only the
+            // markup differs.
             const position = `${index + 1} of ${workstream.privateChildren?.length ?? 0}`;
             const row = (
               <button
