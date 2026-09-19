@@ -41,7 +41,7 @@ function successfulResend() {
   }));
 }
 
-describe("work-stream mention email", () => {
+describe("channel mention email", () => {
   it("sends a branded, escaped email with a stable recipient idempotency key", async () => {
     const resend = successfulResend();
 
@@ -72,7 +72,7 @@ describe("work-stream mention email", () => {
     expect(String(body.text)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
     expect(String(body.text)).not.toContain("avalon://");
     expect(String(body.html)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
-    expect(String(body.text)).toContain("Reply to this email to continue the work stream.");
+    expect(String(body.text)).toContain("Reply to this email to continue the channel.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");
     expect(String(body.html)).toContain("Quarterly &lt;script&gt;alert(1)&lt;/script&gt; planning");
