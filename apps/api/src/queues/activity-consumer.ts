@@ -563,7 +563,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
       try {
-        await workspace.abandonSpaceIntent({
+        await workspace.recordSpaceIntentReceipt({
           workspaceId: intent.workspaceId,
           userId: intent.requestedByUserId,
           operationId: intent.operationId,

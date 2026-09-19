@@ -56,10 +56,10 @@ function insertSpace(
 ): void {
   database.prepare(
     `INSERT INTO workspace_space_directory (
-       space_id, title, description, scope, appearance_json, archived_at,
+       space_id, title, scope, appearance_json, archived_at,
        created_by_user_id, system_role, authority_generation, source_version,
        payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
-     ) VALUES (?, 'Hiring', '', ?, NULL, NULL, ?, ?, 1, 0, '', 1, 1, 1, 1, 1)`,
+     ) VALUES (?, 'Hiring', ?, NULL, NULL, ?, ?, 1, 0, '', 1, 1, 1, 1, 1)`,
   ).run(
     overrides.spaceId ?? SPACE_ID,
     overrides.scope ?? "workspace",

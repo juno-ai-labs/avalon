@@ -194,7 +194,7 @@ it('reports feature table and remaining-reference inventory through the real wor
   await stub.retiredMeetingInventory();
   await runInDurableObject(stub, async (_instance, state) => { await state.storage.put('unrelated-fixture', 'keep'); });
   const inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(60);
+  expect(inventory.schemaVersion).toBe(61);
   expect(inventory.references).toEqual([]);
   expect(inventory.resources).toEqual([]);
   expect(inventory.featureTables).toEqual([]);
@@ -264,7 +264,7 @@ it('keeps populated pre-retirement workspaces reachable across cold starts and f
   expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
   await evictDurableObject(stub);
   inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(60);
+  expect(inventory.schemaVersion).toBe(61);
   expect(inventory.featureTables).toEqual([]);
 });
 
@@ -276,11 +276,11 @@ it('removes the adopted-schema shim before running later migrations', async () =
     applyDurableObjectSqliteMigrations({ ...options, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version < 57) });
     state.storage.sql.exec('DROP TABLE automation_resources');
     applyMeetingRetirementMigrations({ ...options, migrations: [...WORKSPACE_DO_SCHEMA_MIGRATIONS, {
-      version: 61, description: 'test later migration observes original adopted schema', statements: [
+      version: 62, description: 'test later migration observes original adopted schema', statements: [
         'CREATE TABLE test_shim_guard (remaining INTEGER CHECK (remaining = 0)) STRICT',
         "INSERT INTO test_shim_guard SELECT COUNT(*) FROM sqlite_schema WHERE name = 'automation_resources'",
       ],
     }] });
-    expect(state.storage.sql.exec('SELECT MAX(version) AS version FROM _sql_schema_migrations').one()).toEqual({ version: 61 });
+    expect(state.storage.sql.exec('SELECT MAX(version) AS version FROM _sql_schema_migrations').one()).toEqual({ version: 62 });
   });
 });
