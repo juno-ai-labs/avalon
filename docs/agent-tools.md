@@ -448,7 +448,11 @@ recover from is better than a capability it can sometimes use and cannot reason 
 
 Where truncation is kinder than refusal — a long reference read — truncate
 **with a visible marker** so the boundary is legible to the model instead of
-arriving later as a provider context error.
+arriving later as a provider context error. `truncateTextWithMarker` in
+`@rally/connectors` is that marker, and it spends itself from the budget rather
+than adding to it: a bound that reports 12,000 characters and delivers 12,064 is
+not a bound. A bare `truncateText(value, max).text` throws away the flag beside
+it, which is how an adapter ships a cut nobody downstream can see.
 
 ### 7. Idempotency: mirror identical retries, reject reused keys
 
@@ -486,6 +490,52 @@ absolute address alongside the id, built by the shared helper rather than
 hand-assembled in the handler, so every producer stays in sync. Building it is
 best-effort: if the address cannot be resolved, omit the field rather than
 failing the create.
+
+**A list returns a declared row, never the provider's object.** Name the fields
+one row carries, in a `FieldProjection` beside the tool, and apply it with
+`projectFields` from `@rally/connectors` before anything else touches the value.
+A provider's object is not a row: GitHub's pull request embeds `head.repo` and
+`base.repo`, two complete repository records with about thirty URL templates
+each, and its workflow run embeds `repository` and `head_repository` the same
+way. Measured on a real substream, that was 24.5 KB per pull request and 21.3 KB
+per workflow run against roughly 400 bytes of answer, and five list calls
+accounted for 5.1 MB of 5.2 MB of model-facing payload.
+
+Note what did *not* prevent it. Every count-based bound was inside its limit
+throughout — `perPage` at 30 of 100, no string near its character clamp, no
+array near a hundred entries, nothing eight levels deep. **A row is wide, not
+long, and no cap on length fixes a width problem.** Lowering the page size is
+the intuitive fix and it makes things worse: it does not change the bytes per
+useful fact, it just buys the same waste in more round trips.
+
+Four rules decide what a row holds:
+
+- **Whatever another tool documents as copied from this one stays.** A
+  projection that drops an id does not save bytes, it breaks the tool that was
+  documented to take it.
+- **A field the provider sent as `null` stays `null`, at any depth**, because
+  `merged_at: null` is the answer to "was it merged". A field the provider never
+  sent stays absent, because a synthesized `null` claims it answered a question
+  nobody asked it.
+- **Provider fields keep the provider's spelling.** A model that learned an API
+  in pretraining reaches for `html_url` and `head.ref` (rule 2 above); only the
+  envelope around the rows is ours to name.
+- **The list says what its row holds, and names the tool that returns the
+  rest.** A model cannot see an absent field, and will read one as empty. This
+  is the sentence that keeps a summary from being mistaken for the whole record.
+
+Do not add a `fields` parameter so the model can ask for more. It is one more
+optional parameter beside the others, and [rule 13](#13-every-parameter-says-what-it-is-for-and-what-leaving-it-out-does)
+records what a parameter a model does not understand costs. If a row is missing
+something, add it to the row for everyone, or point the model at the `get`.
+
+The projection is not a limit in the sense of
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md):
+it is a design decision about what the tool is for, cheap to reverse, and its
+failure is visible in the next call. The clamps behind it — the character,
+array, and depth bounds an adapter already applies — stay where they are, doing
+the job they are good at, which is bounding one declared field that is
+legitimately enormous.
 
 ### 9. Make compare-and-swap tokens copyable and sequenceable
 
@@ -1060,6 +1110,41 @@ future agent tool or plugin, not just this family.
   system messages that tell the model when to reach for a tool.
 - [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.
+
+## Changelog
+
+### 2026-09-19 — A list returns a declared row, not the provider's object
+
+**What changed:** Tool results are projected onto a declared set of field paths
+before anything else sees them. `projectFields` and the `FieldProjection` type
+are in `packages/connectors/src/provider-utils.ts`; every GitHub list tool now
+declares its row, and `truncateTextWithMarker` makes a cut visible instead of
+silent. Rule 8 above holds the contract.
+
+**Why:** A substream measurement found five GitHub list calls holding 5.1 MB of
+5.2 MB of model-facing payload — 24.5 KB per pull request, 21.3 KB per workflow
+run, against roughly 400 bytes of answer. Nothing was unbounded: `perPage`, the
+character clamps, and the array and depth clamps in `boundGitHubValue` were all
+inside their limits, because they all bound a row's *length* and the problem was
+its *width*. Six adapters in this package carry a near-identical clamp-only
+walker, so the projection is a primitive rather than a fix to one adapter's
+output, and GitHub is its first caller.
+
+**Considered and rejected:** Lowering `perPage`, which leaves the bytes per
+useful fact unchanged and buys the same waste in more round trips. A defensive
+byte ceiling on a tool result, which truncates the useful tail of a page to keep
+its useless head, and whose number is the team's rather than an implementer's
+([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md));
+that guard is still worth having, at the harness boundary where it covers hosted
+and custom MCP too, and it belongs after a measurement of what rows now cost. A
+model-supplied `fields` parameter, which is another optional parameter for a
+small model to guess at.
+
+**What a future change has to respect:** A row that drops an identifier another
+tool documents as copied from it is a broken tool, not a smaller one. A declared
+field the provider sent as `null` has to survive as `null`, and one the provider
+omitted has to stay omitted. And a list whose description does not say what its
+row holds teaches the model to read an absent field as an empty one.
 
 ### 2026-09-16 — Move authored pagination state out of model arguments
 

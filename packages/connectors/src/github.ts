@@ -8,16 +8,19 @@ import {
   isRecord,
   isRevokedGrantCode,
   numberValue,
+  projectFields,
   providerJson,
   recordArray,
   recordValue,
   sha256Hex,
   stringValue,
   truncateText,
+  truncateTextWithMarker,
   refreshExpiringCredentials,
   verifyHmacSha256,
   withProviderReauthorization,
   type FetchLike,
+  type FieldProjection,
 } from "./provider-utils";
 import {
   assertPrincipalAccess,
@@ -406,29 +409,138 @@ const checksListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().ext
   page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
+/**
+ * What one row of each list is.
+ *
+ * A list answers "which one"; a `get` answers "what is in it". Every path below
+ * earns its place by letting the model choose a row or make the next call with
+ * it — `actions.get_workflow_run` documents `runId` as "copied from the `id`
+ * field of an actions_list_workflow_runs result", so `id` survives the
+ * projection or that tool stops working. Bodies are not here, because
+ * `issues.get` and `pull_requests.get` return them, and no `*_url` is here
+ * except the one a person would open, because this adapter builds its own
+ * requests from `owner`, `repo` and a number.
+ *
+ * What is gone is the bulk. A pull request carried `head.repo` and `base.repo`,
+ * two complete repository records each with its own thirty-odd URL templates,
+ * and a workflow run carried `repository` and `head_repository` the same way.
+ * Measured on a real substream: 24.5 KB per pull request and 21.3 KB per
+ * workflow run, against roughly 400 bytes of answer. Every count-based bound in
+ * this file — `perPage`, the string clamps, the array and depth clamps in
+ * `boundGitHubValue` — was inside its limit throughout, because a row is wide
+ * rather than long and no cap on length fixes a width problem.
+ *
+ * GitHub's own spelling is kept for provider fields: a model that learned this
+ * API in pretraining reaches for `html_url` and `head.ref`, and renaming them
+ * to match the envelope would cost more than the consistency is worth. The
+ * envelope itself (`count`, `page`, `perPage`, `hasMore`, `appliedFilters`) is
+ * this adapter's own invention and keeps this adapter's casing.
+ */
+const PULL_REQUEST_ROW: FieldProjection = [
+  "number", "title", "state", "draft",
+  "created_at", "updated_at", "closed_at", "merged_at",
+  "user.login",
+  "head.ref", "head.sha", "base.ref",
+  "labels[].name",
+  "assignees[].login",
+  "requested_reviewers[].login",
+  "html_url",
+];
+
+// `commit.verification` is kept down to its verdict. The `payload` beside it is
+// the entire raw commit object repeated as text and `signature` is the armored
+// key block, which together are most of a row on any repository that signs.
+const COMMIT_ROW: FieldProjection = [
+  "sha",
+  "commit.message",
+  "commit.author.name",
+  "commit.author.date",
+  "commit.verification.verified",
+  "author.login",
+  "html_url",
+];
+
+const ISSUE_ROW: FieldProjection = [
+  "number", "title", "state", "state_reason",
+  "created_at", "updated_at", "closed_at",
+  "user.login",
+  "labels[].name",
+  "assignees[].login",
+  "comments",
+  "html_url",
+];
+
+const WORKFLOW_RUN_ROW: FieldProjection = [
+  "id", "name", "display_title", "run_number", "run_attempt",
+  "event", "status", "conclusion",
+  "head_branch", "head_sha",
+  "created_at", "updated_at", "run_started_at",
+  "pull_requests[].number",
+  "html_url",
+];
+
+// `output.text` is dropped and `details_url` kept in its place: the text field
+// is an entire continuous-integration log, unbounded in practice, and the page
+// it would have inlined is one click away for whoever needs it.
+const CHECK_RUN_ROW: FieldProjection = [
+  "id", "name", "status", "conclusion",
+  "started_at", "completed_at",
+  "output.title", "output.summary",
+  "app.slug",
+  "details_url", "html_url",
+];
+
+// The one list whose bytes are the answer: `patch` is what the caller came for,
+// and it keeps its own `TOOL_PATCH_CHARS` budget. Only the three blob URLs
+// beside it go.
+const PULL_REQUEST_FILE_ROW: FieldProjection = [
+  "filename", "status",
+  "additions", "deletions", "changes",
+  "previous_filename",
+  "patch",
+];
+
+const PULL_REQUEST_REVIEW_ROW: FieldProjection = [
+  "id", "user.login", "state", "submitted_at", "commit_id", "body", "html_url",
+];
+
+// `name` and `owner.login` are split out beside `full_name` because they are
+// exactly the two parameters every other tool in this plugin requires, and a
+// small model should not have to split a string to make its next call.
+const REPOSITORY_ROW: FieldProjection = [
+  "full_name", "name", "owner.login",
+  "description", "default_branch",
+  "private", "archived", "language", "pushed_at",
+  "html_url",
+];
+
+const DIRECTORY_ENTRY_ROW: FieldProjection = ["name", "path", "type", "sha", "size"];
+
+const TREE_ENTRY_ROW: FieldProjection = ["path", "type", "mode", "sha", "size"];
+
 const githubToolInputSchemas = new Map<string, z.ZodType>();
 
 export const githubTools: ToolDefinition[] = [
-  tool("repositories.list", "List installation-authorized repositories, ordered by pinned status and then recent activity. Returns totalCount, page, perPage, and hasMore.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
-  tool("repositories.search", "Search installation-authorized repositories by case-insensitive repository name or owner/name. Results are ordered by pinned status and then recent activity.", GitHubCapabilities.metadataRead, "read", repositoriesSearchSchema),
+  tool("repositories.list", "List installation-authorized repositories, ordered by pinned status and then recent activity. Returns totalCount, page, perPage, and hasMore. Each repository row carries full_name along with the name and owner.login to pass to every other tool here, plus description, default_branch, private, archived, language, pushed_at, html_url, pinned, and access.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
+  tool("repositories.search", "Search installation-authorized repositories by case-insensitive repository name or owner/name. Results are ordered by pinned status and then recent activity, and carry the same row as repositories.list.", GitHubCapabilities.metadataRead, "read", repositoriesSearchSchema),
   tool("repository.get", "Read bounded metadata for one accessible GitHub repository.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
-  tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
+  tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated. Each entry carries its path, type, sha, and size, and a directory entry also carries its name.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
   tool("contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned; only a successful contents.get call counts as code-file evidence.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
-  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits; on a later page it only means the earlier pages held everything.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
-  tool("issues.list", "List issues in an accessible GitHub repository. Returns issues, count, page, perPage, hasMore, and appliedFilters. Pull requests are excluded, so this is narrower than the repository's open-issue count, which GitHub counts pull requests in; list those with pull_requests.list. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no issues; on a later page it only means the earlier pages held everything.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
+  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. Each commit row is a summary: sha, message, author name and date, whether the signature verified, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits; on a later page it only means the earlier pages held everything.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
+  tool("issues.list", "List issues in an accessible GitHub repository. Returns issues, count, page, perPage, hasMore, and appliedFilters. Each issue row is a summary: number, title, state, state_reason, author, labels, assignees, comment count, timestamps, and html_url; read an issue body with issues.get. Pull requests are excluded, so this is narrower than the repository's open-issue count, which GitHub counts pull requests in; list those with pull_requests.list. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no issues; on a later page it only means the earlier pages held everything.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
   tool("issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
   tool("issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
   tool("issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
   tool("issue_comments.create", "Create a comment on a GitHub issue.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
-  tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. To list every open pull request, send only owner and repo: head and base are narrowing filters, and on page 1 an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests. On a later page an empty list only means the earlier pages held everything.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
+  tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. Each pull request row is a summary: number, title, state, draft, author, head and base branch, head sha, labels, assignees, requested reviewers, timestamps, and html_url; read a pull request body with pull_requests.get. To list every open pull request, send only owner and repo: head and base are narrowing filters, and on page 1 an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests. On a later page an empty list only means the earlier pages held everything.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
   tool("pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
-  tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request. Returns files, count, page, perPage, and hasMore.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
-  tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. An empty page 1 means nobody has reviewed it yet; an empty later page only means the earlier pages held every review.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request. Returns files, count, page, perPage, and hasMore. Each file row carries filename, status, additions, deletions, changes, previous_filename when the file was renamed, and the patch itself.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. Each review row carries id, author, state, submitted_at, commit_id, body, and html_url. An empty page 1 means nobody has reviewed it yet; an empty later page only means the earlier pages held every review.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.create", "Create a pull request from an existing branch.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
   tool("pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
-  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs; on a later page it only means the earlier pages held everything.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
+  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. Each run row is a summary: id to pass to actions_get_workflow_run, name, display_title, run_number, run_attempt, event, status, conclusion, head_branch, head_sha, timestamps, the numbers of any pull requests it ran for, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs; on a later page it only means the earlier pages held everything.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
   tool("actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
-  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. A finished check reports its verdict in conclusion, not in status. An empty page 1 with no narrowing entries in appliedFilters means no check has reported on that ref, which is not the same as a passing one; with checkName, status, or filter in appliedFilters it means those matched nothing, and an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
+  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. Each check row is a summary: id, name, status, conclusion, timestamps, the app that reported it, output.title, output.summary, and details_url, which is where the full log lives rather than in this result. A finished check reports its verdict in conclusion, not in status. An empty page 1 with no narrowing entries in appliedFilters means no check has reported on that ref, which is not the same as a passing one; with checkName, status, or filter in appliedFilters it means those matched nothing, and an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
 ];
 
 export const GitHubAgentPluginDescriptor = defineConnectorAgentPlugin({
@@ -1452,7 +1564,7 @@ function repositoryListingValue(
   repository: Record<string, unknown>,
   pinnedNames: Set<string>,
 ): Record<string, unknown> {
-  const bounded = boundGitHubValue(repository);
+  const bounded = boundGitHubRow(repository, REPOSITORY_ROW);
   return {
     ...(isRecord(bounded) ? bounded : {}),
     pinned: repositoryIsPinned(repository, pinnedNames),
@@ -1562,7 +1674,7 @@ async function executeGitHubTool(
           mode: "directory",
           path,
           ref: args.ref ?? null,
-          entries: pageEntries.map((entry) => boundGitHubValue(entry)),
+          entries: pageEntries.map((entry) => boundGitHubRow(entry, DIRECTORY_ENTRY_ROW)),
           totalCount: entries.length,
           totalCountIsExact: !providerTruncated,
           offset: args.offset,
@@ -1625,7 +1737,7 @@ async function executeGitHubTool(
         path,
         ref,
         sha: stringValue(tree, "sha"),
-        entries: pageEntries.map((entry) => boundGitHubValue(entry)),
+        entries: pageEntries.map((entry) => boundGitHubRow(entry, TREE_ENTRY_ROW)),
         totalCount: entries.length,
         totalCountIsExact: !providerTruncated,
         offset: args.offset,
@@ -1645,7 +1757,7 @@ async function executeGitHubTool(
         per_page: args.perPage, page: args.page,
       },
     });
-    const page = githubListPage("commits", value, args, {
+    const page = githubListPage("commits", COMMIT_ROW, value, args, {
       sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until,
     });
     return { output: page, summary: `Listed ${page.count} commits in ${args.owner}/${args.repo}` };
@@ -1667,7 +1779,7 @@ async function executeGitHubTool(
     const issues = Array.isArray(value)
       ? value.filter((candidate) => isRecord(candidate) && !recordValue(candidate, "pull_request"))
       : value;
-    const page = githubListPage("issues", issues, args, {
+    const page = githubListPage("issues", ISSUE_ROW, issues, args, {
       state: args.state,
       labels: args.labels.length ? args.labels : undefined,
       since: args.since,
@@ -1736,7 +1848,7 @@ async function executeGitHubTool(
         per_page: args.perPage, page: args.page,
       },
     });
-    const page = githubListPage("pullRequests", value, args, {
+    const page = githubListPage("pullRequests", PULL_REQUEST_ROW, value, args, {
       state: args.state, head: args.head, base: args.base,
     });
     return { output: page, summary: `Listed ${page.count} pull requests in ${args.owner}/${args.repo}` };
@@ -1751,14 +1863,14 @@ async function executeGitHubTool(
   if (name === "pull_requests.list_files") {
     const args = pullRequestPageSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage, page: args.page } });
-    const page = githubListPage("files", value, args);
+    const page = githubListPage("files", PULL_REQUEST_FILE_ROW, value, args);
     return { output: page, summary: `Listed ${page.count} files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
   if (name === "pull_requests.list_reviews") {
     const args = pullRequestPageSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage, page: args.page } });
-    const page = githubListPage("reviews", value, args);
+    const page = githubListPage("reviews", PULL_REQUEST_REVIEW_ROW, value, args);
     return { output: page, summary: `Listed ${page.count} reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
@@ -1798,7 +1910,7 @@ async function executeGitHubTool(
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/actions/runs`, {
       query: { branch: args.branch, event: args.event, status: args.status, per_page: args.perPage, page: args.page },
     }), "GitHub did not return workflow runs");
-    const page = githubCountedListPage("workflowRuns", "workflow_runs", value, args, {
+    const page = githubCountedListPage("workflowRuns", WORKFLOW_RUN_ROW, "workflow_runs", value, args, {
       branch: args.branch, event: args.event, status: args.status,
     });
     return { output: page, summary: `Listed ${page.count} workflow runs in ${args.owner}/${args.repo}` };
@@ -1816,7 +1928,7 @@ async function executeGitHubTool(
       query: { check_name: args.checkName, status: args.status, filter: args.filter, per_page: args.perPage, page: args.page },
       accept: "application/vnd.github+json",
     }), "GitHub did not return check runs");
-    const page = githubCountedListPage("checkRuns", "check_runs", value, args, {
+    const page = githubCountedListPage("checkRuns", CHECK_RUN_ROW, "check_runs", value, args, {
       ref: args.ref, checkName: args.checkName, status: args.status, filter: args.filter,
     });
     return { output: page, summary: `Listed ${page.count} check runs for ${args.owner}/${args.repo}@${args.ref}` };
@@ -2030,6 +2142,7 @@ interface GitHubListPage extends Record<string, unknown> {
  */
 function githubListPage(
   key: string,
+  row: FieldProjection,
   fetched: unknown,
   args: { perPage: number; page: number },
   appliedFilters: Record<string, unknown> = {},
@@ -2042,7 +2155,7 @@ function githubListPage(
   if (!Array.isArray(fetched)) throw new ConnectorError("provider_error", "GitHub did not return the expected list");
   const items = fetched.slice(0, args.perPage);
   return {
-    [key]: items.map((item) => boundGitHubValue(item)),
+    [key]: items.map((item) => boundGitHubRow(item, row)),
     count: items.length,
     page: args.page,
     perPage: args.perPage,
@@ -2066,6 +2179,7 @@ function githubListPage(
  */
 function githubCountedListPage(
   key: string,
+  row: FieldProjection,
   providerKey: string,
   value: Record<string, unknown>,
   args: { perPage: number; page: number },
@@ -2075,7 +2189,7 @@ function githubCountedListPage(
   const items = all.slice(0, args.perPage);
   const totalCount = numberValue(value, "total_count");
   return {
-    [key]: items.map((item) => boundGitHubValue(item)),
+    [key]: items.map((item) => boundGitHubRow(item, row)),
     count: items.length,
     ...(totalCount != null ? { totalCount } : {}),
     page: args.page,
@@ -2085,9 +2199,21 @@ function githubCountedListPage(
   };
 }
 
+/**
+ * One row of a list: the declared fields, then the clamps over what survived.
+ *
+ * The order matters. Projecting first is what removes the embedded repository
+ * records, and it leaves the clamps doing the job they are actually good at —
+ * bounding a declared field that is legitimately enormous, such as a patch or a
+ * review body — rather than standing in for a decision nobody had made.
+ */
+function boundGitHubRow(item: unknown, row: FieldProjection): unknown {
+  return isRecord(item) ? boundGitHubValue(projectFields(item, row)) : boundGitHubValue(item);
+}
+
 function boundGitHubValue(value: unknown, depth = 0, key = ""): unknown {
   if (typeof value === "string") {
-    return truncateText(value, key === "patch" ? TOOL_PATCH_CHARS : TOOL_TEXT_CHARS).text;
+    return truncateTextWithMarker(value, key === "patch" ? TOOL_PATCH_CHARS : TOOL_TEXT_CHARS);
   }
   if (value == null || typeof value === "number" || typeof value === "boolean") return value;
   if (depth >= 8) return "[truncated]";
