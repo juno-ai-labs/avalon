@@ -1,0 +1,111 @@
+import type { Region } from "@rally/contracts/regions";
+
+import { publishFencedTargets } from "./fenced-target-publication";
+import {
+  SpaceDefaultQueueMessageSchema,
+  SpaceIntentResumeQueueMessageSchema,
+  type SpaceDefaultQueueMessage,
+  type SpaceIntentResumeQueueMessage,
+} from "./workspace-space-protocol";
+import type {
+  WorkspaceSpaceDefaultPublication,
+  WorkspaceSpaceIntentClaim,
+} from "./workspace-space-storage";
+
+export interface SpaceDefaultPublicationStorage {
+  claimDefaultPublications(
+    now: number,
+    retryAt: (attempt: number) => number,
+  ): WorkspaceSpaceDefaultPublication[];
+  acceptDefaultPublications(
+    publications: readonly WorkspaceSpaceDefaultPublication[],
+    now?: number,
+  ): void;
+  claimIntentResumes(now: number, retryAt: (attempt: number) => number): WorkspaceSpaceIntentClaim[];
+}
+
+export interface SpacePublicationQueue {
+  sendBatch(messages: Array<{ body: SpaceDefaultQueueMessage }>): Promise<unknown>;
+}
+
+export interface SpaceIntentQueue {
+  sendBatch(messages: Array<{ body: SpaceIntentResumeQueueMessage }>): Promise<unknown>;
+}
+
+export interface SpacePublicationInput {
+  storage: SpaceDefaultPublicationStorage;
+  queue: SpacePublicationQueue;
+  workspaceId: string;
+  region: Region;
+  now: number;
+  retryAt: (attempt: number) => number;
+}
+
+/** One batch of Space-default targets, claimed and published. */
+export async function publishSpaceDefaultTargets(input: SpacePublicationInput): Promise<number> {
+  return publishFencedTargets({
+    claim: (now, retryAt) => input.storage.claimDefaultPublications(now, retryAt),
+    accept: (publications, now) => input.storage.acceptDefaultPublications(publications, now),
+    message: (publication) => SpaceDefaultQueueMessageSchema.parse({
+      type: "space_default",
+      region: input.region,
+      workspaceId: input.workspaceId,
+      requestedByUserId: publication.requestedByUserId,
+      spaceId: publication.spaceId,
+      kind: publication.kind,
+      targetId: publication.targetId,
+      defaultGeneration: publication.defaultGeneration,
+      workstreamId: publication.workstreamId,
+      membershipGeneration: publication.membershipGeneration,
+    }),
+    queue: input.queue,
+    now: input.now,
+    retryAt: input.retryAt,
+  });
+}
+
+/**
+ * Republish the cross-object operations that never settled.
+ *
+ * A Space audience change, a membership, an archive: each stages an intent in
+ * WorkspaceDO before touching another object, and a request that dies between
+ * the two leaves the intent `pending`. Nothing else notices — the caller is
+ * gone and the Channel was never asked — so the alarm is what finishes it, by
+ * putting the operation back on the activity Queue for the consumer to re-run.
+ *
+ * Claimed the way a default target is: the retry gate advances before the send,
+ * so a rejected batch is retried later rather than immediately, and a duplicate
+ * delivery is safe because every step it re-runs is fenced on the Space
+ * revision and membership generation the intent recorded.
+ */
+export async function publishSpaceIntentResumes(input: {
+  storage: SpaceDefaultPublicationStorage;
+  queue: SpaceIntentQueue;
+  workspaceId: string;
+  region: Region;
+  now: number;
+  retryAt: (attempt: number) => number;
+}): Promise<number> {
+  return publishFencedTargets({
+    claim: (now, retryAt) => input.storage.claimIntentResumes(now, retryAt),
+    // The claim already advanced each intent's gate, and the intent settles
+    // when the consumer's work finishes rather than when the Queue takes the
+    // message, so acceptance records nothing here.
+    accept: () => undefined,
+    message: (intent) => SpaceIntentResumeQueueMessageSchema.parse({
+      type: "space_intent_resume",
+      region: input.region,
+      workspaceId: input.workspaceId,
+      operationId: intent.operationId,
+      kind: intent.kind,
+      spaceId: intent.spaceId,
+      workstreamId: intent.workstreamId,
+      spaceRevision: intent.spaceRevision,
+      membershipGeneration: intent.membershipGeneration,
+      requestedByUserId: intent.requestedByUserId,
+    }),
+    queue: input.queue,
+    now: input.now,
+    retryAt: input.retryAt,
+  });
+}
