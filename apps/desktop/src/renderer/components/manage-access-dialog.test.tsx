@@ -68,7 +68,7 @@ describe('Manage access', () => {
 
     expect(await screen.findByText('Only the 2 people in the channel.')).toBeVisible();
     expect(screen.getByText('Hiring')).toBeVisible();
-    expect(screen.getByText('The 1 people in this space.')).toBeVisible();
+    expect(screen.getByText('The 1 person in this space.')).toBeVisible();
   });
 
   // The rule this screen exists for: a Channel whose own scope is personal is

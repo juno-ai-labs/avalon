@@ -286,7 +286,7 @@ describe('the Spaces sidebar section', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
 
-    expect(screen.getByText('1 channels; open this space to see all')).toBeVisible();
+    expect(screen.getByText('1 channel; open this space to see all')).toBeVisible();
     expect(screen.queryByText('No channels')).not.toBeInTheDocument();
   });
 
