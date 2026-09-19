@@ -670,7 +670,7 @@ function ruleWithin(source: string, selector: string): string | null {
 }
 
 /**
- * Every rule's selector prelude, with comments removed.
+ * Every rule, as its selector prelude and its declarations.
  *
  * Splitting on `}` and taking the text before the *last* `{` in each piece
  * keeps the inner selector of a nested rule rather than the `@media` that
@@ -683,18 +683,14 @@ function rules(): { selector: string; body: string }[] {
     .split('}')
     .flatMap((block) => {
       if (!block.includes('{')) return [];
-      const selector = (block.split('{').at(-2) ?? '').trim().replace(/\s+/gu, ' ');
+      const selector = (block.split('{').at(-2) ?? '').trim();
       return selector ? [{ selector, body: block.split('{').at(-1) ?? '' }] : [];
     });
 }
 
+/** Just the selector preludes, for the checks that never look at a body. */
 function preludes(): string[] {
-  return stylesheet
-    .replace(/\/\*[\s\S]*?\*\//gu, ' ')
-    .split('}')
-    .map((block) => (block.includes('{') ? (block.split('{').at(-2) ?? '') : ''))
-    .map((prelude) => prelude.trim())
-    .filter(Boolean);
+  return rules().map(({ selector }) => selector);
 }
 
 /**
@@ -1135,19 +1131,20 @@ describe('the one hover wash', () => {
    * state is exempt because that state is not a hover.
    */
   it('lets no hover paint a neutral surface fill instead', () => {
-    const neutralSurface = /var\(--av-(?:sys-color-surface-(?:raised|raised-hover|elevated-hover|subtle)|ref-color-neutral-\d+)\)/u;
-    const hue = /danger|success|brand|accent|scrim|bubble/u;
+    const neutralSurface = /var\(--av-(?:sys-color-surface-[a-z-]+|ref-color-neutral-\d+|cmp-row-background-selected|cmp-control-background-quiet)\)/u;
+    const hue = /danger|success|warning|brand|accent|scrim|bubble/u;
     const settled = /\.is-selected|\.is-active|\.is-current|aria-pressed/u;
     // The capsule composer's round tools rest on the wash already, so their
     // hover has to be a further step or there is no feedback at all.
     const restsOnTheWash = '.is-message-capsule .composer-tools > .icon-button:hover:not(:disabled)';
 
     const offenders = rules()
+      .map(({ selector, body }) => ({ selector: selector.replace(/\s+/gu, ' '), body }))
       .filter(({ selector }) => /:hover|\[data-highlighted\]/u.test(selector))
       .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
       .filter(({ body }) => !body.includes('var(--hover-layer)'))
       .filter(({ body }) => {
-        const background = /(?:^|[;{\s])background(?:-color)?:\s*([^;]+);/u.exec(body)?.[1] ?? '';
+        const background = /(?:^|[;{\s])background(?:-color)?:\s*([^;}]+);?/u.exec(body)?.[1] ?? '';
         return neutralSurface.test(background) && !hue.test(background);
       })
       .map(({ selector }) => selector);
