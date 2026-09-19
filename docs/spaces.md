@@ -705,8 +705,8 @@ so the relationship is read at accept time and pinned on the attachment — whic
 is also what makes a guest's empty Space payload a property of the socket rather
 than a D1 read per publication.
 
-A narrowing planner beside the widening one. It
-reads as the symmetric thing to build and it is the wrong shape: a source that
+A narrowing planner beside the widening one. It reads as the symmetric thing to
+build and it is the wrong shape: a source that
 can narrow can revoke access another source still supplies, and the composition
 rule that makes a Space's audience safe to change without auditing every other
 Space is exactly that a source only widens. Narrowing is therefore expressed as
