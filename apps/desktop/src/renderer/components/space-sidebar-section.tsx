@@ -130,7 +130,11 @@ export function SpaceSidebarSection({
   // hand the last time it was open: the exception was about that visit.
   useEffect(() => {
     if (openSpaceId === null) return;
-    setExpansion(({ [openSpaceId]: _collapsedLastVisit, ...rest }) => rest);
+    setExpansion((current) => {
+      const next = { ...current };
+      delete next[openSpaceId];
+      return next;
+    });
   }, [openSpaceId]);
 
   const closeCreate = (): void => {
