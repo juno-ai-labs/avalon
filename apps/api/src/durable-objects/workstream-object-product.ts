@@ -1,6 +1,6 @@
 import { createAccessContext, requireAuthorizedRead } from "../services/authorization-service";
 import { stableUuid } from "../lib/stable-uuid";
-import { ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
@@ -3790,7 +3790,7 @@ export class WorkstreamObjectProductService {
     });
     const agentExchange = "agentExchange" in input ? input.agentExchange : null;
     const agentContent = "agentExchange" in input
-      ? { kind: "agent_message" as const, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;
+      ? { kind: AGENT_MESSAGE_CONTENT_KIND, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;
     const structuredContentJson = JSON.stringify(agentContent ?? ("activation" in input ? input.activation : null));
     const participant = await this.transcript.prepareParticipantMessage({
       turnId: input.messageId,

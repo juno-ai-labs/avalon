@@ -2,12 +2,26 @@ import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
-import { pluginGroup } from './plugin-groups';
+import {
+  AGENT_MESSAGES_INBOUND_GROUP,
+  AGENT_MESSAGES_OUTBOUND_GROUP,
+  AGENT_WORKERS_FINISHED_GROUP,
+  AGENT_WORKERS_STARTED_GROUP,
+  agentWorkersFailedGroup,
+  countedGroup,
+  pluginGroup,
+  type PluginGroup,
+} from './plugin-groups';
 import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
+  agentMessageNotice,
+  agentMessageNoticeReason,
   connectorConnectionCardInputFromToolEvent,
+  isAgentMessageContent,
+  isAgentMessageSendWireName,
+  isAgentStartWireName,
   isConnectorConnectionCardWireName,
   type TranscriptActivity,
   type PendingTranscriptInput,
@@ -373,6 +387,42 @@ export function orderedTranscriptMessages(
         };
         if (block.type === 'text') {
           const structured = block.structuredContent ?? {};
+          // A teammate's message is machinery, not a note to the room. It is
+          // prose one agent wrote for another — sender identity, a message id
+          // to reply to, findings mid-investigation — and the feed used to
+          // print it as a clamped system bullet between the tool rows, which
+          // put an unaddressed wall of text in front of a reader who was never
+          // its audience. As a counted row it sits with the work it belongs to
+          // and folds away behind the answer that reports on it, exactly as a
+          // plugin's calls do. It also stops closing the plugin run around it,
+          // which is the same judgement: a message arriving is not something a
+          // person read.
+          const agentMessage = agentMessageActivity(structured);
+          if (agentMessage) {
+            rememberOrder(block.blockId);
+            return {
+              ...base,
+              id: block.blockId,
+              // The turn is the host's, appended on the sender's behalf, so its
+              // actor is `system`. The row is Rally's own machinery and takes
+              // the author every other work row has; `feedRowKind` already
+              // routes on the type, and this keeps the two answers agreeing.
+              authorType: 'agent',
+              messageType: 'plugin_activity',
+              // `base` keeps the turn's attention ordinal, and that is
+              // deliberate — this row is NOT the plugin-group case. A grouped
+              // plugin row carries no ordinal because the tool turns behind it
+              // never had one; an admitted agent message is a non-tool turn, so
+              // the server allocates it one and the room's unread waterline
+              // moves with it. Nulling it here left no row carrying that
+              // ordinal at all, so `highestVisibleAttentionSequence` could
+              // never observe it and the unread dot could not be cleared by
+              // reading — only by sending. The row is also the whole of what
+              // there is to read for this turn, so acknowledging it on scroll
+              // is honest in a way acknowledging a tool row is not.
+              pluginActivity: agentMessage,
+            };
+          }
           const imported = ImportedMessageProvenanceSchema.safeParse(structured);
           const elicitation = ElicitationSchema.safeParse(
             'elicitation' in structured ? structured['elicitation'] : structured,
@@ -476,6 +526,7 @@ export function orderedTranscriptMessages(
             ...(pluginName === undefined ? {} : { pluginName }),
             ...((run?.connectorType ?? owner?.connectorType) ? { connectorType: run?.connectorType ?? owner?.connectorType } : {}),
             name: block.toolName,
+            wireName: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
               : block.status === 'cancelled'
@@ -565,6 +616,30 @@ export function orderedTranscriptMessages(
     // own id is the fallback, which is what positioning used before runs
     // existed. Without it such a row has nowhere to sit and is dropped.
     const calls = new Set(run.toolCallIds);
+    // A run whose every call now has a counted row of its own has nothing left
+    // to aggregate, and printing it anyway puts the exact row this change
+    // removes — "Used Background agents for 1s" — back beside the row that
+    // replaced it. The server reports the run for the whole plugin; rerouting
+    // the blocks alone left it behind, because it is keyed on the plugin id
+    // rather than on the calls.
+    //
+    // A run with calls left keeps its row: it is the plugin's own stretch, gaps
+    // and all, which is what a plugin row has always reported, and it remains
+    // true that Rally worked there. It does then carry the rerouted calls'
+    // share of the time, which is not separable — the server times the plugin,
+    // not the calls — and is the same approximation every plugin row makes.
+    //
+    // A run with no `toolCallIds` cannot answer the question, and a run whose
+    // blocks have not all arrived can answer it only for the ones that have.
+    // Both keep the row: dropping one on an unknown would take a real row out
+    // of the feed, which is the worse of the two failures.
+    const runBlocks = lastTurn.blocks.filter((block) => block.type === 'tool' && calls.has(block.toolCallId));
+    if (calls.size > 0
+      && runBlocks.length === calls.size
+      && runBlocks.every((block) => block.type === 'tool'
+        && countedGroupForToolCall(block.toolName, block.status) !== null)) {
+      continue;
+    }
     const anchored = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
       && (calls.size > 0 ? calls.has(block.toolCallId) : block.pluginId === run.pluginId)
       ? [block.blockIndex]
@@ -798,6 +873,36 @@ export function pendingTranscriptInputOverlay(
   }>,
 ): TranscriptOverlay {
   const elicitation = pendingInputElicitation(input.block);
+  // An agent message is machinery before it is promoted as much as after, and
+  // `hydratePendingTranscriptInput` carries its structured content through, so
+  // the same row is available here. It also keeps the message off the composer
+  // queue: a queued row is something a person wrote and can reorder, and a
+  // teammate's message is neither.
+  const agentMessage = agentMessageActivity(input.block.structuredContent);
+  if (agentMessage) {
+    return {
+      identity: input.clientMessageId
+        ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
+        : { type: 'loop_input', inputId: input.inputId, futureTurnId: input.futureTurnId },
+      provenance,
+      position: {
+        afterTranscriptSequence: input.afterTranscriptSequence,
+        eventSequence: provenance.source === 'socket_event'
+          ? provenance.eventSequence
+          : input.inputSequence,
+      },
+      message: {
+        id: input.futureTurnId,
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        workstreamId,
+        sequenceNumber: 0,
+        authorType: 'agent',
+        messageType: 'plugin_activity',
+        pluginActivity: agentMessage,
+        createdAt: input.admittedAtUtc,
+      },
+    };
+  }
   return {
     identity: input.clientMessageId
       ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -1104,6 +1209,91 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
 }
 
 /**
+ * The counted row an agent message gets, or null when the block is not one.
+ *
+ * Shared by the canonical projection and the pending-input overlay. A message
+ * reaches its recipient through the mailbox first and can sit there until the
+ * next safe execution boundary, which for a busy recipient is a whole step —
+ * so a projection that only the canonical path had left the raw agent-to-agent
+ * prose on screen for exactly that window, then swapped it for a counted row
+ * on promotion. One message drawn two contradictory ways depending on when it
+ * was looked at, and the wall of prose this change exists to remove still
+ * being drawn for the length of a step.
+ */
+function agentMessageActivity(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+): PluginActivityData | null {
+  if (!isAgentMessageContent(structuredContent)) return null;
+  // The host writes two of these on a run's behalf, and they are not messages:
+  // one says a worker failed, the other that it finished with nothing to say.
+  // Counting them among a teammate's own messages would bury the only two ends
+  // of a worker's life the transcript records.
+  const notice = agentMessageNotice(structuredContent);
+  const group = notice === 'failed'
+    ? agentWorkersFailedGroup(agentMessageNoticeReason(structuredContent))
+    : notice === 'finished_without_reply'
+      ? AGENT_WORKERS_FINISHED_GROUP
+      : AGENT_MESSAGES_INBOUND_GROUP;
+  return countedActivity(group, false);
+}
+
+/**
+ * The counted group a tool call belongs to instead of its plugin's row, or
+ * null when it stays on that row.
+ *
+ * One function because two places ask the same question and must not answer it
+ * differently: the contribution that builds the counted row, and the plugin
+ * run that must not *also* print an aggregate for calls it no longer stands
+ * for. Two copies of this test would disagree the first time a status rule
+ * moved, and the symptom would be a duplicated row rather than a type error.
+ *
+ * It takes both status vocabularies — the projected one and the raw block's —
+ * because the two callers hold different ones, and the rule is about the call
+ * rather than about which of them is asking.
+ *
+ * A call that failed did not send a message or start a worker, so it is not
+ * one of the things these rows count, and it falls back to the plugin row,
+ * which says only that Rally reached for the plugin and is still true. That
+ * matters beyond tidiness for a send: the host counts only completed and
+ * ambiguous effects as a hand-off, so a run whose only send failed is told its
+ * worker finished without replying — and a feed that had already claimed the
+ * message was sent would be contradicting itself two rows later. `ambiguous`
+ * counts, on the same authority: a write whose confirmation was lost most
+ * likely landed.
+ */
+function countedGroupForToolCall(
+  name: string | undefined,
+  status: ToolEventData['status'] | 'planned' | 'cancelled',
+): PluginGroup | null {
+  if (status === 'failed' || status === 'cancelled') return null;
+  if (isAgentMessageSendWireName(name)) return AGENT_MESSAGES_OUTBOUND_GROUP;
+  if (isAgentStartWireName(name)) return AGENT_WORKERS_STARTED_GROUP;
+  return null;
+}
+
+/**
+ * One contribution to a counted group, before the run knows its total.
+ *
+ * The count is 1 and the duration is null on every one of them: the row this
+ * becomes is phrased by `PluginGroup.countPhrase` from the sum, and prints no
+ * time. `completedVerb` is the group's own singular, which is what the row
+ * reads if it turns out to stand for exactly one contribution and nothing
+ * overwrites it.
+ */
+function countedActivity(group: PluginGroup, active: boolean): PluginActivityData {
+  return {
+    groupKey: group.key,
+    name: group.name,
+    icon: group.icon,
+    activeVerb: group.activeVerb,
+    completedVerb: group.completedVerb,
+    active,
+    durationMs: null,
+    count: 1,
+  };
+}
+
+/**
  * What one row contributes to its plugin's group, or null when the row is not
  * plugin activity at all.
  */
@@ -1122,6 +1312,22 @@ function pluginGroupContribution(message: Message): {
   }
   const tool = message.toolEvent;
   if (!tool) return null;
+  // Ahead of the plugin lookup, because these calls belong to their own subject
+  // rather than to the plugin that carries them: `avalon:agents` also owns
+  // `list_agents`, `stop_agent`, `sidekicks_list` and `create_sidekick`, which
+  // really are the reader using a plugin and keep the Background agents row.
+  // Folding all seven together is what produced "Used Background agents for 1s"
+  // over a second that contained two messages — a duration standing in for a
+  // count nobody could see.
+  // `wireName`, not `name`: a live invocation's `name` is the activity's prose.
+  const counted = countedGroupForToolCall(tool.wireName ?? tool.name, tool.status);
+  if (counted) {
+    return {
+      key: counted.key,
+      activity: countedActivity(counted, tool.status === 'started'),
+      authoritativeDuration: false,
+    };
+  }
   const group = pluginGroup(tool.plugin?.canonicalId ?? tool.pluginId, tool.pluginName ?? tool.plugin?.displayName, tool.connectorType ?? tool.plugin?.connectorType);
   if (!group) return null;
   return {
@@ -1140,6 +1346,7 @@ function pluginGroupContribution(message: Message): {
     authoritativeDuration: false,
   };
 }
+
 
 /**
  * Whether a row leaves the run of activity around it open.
@@ -1197,6 +1404,27 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     activityDurationKnown: boolean;
     toolDurationKnown: boolean;
     sawActivity: boolean;
+    /**
+     * How many contributions this stretch holds, for a counted group.
+     *
+     * Kept on every group and read only by the counted ones: a timed row has
+     * no use for it — the number of Slack calls is the mechanism the row exists
+     * to hide — and branching the accumulator on the group's kind would fork
+     * the one loop that decides where every row in this feed sits.
+     */
+    count: number;
+    /**
+     * The highest ordinal among contributions that are turns in their own
+     * right, for a counted group; null for the timed majority.
+     *
+     * The highest rather than the first: this is one row standing for several
+     * messages, so the divider belongs above it whenever *any* of them is
+     * unread, and acknowledging the row has to acknowledge all of them or the
+     * waterline stalls inside the group. Only rows with no `toolEvent`
+     * contribute — a tool row's ordinal is its turn's, shared with that turn's
+     * text, which is the ordinal a group row must not carry.
+     */
+    attentionSequenceNumber: number | null;
     monotonicStartedAt: number[];
     upperBound: boolean;
     /**
@@ -1248,6 +1476,8 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         activityDurationKnown: true,
         toolDurationKnown: true,
         sawActivity: false,
+        count: 0,
+        attentionSequenceNumber: null,
         monotonicStartedAt: [],
         upperBound: false,
         activitySpans: [],
@@ -1276,6 +1506,13 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       });
     }
     group.active ||= contribution.activity.active;
+    group.count += 1;
+    if (message.toolEvent === undefined && message.attentionSequenceNumber != null) {
+      group.attentionSequenceNumber = Math.max(
+        group.attentionSequenceNumber ?? message.attentionSequenceNumber,
+        message.attentionSequenceNumber,
+      );
+    }
     // One unknown piece makes the whole total unknowable rather than smaller:
     // adding up only the parts that reported would understate the work by
     // exactly the part that did not, and present the result as certain.
@@ -1304,6 +1541,38 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
   }
   for (const group of groups) {
     const row = rows[group.row]!;
+    // A counted group answers "how many", so it is finished here and skips the
+    // timing tiers entirely rather than computing a number its row would not
+    // print. The phrase is written now because only now is the total known:
+    // the row was spread from the run's first contribution, when the stretch
+    // was one message long.
+    const counted = countedGroup(group.identity.groupKey);
+    if (counted?.countPhrase) {
+      rows[group.row] = {
+        ...row,
+        // An agent message is a turn of its own and the server gave it an
+        // ordinal; the row standing for it has to carry one or the room's
+        // unread waterline can never move past it. Null where no contribution
+        // had one, which is every counted group built from tool calls.
+        attentionSequenceNumber: group.attentionSequenceNumber,
+        // The row was spread from its first contribution and carries that one's
+        // spans, which stand for a fraction of what it now says. A counted row
+        // reports no interval at all rather than that fraction: a message is an
+        // event, and `send_message` returns at once by contract, so there is no
+        // stretch of work here for an accordion to add up. `foldedStretchTotal`
+        // skips it on that basis instead of reading the absence as a row whose
+        // time is unknown, which would silence the whole drawer's total.
+        workSpans: undefined,
+        pluginActivity: {
+          ...group.identity,
+          active: group.active,
+          durationMs: null,
+          count: group.count,
+          completedVerb: counted.countPhrase(group.count),
+        },
+      };
+      continue;
+    }
     // The activity measures the plugin, calls and the gaps between them alike,
     // so where there is one it answers both questions and the tool tier is not
     // consulted. The row was spread from the run's first contribution, so its
@@ -2201,7 +2470,15 @@ function foldedStretchTotal(rows: readonly Message[]): WorkTotal {
   }
   const spans: WorkSpan[] = [];
   for (const row of work) {
-    if (row.workSpans === undefined) return { durationMs: null };
+    if (row.workSpans === undefined) {
+      // A counted row is the one kind that is missing spans because it has
+      // none to have: it stands for messages, which are events rather than
+      // stretches of work. Treating that as an unmeasured interval would take
+      // the drawer's total down to a bare "Worked" every time a teammate
+      // answered mid-run — reporting less because the feed learned more.
+      if (row.pluginActivity?.count !== undefined) continue;
+      return { durationMs: null };
+    }
     spans.push(...row.workSpans);
   }
   return spans.length === 0
