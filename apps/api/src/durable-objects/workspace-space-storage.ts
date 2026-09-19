@@ -25,6 +25,7 @@ import type {
   WorkspaceSpaceDefaultResult,
   WorkspaceSpaceDefaultTarget,
   WorkspaceSpaceMembershipPlanResult,
+  WorkspaceSpaceMutationResult,
   WorkspaceSpaceMembershipRemovalRequest,
   WorkspaceSpaceMembershipRequest,
   WorkspaceSpaceMembershipSettleRequest,
@@ -1067,7 +1068,7 @@ export class WorkspaceSpaceStorage {
    * Channel is stranded, and nobody this Space was the discovery path for loses
    * every way of finding one.
    */
-  prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMembershipPlanResult {
+  prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
       if (!this.visibleSpaceIds(userId).includes(spaceId)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [] };
@@ -1105,7 +1106,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(spaceId), membershipGeneration: row.revision };
+      return { ok: true, space: this.space(spaceId) };
     });
   }
 

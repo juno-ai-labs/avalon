@@ -597,15 +597,15 @@ describe("WorkspaceDO space authority", () => {
     await place(spaceId, CHANNEL_A);
 
     await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
     })).resolves.toMatchObject({ ok: false, code: "space_membership_final" });
 
     await place(second, CHANNEL_A);
     await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
     })).resolves.toMatchObject({ ok: true });
     await expect(workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
     })).resolves.toMatchObject({ ok: true, space: { status: "archived" } });
     await expect(workspace().listInactiveSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
       .resolves.toMatchObject({ ok: true, directory: { items: [{ id: spaceId }] } });
@@ -624,10 +624,18 @@ describe("WorkspaceDO space authority", () => {
       await seatSpaceSource(workstreamId, second);
     }
 
+    // One operation id across both halves, which is what makes the settlement
+    // name the intent the preflight staged rather than reconstruct it from a
+    // revision the archive itself advances.
+    const operationId = crypto.randomUUID();
     const staged = await workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
     });
     if (!staged.ok) throw new Error(staged.code);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    })).toMatchObject({ rows: [{ kind: "archive", state: "pending" }] });
     // The prepare has already flipped every membership to `removing`, which is
     // why the fan-out asks which Channels this Space still *reaches*. Asking
     // for its active members answers nothing and leaves the retraction loop
@@ -646,8 +654,16 @@ describe("WorkspaceDO space authority", () => {
       });
       if (!retracted.ok) throw new Error(retracted.code);
     }
-    await workspace().finalizeSpaceArchive({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId });
+    await workspace().finalizeSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
+    });
 
+    // Settled, so the alarm stops republishing it. Nothing else in the tree
+    // knows this id, which is the point of carrying it.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["archived"]' }] });
     for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
       expect(await memberChannel(workstreamId).readAccessSources({
         workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
@@ -663,8 +679,12 @@ describe("WorkspaceDO space authority", () => {
     await publishChannel(CHANNEL_A, null);
     await place(spaceId, CHANNEL_A);
     await place(second, CHANNEL_A);
-    await workspace().prepareSpaceArchive({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId });
-    await workspace().finalizeSpaceArchive({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId });
+    await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+    });
+    await workspace().finalizeSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+    });
 
     await expect(workspace().restoreSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({ ok: true, space: { status: "active", channelCount: 1 } });
@@ -680,6 +700,7 @@ describe("WorkspaceDO space authority", () => {
 
     await expect(workspace().prepareSpaceArchive({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: general.space.id,
+      operationId: crypto.randomUUID(),
     })).resolves.toMatchObject({ ok: false, code: "space_protected" });
     await expect(workspace().noteSpaceAudience({
       workspaceId: WORKSPACE_ID,
