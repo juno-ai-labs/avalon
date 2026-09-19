@@ -159,7 +159,11 @@ import {
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import {
+  WorkstreamTranscriptStorage,
+  UnsettledToolBatchError,
+  isUnsettledToolBatchError,
+} from "./workstream-transcript-storage";
 import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
 import {
   TranscriptOperationRequestSchema,
@@ -3587,16 +3591,80 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           && loop.active_execution_id === activation.execution.runId
           && loop.active_execution_epoch === activation.execution.executionEpoch
           && loop.lease_owner === activation.execution.leaseOwner) {
-          await this.product.recordWorkflowFailed(
-            activation.execution.runId,
-            { code, message: "Rally could not complete this execution" },
-            {
-              loopId: loop.loop_id,
-              executionId: activation.execution.runId,
-              executionEpoch: activation.execution.executionEpoch,
-              leaseOwner: activation.execution.leaseOwner,
-            },
-          );
+          // Before the release, not after it: this is the last moment the
+          // batch can be settled, and settling it is what lets the failure
+          // terminalize now instead of waiting out the lease.
+          await this.settleInterruptedToolBatchForFailure(activation.input)
+            .catch((settleError: unknown) => logWarn(
+              this.env,
+              "substream_loop_failure_tool_batch_settlement_failed",
+              {
+                workspace_id: activation.input.workspaceId,
+                workstream_id: activation.input.parentId,
+                substream_id: activation.input.substreamId ?? "0",
+                execution_id: activation.execution.runId,
+                reason: settleError instanceof Error ? settleError.message : "unknown",
+              },
+            ));
+          try {
+            await this.product.recordWorkflowFailed(
+              activation.execution.runId,
+              { code, message: "Rally could not complete this execution" },
+              {
+                loopId: loop.loop_id,
+                executionId: activation.execution.runId,
+                executionEpoch: activation.execution.executionEpoch,
+                leaseOwner: activation.execution.leaseOwner,
+              },
+            );
+          } catch (failure) {
+            if (!isUnsettledToolBatchError(failure)) throw failure;
+            // Not a failure to record the failure: the loop is deliberately
+            // left executing so its lease can expire and hand the interrupted
+            // tool batch to `recoverInterruptedToolBatch`, which is the only
+            // thing that can settle it and can only run while this run has not
+            // terminalized. Recorded under its own name because it is a
+            // deferral with a known resolution, and reading it as a drain
+            // failure is what turned the same state into a day of hot retries.
+            //
+            // This is the whole account of the event: the branch returns, so
+            // `substream_loop_execution_failed` below never runs, and dropping
+            // `reason` here would tell an operator that a batch is stuck while
+            // withholding why the run failed in the first place — on the one
+            // path this change added in order to make that legible.
+            const withheld = failure instanceof UnsettledToolBatchError ? failure : null;
+            logWarn(this.env, "substream_loop_failure_awaiting_tool_batch_repair", {
+              workspace_id: activation.input.workspaceId,
+              workstream_id: activation.input.parentId,
+              substream_id: activation.input.substreamId ?? "0",
+              execution_id: activation.execution.runId,
+              execution_epoch: activation.execution.executionEpoch,
+              error_code: code,
+              reason: error instanceof Error ? error.message : "unknown",
+              stack: harnessErrorFrames(error),
+              lease_expires_at: loop.lease_expires_at,
+              withheld_turn_id: withheld?.turnId ?? null,
+              withheld_model_turn_index: withheld?.modelTurnIndex ?? null,
+              withheld_call_count: withheld?.withheldCallCount ?? null,
+            });
+            return;
+          }
+          // The run is terminal now, so anything it still had open is a card
+          // nobody will close. Awaited rather than deferred: the drain's next
+          // pass can evict this isolate, and the sweep that would have caught
+          // it runs only while recovering a previous instance's attempt.
+          await this.settleResidualReceiptsAfterFailure(activation.input)
+            .catch((repairError: unknown) => logWarn(
+              this.env,
+              "substream_loop_residual_receipt_repair_failed",
+              {
+                workspace_id: activation.input.workspaceId,
+                workstream_id: activation.input.parentId,
+                substream_id: activation.input.substreamId ?? "0",
+                execution_id: activation.execution.runId,
+                reason: repairError instanceof Error ? repairError.message : "unknown",
+              },
+            ));
         }
         logWarn(this.env, "substream_loop_execution_failed", {
           workspace_id: activation.input.workspaceId,
@@ -3939,6 +4007,128 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /** The reap and receipt-repair budget this object runs every sweep under. */
+  private harnessRecoveryOptions(
+    input: WorkstreamWorkflowInput,
+    executionEnv: Env,
+  ): Parameters<typeof reapStaleHarnessRuns>[1] {
+    return {
+      receipts: createToolReceiptPortFactory(executionEnv),
+      workspaceId: input.workspaceId,
+      workstreamId: input.parentId,
+      limit: 25,
+      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
+        workspace_id: failure.workspaceId,
+        workstream_id: failure.workstreamId,
+        harness_run_id: failure.runId,
+        attempt_id: failure.attemptId,
+        repair_phase: failure.phase,
+        reason: failure.reason,
+      }),
+    };
+  }
+
+  /**
+   * Settle an interrupted tool batch while the failing run can still do it.
+   *
+   * This is the ordinary path, and the refusal in `recordWorkflowFailed` is the
+   * backstop behind it. Deferring to the lease expiry instead would be correct
+   * and far too slow: a run refused before its tool ran — an authorization
+   * revoked mid-turn, say — has an unsettled batch with no receipts at all, and
+   * making that room wait `LOOP_EXECUTION_LEASE_MS` with every queued message
+   * behind it, to append four "did not run" results nobody is waiting for, is a
+   * worse product than the wedge this whole change is about.
+   *
+   * Settling here needs nothing the failing run does not already hold: the loop
+   * fence is live, the attempt lease is on the run row because terminalization
+   * has not happened yet, and the receipts are addressed by this run's own id.
+   * Best-effort on purpose. If it cannot settle — the loop lease lapsed while
+   * the run was away, the attempt was taken over — the refusal below keeps the
+   * loop executing and the recovery branch gets it, which is slow but correct.
+   */
+  private async settleInterruptedToolBatchForFailure(
+    input: WorkstreamWorkflowInput,
+  ): Promise<void> {
+    if (!this.transcript.unsettledToolBatchBlockingRelease(input.loopId)) return;
+    const attempt = this.state.storage.sql.exec<{
+      legacy_attempt_id: string | null;
+      lease_owner: string | null;
+    }>(
+      `SELECT legacy_attempt_id, lease_owner FROM runs WHERE run_id = ?`,
+      input.harnessRunId,
+    ).toArray()[0];
+    // No attempt to fence a receipt settlement with. `recoverInterruptedToolBatch`
+    // would refuse one anyway, so leave it to the backstop rather than half-doing it.
+    if (!attempt?.legacy_attempt_id || !attempt.lease_owner) return;
+    // Handing these straight back to `ToolReceiptStorage#fence` would be asking
+    // the row to vouch for itself: that fence compares the values it is given
+    // against this same row, so it could only ever fail on expiry or
+    // terminalization, never on "another instance owns this attempt now". Every
+    // other caller passes a lease `claimHarnessAttempt` minted for it, which
+    // proves current ownership; this path has no such lease to pass, so it
+    // proves the same thing by reconstructing the owner. `harnessAttemptOwner`
+    // ends in a per-isolate nonce, so a takeover does not match — and neither
+    // does an attempt recovered from a dead instance, whose owner the reaper
+    // rewrites. Either way the settlement stands down and the release guard
+    // hands the batch to the lease-expiry recovery, which is the slow path but
+    // never the wrong one.
+    const ownedHere = attempt.lease_owner === this.harnessAttemptOwner(
+      input,
+      attempt.legacy_attempt_id,
+    ) || attempt.lease_owner === previousInstanceRecoveryOwner(attempt.legacy_attempt_id);
+    if (!ownedHere) {
+      logWarn(this.env, "substream_loop_failure_tool_batch_settlement_not_owned", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        attempt_id: attempt.legacy_attempt_id,
+      });
+      return;
+    }
+    await this.recoverInterruptedToolBatch(
+      this.localRuntimeEnvironment(
+        input.workspaceId,
+        input.parentId,
+        input.substreamId ?? "0",
+      ),
+      input,
+      { attemptId: attempt.legacy_attempt_id, owner: attempt.lease_owner },
+    );
+  }
+
+  /**
+   * Close the tool receipts a failed run left open.
+   *
+   * `terminalizeHarnessAttempt` settles these as part of terminalizing, and
+   * says at length why every terminal status needs it: an open receipt on a
+   * terminal run is a card that spins forever, and nothing downstream repairs
+   * it. `recordWorkflowFailed` terminalizes with its own SQL and so never
+   * reached that settlement — the sweep below runs only when a previous
+   * instance's attempt is being recovered, which on an object whose next run
+   * never starts is never. A `web_fetch` on the substream wedged on 2026-09-19
+   * was still `executing` a day later for exactly that reason.
+   *
+   * The bounded sweep rather than a hand-built repair row: it selects the
+   * terminal runs whose settlement marker is missing, which is precisely what
+   * this path leaves behind, and records the marker so later passes do not
+   * rescan them. Best-effort by construction — the run has already failed, and
+   * a repair that cannot run now is one the next sweep still owns.
+   */
+  private async settleResidualReceiptsAfterFailure(
+    input: WorkstreamWorkflowInput,
+  ): Promise<void> {
+    const executionEnv = this.localRuntimeEnvironment(
+      input.workspaceId,
+      input.parentId,
+      input.substreamId ?? "0",
+    );
+    await repairTerminalResidualReceipts(
+      createHarnessRunObjectPort(executionEnv, input.workspaceId, input.parentId),
+      this.harnessRecoveryOptions(input, executionEnv),
+    );
+  }
+
   private async runAgentExecution(input: WorkstreamWorkflowInput): Promise<{
     status: WorkstreamHarnessResult["status"];
     errorCode: string | null;
@@ -3974,20 +4164,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       executionEpoch: loopExecution.executionEpoch,
       leaseOwner: loopExecution.leaseOwner,
     };
-    const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
-      receipts: createToolReceiptPortFactory(executionEnv),
-      workspaceId: input.workspaceId,
-      workstreamId: input.parentId,
-      limit: 25,
-      onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
-        workspace_id: failure.workspaceId,
-        workstream_id: failure.workstreamId,
-        harness_run_id: failure.runId,
-        attempt_id: failure.attemptId,
-        repair_phase: failure.phase,
-        reason: failure.reason,
-      }),
-    };
+    const recoveryOptions = this.harnessRecoveryOptions(input, executionEnv);
     const recoverableAttemptId = this.recoverableHarnessAttempts.get(input.harnessRunId) ?? null;
     if (recoverableAttemptId === null) {
       await reapStaleHarnessRuns(runs, recoveryOptions);
@@ -6805,10 +6982,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // stays open. Admitting the answer arms its own wake.
     if (loop) {
       if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
-      // The room then goes quiet with messages still queued, and an
-      // `elicitation_requests` row only ever moves `pending -> answered`, so a
-      // question nobody answers — the reader missed the card, or left — stalls
-      // it with no expiry to end the wait. The stall is correct; being unable
+      // The room then goes quiet with messages still queued. No path writes
+      // `elicitation_requests.status = 'cancelled'` today — every one of them
+      // writes `answered` — so in practice a question nobody answers, because
+      // the reader missed the card or left, stalls it with no expiry to end the
+      // wait. `openQuestionToolCallIds` reads the status rather than assuming
+      // that, so the day cancellation does ship this branch keeps its meaning:
+      // a cancelled question is not one an answer can still arrive for. The stall is correct; being unable
       // to see it is not, and this is the one branch where the loop stops
       // without an error to find it by.
       const queued = this.loop.pendingInputs();
