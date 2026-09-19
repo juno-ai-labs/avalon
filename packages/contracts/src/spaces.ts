@@ -364,22 +364,24 @@ export const ChannelAccessSourcesSchema = z.strictObject({
     scope: SpaceScopeSchema,
     participantUserIds: z.array(UserIdSchema),
   })),
-  /**
-   * The Spaces the *Organization* says currently hold this Channel.
-   *
-   * Deliberately a second list beside `spaces`, not a derivation of it. That
-   * one is the Channel's own record of which sources reach it — provenance,
-   * owned by WorkstreamDO — and this is the membership, owned by WorkspaceDO.
-   * They agree in the steady state and disagree exactly while an operation is
-   * in flight or has been interrupted, which is the thing **Manage access** has
-   * to be able to show rather than hide behind one merged answer.
-   *
-   * Defaulted because a response written before the Space authority existed
-   * described a Channel with no memberships to report.
-   */
-  spaceIds: z.array(SpaceIdSchema).default([]),
 });
 export type ChannelAccessSources = z.infer<typeof ChannelAccessSourcesSchema>;
+
+/**
+ * What `GET /workstreams/:id/access` answers with: the Channel's own
+ * provenance, plus the Spaces the *Organization* says currently hold it.
+ *
+ * Two lists rather than one, and `spaceIds` is deliberately not on
+ * {@link ChannelAccessSourcesSchema}: that shape is what the Channel's own
+ * authority knows, and WorkstreamDO cannot see a membership. They agree in the
+ * steady state and disagree exactly while an operation is in flight or has been
+ * interrupted, which is the thing **Manage access** has to be able to show
+ * rather than hide behind one merged answer.
+ */
+export const ChannelAccessSchema = ChannelAccessSourcesSchema.extend({
+  spaceIds: z.array(SpaceIdSchema),
+});
+export type ChannelAccess = z.infer<typeof ChannelAccessSchema>;
 
 /**
  * Every way a Space operation is refused, as a code the far side can branch on.

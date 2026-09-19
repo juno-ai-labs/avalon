@@ -135,6 +135,20 @@ Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
 transcript and execution context were built with it.
 
+### General
+
+`ensureGeneralSpace` reserves the Organization's one General Space — named
+General, Organization-wide, `system_role = 'general'` — or answers with the
+existing one. It is idempotent, and the unique partial index on `system_role` is
+what decides a race between two callers rather than a check-then-write.
+
+**It reserves; it does not provision.** Opening the object is the caller's, the
+way it is for any other reservation, and nothing in this phase calls it: the
+cutover and the creation paths that need General are Phase 4 and Phase 5 of
+[the plan](PRDs/2026-09-18_spaces-and-product-hierarchy/plan.md). A caller that
+reserves General without then provisioning its object leaves a Space in every
+member's sidebar that answers nothing, exactly as a cancelled `create` would.
+
 ### Resuming an interrupted operation
 
 Every cross-object Space operation stages an intent in WorkspaceDO before it
@@ -299,8 +313,8 @@ when one of them refuses.
 
 Eleven tables, all in WorkspaceDO's migration 61.
 
-`workspace_space_directory` is one row per Space: the presentation and scope a
-projection wrote, the archive timestamp, the protected `system_role`, the
+`workspace_space_directory` is one row per Space: the name, appearance and scope
+a projection wrote, the archive timestamp, the protected `system_role`, the
 generation/source-version/payload-hash triple every projection is fenced on, and
 one `revision` that advances on every accepted change. A unique partial index on
 `system_role` makes General singular. `workspace_space_viewers` is the
@@ -355,12 +369,11 @@ participant from a Space requires an Organization owner or administrator;
 everything else follows the flat rule Projects used, where anyone who can read a
 Space may edit it.
 
-`recordSpaceIntentReceipt` and `abandonSpaceIntent` are deliberately
-server-to-server and carry no membership recheck, like the default-target
-settlement RPCs beside them. They grant nothing and read nothing; the operation
-id is the whole address, and every step they settle was authorized when it was
-staged. Refusing them on membership would leave an intent pending forever, and
-the alarm republishing it forever, whenever the person who started an operation
+`recordSpaceIntentReceipt` is deliberately server-to-server and carries no
+membership recheck, like the default-target settlement RPCs beside it. It grants nothing and reads nothing; the operation
+id is the whole address, and every step it settles was authorized when it was
+staged. Refusing it on membership would leave an intent pending forever, and the
+alarm republishing it forever, whenever the person who started an operation
 later left the Organization.
 
 ## Operations

@@ -105,26 +105,6 @@ export function spaceRefusal(code: SpaceErrorCode, spaceName: string, unreachabl
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
-  async list(): Promise<SpaceDirectory> {
-    const result = WorkspaceSpaceDirectoryResultSchema.parse(await (await this.workspace()).listSpaces({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-    }));
-    if (!result.ok) throw spaceRefusal(result.code, "");
-    return SpaceDirectorySchema.parse(result.directory);
-  }
-
-  async listInactive(): Promise<SpaceDirectory> {
-    const result = WorkspaceSpaceDirectoryResultSchema.parse(
-      await (await this.workspace()).listInactiveSpaces({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-      }),
-    );
-    if (!result.ok) throw spaceRefusal(result.code, "");
-    return SpaceDirectorySchema.parse(result.directory);
-  }
-
   async reorder(input: ReorderSpacesRequest): Promise<SpaceDirectory> {
     const result = WorkspaceSpaceDirectoryResultSchema.parse(await (await this.workspace()).reorderSpaces({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -188,28 +168,6 @@ export class SpaceService {
       }).catch(() => undefined);
       throw error;
     }
-  }
-
-  /**
-   * The Organization's General Space, created if it has none.
-   *
-   * Idempotent: WorkspaceDO's unique partial index decides which caller wins a
-   * race, and only the winner provisions the object.
-   */
-  async ensureGeneral(): Promise<SpaceSummary> {
-    const workspace = await this.workspace();
-    const result = await workspace.ensureGeneralSpace({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-    });
-    const space = this.settled(result, "General");
-    if (result.created) {
-      await this.provisionSpaceObject(space.id, {
-        name: space.name, iconKey: space.iconKey, colorKey: space.colorKey, scope: space.scope,
-      });
-      return this.summary(space.id);
-    }
-    return space;
   }
 
   /** Presentation belongs to the Space's own authority; this is its door. */
@@ -521,15 +479,10 @@ export class SpaceService {
     membershipGeneration: number | null;
   }): Promise<void> {
     const workspace = await this.workspace();
-    const abandon = async (reason: string): Promise<void> => {
-      await workspace.abandonSpaceIntent({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        operationId: intent.operationId,
-        receipt: reason,
-        settled: true,
-      });
-    };
+    // Settling an intent is what takes it out of the alarm's claim, so giving
+    // up on one is a receipt like any other rather than a second operation.
+    const abandon = (reason: string): Promise<void> =>
+      this.recordReceipt(intent.operationId, reason, true);
     const space = await this.summary(intent.spaceId);
     const access = new ChannelAccessService(this.env, this.auth);
     if (intent.kind === "add" && intent.workstreamId && intent.membershipGeneration) {
