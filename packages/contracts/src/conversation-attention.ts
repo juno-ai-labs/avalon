@@ -10,13 +10,18 @@ import { z } from "zod";
  * that is not, so the question had to stop being a rendering detail and become
  * a value two authorities can agree on.
  *
- * This module is the one implementation. The desktop calls it where it draws;
- * WorkspaceDO's page query mirrors it in SQL because the page is *decided* on
- * the server and a client-side filter over a server-ordered page would hand
- * back short pages and a cursor that skipped rows. The SQL is therefore the
- * authority, and `apps/api/test-workers/space-conversation-page.test.ts` walks
- * every combination of these four inputs asserting the two agree — that test
- * is what keeps them equal, because nothing else can.
+ * **This is the definition the page query is held to, and nothing on the
+ * client calls it.** WorkspaceDO's page query mirrors it in SQL because the
+ * page is *decided* on the server: a client-side filter over a server-ordered
+ * page would hand back short pages and a cursor that skipped rows. So the SQL
+ * is the authority and this is the executable specification of it, compared
+ * against it by `apps/api/test-workers/space-conversation-page.test.ts`, which
+ * walks every combination of these four inputs asserting the two agree. That
+ * test is what keeps them equal, because nothing else can.
+ *
+ * The desktop draws the rows the server has already filtered, so it has no
+ * reason to call this — and if it ever does, that is a second place the
+ * question is answered and the walk stops being enough on its own.
  */
 
 /**
