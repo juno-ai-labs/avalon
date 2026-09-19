@@ -308,6 +308,21 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
         message: "Only directory effects may use the WorkspaceDO handoff",
       });
     }
+    // A breakout's own projection names the breakout; a Channel's aggregate
+    // names nothing, because it already *is* the conversation the row is
+    // about. `"0"` is the main conversation, whose projection is exactly what
+    // the aggregate is built from — an envelope carrying it would be asking
+    // the Organization to store the Channel twice, once as a Channel and once
+    // as its own breakout. A Space has no breakout anything draws, so its
+    // handoff carries no substream id either.
+    if (envelope.substreamId !== undefined
+      && (envelope.parentKind !== "workstream" || envelope.substreamId === "0")) {
+      context.addIssue({
+        code: "custom",
+        path: ["envelopes", index, "substreamId"],
+        message: "Only a Channel's non-main conversation may name itself on the WorkspaceDO handoff",
+      });
+    }
     if ((envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")
       && !UuidV7Schema.safeParse(envelope.messageId).success) {
       context.addIssue({
