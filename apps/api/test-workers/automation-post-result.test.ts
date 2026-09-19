@@ -414,7 +414,9 @@ describe("post_result", () => {
         harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
         executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
       const { agents } = await new AgentCommunicationService(TEST_ENV, input).list();
-      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently", status: "executing" }]);
+      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently" }]);
+      // A directory, not a status feed: what a teammate is doing is asked of it.
+      expect(agents[0]).not.toHaveProperty("status");
       const address = agentAddressForId(agents[0]!.agentId);
       const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -499,12 +501,19 @@ describe("post_result", () => {
     await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
       "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
     ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    // The parent hears that the worker finished without replying, and nothing
+    // else: the final response itself stays in the worker's transcript.
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+      `Agent Detailed researcher finished without replying. Id: ${started.agentId}`,
+    ))).toBe(true);
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(LARGE_RESULT_TEXT.slice(0, 80)))).toBe(false);
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
-    ).one().n)).toBe(0);
-    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM runs",
-    ).one().n)).toBe(0);
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(1);
   });
 
   it("replays an explicit reply after lost admission confirmation and a cold restart", async () => {
@@ -525,6 +534,10 @@ describe("post_result", () => {
     const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
       state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
     )));
+    // The worker finished without replying, and its owner runs on that notice
+    // before the reply is injected, so the reply meets the ordinary admission
+    // path rather than a mid-run mailbox.
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     const replyService = new AgentCommunicationService(TEST_ENV, childInput);
     const replyContext = { ...context, effectIntentId: crypto.randomUUID() };
     const reply = { messageId: childInput.agentExchange!.messageId, message: "Explicit findings.", attachmentIds: [] };
@@ -540,7 +553,7 @@ describe("post_result", () => {
       };
     });
     await expect(replyService.send(reply, replyContext)).rejects.toThrow("injected_reply_confirmation_loss");
-    await settledRun(roomConversation());
+    await settledRun(roomConversation(), 2);
     // Crash only the recipient. Graceful eviction waits for live requests;
     // aborting every object also resets Miniflare's D1 and breaks isolation.
     let beforeCrash: unknown;
@@ -555,13 +568,13 @@ describe("post_result", () => {
         SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
         UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
       )`,
-    ).one().n)).toBe(1);
+    ).one().n)).toBe(2);
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM runs",
-    ).one().n)).toBe(1);
+    ).one().n)).toBe(2);
   });
 
-  it.each(["needs_input", "failed"] as const)("settles %s with only failed runs notifying their owner once", async (status) => {
+  it.each(["needs_input", "failed"] as const)("settles %s beside the completed run's own notice, with only failed runs adding one more", async (status) => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -580,6 +593,9 @@ describe("post_result", () => {
     const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
       state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
     )));
+    // The real run completed without replying, so the owner already holds that
+    // one notice and has run on it.
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     await runInDurableObject(child, async (instance) => {
       const target = instance as unknown as {
         deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" | "failed"; error: { code: string; message: string } }) => Promise<string | null>;
@@ -591,7 +607,7 @@ describe("post_result", () => {
       }
     });
     if (status === "failed") {
-      await settledRun(roomConversation());
+      await settledRun(roomConversation(), 2);
       expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
         `Agent failed due to ambiguous_external_write. Id: ${started.agentId}`,
       ))).toBe(true);
@@ -601,7 +617,64 @@ describe("post_result", () => {
         SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
         UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
       )`,
-    ).one().n)).toBe(status === "failed" ? 1 : 0);
+    ).one().n)).toBe(status === "failed" ? 2 : 1);
+  });
+
+  it("tells the owner once when a worker finishes without replying, and not when it replied", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const conversation = (agentId: Parameters<typeof agentAddressForId>[0]) => {
+      const address = agentAddressForId(agentId);
+      return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+    };
+    const notices = () => runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n);
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "no further action is needed.", attachmentIds: [] }, context);
+    // The result says how the reply comes back, at the moment the model reads it.
+    expect(started).toMatchObject({ name: "Quiet teammate" });
+    expect(started.next).toContain("Nothing to fetch; do not resend the assignment.");
+    const quiet = conversation(started.agentId);
+    const [run] = await settledRun(quiet);
+    expect(run).toMatchObject({ status: "completed" });
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+      `Agent Quiet teammate finished without replying. Id: ${started.agentId}`,
+    ))).toBe(true);
+    expect(await notices()).toBe(1);
+    // Settling the same run again delivers nothing: the run supplies the identity.
+    const childInput = await runInDurableObject(quiet, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    await runInDurableObject(quiet, async (instance) => {
+      const target = instance as unknown as {
+        deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "completed" }) => Promise<string | null>;
+      };
+      await target.deliverAgentRunResult(childInput, { status: "completed" });
+    });
+    expect(await notices()).toBe(1);
+    // A worker that replied has said what it had to say; its completion is silent.
+    const replied = await service.start({ name: "Replying teammate", description: "Report back",
+      message: "EXPLICIT_REPLY: report back.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(conversation(replied.agentId)))[0]).toMatchObject({ status: "completed" });
+    expect((await settledRun(roomConversation(), 2))[1]).toMatchObject({ status: "completed" });
+    expect(await notices()).toBe(2);
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes("Here are the requested findings."))).toBe(true);
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+      `Agent Replying teammate finished without replying`,
+    ))).toBe(false);
   });
 
   it("keeps a recursively stopped owner stopped when its child reports failure", async () => {
@@ -629,18 +702,21 @@ describe("post_result", () => {
       { ...context, effectIntentId: crypto.randomUUID() });
     const childConversation = conversation(child.agentId);
     await settledRun(childConversation);
+    // The child finished without replying; the owner runs on that notice
+    // before it is stopped, so the stop below holds only the failure notice.
+    await settledRun(ownerConversation, 2);
     await service.stop(owner.agentId);
     await new AgentCommunicationService(TEST_ENV, await readInput(childConversation)).notifyFailure("provider_unavailable");
     expect(await ownerConversation.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
     expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM runs",
-    ).one().n)).toBe(1);
+    ).one().n)).toBe(2);
     expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
     ).one().n)).toBe(1);
     await service.send({ agentId: owner.agentId, message: "Continue your work.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
-    await settledRun(ownerConversation, 2);
+    await settledRun(ownerConversation, 3);
     expect(await ownerConversation.agentRuntimeInfo()).not.toMatchObject({ status: "stopped" });
   });
 
@@ -792,21 +868,30 @@ describe("post_result", () => {
       await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
         "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
       ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      // A worker that finished without replying is reported to the room, and
+      // nothing else reaches it: the final response is projected nowhere. A
+      // Sidekick's authoring conversation is not a background agent and sends
+      // no such notice.
+      const notices = kind === "worker" ? 1 : 0;
+      if (notices) expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
       expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
         "SELECT COUNT(*) AS n FROM runs",
-      ).one().n)).toBe(0);
+      ).one().n)).toBe(notices);
       expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
       expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM (
           SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
           UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
         )`,
-      ).one().n)).toBe(0);
+      ).one().n)).toBe(notices);
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        `finished without replying. Id: ${started.agentId}`,
+      ))).toBe(kind === "worker");
       expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
       await service.send({ agentId: started.agentId, message: "EXPLICIT_REPLY: send a useful result.", attachmentIds: [] },
         { ...context, effectIntentId: crypto.randomUUID() });
       expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
-      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation(), notices + 1))[notices]).toMatchObject({ status: "completed" });
     } finally {
       deliveries.mockRestore();
     }

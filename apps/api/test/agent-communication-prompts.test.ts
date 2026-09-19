@@ -7,7 +7,18 @@ describe('agent coordination role guidance', () => {
     expect(guidance).toContain('You are a background agent');
     expect(guidance).toContain('Execute the assignment directly');
     expect(guidance).toContain('only when splitting the work would materially help');
+    expect(guidance).toContain('reported to them as finished without replying');
     expect(guidance).not.toContain('Stay available to participants');
+  });
+
+  it.each([
+    { parentKind: 'workstream' as const },
+    { parentKind: 'automation' as const },
+    { parentKind: 'workstream' as const, backgroundAgent: true },
+  ])('tells every role that ending the turn is the wait and a wake-up is a deadline (%o)', (input) => {
+    const guidance = agentCoordinationRoleGuidance(input);
+    expect(guidance).toContain('the reply arrives here as a message and wakes this conversation, so do not poll for it or resend the assignment');
+    expect(guidance).toContain('schedule one wake-up for that time, never a repeating one');
   });
 
   it('reserves participant responsiveness for foreground workstreams', () => {
