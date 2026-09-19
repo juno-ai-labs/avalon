@@ -65,7 +65,16 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
   // The per-person half. `listable` is the whole visibility answer a breakout
   // gets from its own authority — it already accounts for the breakout being
   // archived and for this person's membership of a private child — and the
-  // page requires it rather than re-deriving the question from participation.
+  // page asks it rather than re-deriving the question from participation.
+  //
+  // No index beside the primary key. Every read of this table starts from a
+  // `(workstream_id, substream_id)` the page has already chosen, and the only
+  // delete is the per-envelope one the projection itself performs when a
+  // person stops being an active member. `workspace_workstream_viewers` has no
+  // user-id index either, and there is no sweep for one to serve: an index
+  // here would be a write on every viewer projection buying nothing, and a
+  // comment claiming a sweep that somebody would later quote as evidence one
+  // exists.
   `CREATE TABLE workspace_breakout_viewers (
     workstream_id TEXT NOT NULL,
     substream_id TEXT NOT NULL,
@@ -86,10 +95,6 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
     projected_at INTEGER NOT NULL,
     PRIMARY KEY (workstream_id, substream_id, user_id)
   ) STRICT`,
-  // A person leaving the Organization is swept by user id, the way the
-  // Channel viewers are; nothing else reads these rows person-first.
-  `CREATE INDEX workspace_breakout_viewers_user_idx
-    ON workspace_breakout_viewers(user_id, workstream_id, substream_id)`,
 ];
 
 /** One breakout's row, as the page reads it back. */
