@@ -183,6 +183,13 @@ true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
 means General** — `SpaceService.ensureGeneral` makes the Organization's General
 Space if this is the first thing that ever needed it.
 
+**A Channel created without a named Space is therefore born Organization-wide**,
+whatever scope the caller asked for: General is Organization-wide, its source
+unions into the birth audience, and a source only ever widens. That is true of
+the top-level composer, of a connector ingress that resolved a personal scope,
+of session import, of `createFromOpportunity`, and of the demo seeder. A Channel
+that is meant to stay personal has to be born in a personal Space that names it.
+
 The audience the Channel opens with is derived from those Spaces rather than
 taken from the request. `resolveSpaceWorkstreamStart` runs the same
 `effectiveChannelAudience` algebra the rest of the Space module uses over the

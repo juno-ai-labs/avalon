@@ -169,6 +169,21 @@ spike settled — the decision memo and the multiplayer renewal — a third,
 drafting the announcement of a filing, which is where the pack's document
 versions and its substream live, and one standing Sidekick.
 
+**A room is Organization-wide, and the seeder refuses one that is not.** Every
+Channel is born in a Space and a create that names none lands in General, which
+is Organization-wide — so a `personal` room would seed workspace-scoped
+whatever the pack asked for, the readiness barrier would compare that against
+the scope the pack stated, and the demo would sit in **Waiting for workspace**
+until the operator gave up. `applyDemoSeedAction` therefore refuses a
+`create_workstream` step with `scope: "personal"` by name,
+`demo_seed_personal_room_unsupported`, rather than seeding a room whose
+audience is a lie. The schema still admits the value, because the pack's
+substream rules are written in terms of it and because the honest fix when a
+demo needs a private room is a personal Space for it to be born in — which the
+pack cannot name yet. The placeholder pack's four rooms are all
+workspace-scoped, so nothing in service is affected;
+[`workstream-creation.md`](workstream-creation.md) owns the birth audience.
+
 **A room step addresses a conversation, not a room.** Naming only the room means
 its main conversation; naming a room and a substream means the child. Every rule
 above is applied per conversation, so a question parks the conversation it was
@@ -566,7 +581,7 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test-workers/demo-connection-copy.test.ts` | A copy opens under its own identity, and the template is byte-identical afterwards **when its key version is stale** — the only state in which the wrong decrypt helper is visible. A personal connection and a non-Google one are skipped and reported, as `personal_scope` and `shared_grant`, and only the Google copy exists afterwards. |
 | `apps/api/test/demo-workspace-register.test.ts` | The walk's `retired_at` write against the real migration: written once, the first instant kept on a replay, and a workspace this feature never made untouched. |
 | `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
-| `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). A second pack opens a substream through the real preparation, confirmation and membership path: the child's roster includes a presenter who is not in its parent, its starting context is the pack's text, it runs its own loop, and the parent's main conversation gains nothing. Proved to fail twice — with the substream routing dropped, every child line lands in the parent; with the summary gateway removed, creation's one inference reaches the provider double. |
+| `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). A second pack opens a substream through the real preparation, confirmation and membership path: the child's roster includes a presenter who is not in its parent, its starting context is the pack's text, it runs its own loop, and the parent's main conversation gains nothing. Proved to fail twice — with the substream routing dropped, every child line lands in the parent; with the summary gateway removed, creation's one inference reaches the provider double. A third case holds the seeder's refusal of a `personal` room, which a Channel born without a named Space can no longer honour. |
 | `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. The substream rules separately: a child of a room that does not exist, a line from somebody only in the parent, a mention of somebody not in the child, a personal parent that cannot admit an outsider, a question counted per conversation rather than per room — and that a substream's steps leave the room's facts, which is what the barrier waits on, completely unchanged. |
 | `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
