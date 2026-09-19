@@ -84,7 +84,10 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `ConversationParentDurableObject`, the half of a conversation parent that is the same for both kinds: the child registry, per-child projections and receipts, cross-child aggregation, the parent outbox, and its drain onto `ACTIVITY_QUEUE`. Holds the shared table statements both parents' ledgers render. |
-| `apps/api/src/durable-objects/workstream-do.ts` | `WorkstreamDO`: the work-stream parent. Adds `workstream_metadata`, the control socket's complete metadata snapshots, viewer authorization from scope and participation, and the one synchronous provisional directory delivery at creation. |
+| `apps/api/src/durable-objects/workstream-do.ts` | `WorkstreamDO`: the work-stream parent, and — under a different role — the Space parent. Adds `workstream_metadata`, the control socket's complete metadata snapshots, viewer authorization from scope and participation, and the one synchronous provisional directory delivery at creation. |
+| `apps/api/src/durable-objects/workstream-do-schema.ts` | `WORKSTREAM_DO_SCHEMA_MIGRATIONS`, in its own module so the role constants can name it without closing an import cycle with the class. |
+| `apps/api/src/durable-objects/conversation-parent-role.ts` | `ConversationParentRole` and the two role constants: every way a Space differs from a Channel, in one screen. |
+| `apps/api/src/durable-objects/space-do.ts`, `space-do-schema.ts` | `SpaceDO`: `WorkstreamDO` supplied with the space role, plus its retirement registration, and the one-version ledger that renders the shape the work-stream ledger currently ends at. |
 | `apps/api/src/durable-objects/automation-do.ts`, `automation-do-protocol.ts` | `AutomationDO`: the automation parent. Adds the automation row, definition revisions, schedules, runs, and inbound-email receipts; forwards nothing its children say. Owned by [`automation-lifecycle.md`](automation-lifecycle.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
@@ -263,14 +266,24 @@ Names include region for operator clarity and deterministic routing:
 ```text
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
 WorkstreamDO      <region>:<workspace-id>:<workstream-id>                in WORKSTREAM_DOS
+SpaceDO           <region>:<workspace-id>:space:<space-id>               in SPACE_DOS
 AutomationDO      <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
 ```
 
+`SpaceDO` carries the role word `space` where `WorkstreamDO` carries nothing,
+even though both are otherwise `<region>:<workspace>:<uuid>`. The two ids come
+out of the same generator and live in different namespaces, so a collision would
+be harmless — but the name is also what an operator reads in a migration report,
+and one that cannot say which class it belongs to is useless for finding the
+object that is stuck. The word is in `FIXED_SEGMENTS`
+(`packages/contracts/src/durable-object-migrations.ts`), without which the
+report silently drops the name rather than refusing it.
+
 `conversationObjectName(region, workspaceId, parentId, substreamId = "0")` is the
 one constructor for a conversation object's name, and `parentId` is a work
-stream id or an automation id. The kind is deliberately not in the name: both
+stream id, an automation id, or a Space id. The kind is deliberately not in the name: both
 ids are UUIDs, and the object records which kind of parent it belongs to in its
 own root row (`workstream.parent_kind`, read back as
 `WorkstreamObjectIdentity = {workspaceId, parentKind, parentId}`). The main
@@ -335,6 +348,57 @@ substream id that reaches a socket route without a registration is not
 warmed and must not materialize an object merely because its parent is visible;
 `listChildren` is what access revocation and the parent's own reads walk, and a
 child nobody registered is one nobody can find or close.
+
+### A Space is this class under a role
+
+A **Space** groups Channels inside an Organization. It carries a name, icon,
+colour, audience, participants, resources and Sidekick recommendations, and it
+has a hidden main conversation that holds the participants and resources — which
+is exactly a work stream, minus every product surface. Rally never opens its
+feed, never runs an agent in it, and never lists its grants.
+
+So `SpaceDO` **is** `WorkstreamDO`, constructed with a different
+`ConversationParentRole` (`durable-objects/conversation-parent-role.ts`) and
+overriding nothing:
+
+| Role field | `WORKSTREAM_ROLE` | `SPACE_ROLE` |
+| --- | --- | --- |
+| `kind` | `workstream` | `space` — what `parentIdentity()` stamps on every effect, and what `admitChildEnvelope` holds a child to |
+| `namespace` / `objectName` | `WORKSTREAM_DOS`, `workstreamDOName` | `SPACE_DOS`, `spaceDOName` — the self-registration and every name this object derives |
+| `migration` | `workstream_do`, `WorkstreamDO`, 17 versions | `space_do`, `SpaceDO`, one version rendering that ledger's current shape |
+| `admitsClientSockets` | yes | no — `GET /socket` answers 403 `space_socket_refused` before a ticket is read |
+| `publishesGrantDirectory` | yes | no — `ScopeGrantStorage` is handed a no-op writer, so grants commit and nothing reaches the shared grant directory |
+| `forwardsFeedEffects` | yes | no — only `directory_common` and `directory_user` leave the parent; activity events and notifications are dropped here, because anything reaching the outbox is delivered |
+| `wakesMainEagerly` | yes | no — nothing opens a Space's conversation, so warming it buys a cold start for nobody |
+
+**Why a role and not overrides.** The obvious shape is `class SpaceDO extends
+WorkstreamDO` with a dozen `override`s, and it fails on the thing subclassing is
+usually chosen for. A base method that hard-codes `env.WORKSTREAM_DOS`,
+`workstreamDOName`, the migration component, the eager child wake or the
+grant-directory writer is *silently* wrong for the subclass rather than visibly
+absent: every such site would have to be found by reading the class, and the
+four that mattered are spread across three hundred lines and two base classes.
+Making each one a field turns "did we cover every difference" into a question
+one file answers, and turns adding a difference into an addition there rather
+than an override elsewhere.
+
+**What the class itself may hold.** Nothing. `space-do.ts` is a constructor that
+supplies the role and a retirement registration, and a change that wants a
+method belongs in the role. The retirement call is not redundant even though
+dispositions resolve up the prototype chain: it registers the *same policy
+object* `WorkstreamDO` exports, and what it adds is the tombstone wrapping of any
+method `SpaceDO` comes to define itself — which is precisely the omission that
+would be invisible in a class that currently defines none.
+
+**What the Space role does not change.** The schema. `space_do` version 1
+renders the same tables, indexes and triggers `workstream_do` versions 1–17 end
+at, because the class is the same code and an inherited method that met a
+missing table would fail at a request rather than at a deploy. Nothing else in
+the tree compares the two ledgers, so `apps/api/test/space-do-schema.test.ts`
+applies both against real migration runners and compares `sqlite_master` object
+for object: a column added to one and not the other is otherwise invisible until
+a real Space meets it. A change to the table set therefore lands as
+`workstream_do` 18 *and* `space_do` 2.
 
 ### Control plane and data plane
 
@@ -1762,7 +1826,43 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+### 2026-09-19 — A Space is this class under an immutable role, not a subclass with overrides
 
+**What changed:** `WorkstreamDO`'s constructor takes a
+`ConversationParentRole`, defaulting to `WORKSTREAM_ROLE`, and reads it for the
+eight things that used to be literals: the namespace and name it registers
+itself under, its migration component, class and ledger, whether `GET /socket`
+may upgrade, whether a committed grant reaches the shared grant directory,
+whether a child's non-directory effects are forwarded to the workspace, and
+whether construction warms the main conversation. `SpaceDO` supplies
+`SPACE_ROLE` and defines nothing else. The ledger moved to
+`workstream-do-schema.ts`, and `space_do` version 1 renders the shape it
+currently ends at.
+
+**Why:** Spaces replace Projects, and a Space needs the whole work-stream
+primitive — presentation, participants, resources, Sidekick recommendations,
+receipts, lifecycle, retirement — with none of its product surface. A sibling
+object would have forked every one of those capabilities into a second
+authority on the day it shipped.
+
+**Considered and rejected:** `class SpaceDO extends WorkstreamDO` with
+overrides, which is what the PRD's first sketch described. It fails on the thing
+subclassing is usually chosen for: a base method that hard-codes
+`env.WORKSTREAM_DOS`, `workstreamDOName` or `MIGRATION_COMPONENT` is silently
+wrong for the subclass rather than visibly absent, so the difference is only
+found by reading the class — and the four that mattered were three hundred lines
+and two base classes apart. Also rejected: sharing the `workstream_do` migration
+component, which would put two classes with different histories under one
+tracker rollup and make `forceMigration`'s class fence meaningless; and
+replaying the work-stream ledger on a Space, which would make every new Space
+rebuild `durable_outbox` three times to reach a shape one statement can create.
+
+**What a future change has to respect:** A difference between a Channel and a
+Space belongs in the role, where the base class reads it and where it sits
+beside the other seven — not in an override, which reintroduces exactly the
+invisibility this replaced. And the two ledgers converge on one schema: a table
+or column added to `workstream_do` is also a new `space_do` version, which
+`apps/api/test/space-do-schema.test.ts` is what fails if it is not.
 ### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
 
 **What changed:** `localWorkstreamAuthority` tells two calls apart that used

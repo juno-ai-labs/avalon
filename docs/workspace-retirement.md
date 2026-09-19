@@ -47,13 +47,21 @@ boundary.
 So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
-properties of a prototype. The four object classes that can belong to a
-workspace — `WorkspaceDO`, `WorkstreamDO`, `SidekickDO` (deployed under the
-Cloudflare class name `AutomationDO`) and `SubstreamAgent` — extend
+properties of a prototype. The five object classes that can belong to a
+workspace — `WorkspaceDO`, `WorkstreamDO`, `SpaceDO`, `SidekickDO` (deployed
+under the Cloudflare class name `AutomationDO`) and `SubstreamAgent` — extend
 `ScheduledDurableObject`, so the tombstone and its two entry points live there;
-five gate policies are declared, one for the abstract
-`ConversationParentDurableObject` base the two parents share and one for each
-concrete class, and each declares only its exceptions. The gate does not wrap
+six gate policies are declared, one for the abstract
+`ConversationParentDurableObject` base the parents share and one for each
+concrete class, and each declares only its exceptions.
+
+`SpaceDO` is `WorkstreamDO` under a different role and overrides nothing, so a
+disposition it resolves is always `WorkstreamDO`'s — the lookup walks the
+prototype chain. Its registration is therefore not what classifies its doors;
+it registers the *same policy object* `WorkstreamDO` exports, and what it adds is
+the tombstone wrapping of any method `SpaceDO` comes to define itself. A class
+that defines none today is exactly where that omission would be invisible, and a
+second literal policy would have been two door lists to keep in step. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
 fenced; today every such getter delegates to a gated method.
 
@@ -312,12 +320,12 @@ included.
 
 | Suite | Command | What it proves |
 | --- | --- | --- |
-| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all four object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
+| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all four socket-holding object classes rebuild themselves after eviction and revoke access while retired, that `SpaceDO` resolves the same door list `WorkstreamDO` declares, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, and the walk closes children before parents. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
-| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SubstreamAgent`'s recovery attempt stays a prototype method. |
+| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SpaceDO` delegates the whole gate to `WorkstreamDO` and adds no constructor work of its own; `SubstreamAgent`'s recovery attempt stays a prototype method. |
 | `apps/api/test/workspace-runtime-database.test.ts`, `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api exec vitest run test/<file>` | Retirement's tables are declared to the schema guards. |
 | `apps/ace/test/workspaces.test.ts`, `apps/ace/test/workspaces-client.test.tsx`, `apps/ace/test/directory.test.ts` | `pnpm --filter @rally/ace test` | Ace's relay refuses an unconfirmed retirement before asking the region, carries the confirmation when it does, names a contract mismatch as such, and answers a directory outage with a sentence; the tab's typed confirmation, its receipt, an incomplete pass kept armed and scoped to its workspace, a failed search shown as a failure, and a partial outage named. |
 

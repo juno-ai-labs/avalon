@@ -18,7 +18,11 @@ row plus the external-event registrations that fan a connector event out. See
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent parent (`WorkstreamDO` for a work stream, `AutomationDO` for an
-automation) owns the aggregate metadata and the parent outbox. Legacy D1 workspace-product activity/opportunity rows are
+automation, `SpaceDO` — the same class as `WorkstreamDO` under a different role
+— for a Space) owns the aggregate metadata and the parent outbox. The stored
+`workstream.parent_kind` is the closed three-value vocabulary those three
+classes answer to, widened to admit `space` by conversation-object schema
+version 66. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
 becomes active. Migration 0090 removes those sources, the per-work-stream source
 tables, and their writer fences after the authority is open. Neither family is a
@@ -279,8 +283,8 @@ SQL joins.
   each provisioned child carries the bounded root facts needed to authorize and
   project its own context, while `WorkstreamDO.workstream_metadata` is the
   Main-derived parent view. `workstream_key` is the conversation parent id and
-  `parent_kind` (v39) says whether that parent is a work stream or an
-  automation; `origin_type`, `automation_subscription_id`, `automation_run_id`,
+  `parent_kind` (v39, widened by v66) says whether that parent is a work stream,
+  an automation, or a Space; `origin_type`, `automation_subscription_id`, `automation_run_id`,
   and `planned_for` are dead columns, kept only because the released
   runtime-compat triggers name them. `objective` is the work
   stream's description; `description_source` records whether a person wrote it
