@@ -3703,18 +3703,28 @@ export async function runWorkstreamHarness(
           return recovered;
         }
       } catch (error) {
+        // A re-entry that failed has proved nothing, and the honest answer is
+        // the ambiguity below rather than a thrown run — for *any* tool the
+        // host was willing to re-enter. That is the same claim `reenterable`
+        // makes, so it is read from the resolved tool rather than from a list
+        // of names beside it.
+        //
+        // It was a list, and it was the defect this change removed from
+        // `reenterInterruptedWrite` sitting one function away: `publish_resource`
+        // had to be added to it by hand, the next re-enterable tool would have
+        // to be too, and nothing would have reminded anyone — the tool would
+        // look fully wired. The cost of forgetting is not "stays ambiguous"; it
+        // is the `throw` below, which kills the live run the way the incident
+        // did. `checkout_repository` was already in that position.
+        const attempted = harnessTools.plugins
+          .find((candidate) => candidate.canonicalId === expectedPolicy.pluginId)
+          ?.tools.find((candidate) => candidate.definition.name === expectedPolicy.definition.name);
+        // `command_recovery_unavailable` stays named because it is the one
+        // refusal that is *not* a failed lookup: `run_command` says with it
+        // that the durable submission authority was retired, which is a
+        // conclusion rather than an absence of one.
         const codedRecoveryFailure = typeof error === "object" && error !== null && "code" in error;
-        // A re-entry that fails has not proved anything, and for these two the
-        // honest answer is the ambiguity below rather than a thrown run: both
-        // reconcile by *looking* — the pull request its run already opened, the
-        // document its path identity already published — so a refusal means the
-        // lookup could not be made, not that the write is known to have landed.
-        const cannotProveSafeRecovery = codedRecoveryFailure && (
-          error.code === "command_recovery_unavailable"
-          || expectedPolicy.definition.name === "publish_branch_and_pr"
-          || expectedPolicy.definition.name === "publish_resource"
-        );
-        if (!cannotProveSafeRecovery) {
+        if (!attempted?.reenterable && !(codedRecoveryFailure && error.code === "command_recovery_unavailable")) {
           throw error;
         }
         logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
@@ -6653,9 +6663,15 @@ export function createToolEffectIntents(): {
  * mechanisms. A `record_before_execute` tool reattaches through the
  * `effectIntentId` this function supplies from the receipt. A `provider_key`
  * tool re-submits under the key that receipt was admitted with, so the provider
- * itself collapses the two calls. What neither class permits is re-entering a
- * *settled* receipt: `completed` has a durable result to replay instead, and
- * `failed` may already have been read by a caller.
+ * itself collapses the two calls.
+ *
+ * What neither class permits is re-entering a `completed` or `failed` receipt:
+ * the first has a durable result to replay instead, and the second may already
+ * have been read by a caller. `ambiguous` *is* re-entered, and is settled — so
+ * "no settled receipt is re-entered" is the wrong rule to carry away. It is the
+ * state a previous re-entry attempt left behind, nothing has read a result from
+ * it, and the live path at `findCompletedToolResult` depends on reaching it
+ * (`allowAmbiguousReconciliation`).
  */
 async function reenterInterruptedWrite(input: {
   row: {
@@ -6788,7 +6804,15 @@ export async function reenterInterruptedWriteForRecovery(
     providerIdempotencyKey: string | null;
   },
   lease: AttemptLease,
-  signal: AbortSignal,
+  /**
+   * The attempt authority, used to hold the lease open across the re-entry.
+   *
+   * Not a convenience: `claimHarnessAttempt` takes a 300-second lease and
+   * `run_command` may run for 900 plus sandbox acquisition, so a long re-entry
+   * would otherwise finish holding a lease that expired underneath it — and
+   * the settlement below is fenced on exactly that lease.
+   */
+  runs: HarnessRunObjectPort,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<InterruptedWriteReentry> {
   const plan = parseJson<Record<string, unknown> | null>(receipt.executionPlanJson, null);
@@ -6828,11 +6852,31 @@ export async function reenterInterruptedWriteForRecovery(
   }
   let plugin: HarnessPlugin | null;
   try {
-    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    // The same publication scope `loadHarnessTools` freezes. A work-stream
+    // scoped Sidekick publishes into the room that owns it, so a plugin built
+    // without this resolves `publish_resource` under the Sidekick's own
+    // conversation instead — a different path identity, which would make the
+    // reconciler look for the interrupted publication somewhere it was never
+    // written and report `not_landed` for a publication that landed.
+    const runDefinition = input.automationRun
+      ? await readAutomationRunDefinition(env, input)
+      : null;
+    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher, {
+      publicationWorkstreamId: runDefinition?.owningWorkstreamId ?? null,
+    });
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
   }
   if (!plugin) return { outcome: "unknown", reason: "plugin_unavailable" };
+  // Held open for as long as the tool runs, and the reason the re-entry gets a
+  // real signal rather than one that never fires: this aborts the moment the
+  // attempt lease can no longer be renewed, which is the moment anything this
+  // call goes on to settle would be settling under somebody else's fence.
+  const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, lease, {
+    leaseSeconds: 300,
+    minimumIntervalMs: 5_000,
+  });
+  const monitor = liveness.startMonitor(5_000);
   try {
     const result = await reenterInterruptedWrite({
       row: {
@@ -6856,7 +6900,7 @@ export async function reenterInterruptedWriteForRecovery(
         harnessRunId: input.harnessRunId,
         toolCallId: receipt.toolCallId,
         executionPrincipal: input.executionPrincipal,
-        signal,
+        signal: liveness.signal,
       },
     });
     if (result === null) return { outcome: "unknown", reason: "tool_not_reenterable" };
@@ -6865,15 +6909,29 @@ export async function reenterInterruptedWriteForRecovery(
     // receipt `completed` before the repaired transcript can claim it, or a
     // second interruption would find the same row unsettled and ask the tool a
     // third time.
-    await persistSuccessfulToolResult(env, input, lease, {
-      invocationId: receipt.effectIntentId,
-      toolCallId: receipt.toolCallId,
-      output: durableToolReplayOutput(capability, result.output, result.summary),
-      outputSummary: result.summary,
-      ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
-      memberSafePayload: { toolName: canonicalToolName, recovered: true },
-      allowCancellationRequested: true,
-    });
+    //
+    // Its own `try`, because the two failures either side of this line are not
+    // the same failure. Above, the question went unanswered. Here the tool
+    // answered and Rally could not write the answer down — a distinction the
+    // shared catch erased, settling the receipt `ambiguous_external_write` and
+    // telling the member Rally could not confirm the write while holding the
+    // confirmation in a local variable. That is the generic-code defect
+    // `AGENTS.md` names, so it gets a code of its own.
+    try {
+      await persistSuccessfulToolResult(env, input, liveness.lease, {
+        invocationId: receipt.effectIntentId,
+        toolCallId: receipt.toolCallId,
+        output: durableToolReplayOutput(capability, result.output, result.summary),
+        outputSummary: result.summary,
+        ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+        memberSafePayload: { toolName: canonicalToolName, recovered: true },
+        allowCancellationRequested: true,
+      });
+    } catch (error) {
+      return { outcome: "unknown", reason: codeShaped(
+        `reentry_result_not_durable:${diagnosticErrorCode(error, "settlement_failed")}`,
+      ) };
+    }
     return { outcome: "completed", result };
   } catch (error) {
     // A throw leaves the question open, which is exactly what ambiguity is
@@ -6891,6 +6949,11 @@ export async function reenterInterruptedWriteForRecovery(
       outcome: "unknown",
       reason: declared ? codeShaped(declared) : diagnosticErrorCode(error, "reentry_failed"),
     };
+  } finally {
+    // Never left running. A timer that outlives this call keeps renewing the
+    // lease of an attempt nobody is executing, in a Worker isolate that may go
+    // on to serve something else.
+    await monitor.stop();
   }
 }
 
