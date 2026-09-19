@@ -926,10 +926,19 @@ to be signed in.
    failure signal for this work, as it is for every other Space delivery.
 
 **Old clients.** Once a region is serving the new payload, a desktop build from
-before the cutover is answered `426 client_update_required` on `GET /workstreams`
-and `GET /workspace/socket`, which the client renders as an update prompt. iOS
-and the desktop main process are unaffected by design — the gate keys on the
-`Origin` header, and only a browser context sends one.
+before the cutover is answered `426 client_update_required` on
+`GET /workstreams` and `GET /workspace/socket`. **That is a wire-level refusal,
+not an update prompt**: no shipped build knows the code, so a pre-cutover
+desktop renders it as whatever it shows for a transport failure. The prompt
+belongs to builds that ship after this, which declare a contract and can read
+the answer.
+
+The gate keys on the **absence of `x-rally-client-contract`**, or on a declared
+version below `MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` only separates a
+browser context from a native one: a request with no contract header and no
+`Origin` is admitted, because iOS and the desktop main process decode with
+schemas that ignore unknown keys and refusing them would break working clients
+over a problem they do not have.
 
 ### Desktop icon release gate
 

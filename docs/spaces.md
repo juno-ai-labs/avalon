@@ -818,11 +818,20 @@ it. `GET /workstreams` and `GET /workspace/socket` therefore answer a build that
 declares no current contract with `426 client_update_required` — the two
 surfaces the changed payloads travel on, rather than a middleware, so a build
 that cannot render the sidebar can still be signed in, still post a message, and
-still be told to update. The discriminator is the `Origin` header: a request
-carrying one is a browser context, which is the desktop renderer, which is the
-only client whose decoders are strict. `x-rally-client-contract` carries the
-version, and `MINIMUM_SERVED_CLIENT_CONTRACT` in
-`packages/contracts/src/http-headers.ts` is what raising the floor means.
+still be told to update.
+
+The gate reads `x-rally-client-contract`: absent, or below
+`MINIMUM_SERVED_CLIENT_CONTRACT` in `packages/contracts/src/http-headers.ts`,
+is a refusal. `Origin` is not the gate — it only separates a browser context
+from a native one, so that a request with neither header is admitted, because
+iOS and the desktop main process decode with schemas that ignore unknown keys.
+
+**`426` is a wire-level refusal, not an update prompt.** No build that predates
+this release knows the code, so a pre-cutover desktop shows whatever it shows
+for a transport failure. The prompt is what a build shipped *after* this can
+render, because it declares a contract and can read the answer; the PRD's
+"explicit update-required response rather than a malformed or partial payload"
+is satisfied by refusing rather than by what the old build draws.
 
 The engineering MCP reaches a Space through `list_spaces` and `run_space_sql`,
 both fenced on `workspace_space_directory` rather than on naming the object — see
