@@ -14,7 +14,8 @@ import type { HonoAppEnv } from "../env";
  * `410` rather than `404`: the resource existed and is permanently gone, which
  * is the difference between "you have the wrong id" and "update the app". The
  * body names the replacement so whoever finds this in a log knows where the
- * surface went. Phase 5 removes the Project authority underneath it.
+ * surface went. The authority underneath it is gone — WorkspaceDO migration 62
+ * dropped its tables — so this route is the whole of what `/projects` is.
  */
 export const projectRoutes = new Hono<HonoAppEnv>();
 

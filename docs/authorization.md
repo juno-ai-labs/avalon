@@ -123,7 +123,7 @@ immediately before committing its link, through the existing resource authorizer
 Product dispatch has already reloaded the current relationship; it does not trust
 a caller-supplied guest/member classification. Ordinary members keep the existing
 attachment path and personal-connection ownership check, without the added
-resource-authorizer round trip on project defaults or origin attachment. Guest
+resource-authorizer round trip on Space defaults or origin attachment. Guest
 metadata stays inside the mutation until its source check succeeds; a known
 resource ID is insufficient for a guest. Upload drafts must be sent with a message; existing
 attachment routes accept uploads after publication. Revoking the conversation

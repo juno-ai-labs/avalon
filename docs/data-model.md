@@ -401,14 +401,21 @@ SQL joins.
   removed from their audience cannot make it visible again.
   An archived or narrowed work stream contributes no row while remaining
   removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
-- `projects`, `project_participants`, and `workspace_project_order` in
-  WorkspaceDO hold project identity/presentation, project-level readers, and
-  each person's fixed server order. Presentation, audience, and lifecycle use
-  separate revisions so a rename does not stale an audience operation. Project
-  names are unique after normalization across active and inactive rows, and the
-  icon/color columns accept only the shared V1 registries. See
+- **WorkspaceDO migration 62 drops the eight Project tables** — `projects`,
+  `project_participants`, `workspace_project_order`, `workspace_project_state`,
+  `project_workstream_memberships`, `project_default_resources`,
+  `project_default_resource_targets` and `project_default_resource_publications`
+  — children-before-parents, because `PRAGMA foreign_keys = OFF` is a no-op once
+  a Durable Object event has touched SQLite. The drops sit behind a barrier: the
+  migration settles every pending default target and publication, then asserts
+  the remainder is zero through a scratch table whose CHECK constraint is named
+  `project_effects_pending`, so a failure says what was unsettled rather than
+  `CHECK constraint failed`. A migration runs inside one `transactionSync`, so
+  that abort takes the whole attempt and nothing is dropped. What the Project
+  mechanism already delivered to a Channel — an attached resource, a
+  recommended Sidekick, an audience — is the Channel's own and survives. See
   [`projects.md`](projects.md).
-- WorkspaceDO migration 61 adds the Space authority that replaces those rows:
+- WorkspaceDO migration 61 adds the Space authority that replaced those rows:
   `workspace_space_directory` and `workspace_space_viewers` are the *projection*
   a Space's own object publishes, so they carry the generation, source version
   and payload hash each effect is fenced on rather than being written by a
@@ -419,10 +426,13 @@ SQL joins.
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation
   with the three fences it was staged against. `space_defaults`,
-  `space_default_targets` and `space_default_publications` mirror the Project
-  trio with a `kind` column, so a resource and a Sidekick recommendation share
-  one staging, fence and receipt. `space_bootstrap` and
-  `space_bootstrap_receipts` are seeded `pending` for every Organization. The
+  `space_default_targets` and `space_default_publications` carry a `kind`
+  column, so a resource and a Sidekick recommendation share one staging, fence
+  and receipt. `space_bootstrap` is the singleton cutover row — phase, General's
+  id, the walk's cursor, the blocked Channels as JSON, and the
+  `not_before`/`attempts` retry gate the alarm claims on — seeded `pending` for
+  every Organization, with `space_bootstrap_receipts` keyed
+  `(workstream_id, phase)` so a redelivered page costs nothing. The
   same migration rebuilds `workspace_retirement_graph` so `parent_kind` admits
   `'space'`, carrying its rows and their `retired_at` receipts through a scratch
   table — migration 42 is released and is not edited. A unique partial index on

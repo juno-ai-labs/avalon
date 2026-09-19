@@ -856,6 +856,66 @@ change the update channel. Change `latest-mac.yml` or `Rally.dmg` only as a
 separate, explicitly approved release rollback using the normal publisher's
 ordering and cache-purge safeguards.
 
+### Running the Spaces cutover
+
+One-time, per region, and it is driven from the migration tracker rather than
+from a script. [`spaces.md`](spaces.md) owns the mechanism; this is the
+sequence.
+
+**What is being moved.** WorkspaceDO migration 61 seeds a `space_bootstrap` row
+`pending` in every Organization, and migration 62 deletes the Project tables
+behind a barrier. Waking a WorkspaceDO applies both and arms its alarm, which
+claims the first page of cutover work; from there the activity Queue carries
+each page to a consumer that places one page of Channels in General. Nobody has
+to be signed in.
+
+1. **Deploy, then force `WorkspaceDO`.** On `/migrations`, pick `WorkspaceDO`,
+   optionally one region at a time. That is the whole start: the constructor
+   applies 61 and 62 and the alarm does the rest.
+
+2. **Watch the cutover row, not the page count.** Through the engineering MCP:
+
+   ```text
+   run_workspace_sql: SELECT phase, general_space_id, cursor, attempts,
+                             blocked_json, completed_at
+                        FROM space_bootstrap WHERE id = 1
+   ```
+
+   The phases run `pending` → `general` → `memberships` → `finalize` →
+   `complete`. An Organization sitting in `memberships` with a moving `cursor`
+   is working. One sitting in `finalize` is refusing to close, and
+   `blocked_json` says why.
+
+3. **Remediate blockers.** `space_membership_content_fence` means the Channel
+   holds retained content the Organization may not read, so placing it in
+   General would disclose it. The cutover never bypasses that — somebody decides
+   whether the Channel should be Organization-wide, and the ordinary
+   **Add to space** flow does it once they have.
+   `space_bootstrap_no_active_actor` means every participant of a personal
+   Channel has left the Organization; re-activating one member, or leaving the
+   Channel personal and out of the hierarchy, are both decisions rather than
+   operations. The alarm re-runs `finalize` on its ordinary interval, so a
+   remediated Organization closes itself with no further command.
+
+4. **`project_effects_pending` is the one blocker with an operator remedy.** It
+   means a Project default was still queued when the cutover tried to close. The
+   in-flight messages are on the regional activity Queue: let it drain, confirm
+   no new dead letters, and force `WorkspaceDO` again. Migration 62 asserts the
+   same condition inside the transaction and aborts by that name, so an
+   Organization that cannot pass it keeps its Project tables intact rather than
+   getting a partial retirement.
+
+5. **Confirm the finish.** `phase = 'complete'` with an empty `blocked_json` in
+   every Organization, and an empty regional activity dead-letter queue — a
+   dead-lettered `space_bootstrap` or `space_default` message is the terminal
+   failure signal for this work, as it is for every other Space delivery.
+
+**Old clients.** Once a region is serving the new payload, a desktop build from
+before the cutover is answered `426 client_update_required` on `GET /workstreams`
+and `GET /workspace/socket`, which the client renders as an update prompt. iOS
+and the desktop main process are unaffected by design — the gate keys on the
+`Origin` header, and only a browser context sends one.
+
 ### Desktop icon release gate
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
