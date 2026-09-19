@@ -672,7 +672,7 @@ table.
 - CI additionally runs `pnpm test:scripts`, both Wrangler dry-run builds, the
   desktop release invariants
   (`pnpm --filter @rally/desktop test:release`), and a Gitleaks scan over the
-  full history.
+  commits the pull request adds to its base branch.
 - `pnpm smoke:local` and the manual desktop acceptance flows are in
   [`e2e.md`](e2e.md); running both Workers and the Electron client locally is in
   [`dev-environment.md`](dev-environment.md).

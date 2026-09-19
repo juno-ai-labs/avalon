@@ -946,6 +946,14 @@ does not own the subsystems on either side of them:
   range is now the pull request's own commits, and the limit that remains is the
   other side of that — a secret already on the base branch is not re-reported,
   because it was this gate's to catch on the pull request that carried it.
+- **A secret introduced only by a conflict resolution is invisible to the
+  `secrets` gate.** `git log -p` emits no patch for a merge commit, so a value
+  that appears in neither parent and only in the merged tree is in no patch the
+  scan reads. This is not a consequence of scanning a range — the unscoped
+  whole-history scan that preceded it had the identical gap, confirmed against
+  the pinned binary both ways — and it is the same property that keeps a merge
+  from double-reporting the commits under it. A conflict resolution that pastes
+  a credential is therefore caught by review or not at all.
 - **One documented dependency advisory is accepted.** As of August 2026 the package
   audit still reports
   [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) against
