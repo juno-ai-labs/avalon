@@ -423,8 +423,14 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
   z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
     input: WorkstreamObjectCreateMessageInputSchema }),
-  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
+  // `spaceSourceId` names the Space a participant change is being made on
+  // behalf of. It changes nothing about admission — the same roster or grant
+  // row is written either way — only where the resulting grant is published,
+  // and it is carried here because nothing downstream can infer it.
+  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
   z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
@@ -3339,7 +3345,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId },
+          ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) });
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
