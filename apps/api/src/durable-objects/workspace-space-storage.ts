@@ -351,9 +351,42 @@ function decodeChannelCursor(cursor: string): string | null {
   }
 }
 
+/** A directory with nothing in it, for an object whose Space tables are absent. */
+const EMPTY_DIRECTORY: SpaceDirectory = SpaceDirectorySchema.parse({ waterline: 0, items: [] });
+
 /** Synchronous repository for the Space state owned by one WorkspaceDO. */
 export class WorkspaceSpaceStorage {
+  private tablesPresent: boolean | null = null;
+
   constructor(private readonly storage: DurableObjectStorage) {}
+
+  /**
+   * Whether this object has reached the migration that created these tables.
+   *
+   * Not paranoia about the ledger. The meeting-notes retirement holds an object
+   * at version 57 until its external cleanup finishes, so an Organization
+   * mid-cleanup runs on a schema with no Space tables — and the sidebar's
+   * connect payload, the alarm's re-arm, the Channel directory's `spaceIds` and
+   * the archival note all read them before anything product-shaped has a chance
+   * to refuse. An unguarded read there is not a Space that looks empty; it is a
+   * `no such table` that fails the whole connect, so the Organization cannot
+   * open its sidebar at all.
+   *
+   * **This is the only place the question is asked.** Every Space read in
+   * WorkspaceDO comes through this class, each answering its own empty state
+   * below, and every Space *write* is refused by name (`space_bootstrap_pending`)
+   * at the RPC. A second `sqlite_schema` lookup written somewhere else is how
+   * the first version of this guard covered the alarm and nothing else.
+   *
+   * Memoized per instance — one lookup per call site rather than per statement
+   * — and an instance lives for one RPC, so it cannot cache across a migration.
+   */
+  ready(): boolean {
+    this.tablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_space_directory'`,
+    ).toArray().length === 1;
+    return this.tablesPresent;
+  }
 
   /**
    * Allocate a Space and write the rows a client can be answered from before
@@ -407,6 +440,7 @@ export class WorkspaceSpaceStorage {
 
   /** Undo a reservation whose Space object could not be provisioned. */
   cancelReservation(spaceId: string, now = Date.now()): boolean {
+    if (!this.ready()) return false;
     return this.storage.transactionSync(() => {
       const removed = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         // Only a row nothing has projected onto yet: once the Space's own
@@ -425,6 +459,7 @@ export class WorkspaceSpaceStorage {
   }
 
   list(userId: string, now = Date.now()): SpaceDirectory {
+    if (!this.ready()) return EMPTY_DIRECTORY;
     return this.storage.transactionSync(() => {
       for (const spaceId of this.visibleSpaceIds(userId)) this.appendOrder(userId, spaceId, now);
       return this.directory(userId);
@@ -432,6 +467,7 @@ export class WorkspaceSpaceStorage {
   }
 
   listInactive(userId: string): SpaceDirectory {
+    if (!this.ready()) return EMPTY_DIRECTORY;
     const rows = this.storage.sql.exec<SpaceRow>(
       `SELECT space.* FROM workspace_space_directory space
          LEFT JOIN workspace_space_viewers viewer
@@ -753,8 +789,43 @@ export class WorkspaceSpaceStorage {
     ).toArray().map((row) => row.workstream_id);
   }
 
+  /**
+   * Every active Space each of these Channels sits in.
+   *
+   * One fan-in read rather than one per row: a directory page is up to 250
+   * Channels and each may be in several Spaces, and asking per row would put
+   * 250 statements behind one sidebar paint. It lives here rather than beside
+   * its caller because it is a Space read, and every Space read goes through
+   * {@link WorkspaceSpaceStorage.ready} — this one used to be the hole, reading
+   * the Space tables straight out of the sidebar payload.
+   */
+  spaceIdsByChannel(workstreamIds: readonly string[]): Map<string, string[]> {
+    const byWorkstream = new Map<string, string[]>();
+    if (!this.ready()) return byWorkstream;
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      for (const row of this.storage.sql.exec<{
+        workstream_id: string;
+        space_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT membership.workstream_id, membership.space_id
+           FROM space_channel_memberships membership
+           JOIN workspace_space_directory space ON space.space_id = membership.space_id
+          WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
+          ORDER BY membership.workstream_id, membership.space_id`,
+        ...chunk,
+      ).toArray()) {
+        const existing = byWorkstream.get(row.workstream_id);
+        if (existing) existing.push(row.space_id);
+        else byWorkstream.set(row.workstream_id, [row.space_id]);
+      }
+    }
+    return byWorkstream;
+  }
+
   /** The active Spaces a Channel is in, whether or not the reader can see them. */
   channelSpaceIds(workstreamId: string): string[] {
+    if (!this.ready()) return [];
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT membership.space_id
          FROM space_channel_memberships membership
@@ -1190,6 +1261,7 @@ export class WorkspaceSpaceStorage {
   }
 
   defaultTargetCurrent(target: WorkspaceSpaceDefaultTarget): boolean {
+    if (!this.ready()) return false;
     return this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS one
          FROM space_default_targets target
@@ -1246,6 +1318,7 @@ export class WorkspaceSpaceStorage {
     errorCode: string,
     now = Date.now(),
   ): boolean {
+    if (!this.ready()) return false;
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
       `UPDATE space_default_targets
           SET attempts = attempts + 1, updated_at = ?, last_error_code = ?
@@ -1268,6 +1341,7 @@ export class WorkspaceSpaceStorage {
     errorCode: string,
     now = Date.now(),
   ): boolean {
+    if (!this.ready()) return false;
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
       `UPDATE space_default_targets
           SET state = 'terminal', attempts = attempts + 1, updated_at = ?, last_error_code = ?
@@ -1285,24 +1359,8 @@ export class WorkspaceSpaceStorage {
     ).toArray().length === 1;
   }
 
-  /**
-   * Whether this object has reached the migration that created these tables.
-   *
-   * Not paranoia about the ledger. The meeting-notes retirement holds an object
-   * at version 57 until its cleanup finishes, so an Organization mid-cleanup
-   * runs every alarm against a schema that has no Space tables — and the alarm
-   * re-arm below reads them on every wake, before anything product-shaped has a
-   * chance to refuse. One `sqlite_schema` lookup per re-arm is the price of
-   * that object's alarms continuing to work.
-   */
-  private tablesApplied(): boolean {
-    return this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'space_default_publications'`,
-    ).toArray().length === 1;
-  }
-
   nextDefaultPublicationDueAt(): number | null {
-    if (!this.tablesApplied()) return null;
+    if (!this.ready()) return null;
     return this.storage.sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MIN(publication.next_attempt_at) AS due_at
          FROM space_default_publications publication
@@ -1445,6 +1503,7 @@ export class WorkspaceSpaceStorage {
 
   /** Append one receipt and, when the operation is done, settle it. */
   settleIntent(operationId: string, receipt: string, settled: boolean, now = Date.now()): void {
+    if (!this.ready()) return;
     this.storage.sql.exec(
       `UPDATE space_intents
           SET receipts_json = json_insert(receipts_json, '$[#]', ?),
@@ -1468,7 +1527,7 @@ export class WorkspaceSpaceStorage {
   }
 
   nextIntentResumeDueAt(): number | null {
-    if (!this.tablesApplied()) return null;
+    if (!this.ready()) return null;
     return this.storage.sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MIN(not_before) AS due_at FROM space_intents
         WHERE state IN ('pending', 'applied')`,
@@ -1521,12 +1580,20 @@ export class WorkspaceSpaceStorage {
 
   /** The Organization's one General Space, or nothing if it has none yet. */
   generalSpaceId(): string | null {
+    if (!this.ready()) return null;
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       "SELECT space_id FROM workspace_space_directory WHERE system_role = 'general'",
     ).toArray()[0]?.space_id ?? null;
   }
 
   bootstrapStatus(): WorkspaceSpaceBootstrapStatus {
+    // An object that has not reached migration 61 has not started its cutover
+    // either, which is what `pending` says — and `ready: false` is what keeps a
+    // client on the Organization-opening state rather than showing a hierarchy
+    // that does not exist yet.
+    if (!this.ready()) {
+      return { phase: "pending", generalSpaceId: null, blockedWorkstreamIds: [], ready: false };
+    }
     const row = this.storage.sql.exec<{
       phase: WorkspaceSpaceBootstrapStatus["phase"];
       general_space_id: string | null;
@@ -1572,6 +1639,7 @@ export class WorkspaceSpaceStorage {
    * client already holds is dropped as a replay.
    */
   noteMemberArchivalChange(workstreamIds: readonly string[], now = Date.now()): boolean {
+    if (!this.ready()) return false;
     return this.storage.transactionSync(() => {
       const holdsMembership = boundParameterChunks(workstreamIds).some((chunk) => (
         this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
@@ -1588,6 +1656,7 @@ export class WorkspaceSpaceStorage {
   }
 
   waterline(): number {
+    if (!this.ready()) return 0;
     return this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
       "SELECT waterline FROM workspace_space_state WHERE id = 1",
     ).one().waterline;
@@ -1729,6 +1798,7 @@ export class WorkspaceSpaceStorage {
 
   /** Active Spaces this viewer may see, in creation order. */
   private visibleSpaceIds(userId: string): string[] {
+    if (!this.ready()) return [];
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT space.space_id
          FROM workspace_space_directory space
