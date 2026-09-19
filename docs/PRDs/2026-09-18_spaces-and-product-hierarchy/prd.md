@@ -4,7 +4,8 @@
 >
 > Replace Projects with Spaces, organize every non-deleted Channel under at least
 > one Space, and rename Rally's product hierarchy to Organizations, Spaces,
-> Channels, and Breakouts. Companion: [state](state.md). Supersedes the
+> Channels, and Breakouts. Companions: [state](state.md) and [plan](plan.md).
+> Supersedes the
 > [Projects PRD](../2026-08-26_projects/prd.md). Related subsystem references:
 > [Projects](../../projects.md), [authorization](../../authorization.md),
 > [scope-grant directory](../../scope-grant-directory.md),
@@ -321,7 +322,70 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
-None yet.
+### 2026-09-19 — Space-derived access is provenance in WorkstreamDO, applied through the Channel's canonical audience operations
+
+**Decided:** WorkstreamDO records which Space sources currently reach a Channel
+and which readers each supplied, and the one effective-audience function
+derives the Channel's readers from its direct source plus those Space sources.
+Every expansion or retraction is applied through the Channel's existing scope
+and participant operations on its main conversation, which is where the
+retained-content containment preflight and its SQL triggers already run. Grant
+rows written for a Space source carry that provenance and are never published
+to the shared scope-grant directory.
+
+**Why:** Design decision 4 extends "the WorkstreamDO grant authority". On
+`main` that ledger only becomes the admission authority for a Channel after its
+first share; every other Channel is still admitted from the scope and
+participant rows its main conversation holds. Recording Space sources only in
+the grant ledger would grant nothing on most Channels. Recording provenance in
+WorkstreamDO and applying it through the canonical operations reaches both
+kinds of Channel with one preflight.
+
+**Changes:** Nothing in the agreed goals. Design decision 4 is implemented as
+provenance beside the grant ledger rather than inside it; the "one effective
+grant" is the audience the canonical operations converge to.
+
+### 2026-09-19 — Space wire scope keeps the `workspace` value
+
+**Decided:** `SpaceScope` is `personal | workspace`, the vocabulary every
+Channel scope, grant, and directory row already uses. The product word is
+Organization on every surface.
+
+**Why:** Composing an Organization-wide Space source with a Channel's direct
+scope is a comparison between two scope values; two spellings of the same
+audience would need a translation at every seam. Non-goal 7 keeps internal
+tenancy vocabulary.
+
+**Changes:** Nothing in scope.
+
+### 2026-09-19 — WorkspaceDO's default registry is the delivery authority
+
+**Decided:** A Space's default resources and Sidekicks are attached to the
+Space's own authority (its hidden main conversation for resources, its parent
+for Sidekick recommendations) and registered in WorkspaceDO with a generation.
+The registry is what stages, fences, and settles delivery to member Channels;
+the Space's own attachments are the inheritance record a person sees.
+
+**Why:** Delivery needs a generation to fence stale Queue work, and the Space's
+own attachment tables have no such counter. Keeping the counter beside the
+membership generations, in the object that already coordinates them, avoids a
+second fence that would have to be read across an RPC boundary.
+
+**Changes:** Nothing in scope.
+
+### 2026-09-19 — The conversation-object migration is 66 and internal names keep their words
+
+**Decided:** The closed `space` parent kind lands as conversation-object schema
+version 66, not "after 62": `main` reached 65 before implementation started.
+The `--av-sys-color-project-*` design tokens, the `project` colour helpers, and
+the stored `workspace` and `workstream` identifiers are kept; only visible copy
+changes. New Space surfaces use `space` in their own class and file names.
+
+**Why:** A token rename touches every glyph and avatar in the desktop client
+for no visible change. Non-goal 7 and design decision 8 already keep internal
+vocabulary where renaming it buys nothing.
+
+**Changes:** Nothing in scope.
 
 ## Key design decisions
 
