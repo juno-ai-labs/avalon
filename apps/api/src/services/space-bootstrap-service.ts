@@ -61,14 +61,68 @@ export class SpaceBootstrapService {
       workspace_id: this.driver.workspaceId,
       space_id: general.id,
     });
-    await this.settle({ phase: "general", cursor: null, placedWorkstreamIds: [], blocked: [] });
+    await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
+  }
+
+  /**
+   * Ask, of one page of Channels, whether the cutover may widen each of them —
+   * and write nothing.
+   *
+   * The PRD's Existing Organizations section says an unsafe Channel blocks its
+   * Organization "without partial mutation", and rollout step 3 asks the
+   * preflight to identify every blocker *before* promotion. A walk that
+   * discovered its blockers one placement at a time could not do either: by the
+   * time the fenced Channel refused, the Channels before it in the page were
+   * already Organization-wide. So the same questions a placement asks are asked
+   * here first, against the same page and cursor, and `memberships` is only
+   * entered when this pass recorded nothing.
+   *
+   * A Channel that comes back clear is reported as cleared, which takes a stale
+   * blocker off the row: this is also the pass that notices a remediation, and
+   * a Channel whose content or fence has changed since the last walk is exactly
+   * what an Organization stuck in `finalize` is waiting for.
+   */
+  async runPreflight(cursor: WorkstreamId | null): Promise<void> {
+    const workspace = await this.workspace();
+    const page = WorkspaceSpaceBootstrapPageSchema.parse(await workspace.spaceBootstrapPage({
+      workspaceId: this.driver.workspaceId,
+      cursor,
+    }));
+    if (page.generalSpaceId === null) {
+      await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
+      return;
+    }
+    const actors = await this.activeActors(page.items);
+    const cleared: WorkstreamId[] = [];
+    const blocked: Array<{ workstreamId: WorkstreamId; code: string }> = [];
+    for (const channel of page.items) {
+      // A Channel some Space already holds is not about to be widened by this
+      // cutover, so there is nothing to preflight and nothing to refuse.
+      const admission = channel.placed ? { actor: this.driver } : await this.admit(channel, actors);
+      if ("actor" in admission) cleared.push(channel.workstreamId);
+      else blocked.push({ workstreamId: channel.workstreamId, code: admission.code });
+    }
+    if (blocked.length > 0) {
+      logWarn(this.env, "space_bootstrap_channels_blocked", {
+        workspace_id: this.driver.workspaceId,
+        blocked: blocked.length,
+        reason: blocked[0]?.code ?? "unknown",
+      });
+    }
+    await this.settle({
+      phase: "preflight",
+      cursor: page.nextCursor,
+      clearedWorkstreamIds: cleared,
+      blocked,
+    });
   }
 
   /**
    * Place one page of Channels in General.
    *
-   * Active and archived alike. A Channel some Space already holds is receipted
-   * and skipped, which is what makes a redelivery of the same page — and a
+   * Active and archived alike, and only ever on an Organization whose
+   * `preflight` pass found nothing to refuse. A Channel some Space already
+   * holds is skipped, which is what makes a redelivery of the same page — and a
    * Channel created by the ordinary creation path while the cutover is running
    * — cost nothing.
    */
@@ -81,7 +135,7 @@ export class SpaceBootstrapService {
     if (page.generalSpaceId === null) {
       // The phase moved backwards under us, or General's reservation was
       // cancelled. Say so and let the alarm republish the `general` step.
-      await this.settle({ phase: "general", cursor: null, placedWorkstreamIds: [], blocked: [] });
+      await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
       return;
     }
     const actors = await this.activeActors(page.items);
@@ -106,7 +160,7 @@ export class SpaceBootstrapService {
     await this.settle({
       phase: "memberships",
       cursor: page.nextCursor,
-      placedWorkstreamIds: placed,
+      clearedWorkstreamIds: placed,
       blocked,
     });
   }
@@ -131,7 +185,7 @@ export class SpaceBootstrapService {
       // A Channel arrived after the walk passed its id — the ordinary creation
       // path places one itself, but a directory projection can land late — so
       // the walk starts again rather than the Organization waiting forever.
-      await this.settle({ phase: "general", cursor: null, placedWorkstreamIds: [], blocked: [] });
+      await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
       return;
     }
     logWarn(this.env, "space_bootstrap_not_ready", {
@@ -154,17 +208,28 @@ export class SpaceBootstrapService {
     return this.place(channel, general.id, await this.activeActors([channel]));
   }
 
-  /** Place one Channel in General, or name the refusal that stopped it. */
-  private async place(
+  /**
+   * Whether the cutover may widen this Channel, and as whom.
+   *
+   * Everything a placement can refuse *before* it writes anything, in one
+   * place, because two passes ask it: `preflight` to find every blocker in an
+   * Organization before the first Channel is widened, and `place` again at the
+   * moment of the mutation. The second ask is not redundant — the fence is a
+   * trigger inside the conversation and content can arrive between the two —
+   * but by then a refusal is a rarity rather than the normal way a blocker is
+   * discovered.
+   *
+   * Only a Channel that is about to be widened is asked about containment. An
+   * Organization-wide one is already readable by everybody General admits, so
+   * there is nothing for a containment fence to be about and nothing to ask a
+   * second object.
+   */
+  private async admit(
     channel: SpaceBootstrapChannel,
-    generalSpaceId: SpaceId,
     actors: ReadonlyMap<string, AuthContext>,
-  ): Promise<string | null> {
+  ): Promise<{ actor: AuthContext } | { code: string }> {
     const actor = this.actorFor(channel, actors);
-    if (!actor) return "space_bootstrap_no_active_actor";
-    // Only a Channel that is about to be widened. An Organization-wide one is
-    // already readable by everybody General admits, so there is nothing for a
-    // containment fence to be about and nothing to ask a second object.
+    if (!actor) return { code: "space_bootstrap_no_active_actor" };
     if (channel.scope === "personal") {
       const contains = await (await this.conversation(channel.workstreamId)).previewAudienceContainment({
         workspaceId: asWorkspaceId(this.driver.workspaceId),
@@ -172,11 +237,25 @@ export class SpaceBootstrapService {
         audience: { scope: "workspace" },
       });
       if (contains !== true) {
-        return contains === false
-          ? "space_membership_content_fence"
-          : "space_bootstrap_conversation_unreachable";
+        return {
+          code: contains === false
+            ? "space_membership_content_fence"
+            : "space_bootstrap_conversation_unreachable",
+        };
       }
     }
+    return { actor };
+  }
+
+  /** Place one Channel in General, or name the refusal that stopped it. */
+  private async place(
+    channel: SpaceBootstrapChannel,
+    generalSpaceId: SpaceId,
+    actors: ReadonlyMap<string, AuthContext>,
+  ): Promise<string | null> {
+    const admission = await this.admit(channel, actors);
+    if (!("actor" in admission)) return admission.code;
+    const { actor } = admission;
     const workspace = await this.workspace();
     const plan = WorkspaceSpaceMembershipPlanResultSchema.parse(await workspace.prepareSpaceMembership({
       workspaceId: asWorkspaceId(this.driver.workspaceId),

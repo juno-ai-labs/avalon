@@ -266,7 +266,7 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   // immediately instead of waiting out a retry interval.
   `CREATE TABLE space_bootstrap (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    phase TEXT NOT NULL CHECK (phase IN ('pending', 'general', 'memberships', 'finalize', 'complete')),
+    phase TEXT NOT NULL CHECK (phase IN ('pending', 'general', 'preflight', 'memberships', 'finalize', 'complete')),
     general_space_id TEXT,
     cursor TEXT,
     blocked_json TEXT NOT NULL CHECK (json_valid(blocked_json)),
@@ -379,7 +379,7 @@ function decodeChannelCursor(cursor: string): string | null {
 
 /** What the cutover's alarm claimed, and what the consumer should do with it. */
 export interface SpaceBootstrapClaim {
-  kind: "general" | "memberships" | "finalize";
+  kind: "general" | "preflight" | "memberships" | "finalize";
   cursor: string | null;
 }
 
@@ -1764,7 +1764,8 @@ export class WorkspaceSpaceStorage {
    * `phase` is the pass that is *running*, so it maps to a message kind
    * directly. `pending` and `general` both publish `general` because
    * `ensureGeneral` is idempotent — the second one through is answered with the
-   * Space the first one made.
+   * Space the first one made. `preflight` and `memberships` are the two passes
+   * that walk the directory, so they are the two that carry a cursor.
    */
   claimBootstrap(now: number, retryAt: (attempt: number) => number): SpaceBootstrapClaim | null {
     if (!this.ready()) return null;
@@ -1789,8 +1790,9 @@ export class WorkspaceSpaceStorage {
       );
       return {
         kind: row.phase === "memberships" ? "memberships"
+          : row.phase === "preflight" ? "preflight"
           : row.phase === "finalize" ? "finalize" : "general",
-        cursor: row.phase === "memberships" ? row.cursor : null,
+        cursor: row.phase === "memberships" || row.phase === "preflight" ? row.cursor : null,
       };
     });
   }
