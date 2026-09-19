@@ -1640,11 +1640,92 @@ describe('markdown list markers', () => {
       expect(prelude).toContain('.citation-card-preview');
     }
 
-    expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
-    expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
+    // Every paint is a substitution now, so the tokens are asserted where they
+    // are named — on the group — and the elements are asserted to read it.
+    expect(rule('.markdown-body')).toContain('--markdown-ink-strong: var(--av-ref-color-neutral-14);');
+    expect(rule('.markdown-body')).toContain('--markdown-link: var(--av-sys-color-accent-soft);');
+    expect(rule('.markdown-body strong')).toContain('var(--markdown-ink-strong)');
+    expect(rule('.markdown-body a')).toContain('var(--markdown-link)');
     expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
     expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
+  });
+});
+
+/**
+ * The paint group, and the one surface that re-points it.
+ *
+ * Every colour in the shared group is a `--markdown-*` substitution, so a
+ * surface with a fill of its own moves the whole of markdown onto its own ink
+ * in one block rather than restating element rules — which is what the person's
+ * bubble had been doing, one element at a time, as somebody noticed each one.
+ */
+describe('markdown paint', () => {
+  /**
+   * A person's bubble paints its own fill, so it re-points the whole group.
+   *
+   * Half of it is the failure worth guarding: `.markdown-inline-code` took its
+   * chip from the neutral ramp while the bubble had already forced the ink to
+   * near-white, and a `/goal` in a message was a light pill with nothing
+   * legible inside it. A role added to the group later inherits that bug on
+   * every filled bubble unless it is re-pointed too, and the day it lands is
+   * the cheap day to notice — so the two sets are compared rather than the
+   * individual values, which are the bubble's to tune.
+   */
+  it('re-points every markdown paint inside a filled bubble', () => {
+    const names = (selector: string): string[] => [
+      ...(rule(selector) ?? '').matchAll(/(--markdown-[a-z-]+)\s*:/gu),
+    ].map((match) => match[1]!).sort();
+
+    const group = names('.markdown-body');
+    expect(group.length).toBeGreaterThan(0);
+    expect(names('.human-message-bubble .markdown-body')).toEqual(group);
+  });
+
+  /**
+   * The half the name comparison above cannot see: that an element rule reads
+   * the group at all.
+   *
+   * Comparing declared names says nothing about what the elements consume, so
+   * reverting `.markdown-inline-code` to `background: var(--av-ref-color-neutral-4)`
+   * — the literal bug this change exists to fix — passes every other test in
+   * this file. What makes a paint follow its surface is naming a `--markdown-*`
+   * property, and that is what this scans for.
+   *
+   * The exemptions are the two kinds of paint that deliberately do not follow a
+   * surface, and each has to be argued rather than added: the fenced block,
+   * which takes the whole group back to the appearance because its highlighter
+   * and its diagrams are resolved from the root, and a failure notice, whose
+   * colour is a meaning rather than a shade. Anything else reaching for an
+   * `--av-*` colour inside this group is the bug coming back.
+   */
+  it('paints every markdown element through the group, not from a token', () => {
+    const EXEMPT = [
+      // Re-points the group back to the appearance, which is the whole point of
+      // it; `markdown-rendering.md` holds the argument.
+      '.markdown-body .markdown-code-block',
+      // `danger-soft` is what "this did not render" means, on any surface.
+      '.markdown-mermaid-error',
+    ];
+    // A citation card and a mention chip are components that happen to be
+    // rendered inside a markdown body, not markdown elements: they carry their
+    // own semantic paint wherever they appear, and the chip already has the
+    // `currentColor` rule a filled bubble needs.
+    const COMPONENT = /\.(citation|mention|connector)-/u;
+    const MARKDOWN = /^(\.markdown-body\b|\.markdown-(inline-code|code-block|code-language|table-scroll)\b)/u;
+
+    const offenders = preludes()
+      .filter((prelude) => prelude.split(',').some((selector) => MARKDOWN.test(selector.trim())))
+      .filter((prelude) => !EXEMPT.some((exempt) => prelude.startsWith(exempt)))
+      .filter((prelude) => !COMPONENT.test(prelude))
+      .filter((prelude) => {
+        const declarations = (rule(prelude) ?? '')
+          .split(';')
+          .filter((declaration) => /(?:^|\s)(?:color|background|background-color|border[a-z-]*color|accent-color|fill)\s*:/u.test(declaration));
+        return declarations.some((declaration) => /var\(--av-[a-z0-9-]*color/u.test(declaration));
+      });
+
+    expect(offenders).toEqual([]);
   });
 });
 
