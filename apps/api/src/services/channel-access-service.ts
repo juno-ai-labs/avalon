@@ -142,10 +142,15 @@ export class ChannelAccessService {
    * update then fails can put the record back rather than leave it claiming an
    * audience the Channel never took.
    */
-  async recordDirectScope(workstreamId: string, scope: SpaceScope): Promise<SetChannelDirectScopeResult> {
+  async recordDirectScope(
+    workstreamId: string,
+    scope: SpaceScope,
+    observed = true,
+  ): Promise<SetChannelDirectScopeResult> {
     return (await this.room(workstreamId)).setDirectScope({
       ...this.address(workstreamId),
       scope,
+      observed,
       operationId: uuidV7(),
     });
   }
@@ -153,22 +158,29 @@ export class ChannelAccessService {
   /**
    * Put the recorded direct scope back after a canonical update did not take.
    *
+   * Both halves of the record, not just the scope. A Channel whose row was
+   * still the migration's guess has to go back to being a guess: restoring the
+   * scope alone would tell the first Space to reach it that somebody decided
+   * this audience, and stop it seeding the value it can still derive exactly
+   * from the readers it is handed.
+   *
    * Best effort and never throws: the refusal the caller is about to see is the
    * useful one, and a restore that is itself refused — the Channel is
    * Organization-wide through a Space, so it cannot be recorded as private —
    * leaves a record that is wrong in the safe direction and is named here.
    */
-  async restoreDirectScope(workstreamId: string, scope: SpaceScope): Promise<void> {
+  async restoreDirectScope(workstreamId: string, scope: SpaceScope, observed: boolean): Promise<void> {
     try {
-      const restored = await this.recordDirectScope(workstreamId, scope);
+      const restored = await this.recordDirectScope(workstreamId, scope, observed);
       if (restored.ok) return;
       logWarn(this.env, "channel_direct_scope_restore_refused", {
-        workstream_id: workstreamId, scope, code: restored.code,
+        workstream_id: workstreamId, scope, observed, code: restored.code,
       });
     } catch (error) {
       logWarn(this.env, "channel_direct_scope_restore_failed", {
         workstream_id: workstreamId,
         scope,
+        observed,
         error: error instanceof Error ? error.message : String(error),
       });
     }

@@ -127,14 +127,22 @@ export class WorkstreamAccessStorage {
     return { scope: AudienceScopeSchema.parse(row.scope), observed: row.updated_at > 0 };
   }
 
-  recordDirectScope(scope: AudienceScope, now: number): void {
+  /**
+   * Write the Channel's own audience, and whether anything established it.
+   *
+   * `observed` is false only for a restore putting back a row that was still
+   * the migration's guess. Recording the scope while marking it observed would
+   * tell the first Space to reach this Channel that the guess was a decision,
+   * and stop it seeding the value it can still derive exactly.
+   */
+  recordDirectScope(scope: AudienceScope, now: number, observed = true): void {
     this.sql.exec(
       `INSERT INTO workstream_direct_audience (id, scope, updated_at) VALUES (1, ?, ?)
          ON CONFLICT (id) DO UPDATE SET scope = excluded.scope, updated_at = excluded.updated_at`,
       AudienceScopeSchema.parse(scope),
       // A recorded scope has to be distinguishable from the backfill, and the
       // caller's clock can be zero in a test that pins time.
-      Math.max(now, 1),
+      observed ? Math.max(now, 1) : 0,
     );
   }
 
