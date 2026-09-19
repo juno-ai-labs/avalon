@@ -19,6 +19,7 @@ import { boundParameterChunks } from "./bound-parameters";
 import type {
   RemainingChannelAudience,
   SpaceDefaultKind,
+  SpaceMember,
   SpaceMembershipReach,
   WorkspaceSpaceAudienceNoteRequest,
   WorkspaceSpaceDefaultRequest,
@@ -803,20 +804,26 @@ export class WorkspaceSpaceStorage {
    * `active` plus `removing` — and an archive that read the active set would
    * walk nothing and leave its source on every Channel it reached.
    */
-  memberWorkstreamIds(
+  members(
     userId: string,
     spaceId: string,
     reach: SpaceMembershipReach = "active",
-  ): string[] | false {
+  ): SpaceMember[] | false {
     if (!this.canRead(userId, spaceId)) return false;
-    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+    return this.storage.sql.exec<{
+      workstream_id: string;
+      generation: number;
+    } & Record<string, SqlStorageValue>>(
       reach === "reaching"
-        ? `SELECT workstream_id FROM space_channel_memberships
+        ? `SELECT workstream_id, generation FROM space_channel_memberships
             WHERE space_id = ? AND state IN ('active', 'removing') ORDER BY workstream_id`
-        : `SELECT workstream_id FROM space_channel_memberships
+        : `SELECT workstream_id, generation FROM space_channel_memberships
             WHERE space_id = ? AND state = 'active' ORDER BY workstream_id`,
       spaceId,
-    ).toArray().map((row) => row.workstream_id);
+    ).toArray().map((row) => ({
+      workstreamId: asWorkstreamId(row.workstream_id),
+      membershipGeneration: row.generation,
+    }));
   }
 
   /**

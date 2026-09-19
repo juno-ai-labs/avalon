@@ -29,6 +29,7 @@ import {
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
   type SpaceDefaultKind,
+  type SpaceMember,
   type SpaceMembershipReach,
   type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMutationResult,
@@ -218,8 +219,8 @@ export class SpaceService {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
     }
-    const members = await this.memberChannelIds(spaceId);
-    await this.preflightContainment(members, input);
+    const members = await this.memberChannels(spaceId);
+    await this.preflightContainment(members.map((member) => member.workstreamId), input);
 
     const operationId = uuidV7();
     const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
@@ -238,7 +239,7 @@ export class SpaceService {
     for (const userId of removed) await spaceClient.removeParticipant(userId);
 
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const workstreamId of members) {
+    for (const { workstreamId, membershipGeneration } of members) {
       // The Space, re-read each time round. Every step below is a cross-object
       // await, so a later audience change can accept and overtake this one part
       // way through the walk; carrying on would leave the Channels behind it on
@@ -257,7 +258,7 @@ export class SpaceService {
         scope: input.scope,
         participantUserIds: [...requested].map(asUserId),
         spaceRevision: updated.revision,
-        membershipGeneration: 1,
+        membershipGeneration,
         operationId: uuidV7(),
       });
       await this.recordReceipt(operationId, `audience:${workstreamId}`, false);
@@ -370,7 +371,7 @@ export class SpaceService {
       operationId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const workstreamId of await this.memberChannelIds(spaceId, "reaching")) {
+    for (const { workstreamId } of await this.memberChannels(spaceId, "reaching")) {
       await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
     }
     return this.settled(await workspace.finalizeSpaceArchive({
@@ -396,13 +397,16 @@ export class SpaceService {
       spaceId,
     }), "");
     const access = new ChannelAccessService(this.env, this.auth);
-    for (const workstreamId of await this.memberChannelIds(spaceId)) {
+    // The memberships the restore just put back, each at the generation that
+    // restore advanced it to — read after it, so the fence every application
+    // carries is the row's own rather than a constant.
+    for (const { workstreamId, membershipGeneration } of await this.memberChannels(spaceId)) {
       await access.applySpaceSource(workstreamId, {
         spaceId,
         scope: restored.scope,
         participantUserIds: restored.participants.map((participant) => participant.userId),
         spaceRevision: restored.revision,
-        membershipGeneration: 1,
+        membershipGeneration,
         operationId: uuidV7(),
       });
     }
@@ -485,10 +489,10 @@ export class SpaceService {
    * flips a membership out of `active` — so an archive that asked for the
    * default set would walk nothing.
    */
-  async memberChannelIds(
+  async memberChannels(
     spaceId: SpaceId,
     reach: SpaceMembershipReach = "active",
-  ): Promise<WorkstreamId[]> {
+  ): Promise<SpaceMember[]> {
     const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
@@ -496,7 +500,7 @@ export class SpaceService {
       reach,
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
-    return result.workstreamIds;
+    return result.members;
   }
 
   /**
@@ -590,14 +594,14 @@ export class SpaceService {
           current_revision: space.revision,
         });
       }
-      for (const workstreamId of await this.memberChannelIds(intent.spaceId)) {
+      for (const { workstreamId, membershipGeneration } of await this.memberChannels(intent.spaceId)) {
         await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
         await access.applySpaceSource(workstreamId, {
           spaceId: intent.spaceId,
           scope: space.scope,
           participantUserIds: space.participants.map((participant) => participant.userId),
           spaceRevision: space.revision,
-          membershipGeneration: 1,
+          membershipGeneration,
           operationId: uuidV7(),
         });
       }
@@ -613,7 +617,7 @@ export class SpaceService {
       // this intent already flipped every membership to `removing`, so the
       // active set is empty and the Channels whose source is still live are
       // exactly the ones this read names.
-      for (const workstreamId of await this.memberChannelIds(intent.spaceId, "reaching")) {
+      for (const { workstreamId } of await this.memberChannels(intent.spaceId, "reaching")) {
         await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
       }
       await workspace.finalizeSpaceArchive({
