@@ -340,6 +340,12 @@ describe('token references', () => {
     // so they interpolate as lengths; a theme has no opinion about them.
     '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',
     '--turn-bubble-radius',
+    // The one hover wash, spelled as a paint layer so it composites over a
+    // control's own surface instead of replacing it. It is derived from
+    // `sys.color.state.hover`, which the registry does declare; a theme sets
+    // the colour and this states how it is applied, which is not a theme's to
+    // choose.
+    '--hover-layer',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads
     // light on a dark or profile-coloured bubble and dark on a light card. A

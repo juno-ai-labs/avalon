@@ -9,6 +9,7 @@
     "ref.space": "The spacing unit. Every margin, padding and gap in the feed is a whole multiple of it, derived in the stylesheet, and the semantic spacing tokens are multiples of it too, so a theme that wants a looser or tighter feed moves one number.",
     "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg …>\"}` for artwork drawn in the theme file and `{\"url\": \"https://…\"}` for one fetched over the network, and an array for layers.",
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark — a dark theme makes a control recede by darkening it, a light theme by greying it.",
+    "sys.color.state": "The interaction washes, painted over whatever surface a control already sits on rather than replacing it. There is one hover wash for the whole product: a navigation row, a menu item, a header icon and a settings button are the same gesture under the pointer, and a reader who has to ask which wash a control takes is reading a decision that was never made. It is translucent in both appearances precisely so that one value can do that — an opaque fill has to know what is behind it, and `surface.raised-hover` did not on the canvas.",
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
@@ -46,7 +47,7 @@
     "cmp.pane": "The content pane. `background` is the fill drawn over the backdrop, so a theme that wants its backdrop to show through the feed sets it to `transparent` rather than to a colour that happens to match.",
     "cmp.sidebar": "The navigation. `background` is a translucent tint, so `background-solid` exists for the narrow-width drawer, which sits over the content and cannot be see-through.",
     "cmp.marker": "The mark at a row's leading edge. It is one element whose *shape* is a theme's decision and whose *colour* stays the row's state, so a theme can trade a dot for a line without the navigation losing what the dot was saying. It stretches between `inset-block` and the row, which is what lets one pair of values describe both a centred dot — `calc(50% - 3px)` — and a line that runs the height of the row.",
-    "cmp.row": "Inside a navigation row. `height-dense` is the floor under the rows whose height comes from their content; `height` is the floor for a single-line row. `background-hover` and `background-selected` are the fills; a theme that marks selection with the marker alone sets the latter to `transparent`.",
+    "cmp.row": "Inside a navigation row. `height-dense` is the floor under the rows whose height comes from their content; `height` is the floor for a single-line row. `background-selected` is the selected fill; a theme that marks selection with the marker alone sets it to `transparent`. A row's hover is not here: it is `sys.color.state.hover`, which every control in the product shares.",
     "cmp.group-label": "The band a group's label sits in.",
     "cmp.bubble": "The fill behind a person's turn. A theme with one continuous ground can set all three to nothing and let the message sit on the page as plain text.",
     "cmp.composer": "The message composer's frame. A theme builds either shape out of the same five values: a card sets a background, a border and a radius; a rule sets them to nothing and gives `rule-color` a hairline instead, so the composer reads as a line the page rests on rather than as a box floating over it. `rule-color-focus` is what that line does when the field has focus, which is the only feedback left once the border is gone. `send-background` and `send-radius` are the send control's own frame, which follows the composer: a flat composer with a raised button on it reads as two different surfaces.",
@@ -56,7 +57,7 @@
     "cmp.segmented": "The track behind an exclusive-choice strip. Its one value is the recess the chosen pill sits in, and the pill is `sys.color.surface.raised`, so the two have to move apart in both appearances. That is why the track is not a neutral step: light recesses *down* from the card it sits on and dark recesses further down again, and the one step that reads as a recess in dark is the raised fill itself.",
     "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
     "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
-    "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
+    "cmp.control": "Shared secondary controls, independent of message and sidebar geometry. `background-quiet` is the resting fill of a control drawn as a faint chip rather than as a bordered box \u2014 the composer\u2019s round tools, the send and stop buttons, the collapsed sidebar\u2019s search pill. It carries the same weight as `sys.color.state.hover` today and is named apart from it on purpose: one is what a control looks like at rest and the other is what any control looks like under the pointer, and a change to either should not have to argue about the other.",
     "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
   },
   "tokens": {
@@ -65,6 +66,9 @@
     },
     "cmp.control.font-size": {
       "$type": "dimension"
+    },
+    "cmp.control.background-quiet": {
+      "$type": "color"
     },
     "cmp.surface.radius": {
       "$type": "dimension"
@@ -175,6 +179,9 @@
       "$type": "color"
     },
     "sys.color.surface.elevated-hover": {
+      "$type": "color"
+    },
+    "sys.color.state.hover": {
       "$type": "color"
     },
     "sys.color.text.on-media": {
@@ -641,9 +648,6 @@
     },
     "cmp.row.height-dense": {
       "$type": "dimension"
-    },
-    "cmp.row.background-hover": {
-      "$type": "color"
     },
     "cmp.row.background-selected": {
       "$type": "color"
