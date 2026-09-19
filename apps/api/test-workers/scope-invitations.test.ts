@@ -4,7 +4,7 @@ import { createApp } from "../src/app";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
@@ -197,6 +197,32 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
 });
 
+it("names the field when an invitation is asked to expire past the end of time", async () => {
+  const app = createApp();
+  const headers = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
+  // Past the largest instant a `Date` can hold and still a safe integer, which
+  // is the whole band `z.number().int()` lets through: `expiresAt` reached
+  // `new Date(value).toISOString()` in the link store and came back as a bare
+  // `RangeError: Invalid time value`, naming neither the field nor the caller's
+  // value. Anything larger was already refused for not being an integer, which
+  // is why the ceiling has to be the `Date` range rather than that one.
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const response = await app.request("/sharing", { method: "POST", headers, body: JSON.stringify({
+      operationId: crypto.randomUUID(), parentId, emails: ["guest@example.test"], targets: [child],
+      expiresAt: 9_000_000_000_000_000 }) }, { ...env, LOG_LEVEL: "warn" as const });
+    // A rejection, not a 500, and the diagnostic names the field rather than
+    // carrying one run's `RangeError` message.
+    expect(response.status).toBe(400);
+    expect(warn.mock.calls.map(([entry]) => entry as { validation_issues?: unknown }).flatMap((entry) =>
+      Array.isArray(entry?.validation_issues) ? entry.validation_issues : []))
+      .toContainEqual(expect.objectContaining({ path: "expiresAt" }));
+  } finally {
+    warn.mockRestore();
+  }
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>()).toMatchObject({ n: 0 });
+});
+
 it("emails one opaque credential, fills in the mailbox it was sent to, and accepts by that credential alone", async () => {
   const created = await room().createScopeInvitations(invitation());
   if (created.status !== "created") throw new Error(JSON.stringify(created));
@@ -210,14 +236,23 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
   expect(link.search).toBe("");
   expect(credential.link).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
   expect(link.toString()).toHaveLength(`${new URL("/invite", link).toString()}#inv_`.length + 43);
-  for (const secret of [workspaceId, parentId, invitationId, await tokenFor(invitationId), "region", "global"]) {
-    expect(link.toString()).not.toContain(secret);
+  // The token is the credential, so the link carries it; what it must not carry
+  // is anything that says what the credential addresses.
+  expect(credential.link).toBe(await tokenFor(invitationId));
+  for (const routing of [workspaceId, parentId, invitationId, "region", "global"]) {
+    expect(link.toString()).not.toContain(routing);
   }
-  // The row holds the digest of the token in the email, never the token.
+  // The row holds the digest of the token in the email, never the token, and
+  // no second secret beside the address: a dump of this table cannot be
+  // replayed through the addressed request body that is still accepted.
   const stored = await env.DB.prepare("SELECT type, payload FROM link_payloads").first<{ type: string; payload: string }>();
   expect(stored?.type).toBe("inv");
-  expect(JSON.parse(stored!.payload)).toMatchObject({ workspaceId, parentId, invitationId });
+  expect(JSON.parse(stored!.payload)).toEqual({ workspaceId, parentId, invitationId });
+  expect(stored!.payload).not.toContain(credential.link.slice(4));
   expect(await env.DB.prepare("SELECT 1 FROM link_payloads WHERE token_hash = ?").bind(credential.link).first()).toBeNull();
+  expect(await room().acceptScopeInvitation({ workspaceId, parentId, invitationId,
+    userId: recipientId, ...JSON.parse(stored!.payload), token: "whatever a dump gives you" }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
 
   const app = createApp();
   const origin = { origin: "https://app.test", "content-type": "application/json" };
@@ -261,6 +296,92 @@ it("names the sender and the workspace, and still sends when the conversation ca
   expect(html).toContain("Adam Owner");
   expect(html).toContain("Shared workspace");
   expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
+});
+
+it("takes back the links it minted for a creation it did not record", async () => {
+  const rows = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>())!.n;
+  const operationId = crypto.randomUUID();
+  const two = { ...invitation(), operationId, emails: ["guest@example.test", "second@example.test"] };
+  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
+  expect(await rows()).toBe(2);
+
+  // A replay of the same operation reports the first attempt's invitations, so
+  // the links it minted on the way there address nothing. Nothing else can
+  // reach them: the row is keyed by a digest of a token only this call held.
+  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
+  expect(await rows()).toBe(2);
+
+  // Same for a creation nobody was allowed to make. The invitation is refused
+  // before it is recorded, and its rows go with it.
+  expect(await room().createScopeInvitations({ ...invitation(), actorUserId: recipientId }))
+    .toMatchObject({ status: "denied", reason: "sharing_required" });
+  expect(await rows()).toBe(2);
+});
+
+/** A warning is written in the object's isolate, so the collector and the level it needs live there too. */
+type WarnCaptureScope = typeof globalThis & { __rallyWarnLog?: unknown[]; __rallyWarnOriginal?: typeof console.warn };
+
+it("names which authority refused when a preview cannot be read", async () => {
+  // Both inside the object: `logStructuredEvent` writes to the console of the
+  // isolate it runs in rather than the runner's, and this Worker's test config
+  // sets `LOG_LEVEL` to `error`, which drops the warning before it is written.
+  // A spy taken outside, or taken without the level, records nothing and lets
+  // the assertion below pass vacuously.
+  await runInDurableObject(room(), (instance) => {
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "LOG_LEVEL" ? "warn" : Reflect.get(current, property, receiver),
+    });
+    const scope = globalThis as WarnCaptureScope;
+    scope.__rallyWarnLog = [];
+    scope.__rallyWarnOriginal = console.warn;
+    console.warn = (entry: unknown) => { scope.__rallyWarnLog!.push(entry); };
+  });
+  try {
+    // This work stream's conversation object was never provisioned, so it
+    // refuses the read and the port throws. Every port failure is one class, so
+    // `error_name` is the constant "ObjectPortError" whatever went wrong; only
+    // the code says that this object did not recognize the identity it was
+    // asked about, rather than the protocol having drifted or the stub being
+    // misrouted. Nothing here can fail an invitation, which makes this entry
+    // the only evidence that the preview stopped rendering at all.
+    expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "created" });
+    const entries = await runInDurableObject(room(), () =>
+      structuredClone((globalThis as WarnCaptureScope).__rallyWarnLog ?? [])) as Record<string, unknown>[];
+    expect(entries.find((entry) => entry.event === "scope_invitation_preview_failed"))
+      .toMatchObject({ error_name: "ObjectPortError", error_code: "workstream_message_identity_mismatch" });
+  } finally {
+    await runInDurableObject(room(), () => {
+      const scope = globalThis as WarnCaptureScope;
+      if (scope.__rallyWarnOriginal) console.warn = scope.__rallyWarnOriginal;
+    });
+  }
+});
+
+it("stops describing an invitation past its deadline, accepted or not", async () => {
+  const soon = Date.now() + 60_000;
+  const created = await room().createScopeInvitations({ ...invitation(), expiresAt: soon });
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const invitationId = created.invitations[0]!.id;
+  const token = await tokenFor(invitationId);
+  const request = { workspaceId, parentId, invitationId, userId: recipientId, token };
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
+    .toMatchObject({ status: "ready", email: "guest@example.test" });
+  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
+
+  // An accepted invitation stays replayable past its deadline, so that someone
+  // who already holds the grant can retry an interrupted acceptance. Releasing
+  // the mailbox is a disclosure rather than idempotence, and ends at the
+  // deadline either way.
+  await runInDurableObject(room(), (_instance, state) => {
+    // The deadline lives in the stored summary, so age it there.
+    const stored = state.storage.sql.exec<{ summary_json: string }>("SELECT summary_json FROM scope_invitations WHERE id = ?", invitationId).one();
+    state.storage.sql.exec("UPDATE scope_invitations SET summary_json = ? WHERE id = ?",
+      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), invitationId);
+  });
+  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
 });
 
 it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {

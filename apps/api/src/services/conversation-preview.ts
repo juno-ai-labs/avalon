@@ -58,9 +58,15 @@ export async function readConversationPreview(env: Env, input: {
   workspaceId: string;
   parentId: string;
   substreamId: string;
-  /** How many turns to show, and how much of each. Both belong to whatever is rendering. */
+  /** How many turns to show, and how much of each. All three belong to whatever is rendering. */
   turns: number;
   words: number;
+  /**
+   * A ceiling in UTF-8 bytes on one turn, because a word limit is not a size
+   * limit: a message with no spaces in it is one word however long it is, and
+   * five of those would be as large as the transcript allows.
+   */
+  bytes: number;
 }): Promise<ConversationPreview | null> {
   const port = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId);
   const rows = await port.saidMessages({ messageTypes: SAID_TEXT, order: "newest", limit: input.turns });
@@ -72,7 +78,7 @@ export async function readConversationPreview(env: Env, input: {
     turns: rows.map((row) => ({
       author: row.author_type === "human" ? names.get(row.author_user_id ?? "") ?? UNKNOWN_AUTHOR
         : row.author_type === "external" ? externalName(row.external_actor_json) : AGENT_AUTHOR,
-      ...truncateWords(row.text_content, input.words),
+      ...truncateTurn(row.text_content, input.words, input.bytes),
     })),
   };
 }
@@ -87,6 +93,33 @@ export async function readConversationPreview(env: Env, input: {
 export function truncateWords(text: string, limit: number): { text: string; truncated: boolean } {
   const words = text.trim().split(/\s+/u).filter((word) => word.length > 0);
   return { text: words.slice(0, limit).join(" "), truncated: words.length > limit };
+}
+
+const encoder = new TextEncoder();
+
+/**
+ * The word limit, and then a hard ceiling in bytes.
+ *
+ * Both, because they bound different things. The words are what a reader was
+ * promised; the bytes are what the thing rendering this can carry, and one
+ * unbroken hundred-thousand-character "word" satisfies the first while
+ * defeating the second. Cut by code point so a multi-byte character is never
+ * split in half, and measure in UTF-8 because that is what a byte budget
+ * downstream is counted in.
+ */
+export function truncateTurn(text: string, words: number, bytes: number): { text: string; truncated: boolean } {
+  const byWords = truncateWords(text, words);
+  if (encoder.encode(byWords.text).length <= bytes) return byWords;
+  const points = [...byWords.text];
+  let used = 0;
+  let kept = 0;
+  while (kept < points.length) {
+    const size = encoder.encode(points[kept]!).length;
+    if (used + size > bytes) break;
+    used += size;
+    kept += 1;
+  }
+  return { text: points.slice(0, kept).join(""), truncated: true };
 }
 
 async function authorNames(env: Env, userIds: string[]): Promise<Map<string, string>> {

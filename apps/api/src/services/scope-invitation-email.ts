@@ -25,6 +25,31 @@ export interface ScopeInvitationEmailContent {
   preview: ConversationPreview | null;
 }
 
+/**
+ * How much of the conversation this email shows.
+ *
+ * The product owner asked for five turns at a hundred words each: enough for a
+ * recipient to recognize the work, short enough that a long thread does not
+ * arrive in their mailbox.
+ *
+ * `PREVIEW_BYTES` is the size those words are allowed to weigh, which is a
+ * different question and not the product owner's to answer. A word limit is not
+ * a size limit — a message with no spaces is one word however long it is — and
+ * the ceiling is Gmail's: it clips a message past 102,400 bytes and hides the
+ * rest behind "view entire message", which would take the footer and the link
+ * with it (https://support.google.com/mail/answer/81126, read 2026-09-19). The
+ * arithmetic from there is: leave 8 KiB for everything that is not a quoted
+ * turn, divide what remains across the five of them, and divide again by six
+ * because that is the longest entity `escapeHtml` produces (`&quot;`), so a
+ * turn made entirely of quote characters still fits.
+ */
+export const PREVIEW_TURNS = 5;
+export const PREVIEW_WORDS = 100;
+const GMAIL_CLIP_BYTES = 102_400;
+const TEMPLATE_BYTES = 8 * 1024;
+const MAX_ESCAPE_EXPANSION = 6;
+export const PREVIEW_BYTES = Math.floor((GMAIL_CLIP_BYTES - TEMPLATE_BYTES) / (PREVIEW_TURNS * MAX_ESCAPE_EXPANSION));
+
 /** Two seconds on Rally, for a recipient who has never heard of it and is being asked to sign in to it. */
 const ABOUT_RALLY = "Rally keeps each piece of work in one shared conversation, where your team and its Sidekicks work it through together.";
 

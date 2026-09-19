@@ -64,15 +64,23 @@ operation returns its recorded invitations; changing its input conflicts.
 Delivery retries use the same provider idempotency key and encrypted body.
 
 The email's link is `<browser origin>/invite#inv_<43 characters>` and nothing
-else: a type prefix and 256 bits. Workspace, work stream, invitation and
-acceptance secret are a row in the issuing region's `link_payloads`, which
-stores the token's SHA-256 digest rather than the token, so a copy of that table
-lists what exists instead of handing over working links. Only the secret was
-ever a credential; the three identifiers beside it were the server's own
-routing, published to whoever the mail was forwarded to and describing the shape
-of a team they hold no access to. They are now readable only by the deployment
-holding the row, and the recipient learns where the invitation points from the
-acceptance they authorized, not from the link.
+else: a type prefix and 256 bits. Workspace, work stream and invitation are a
+row in the issuing region's `link_payloads`, keyed by the token's SHA-256
+digest. Those three identifiers were the server's own routing, published to
+whoever the mail was forwarded to and describing the shape of a team they hold
+no access to. They are now readable only by the deployment holding the row, and
+the recipient learns where the invitation points from the acceptance they
+authorized, not from the link.
+
+**The acceptance secret is not in that row — the token that reads the row is
+that secret.** The owner holds its HMAC and the row holds its SHA-256, so
+neither store carries anything a holder could present. An earlier revision put a
+second secret in the payload beside the three identifiers, which made a dump of
+`link_payloads` a set of working invitations through the addressed request body
+that is still accepted; one token doing both jobs removes that copy rather than
+protecting it. Reading the row therefore proves only *which* invitation is being
+asked about, and the owner still checks the presented token against the HMAC it
+recorded.
 
 `link_payloads` is shared rather than invitation-specific, because a link whose
 URL should not describe its subject is a recurring shape rather than one
@@ -81,16 +89,33 @@ promises; nothing is written or read without satisfying it, so a token minted
 for one kind can never be presented as another even though every kind shares the
 table. A row carries the expiry of the thing it addresses, which for an
 invitation is `expiresAt` or null, and each issue deletes rows already past
-their own deadline, so the table is swept by the writes that grow it rather than
-by a schedule nobody owns.
+their own deadline, so rows that carry one are swept by the writes that grow the
+table rather than by a schedule nobody owns. A row issued with no expiry is
+swept by nothing: it is keyed by the digest of a token that is never stored, so
+neither the invitation it addresses nor a later revocation of it can find the
+row again. Reclaiming those would mean deleting on `created_at` age, and that
+age is a retention number the team sets rather than one this module picks.
+
+`expiresAt` itself is bounded at the largest instant a `Date` can represent.
+That is not a policy ceiling — policy expiry is still `null` until the team sets
+one — but the point past which `new Date(value).toISOString()` throws
+`RangeError: Invalid time value` while minting the row, from a value the
+contract had accepted. Anything above it is refused at the schema, where the
+rejection can still name `expiresAt`; anything larger again was already refused
+for not being a safe integer, which is why the ceiling is the `Date` range and
+not that one.
 
 The token is minted before the sharing checks and the transaction, with every
 other external await. A creation that is then denied, or that replays an earlier
-operation, therefore leaves a row addressing an invitation that never existed.
-Such a row is inert: opening it reaches an owner with no such invitation, which
-refuses it exactly as it refuses a revoked one. The alternative, writing the row
-after the invitation commits, risks the opposite and worse failure, an
-invitation whose emailed link resolves to nothing.
+operation, therefore mints rows addressing an invitation that was never
+recorded. The alternative, writing the row after the invitation commits, risks
+the opposite and worse failure, an invitation whose emailed link resolves to
+nothing. Such a row is inert — opening it reaches an owner with no such
+invitation, which refuses it exactly as it refuses a revoked one — but inert is
+not reclaimed, so every path that does not record what it minted discards those
+tokens itself. That is the only moment it can: afterwards nobody holds them.
+Discarding is housekeeping and cannot fail the request, which was already
+decided; a failure to discard is logged and leaves a row that is still inert.
 
 `POST /sharing/accept` and `POST /browser/invitation` both take that token and
 resolve it server-side; a token this deployment cannot read is refused in the
@@ -152,16 +177,29 @@ escaped, so a member's message is text in both parts and markup in neither. A
 test asserts each of those, because the rule is invisible in a template that
 happens to render correctly in a browser.
 
-Gmail clips a message past 102 KiB and shows a "view entire message" link, which
-would cut off the footer; five turns of a hundred words is a few kilobytes, and
-the test holds the whole body under that ceiling.
+Gmail clips a message past 102,400 bytes and shows a "view entire message" link,
+which would cut off the footer and the link with it
+(https://support.google.com/mail/answer/81126, read 2026-09-19). Five turns of a
+hundred words is a few kilobytes of ordinary prose, but a word limit is not a
+size limit — a message with no spaces in it is one word however long it is — so
+each turn also carries a ceiling in UTF-8 bytes. That ceiling is not a number
+anyone here chose: it is Gmail's, less 8 KiB for everything that is not a quoted
+turn, divided across the five of them and again by six, the longest entity
+`escapeHtml` produces (`&quot;`), so a turn made entirely of quote characters
+still fits. Cutting is by code point, so a multi-byte character is never split
+in half. A test holds the whole body under the ceiling on the worst input the
+preview can carry.
 
 Everything in the heading and the preview is cosmetic, and none of it can fail
 an invitation. The names are read from D1 and the turns from another object; a
 failure of either sends the invitation without that part, and the heading has a
 sentence for every name it did not get, down to the line this email carried
-before. Names, titles and authors are collapsed to one line before rendering,
-because a plain-text email has no other structure to forge, and member-written
+before. That is also why the failure is logged with the `ObjectPortError` code
+rather than its name: every port failure is one class, and a preview that has
+silently stopped rendering for everyone otherwise looks exactly like a run of
+invitations to empty conversations. Names, titles and authors are collapsed to
+one line before rendering, because a plain-text email has no other structure to
+forge, and member-written
 turns are quoted with `>` below the real link so a message ending in its own
 sign-in sentence cannot sit where ours does.
 
@@ -265,9 +303,15 @@ and the panel states that distinction. Existing last-participant rules apply.
   `link_payload_drifted:<prefix>:<field>:<issue>` rather than reported as one
   more unavailable invitation — otherwise a deploy that stopped honouring every
   outstanding link of that kind looks exactly like recipients mistyping.
-- The token is the whole of what guards the row, so it carries the same 256 bits
-  as the acceptance secret inside it. A shorter handle would make the row easier
-  to reach than the secret it holds.
+- The token in the link is the acceptance secret, not a handle to one. It
+  carries 256 bits for that reason, and neither store it is recorded in — the
+  owner's HMAC, the row's digest — holds a value that can be presented.
+- Describing an invitation checks its expiry itself rather than inheriting the
+  acceptance path's state check. An accepted invitation is still usable, so
+  without that check a lapsed link would keep naming its mailbox forever.
+- A creation that does not record what it minted discards those links itself.
+  Nothing else can: the row is keyed by a digest of a token nothing stores, so
+  the minting call is the last place it is reachable.
 - The preview reads the offered conversation and no other. Main is previewed
   only where Main is what is offered.
 - Nothing rendered into the email can fail the invitation. A name, a title or a
@@ -290,8 +334,11 @@ before serving conversation traffic. This module does not bypass that gate.
 ## Failure modes and limits
 
 No invitation-expiry number or recipient cap is invented. `expiresAt: null`
-explicitly leaves expiry open; policy values remain a team decision. Existing
-platform request/storage limits still apply. Invalid origin/key configuration
+explicitly leaves expiry open; policy values remain a team decision. The one
+number bounding this module's output, the per-turn byte ceiling above, is
+arithmetic on a published platform limit rather than a policy guess: change
+Gmail's documented figure and the ceiling moves with it. Existing platform
+request/storage limits still apply. Invalid origin/key configuration
 refuses creation. `BROWSER_APP_ORIGIN` and the existing encryption/signing keys
 are required; the existing transactional Resend configuration delivers mail.
 Development/test delivery uses the shared sender's no-send behavior.
@@ -309,15 +356,23 @@ declares the D1 columns it uses. It covers verified-recipient admission, child-o
 access, atomic multi-target activation, replay after removal/revocation,
 sharer replacement, stable operation/email receipts and identity-only HTTP
 acceptance. It also reads the link out of the delivered encrypted body to prove
-it is one typed token with no identifier, region or secret in it, that the row
-holds a digest rather than that token, previews and accepts by the token alone,
-and refuses an edited token, a wrong secret and a revoked invitation.
+it is one typed token with no identifier or region in it, that the row holds a
+digest rather than that token and no secret beside the address it stores, that a
+dump of it replayed through the addressed body is refused, previews and accepts
+by the token alone, and refuses an edited token, a wrong secret, a revoked
+invitation and one past its deadline whether or not it was accepted first.
+It covers the housekeeping around those rows too: that a replayed and a denied
+creation each leave the table where they found it, that an `expiresAt` past the
+`Date` range is refused with the field named in the diagnostic rather than
+raising a `RangeError` while minting, and that a preview failure is logged with
+the port code that says which authority refused.
 `apps/api/test/scope-invitation-link.test.ts` covers the store against the real
 migrations: the round trip, another kind's token, an edited one, an expired row,
 the sweep, and a payload that no longer matches its prefix.
 `apps/api/test/scope-invitation-email.test.ts` covers the body: the heading and
 each of its fallbacks, a name carrying a newline, the quoted turns, the singular
-and plural earlier-message line, word truncation, and `readConversationPreview`
+and plural earlier-message line, word truncation, the byte ceiling that bounds a
+single wordless message, and `readConversationPreview`
 against a real seeded transcript — reading order, the count of what is not
 shown, an author named from D1, the agent, and a conversation nobody has spoken
 in. It also covers the styled part: that it carries everything the
@@ -342,6 +397,16 @@ reached which deployment, workspace and work stream they were being offered,
 before they had accepted anything and whether or not the invitation was theirs
 to accept. Only the secret was ever a credential.
 
+That secret is now the token itself rather than a field the row carries beside
+the routing. The first revision stored both, which quietly made `link_payloads`
+a second place a working invitation could be read out of: a dump of it replays
+through the addressed request body that is still accepted, and no amount of
+guarding the row changes that a row holding a presentable secret is a copy of
+one. Collapsing the two removes the copy. The owner keeps the token's HMAC and
+the row keeps its SHA-256, so the link in the recipient's mailbox is the only
+place the value exists, and a future change that wants a handle separate from
+the secret is reintroducing that second copy, not adding a layer.
+
 The link is now a typed token over a shared `link_payloads` row rather than the
 four fields encrypted into the URL, which was the first thing built here. Both
 hide the same information; the row wins on two counts the sealed form could not
@@ -353,6 +418,16 @@ write on the sending path and a read on every open, and those are the things to
 weigh if this is ever revisited. The row is also why the link still names no
 region: only the deployment holding it can resolve it, so naming one would be
 routing the client already has.
+
+Two smaller things the first revision got wrong are worth keeping written down,
+because both are properties of minting before committing rather than of this
+feature. A row is reachable only by the token that reads it, and that token is
+never stored — so a creation that mints and then does not record is the last
+place those rows can ever be deleted from, and it now does. And `expiresAt`
+reached `new Date(value)` for the first time here, which turned a value the
+contract had always accepted into a `RangeError` naming nothing; the ceiling is
+the `Date` range, set where the rejection can still say `expiresAt`, and it is
+not the policy expiry the team has yet to choose.
 
 The store is generic because the shape recurs: a URL that should not describe
 its subject is not specific to invitations. The prefix is the type, and the type

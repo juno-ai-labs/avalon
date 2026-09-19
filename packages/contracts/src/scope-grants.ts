@@ -77,6 +77,9 @@ export const ScopeAccessResultSchema = z.discriminatedUnion("allowed", [
 ]);
 export type ScopeAccessResult = z.infer<typeof ScopeAccessResultSchema>;
 
+/** ECMAScript's time-value range, the point past which an instant has no `Date` and no ISO string. */
+const MAX_TIME_VALUE = 8_640_000_000_000_000;
+
 /** An invitation is addressed to a verified mailbox; it is not a read capability. */
 export const CreateScopeInvitationsSchema = z.strictObject({
   operationId: IdSchema,
@@ -86,8 +89,11 @@ export const CreateScopeInvitationsSchema = z.strictObject({
   emails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).min(1),
   targets: z.array(ScopeGrantTargetSchema).min(1),
   completeWorkstream: z.boolean().optional(),
-  // Null explicitly leaves expiry open until a team policy is configured.
-  expiresAt: z.number().int().positive().nullable(),
+  // Null explicitly leaves expiry open until a team policy is configured. The
+  // ceiling is not a policy: it is the largest instant `Date` can represent, and
+  // past it `new Date(value).toISOString()` throws `RangeError: Invalid time
+  // value` somewhere downstream with nothing naming the field that caused it.
+  expiresAt: z.number().int().positive().max(MAX_TIME_VALUE).nullable(),
 }).refine((request) => request.targets.every((target) =>
   target.workspaceId === request.workspaceId && target.parentId === request.parentId),
 { message: "An invitation operation belongs to one workstream" });
