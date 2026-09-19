@@ -21,6 +21,14 @@ the shutdown barrier and deletes it. Do not build on anything below; read
 `spaces.md` instead, and change this only to keep the dormant path from
 breaking.
 
+**Every Project surface is gone from the client.** The sidebar section, the
+project screen, the appearance picker, the routes, the API methods, the local
+cache slice and their tests were deleted rather than adapted — the two models
+differ in what a membership is, so there was nothing to adapt. `/projects/*` in
+the desktop redirects to the landing route. What replaced each of them is in
+[`spaces.md`](spaces.md#the-desktop-surfaces); the `--av-sys-color-project-*`
+tokens and `lib/project-palette.ts` are deliberately kept.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -31,9 +39,7 @@ breaking.
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
 | `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |
 | `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
-| `apps/desktop/src/renderer/screens/project-space.tsx` | Project dashboard: work-stream list, default resources, inline presentation and audience controls. The Work streams heading plus opens the same **New project work stream** route as the sidebar row plus. |
-| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
-| `apps/desktop/src/renderer/components/sidebar-skeleton.tsx` | The sidebar's placeholder rows, shared by this section and the lists below it while the first answer is in flight. |
+| `apps/desktop/src/renderer/components/sidebar-skeleton.tsx` | The sidebar's placeholder rows. The Projects section that shared them is gone; the Spaces section that replaced it shows the same rows. |
 
 ## How it works
 

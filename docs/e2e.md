@@ -331,7 +331,7 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 ## Local cache acceptance
 
 1. Sign in, open a work stream with some history, open one of its private
-   substreams, and open a project space. Quit Rally. Slow the sockets without
+   substreams, and open a Space dashboard. Quit Rally. Slow the sockets without
    touching REST: run the Global Worker on another port and put a TCP proxy on
    `8787` that forwards every connection at once except a request whose first
    line is a `/socket/` upgrade, which it holds for eight seconds first, under
@@ -347,10 +347,10 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
    and confirm the launch surface shows the same card and holds creation;
    click Stop on a running run or Retry on a failed run the seed shows and
    confirm the command is refused with a message rather than sent.
-2. Open the substream and the project space the same way and confirm each
-   paints with its own card. Under the project's card confirm the rename,
-   icon, audience, participants, archive, and resource controls are disabled
-   and the work stream links still open, then confirm they enable when the
+2. Open the substream and the Space dashboard the same way and confirm each
+   paints with its own card. Under the Space's card confirm the rename,
+   icon, audience, participants, archive, and default controls are disabled
+   and the Channel links still open, then confirm they enable when the
    card goes. Confirm no `list_workstreams` or detail request is made for what
    painted.
 3. Raise the hold past the three opening attempts (about seventy seconds) and
@@ -388,7 +388,7 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 ## Desktop model-selector acceptance
 
 1. With Application → Developer → **Debug enabled** off, open **New work stream**, **New automation**, an existing work stream, and **New substream** inside it, and confirm none of those composers shows a model control.
-2. Turn Debug enabled on in the Settings window and confirm the control appears in every one of them, without reopening any screen. It is one pill in one place: in the single-row message capsule — the launchers, a conversation, and the substream launcher — immediately to the right of the attachment button, and in the toolbar layout a project space uses, immediately to the right of the microphone's arrow menu. It reads **Default**, and its tooltip says that state follows the `agent-model-workstream` flag rather than naming a model.
+2. Turn Debug enabled on in the Settings window and confirm the control appears in every one of them, without reopening any screen. It is one pill in one place: in the single-row message capsule — the launchers, a conversation, and the substream launcher — immediately to the right of the attachment button, and in the toolbar layout a Space dashboard uses, immediately to the right of the microphone's arrow menu. It reads **Default**, and its tooltip says that state follows the `agent-model-workstream` flag rather than naming a model.
 3. Open the menu and confirm **Default** leads, every id in `AGENT_MODEL_OVERRIDES` is grouped below it under xAI, Google, OpenAI, and DeepSeek — newest first within each vendor, so xAI reads 4.6 above 4.5 above 4.3, Google reads 3.8 above 3.7 above 3.6 above 3.5 above 3, and OpenAI reads Sol above Terra above Luna — the check sits on **Default**, and the checked entry is exposed as the checked radio item to assistive technology. A count is deliberately not written here: the contract is the list, and a number in this step would be a third copy of it to keep in step.
 4. Without touching the selector, create a work stream. Confirm its `harness_runs.model` is what `agent-model-workstream` serves and `workstreams.model_override` is `NULL`.
 5. Choose a different model, confirm the trigger and tooltip both take its name, then create a work stream. Confirm `workstreams.model_override` holds the chosen id, the run's `harness_runs.model` matches it, and the inference ledger records that model with no fallbacks.
