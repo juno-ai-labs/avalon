@@ -34,6 +34,7 @@ import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
 import type { SidekickDO } from "./durable-objects/sidekick-do";
+import type { SpaceDO } from "./durable-objects/space-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
@@ -76,6 +77,13 @@ export interface Env {
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
   AUTOMATION_DOS: DurableObjectNamespace<SidekickDO>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
+  /**
+   * Spaces. A separate binding rather than `WORKSTREAM_DOS` even though
+   * `SpaceDO` is `WorkstreamDO` under a role: a namespace is bound to a class
+   * name, and sharing one would make a Space id and a work-stream id address
+   * the same object whenever they collided.
+   */
+  SPACE_DOS: DurableObjectNamespace<SpaceDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
@@ -403,6 +411,7 @@ const EnvContractSchema = z.object({
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
   AUTOMATION_DOS: binding<DurableObjectNamespace<SidekickDO>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
+  SPACE_DOS: binding<DurableObjectNamespace<SpaceDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),

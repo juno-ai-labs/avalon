@@ -241,6 +241,7 @@ export interface InventoryObject {
 export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "WorkstreamDO",
+  "SpaceDO",
   "WorkspaceDO",
   "AutomationDO", // Kept for pre-rename inventory and queued commands.
   "SidekickDO",
