@@ -8,9 +8,22 @@ import { encryptString, decryptString, randomToken, hmacSha256, timingSafeEqualT
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
+import { readConversationPreview } from "../services/conversation-preview";
 import { issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
+import { scopeInvitationEmailText } from "../services/scope-invitation-email";
+import { logStructuredEvent } from "../observability/logger";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
+
+/**
+ * How much of the conversation the invitation email shows.
+ *
+ * The product owner asked for five turns at a hundred words each: enough for a
+ * recipient to recognize the work, short enough that a long thread does not
+ * arrive in their mailbox.
+ */
+const PREVIEW_TURNS = 5;
+const PREVIEW_WORDS = 100;
 
 const SealedSchema = z.strictObject({ ciphertext: z.string(), iv: z.string() });
 const DeliverySchema = z.strictObject({ recipientEmail: z.string().email(), text: z.string() });
@@ -78,6 +91,9 @@ export class ScopeInvitationService {
     const request = CreateScopeInvitationsSchema.parse(input);
     const origin = scopeInvitationOrigin(this.env);
     if (!origin) return denied("configuration_required");
+    // One read for every recipient of this operation: they are offered the same
+    // scope, so they are told the same thing about it.
+    const [introduction, offered] = await Promise.all([this.introduction(request), this.offered(request.targets)]);
     const prepared = await Promise.all([...new Set(request.emails)].map(async (email) => {
       const id = uuidV7(), token = randomToken();
       // Before the sharing checks and the transaction below, with every other
@@ -87,7 +103,8 @@ export class ScopeInvitationService {
       const link = scopeInvitationLinkUrl(origin, await issueScopeInvitationLink(this.env,
         { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token },
         request.expiresAt));
-      const delivery = { recipientEmail: email, text: `You have been invited to collaborate in Rally.\n\nSign in with ${email} and accept:\n${link}\n\nThis invitation does not grant access until you sign in and accept it.` };
+      const delivery = { recipientEmail: email, text: scopeInvitationEmailText({
+        ...introduction, ...offered, recipientEmail: email, link: link.toString() }) };
       return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         tokenHash: await this.tokenHash(id, token),
         deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) };
@@ -174,6 +191,64 @@ export class ScopeInvitationService {
     if (!this.canShare(current.summary.targets, actor)) return denied("sharing_required");
     const invitation = this.invitations.revoke(request.invitationId, request.expectedRevision);
     return invitation ? { status: "revoked", invitation } : denied("revision_conflict");
+  }
+
+  /**
+   * Who is asking, and into what. Both are shown to someone who has not signed
+   * in, so neither is an identifier, and neither can fail an invitation: the
+   * email has a sentence for every name it did not get.
+   */
+  private async introduction(request: z.infer<typeof CreateScopeInvitationsSchema>) {
+    try {
+      const [inviter, workspace] = await Promise.all([
+        this.env.DB.prepare("SELECT name FROM users WHERE id = ?").bind(request.actorUserId).first<{ name: string | null }>(),
+        this.env.DB.prepare("SELECT name FROM workspaces WHERE id = ?").bind(request.workspaceId).first<{ name: string | null }>(),
+      ]);
+      return { inviterName: inviter?.name ?? null, workspaceName: workspace?.name ?? null };
+    } catch (error) {
+      this.previewFailed("scope_invitation_introduction_failed", request.workspaceId, request.parentId, null, error);
+      return { inviterName: null, workspaceName: null };
+    }
+  }
+
+  private previewFailed(event: string, workspaceId: string, parentId: string, substreamId: string | null, error: unknown): void {
+    logStructuredEvent(this.env, "warn", event, {
+      workspace_id: workspaceId, workstream_id: parentId, substream_id: substreamId,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+
+  /**
+   * The conversation this invitation opens onto, and the end of what has been
+   * said in it.
+   *
+   * The first target, because that is the destination acceptance navigates to:
+   * a work-stream offer opens Main, and a conversation offer opens that
+   * conversation. Never a second conversation and never the parent of a
+   * child-only share — the preview is bounded by the scope, exactly as the
+   * grants are.
+   *
+   * A preview is cosmetic and its transcript lives in another object, so a read
+   * that fails sends the invitation without it. An invitation is not a title,
+   * and must not fail because one could not be rendered.
+   */
+  private async offered(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]) {
+    const target = targets[0];
+    if (!target) return { conversationTitle: null, preview: null };
+    const substreamId = target.kind === "workstream" ? "0" : target.substreamId;
+    const conversationTitle = substreamId === "0"
+      ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM workstream_metadata WHERE id = 1").toArray()[0]?.title ?? null
+      : this.storage.sql.exec<{ title: string | null }>("SELECT title FROM conversation_children WHERE substream_id = ?", substreamId)
+        .toArray()[0]?.title ?? null;
+    try {
+      return { conversationTitle, preview: await readConversationPreview(this.env, {
+        workspaceId: target.workspaceId, parentId: target.parentId, substreamId,
+        turns: PREVIEW_TURNS, words: PREVIEW_WORDS,
+      }) };
+    } catch (error) {
+      this.previewFailed("scope_invitation_preview_failed", target.workspaceId, target.parentId, substreamId, error);
+      return { conversationTitle, preview: null };
+    }
   }
 
   async deliver(id: string): Promise<void> {

@@ -21,6 +21,8 @@ conversation owner.
 | `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email invitation form, stable retry operation and pending revocation. |
 | `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
 | `apps/api/src/services/scope-invitation-link.ts` | The emailed link's token kind, what opens it, and the workstream address it names. |
+| `apps/api/src/services/scope-invitation-email.ts` | What the invitation says: the heading, the quoted preview, and the line about Rally. |
+| `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
 | `packages/db/src/link-payloads.ts` | `defineLinkPayload`/`issueLinkPayload`/`openLinkPayload`: opaque tokens for any link a person receives, typed by their prefix. |
 | `packages/db/migrations/0114_link_payloads.sql` | The shared `link_payloads` table: token digest, type, JSON and optional expiry. |
 | `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
@@ -98,6 +100,49 @@ body those routes took before — workspace, work stream, invitation and token �
 is still accepted, so links already in inboxes when this shipped continue to
 work; nothing mints that form any more, and it can be dropped once no such link
 is outstanding.
+
+### What the invitation says
+
+The email leads with the person and the workspace — "Morgan Ellis invited you to
+Juno Labs on Rally." — then the address to sign in with and the link, then the
+end of the conversation being offered, then one line on what Rally is. Its old
+body named none of that: a recipient could not tell who was asking, what for, or
+whether the mail was meant for them, and an unfamiliar product asking for a
+sign-in with nothing else on the page is indistinguishable from a phishing
+attempt.
+
+The preview is the last five turns of the offered conversation, each cut to a
+hundred words, above a count of everything earlier ("14 earlier messages"). Both
+numbers are the product owner's, set on 2026-09-19: enough to recognize the
+work, not so much that a long thread arrives in a mailbox. Only turns of type
+`text` are read, so tool output and system notices never leave this way, and
+each turn's whitespace is collapsed so a paragraph break inside a quoted message
+cannot read as the end of the quote.
+
+**Which conversation is the one the invitation opens onto**: the first target,
+which is Main for a work-stream offer and that conversation for a conversation
+offer. Never a second conversation, and never the parent of a child-only share.
+The preview is bounded by the offered scope exactly as the grants are; a preview
+that widened would put work outside the share into a mailbox nobody has
+authenticated, which is the thing scoped invitations exist to prevent.
+
+**This does put conversation content in front of an unauthenticated address.**
+The sharer chose that address and can read everything they are sharing, which is
+the authority it rests on, and the same sharer could paste the same text into
+the same mail themselves. What changes is that a mistyped address now receives
+work rather than only an invitation, and that revoking an invitation cannot
+unsend what was quoted in it. That is the accepted cost of an invitation a
+recipient can recognize; a future change that widens what is quoted is changing
+that bargain, not extending it.
+
+Everything in the heading and the preview is cosmetic, and none of it can fail
+an invitation. The names are read from D1 and the turns from another object; a
+failure of either sends the invitation without that part, and the heading has a
+sentence for every name it did not get, down to the line this email carried
+before. Names, titles and authors are collapsed to one line before rendering,
+because a plain-text email has no other structure to forge, and member-written
+turns are quoted with `>` below the real link so a message ending in its own
+sign-in sentence cannot sit where ours does.
 
 `POST /browser/invitation` is the one unauthenticated read here, and it exists
 because a sealed link cannot tell the sign-in form under it which mailbox to
@@ -202,6 +247,11 @@ and the panel states that distinction. Existing last-participant rules apply.
 - The token is the whole of what guards the row, so it carries the same 256 bits
   as the acceptance secret inside it. A shorter handle would make the row easier
   to reach than the secret it holds.
+- The preview reads the offered conversation and no other. Main is previewed
+  only where Main is what is offered.
+- Nothing rendered into the email can fail the invitation. A name, a title or a
+  transcript that cannot be read is left out; only the link and the secret are
+  load-bearing.
 - Email bodies and credentials are not returned by public routes. The only stored
   readable credential representation is encrypted with the existing server key.
 - Browser setup, onboarding and connector configuration are outside the lite
@@ -243,7 +293,15 @@ holds a digest rather than that token, previews and accepts by the token alone,
 and refuses an edited token, a wrong secret and a revoked invitation.
 `apps/api/test/scope-invitation-link.test.ts` covers the store against the real
 migrations: the round trip, another kind's token, an edited one, an expired row,
-the sweep, and a payload that no longer matches its prefix. The deliberate SQL failure is caught inside the real object because
+the sweep, and a payload that no longer matches its prefix.
+`apps/api/test/scope-invitation-email.test.ts` covers the body: the heading and
+each of its fallbacks, a name carrying a newline, the quoted turns, the singular
+and plural earlier-message line, word truncation, and `readConversationPreview`
+against a real seeded transcript — reading order, the count of what is not
+shown, an author named from D1, the agent, and a conversation nobody has spoken
+in. The runtime suite proves the delivered body carries the sender and the
+workspace, and that an invitation whose conversation cannot be previewed is
+still sent. The deliberate SQL failure is caught inside the real object because
 the test RPC bridge otherwise reports its expected rejection twice.
 `message-to-output-pipeline.test.ts` additionally exercises invitation-triggered
 handoff against real Main and child agents, including refusal to transfer for a
@@ -251,7 +309,7 @@ nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
 
-### 2026-09-19 — Put the emailed link behind one token and fill in the mailbox it was sent to
+### 2026-09-19 — Put the emailed link behind one token, and say what the invitation is for
 
 The invitation email published the server's routing to its recipient:
 `#region=…&workspace=…&workstream=…&invitation=…&token=…` told anyone the mail
@@ -288,6 +346,22 @@ a mailbox oracle.
 The addressed request body is still accepted so that links already sent keep
 working. It is the only part of this that is temporary — drop it once no such
 link is outstanding, and the union at both routes goes with it.
+
+Hiding the identifiers also left the email saying nothing at all: a link, and a
+sentence about signing in. So it now opens with the sender and the workspace and
+quotes the last five turns of the conversation being offered, each cut to a
+hundred words, over a count of what came before. That is a deliberate widening
+of what an invitation discloses, and the reasoning is in **What the invitation
+says** above: the sharer already chose the address and could paste the same text
+themselves, the preview is bounded by the offered scope, and the cost is that a
+mistyped address receives work and a revocation cannot unsend it. A future
+change that quotes more than the offered scope, or quotes anything but said
+text, is reopening that decision rather than following it.
+
+The preview reads another object's transcript, so every part of it is written to
+fail quietly: a transcript, a workspace name or a sender name that cannot be
+read is left out and the invitation goes anyway. An invitation that failed
+because a title could not be rendered would be the worst of both.
 
 ### 2026-09-19 — Dismiss the share dialog, and drop the invited-address notice
 

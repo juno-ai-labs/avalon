@@ -41,6 +41,14 @@ async function deliveredLink(id: string, parent = parentId): Promise<URL> {
 
 const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
 
+async function deliveredText(id: string, parent = parentId): Promise<string> {
+  const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
+    new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
+  const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
+  return (JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
+    env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string }).text;
+}
+
 async function tokenFor(id: string, parent = parentId): Promise<string> {
   const address = await openScopeInvitationCredential(env, await credentialFor(id, parent));
   if (!address) throw new Error("invitation credential unreadable");
@@ -57,15 +65,15 @@ async function create(targets: ScopeGrantTarget[] = [child]) {
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
-    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
-    env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(workspaceId),
+    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
+    env.DB.prepare("INSERT INTO workspaces (id, name) VALUES (?, 'Shared workspace')").bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT,user_id TEXT,access_class TEXT,
       role TEXT,status TEXT,incarnation TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
       revision INTEGER NOT NULL DEFAULT 1, joined_at TEXT, last_seen_at TEXT, PRIMARY KEY(workspace_id,user_id))`),
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status,incarnation) VALUES (?,?,'member','owner','active','actor-membership')")
       .bind(workspaceId, actorId),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, analytics_person_id TEXT, name TEXT, email TEXT)"),
-    env.DB.prepare("INSERT INTO users (id) VALUES (?), (?)").bind(actorId, recipientId),
+    env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Adam Owner'), (?, NULL)").bind(actorId, recipientId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT,
       region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
@@ -235,6 +243,21 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
   expect((await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify({ link: edited }) }, env)).status).toBe(403);
 });
 
+it("names the sender and the workspace, and still sends when the conversation cannot be previewed", async () => {
+  const created = await room().createScopeInvitations(invitation());
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const text = await deliveredText(created.invitations[0]!.id);
+  expect(text.split("\n")[0]).toBe("Adam Owner invited you to Shared workspace on Rally.");
+  expect(text).toContain("Sign in with guest@example.test and accept:");
+  expect(text).toContain((await deliveredLink(created.invitations[0]!.id)).toString());
+  expect(text).toContain("This invitation does not grant access until you sign in and accept it.");
+  expect(text.trimEnd().endsWith("work it through together.")).toBe(true);
+  // This work stream's conversation object was never provisioned, so the
+  // preview cannot be read. An invitation is not a preview: it goes anyway,
+  // with nothing quoted.
+  expect(text).not.toContain(">");
+});
+
 it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {
   const request = await create();
   const credential = await credentialFor(request.invitationId);
@@ -261,7 +284,7 @@ it("preserves browser sessions and independent shares across a second workstream
   const at = new Date().toISOString();
   // Real D1 browser-session columns and the production incarnation binding.
   await env.DB.batch([
-    ...["name TEXT", "slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
+    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
       env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
     ...["avatar_url TEXT", "timezone TEXT", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER"].map((column) =>
       env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
