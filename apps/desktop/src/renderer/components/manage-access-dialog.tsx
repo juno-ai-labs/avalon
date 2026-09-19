@@ -1,62 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
 import { Globe2, Lock } from 'lucide-react';
 import { useState } from 'react';
-import type { ChannelAccess, SpaceErrorCode, SpaceSummary } from '@rally/contracts';
+import type { ChannelAccess, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 
-import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
+import { spaceFailureCopy, spaceFailureOf, type SpaceFailure } from '../lib/space-failure-copy';
 import { Button, InlineError, LoadingState, Modal } from './primitives';
-
-/**
- * Every way a change made from this dialog is refused, and the sentence for it.
- *
- * Exhaustive over the server's closed `SpaceErrorCode` union plus the one code
- * that is not a Space refusal at all — a request that never got an answer. The
- * table is what makes a refusal actionable: each of these says what has to
- * change first, which a status code and a transport message cannot.
- *
- * Two of them are the whole reason this screen exists rather than a toggle.
- * `space_membership_final` is the invariant that every Channel has a home;
- * `space_audience_incompatible` is the weaker one, that a reader who keeps
- * access through another source still has to be able to *find* the Channel.
- */
-type ManageAccessFailure = SpaceErrorCode | 'unavailable';
-
-const manageAccessFailureCopy: Record<ManageAccessFailure, string> = {
-  space_access_denied: 'You can’t change who sees this channel.',
-  space_not_found: 'That space no longer exists.',
-  space_protected: 'General’s audience can’t be changed.',
-  space_membership_final: 'This is the channel’s only space, and every channel needs one. Add it to another space first.',
-  space_audience_incompatible: 'Some people who can read this channel would be left with no space to find it in. Add it to a space they can see first.',
-  channel_scope_locked_by_space: 'An organization-wide space still makes this channel public. Remove it from that space first.',
-  space_membership_content_fence: 'This channel holds content the wider audience isn’t allowed to read.',
-  space_default_audience_mismatch: 'Everyone who can read this channel must be able to use that resource or Sidekick.',
-  space_revision_conflict: 'The space changed while this was being applied. Try again.',
-  space_bootstrap_pending: 'Rally is still opening this organization. Try again in a moment.',
-  unavailable: 'That change couldn’t be saved. Try again in a moment.',
-};
 
 /** "1 person", "2 people" — a count a sentence can be built around. */
 function people(count: number): string {
   return count === 1 ? '1 person' : `${count} people`;
 }
 
-function failureOf(cause: unknown): ManageAccessFailure {
-  const code = cause instanceof ApiError ? cause.code : undefined;
-  // A code outside the closed union is a transport or session failure rather
-  // than a Space refusal, and `unavailable` is the only honest thing to say
-  // about it — never the server's own sentence, which is not written for a
-  // person and is not stable.
-  return code !== undefined && code in manageAccessFailureCopy
-    ? code as ManageAccessFailure
-    : 'unavailable';
-}
-
 /** One source of access, however it reaches the Channel. */
 function AccessSource({ action, failure, icon, name, sentence }: {
   action?: React.ReactNode;
-  failure?: ManageAccessFailure | null | undefined;
+  failure?: SpaceFailure | null | undefined;
   icon: React.ReactNode;
   name: string;
   sentence: string;
@@ -68,7 +28,7 @@ function AccessSource({ action, failure, icon, name, sentence }: {
         <small>{sentence}</small>
       </div>
       {action}
-      {failure && <InlineError>{manageAccessFailureCopy[failure]}</InlineError>}
+      {failure && <InlineError>{spaceFailureCopy[failure]}</InlineError>}
     </li>
   );
 }
@@ -109,7 +69,7 @@ export function ManageAccessDialog({
 }): React.JSX.Element {
   const { api } = useAppSession();
   const [saving, setSaving] = useState<string | null>(null);
-  const [failures, setFailures] = useState<Record<string, ManageAccessFailure>>({});
+  const [failures, setFailures] = useState<Record<string, SpaceFailure>>({});
   const access = useQuery<ChannelAccess>({
     queryKey: ['channel-access', workstreamId],
     queryFn: ({ signal }) => api!.channelAccess(workstreamId, signal),
@@ -126,7 +86,7 @@ export function ManageAccessDialog({
       await change();
       await access.refetch();
     } catch (cause) {
-      setFailures((current) => ({ ...current, [key]: failureOf(cause) }));
+      setFailures((current) => ({ ...current, [key]: spaceFailureOf(cause) }));
     } finally {
       setSaving(null);
     }
