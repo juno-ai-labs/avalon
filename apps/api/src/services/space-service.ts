@@ -38,6 +38,7 @@ import { ApiError } from "../lib/api-error";
 import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { logWarn } from "../observability/logger";
 import { ChannelAccessService } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
 import {
@@ -571,9 +572,23 @@ export class SpaceService {
       return;
     }
     if (intent.kind === "audience") {
-      if (space.revision !== intent.spaceRevision) {
-        await abandon("audience_superseded");
-        return;
+      // A superseded audience change is still an interrupted one. The request
+      // that staged this died part way through its walk, so some member
+      // Channels carry the roster it was applying and the rest carry whatever
+      // came before — and the newer change that overtook it has a walk of its
+      // own that may have died the same way. Abandoning here left those
+      // Channels split with nothing to notice, so this converges against the
+      // Space *as it is now* instead: re-applying the current source is an
+      // idempotent delta on a Channel that already has it.
+      const superseded = space.revision !== intent.spaceRevision;
+      if (superseded) {
+        logWarn(this.env, "space_audience_intent_superseded", {
+          workspace_id: this.auth.workspaceId,
+          space_id: intent.spaceId,
+          operation_id: intent.operationId,
+          staged_revision: intent.spaceRevision,
+          current_revision: space.revision,
+        });
       }
       for (const workstreamId of await this.memberChannelIds(intent.spaceId)) {
         await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
@@ -586,7 +601,11 @@ export class SpaceService {
           operationId: uuidV7(),
         });
       }
-      await this.recordReceipt(intent.operationId, "audience_settled", true);
+      await this.recordReceipt(
+        intent.operationId,
+        superseded ? "audience_superseded" : "audience_settled",
+        true,
+      );
       return;
     }
     if (intent.kind === "archive") {
