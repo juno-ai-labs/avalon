@@ -334,7 +334,8 @@ Cloudflare Workflows remain available for non-workstream loops and legacy drain.
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
-one private Daytona sandbox for that work stream. The owning `SubstreamAgent` is the
+one private Daytona sandbox for that conversation, which the background agents
+it starts share. The owning `SubstreamAgent` is the
 authority for generation, mutation leases, tasks, retention, resource links,
 and GitHub publication receipts; WorkspaceDO owns workspace egress policy,
 connector authority, and resource metadata. The provider supplies isolation and process/

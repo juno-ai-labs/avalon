@@ -115,7 +115,7 @@ describe("Slack work stream creator attribution", () => {
       "SELECT COUNT(*) AS count FROM runs",
     )).toEqual({ count: 0 });
     expect(Object.keys(created)).toEqual(["workstream"]);
-    expect(JSON.parse(String((database.prepare(
+    await vi.waitFor(() => expect(JSON.parse(String((database.prepare(
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({
       name: "workstream_created",
@@ -125,7 +125,7 @@ describe("Slack work stream creator attribution", () => {
         connectorType: "slack",
         connectorTypes: ["slack"],
       },
-    });
+    }));
   });
 
   it("leaves an untitled Slack task for the naming pass to settle", async () => {
@@ -192,13 +192,13 @@ describe("Slack work stream creator attribution", () => {
     if (!objectStore) throw new Error("expected the creation to open the work-stream object");
     databases.push(objectStore);
     expect(workstreamObjectParticipantRows(objectStore)).toEqual([]);
-    expect(JSON.parse(String((database.prepare(
+    await vi.waitFor(() => expect(JSON.parse(String((database.prepare(
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({
       name: "workstream_created",
       identityScope: "workspace",
       properties: { creationSource: "slack_agent", connectorType: "slack" },
-    });
+    }));
   });
 });
 

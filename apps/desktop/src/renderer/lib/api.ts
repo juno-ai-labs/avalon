@@ -886,9 +886,21 @@ export class RallyApi {
       ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       // Carried, not dropped: the roster is the only list that can contain a
       // membership the work-stream endpoints will refuse, and a caller that
-      // cannot see the status has no way to keep one out of a picker.
+      // cannot see the status has no way to keep one out of a picker. The
+      // access class travels for the same reason — a guest holds no role, so a
+      // surface that offers one has to be able to tell a guest apart from a
+      // member whose role simply has not loaded.
+      ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       status: member.status,
     }));
+  }
+
+  /** Make an existing member an administrator, or hand them back to member. */
+  async setWorkspaceMemberRole(userId: string, role: 'admin' | 'member'): Promise<void> {
+    await this.requestVoid(`/workspace/members/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH',
+      body: { role },
+    });
   }
 
   async promoteWorkspaceGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {

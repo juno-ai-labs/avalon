@@ -96,7 +96,11 @@ proofs and receipts whose sessions have expired or been revoked. A consumed rece
 without a session is retained through the existing initial session lifetime so
 crash recovery remains possible. Live receipts remain encrypted for response-loss
 retries; clearing them immediately after minting would break that contract.
-Resend/issuance abuse policy remains a production enablement prerequisite.
+Production explicitly uses six-digit codes, ten-minute expiry and five failed
+redemption attempts. On 2026-09-18 the team chose to launch without issuance
+limits: callers can request unlimited fresh challenges and emails. The redemption
+attempt limit does not bound email volume or aggregate guesses across challenges.
+This is an accepted launch trade-off, not a pending enablement prerequisite.
 
 ## Testing
 
@@ -115,6 +119,18 @@ identifier. Global is the currently configured identity deployment; email sign-i
 does not introduce cross-deployment membership or route grants.
 
 ## Changelog
+
+### 2026-09-18 — Production email sign-in policy
+
+**What changed:** Configure six-digit codes, ten-minute expiry and five failed
+attempts; launch without issuance limits, explicitly selected by the team.
+**Why:** Enable guests to redeem shared conversations through the browser.
+**Considered and rejected:** Per-address and per-IP issuance limits were offered
+during launch review; the team chose to launch without them.
+**Consequences:** Outbound email volume and aggregate attempts across fresh
+challenges remain unbounded by Rally. Do not describe issuance limiting as a
+fulfilled or pending launch gate. PR: [#843](https://github.com/juno-ai-labs/avalon/pull/843).
+
 
 ### 2026-09-16 — Persist proof consumption and resumable session identity
 

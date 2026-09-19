@@ -183,6 +183,23 @@ const singleSelectElicitation: ElicitationData = {
 };
 
 describe('ElicitationPanel', () => {
+  it('keeps answer and skip diagnostics out of the response control', async () => {
+    const answerDiagnostic = 'provider answer failure: request=private';
+    const answer = vi.fn().mockRejectedValueOnce(new Error(answerDiagnostic));
+    const { unmount } = render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={answer} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Compare offer/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    expect(await screen.findByText('Your response couldn’t be saved. Try again.')).toBeVisible();
+    expect(screen.queryByText(answerDiagnostic)).not.toBeInTheDocument();
+    unmount();
+
+    const skipDiagnostic = 'router skip failure: route missing';
+    render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={vi.fn().mockRejectedValueOnce(new Error(skipDiagnostic))} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    expect(await screen.findByText('This question couldn’t be skipped. Try again.')).toBeVisible();
+    expect(screen.queryByText(skipDiagnostic)).not.toBeInTheDocument();
+  });
+
   it('repairs TeX in the question and in the option labels beside it', () => {
     // The options come from the same model call as the question: a repaired
     // heading above an unrepaired option reads as a bug in the repair itself.
@@ -2598,6 +2615,16 @@ describe('the card proposing an automation drafted in this room', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create this automation' }));
 
     expect(onAcceptDraft).toHaveBeenCalledExactlyOnceWith('automation-7');
+  });
+
+  it('shows an acceptance failure only on the proposal that failed', () => {
+    const { rerender } = render(
+      <MessageBlock {...actions} acceptDraftFailureFor="automation-other" message={proposal} />,
+    );
+    expect(screen.queryByText('That Sidekick couldn’t be created. Try again.')).not.toBeInTheDocument();
+
+    rerender(<MessageBlock {...actions} acceptDraftFailureFor="automation-7" message={proposal} />);
+    expect(screen.getByText('That Sidekick couldn’t be created. Try again.')).toBeVisible();
   });
 
   it('links to the automation, where the draft is reviewed and applied', () => {

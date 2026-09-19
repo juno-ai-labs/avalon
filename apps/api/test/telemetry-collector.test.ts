@@ -1,9 +1,11 @@
 import "../../../tests/isolated-region";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryCollector } from "../src/telemetry/collector";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 const eventId = "018f22f2-4c22-7abc-8def-0123456789ab";
 const timestamp = "2026-08-12T20:00:00.000Z";
@@ -46,8 +48,10 @@ describe("regional telemetry collector", () => {
   afterEach(() => vi.useRealTimers());
 
   it("durably accepts Global events with one immutable internal deadline", async () => {
-    const database = migratedSqliteDatabase();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const identity = migratedSqliteDatabase();
+    const database = new DatabaseSync(":memory:");
+    database.exec(readFileSync(new URL("../../../packages/db/telemetry-migrations/0001_initial.sql", import.meta.url), "utf8"));
+    const env = createTestEnv({ DB: sqliteD1(identity), TELEMETRY_DB: sqliteD1(database), AVALON_REGION: "global" });
     const collector = new TelemetryCollector(env);
 
     await expect(collector.accept(productEvent(), {
@@ -73,11 +77,13 @@ describe("regional telemetry collector", () => {
       subject_user_id: null,
       analytics_lakehouse_state: "pending",
     });
+    expect(identity.prepare("SELECT name FROM sqlite_schema WHERE name = 'telemetry_accepted_events'").get()).toBeUndefined();
+    identity.close();
     database.close();
   });
 
   it("uses the same delivery policy for an isolated deployment", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "enterprise" });
     const collector = new TelemetryCollector(env);
     const event = productEvent({
@@ -107,7 +113,7 @@ describe("regional telemetry collector", () => {
   });
 
   it("acknowledges identical retries and rejects an event id reused for another payload", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const collector = new TelemetryCollector(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -132,7 +138,7 @@ describe("regional telemetry collector", () => {
   });
 
   it("fails closed for attributable nonessential events when the preference is off or missing", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, product_analytics_enabled, created_at, updated_at)
@@ -163,7 +169,7 @@ describe("regional telemetry collector", () => {
   });
 
   it("rejects a forged route before any regional write", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const collector = new TelemetryCollector(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "enterprise" }));
     await expect(collector.accept(productEvent(), {
       route: "global",
@@ -178,7 +184,7 @@ describe("regional telemetry collector", () => {
 });
 
 it('suppresses delayed built-in meeting telemetry before storing or scheduling it', async () => {
-  const database = migratedSqliteDatabase();
+  const database = migratedObservabilityFixture();
   const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
   const collector = new TelemetryCollector(env);
   const event = {

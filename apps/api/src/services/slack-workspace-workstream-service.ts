@@ -166,13 +166,13 @@ export class SlackWorkspaceWorkstreamService {
       runMode: "steer",
       now: at,
     });
-    await this.recordExternalActorAudit(
+    runtimeDeferral(this.recordExternalActorAudit(
       "slack.workspace_workstream.created",
       created.workstream.id,
       "message",
       admitted.turn.turnId,
       actor,
-    );
+    ));
     // Slack ingress already runs inside the acknowledgement's `waitUntil`, so
     // naming is awaited here rather than deferred again. The opening message
     // is durable pending input by this point; no execution receipt exists yet.
@@ -207,13 +207,13 @@ export class SlackWorkspaceWorkstreamService {
       runMode: "steer",
       now: Date.now(),
     });
-    await this.recordExternalActorAudit(
+    runtimeDeferral(this.recordExternalActorAudit(
       "slack.workspace_workstream.message_created",
       workstreamId,
       "message",
       admitted.turn.turnId,
       input.actor,
-    );
+    ));
     return {
       message: { id: admitted.turn.turnId, clientMessageId: admitted.turn.clientMessageId },
       deliveryState: admitted.deliveryState,
@@ -296,13 +296,13 @@ export class SlackWorkspaceWorkstreamService {
       type: "elicitation_answered",
       elicitation: persistedElicitation,
     });
-    await this.recordExternalActorAudit(
+    runtimeDeferral(this.recordExternalActorAudit(
       "slack.workspace_workstream.elicitation_answered",
       workstreamId,
       "elicitation",
       elicitation.id,
       actor,
-    );
+    ));
     return { elicitation: persistedElicitation };
   }
 
@@ -321,7 +321,7 @@ export class SlackWorkspaceWorkstreamService {
       targetType,
       targetId,
     ]))}`;
-    await this.env.DB.prepare(
+    await this.env.AUDIT_DB.prepare(
       `INSERT OR IGNORE INTO audit_events
        (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
         target_type, target_id, metadata_json, created_at)

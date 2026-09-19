@@ -33,7 +33,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const [changingArchive, setChangingArchive] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveFailure, setArchiveFailure] = useState<'archive' | 'restore' | null>(null);
   const directory = useQuery({ queryKey: ['shared-directory'], enabled: Boolean(api),
     queryFn: ({ signal }) => api!.getSharedDirectory(signal), refetchOnWindowFocus: 'always' });
   const parent = directory.data?.workstreams.find((item) => item.parentId === parentId);
@@ -42,11 +42,11 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   if (!parentId) return <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><p>This conversation link is incomplete.</p></section>;
   const changeArchive = async (value: boolean, target = substreamId) => {
     if (!api || changingArchive) return;
-    setChangingArchive(true); setArchiveError(null);
+    setChangingArchive(true); setArchiveFailure(null);
     try {
       await api.setSubstreamArchived(parentId, target, value);
       await queryClient.invalidateQueries({ queryKey: ['shared-directory'] });
-    } catch (error) { setArchiveError(error instanceof Error ? error.message : 'Unable to change archive state.'); }
+    } catch { setArchiveFailure(value ? 'archive' : 'restore'); }
     finally { setChangingArchive(false); }
   };
   return <>
@@ -55,7 +55,9 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
       <Button disabled={changingArchive} onClick={() => setArchiveTarget(null)}>Cancel</Button>
       <Button disabled={changingArchive} onClick={() => { void changeArchive(true, archiveTarget ?? substreamId).then(() => setArchiveTarget(null)); }}>Archive substream</Button>
     </Modal>
-    {archiveError ? <InlineError>{archiveError}</InlineError> : null}
+    {archiveFailure ? <InlineError>{archiveFailure === 'archive'
+      ? 'The substream couldn’t be archived.'
+      : 'The substream couldn’t be restored.'}</InlineError> : null}
     {archived ? <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><h1>{parentArchived ? 'Archived work stream' : 'Archived conversation'}</h1>
       {parentArchived ? <p>This work stream must be restored before its conversations can reopen.</p>
         : substreamId !== '0' && parent?.archived !== true
@@ -71,7 +73,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
           selectedSubstreamId={substreamId} presentUserIds={context.presentUserIds}
           onSelectSubstream={(id) => navigate(`/workstreams/${parentId}${id === '0' ? '' : `/substreams/${id}`}`)}
           onParticipants={context.openParticipantDialog} onFocusTranscript={context.focusTranscript}
-          onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekicksError={context.sidekicksError}
+          onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekickFailure={context.sidekickFailure}
           onSidekickMenuOpen={context.loadSidekickOptions}
           addSidekick={<SidekickPicker workstreamId={parentId} substreamId={substreamId} />} />}
         renderHeader={(context) => <ConversationHeader grokBotMode workstream={context.detail} socketState={context.socketState}

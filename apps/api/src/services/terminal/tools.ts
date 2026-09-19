@@ -2,6 +2,8 @@ import type { HarnessToolContext, HarnessToolResult } from "@rally/agent-harness
 import type { AttachmentKind } from "@rally/contracts";
 import type { z } from "zod";
 
+import { sha256Hex } from "../../lib/crypto";
+
 import {
   TERMINAL_OUTPUT_ROOT,
   TERMINAL_WORKSPACE_ROOT,
@@ -172,6 +174,11 @@ export interface TerminalWriteFileOutput {
 export interface TerminalWriteFileOptions {
   /** UTF-8 content this same tool invocation already read and validated. */
   previousText: string;
+  /**
+   * The digest of the bytes that content was decoded from. The write replaces
+   * the file only while it still holds them; the read took no lease.
+   */
+  previousSha256: string;
 }
 
 export interface TerminalReadFilePage {
@@ -294,7 +301,7 @@ function pathOutsideRoot(field: TerminalPathField, value: string, root: Terminal
   });
 }
 
-function safeRelativePath(
+export function safeRelativePath(
   value: string,
   field: TerminalPathField,
   root: TerminalPathRoot = "workspace",
@@ -455,7 +462,10 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
         ? prior.split(input.oldString).join(input.newString)
         : prior.replace(input.oldString, input.newString);
       const bytes = boundedUtf8(content, MAX_FILE_BYTES, "filePath");
-      await runtime.writeFile(context, filePath, bytes, { previousText: prior });
+      await runtime.writeFile(context, filePath, bytes, {
+        previousText: prior,
+        previousSha256: await sha256Hex(priorBytes),
+      });
       return {
         output: {
           filePath,
@@ -484,7 +494,12 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
     },
     async apply_patch(rawInput, context): Promise<HarnessToolResult> {
       const input: ApplyPatchInput = TerminalArgumentSchemas.apply_patch.parse(rawInput);
-      const paths = [...input.patch.matchAll(/^(?:\+\+\+|---)\s+(.+?)(?:\t.*)?$/gmu)]
+      // The header regex reads a unified diff. A `*** Begin Patch` envelope has
+      // no headers, and a removed line whose content opens `-- ` would look
+      // like one; its parser validates every path it names with the same rules,
+      // before the runtime touches the provider.
+      const envelope = /^(?:[ \t\r]*\n)*\*\*\* Begin Patch[ \t\r]*(?:\n|$)/u.test(input.patch);
+      const paths = envelope ? [] : [...input.patch.matchAll(/^(?:\+\+\+|---)\s+(.+?)(?:\t.*)?$/gmu)]
         .map((match) => {
           const raw = match[1]!;
           try { return (raw.startsWith('"') ? JSON.parse(raw) as string : raw).replace(/^[ab]\//u, ""); }

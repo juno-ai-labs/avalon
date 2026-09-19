@@ -38,6 +38,7 @@ const api = vi.hoisted(() => ({
   reconnectConnection: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
+  setWorkspaceMemberRole: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -116,6 +117,10 @@ vi.mock('../lib/platform', () => ({
 
 const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' };
 const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' };
+/** An administrator who is not the owner — the standing this change makes reachable. */
+const secondAdmin = { id: 'user-3', name: 'Riley', email: 'riley@example.com', timezone: 'America/Los_Angeles', role: 'admin' };
+/** Shares a display name with `member`, which is why the accessible name carries the email. */
+const namesake = { id: 'user-4', name: 'Sam', email: 'sam.reed@example.com', timezone: 'America/Los_Angeles', role: 'member' };
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Rally Studio',
@@ -1114,6 +1119,49 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 
+  it('gives every connector card one paragraph, and Ashby its opt-in prerequisite on the button', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue([
+      'ashby', 'custom_mcp', 'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+    ]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    // A card's height is the height of its content, and the grid stretches a
+    // row to its tallest card — so a card carrying more than the one
+    // description paragraph pads its neighbours with empty space.
+    // Ashby and Fireflies each used to carry a connection-status line the
+    // installed-connections list above already shows, and Ashby a third
+    // paragraph for its MCP opt-in.
+    const cards = await screen.findAllByRole('article');
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      const paragraphs = [...card.children].filter((child) => child.tagName === 'P');
+      expect(paragraphs).toHaveLength(1);
+      expect(paragraphs[0]?.className).toBe('');
+    }
+
+    // The opt-in is a prerequisite Rally cannot check and the OAuth redirect
+    // cannot explain, so it rides the button it qualifies rather than a second
+    // paragraph. Losing it entirely leaves a non-opted-in org with a
+    // provider-side failure and nothing naming the cause.
+    const ashbyCard = (await screen.findByText('Ashby')).closest('article');
+    expect(ashbyCard).not.toBeNull();
+    const ashbyPersonal = await enabledConnectAction(ashbyCard!, 'Connect for me');
+    fireEvent.focus(ashbyPersonal);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account.",
+    );
+    fireEvent.blur(ashbyPersonal);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+
+    // Every other provider's tooltip says only what the scope means.
+    const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
+    const drivePersonal = await enabledConnectAction(driveCard!, 'Connect for me');
+    fireEvent.focus(drivePersonal);
+    expect(await screen.findByRole('tooltip')).not.toHaveTextContent('Ashby MCP opt-in');
+    fireEvent.blur(drivePersonal);
+  }, 30_000);
+
   it('gives disabled connector tooltip triggers a name and disabled semantics', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
@@ -1949,6 +1997,59 @@ describe('Workspace settings', () => {
       { timeout: 10_000 },
     );
   }, 30_000);
+
+  /**
+   * The viewer this PR exists for: an administrator who is **not** the owner.
+   *
+   * Rendering the owner here would keep this test green against a renderer that
+   * had regressed to owner-only, which is precisely the behaviour under test.
+   */
+  it('lets an administrator who is not the owner promote, demote, and invite another administrator', async () => {
+    api.setWorkspaceMemberRole.mockResolvedValue(undefined);
+    api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
+    renderSettings({ ...workspace, currentUser: secondAdmin });
+    openSettingsSection('Workspace');
+    expect(await screen.findAllByText('Sam')).toHaveLength(2);
+
+    // One control per eligible row, each with an accessible name only that row
+    // can answer to. `Sam` appears twice on purpose: a name alone would leave a
+    // screen-reader user unable to tell the two rows apart.
+    const controls = screen.getAllByRole('button', { name: /administrator/i });
+    const names = controls.map((control) => control.getAttribute('aria-label'));
+    expect(names).toEqual([
+      'Remove administrator access from Riley (riley@example.com)',
+      'Make Sam (sam@example.com) an administrator',
+      'Make Sam (sam.reed@example.com) an administrator',
+    ]);
+    expect(new Set(names).size).toBe(names.length);
+    // The owner's row has none: theirs is the one role the server refuses to
+    // reassign, so a button beside it could only ever fail.
+    expect(screen.queryByRole('button', { name: /Adam/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Make Sam (sam@example.com) an administrator' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'admin'),
+      { timeout: 10_000 },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove administrator access from Riley (riley@example.com)' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(secondAdmin.id, 'member'),
+      { timeout: 10_000 },
+    );
+
+    // The other half of the same change: inviting an administrator was the
+    // owner's alone, and an administrator now has that option too.
+    expect(within(screen.getByRole('combobox', { name: 'Role' })).getByRole('option', { name: 'Administrator' }))
+      .toBeInTheDocument();
+  });
+
+  it('offers an ordinary member no member-role controls at all', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
+    renderSettings({ ...workspace, currentUser: member });
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Adam')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /administrator/i })).not.toBeInTheDocument();
+  });
 
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });

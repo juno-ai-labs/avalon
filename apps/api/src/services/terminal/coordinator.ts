@@ -13,17 +13,27 @@ import type {
 } from "../../durable-objects/workstream-terminal-protocol";
 import {
   TERMINAL_OPERATION_LEASE_MS,
+  TERMINAL_YIELDED_RUN_STATUS_LIST,
+  type TerminalRepositoryRecord,
   type TerminalSandboxRecord,
 } from "../../durable-objects/workstream-terminal-storage";
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
-import { logStructuredEvent } from "../../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../../observability/logger";
+import {
+  createHarnessRunPortFactory,
+  type HarnessRunPortFactory,
+} from "../../runtime/harness-run-port";
 import type { ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
-import { TERMINAL_OUTPUT_ROOT } from "./contract";
+import type { TerminalRunScope } from "./authority";
+import {
+  terminalAcquisitionDeadlineAt,
+  TERMINAL_OUTPUT_ROOT,
+} from "./contract";
 import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,
@@ -32,18 +42,44 @@ import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
   deleteTerminalSandbox,
+  observeTerminalSandbox,
   stopTerminalSandbox,
   isTerminalSandboxLost,
   assertTerminalSandboxReady,
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
+  type TerminalSandboxWaitOptions,
 } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 
 const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
 const EXPIRE_DAYS = 30;
+
+/**
+ * How long a running sandbox may go without a tool call before the lifecycle
+ * sweep stops it. The same window `idle_expires_at` is derived from; exported
+ * because the sweep reads activity from `last_command_at` too, now that a
+ * lease is held per call and a busy run holds nothing between calls.
+ */
+export const TERMINAL_WARM_STOP_MS = WARM_STOP_MINUTES * 60_000;
+
+/**
+ * How long Daytona keeps a stopped sandbox that no Rally sweep will reach.
+ *
+ * A work stream's sandboxes are stopped, archived and expired by the
+ * workspace alarm, whose directory entry the work stream's parent projects.
+ * An automation's parent projects no Terminal deadline, so a Sidekick's
+ * sandboxes — the authoring conversation's and one per triggered run — are
+ * retired by the provider instead: Daytona stops one fifteen idle minutes
+ * after its last use and deletes it this many minutes after that stop. The
+ * number is Rally's own thirty-day expiry so that both kinds of sandbox
+ * outlive their last use by the same time; a shorter life for a run's sandbox,
+ * which nothing reopens once the run has published its results, is a number
+ * the team sets, not one derived here.
+ */
+export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 * 60;
 
 export interface TerminalClock {
   now(): Date;
@@ -66,8 +102,6 @@ export interface AcquiredTerminalSandbox {
   state: "running";
   authorityFingerprint: string;
   networkRevision: number;
-  /** Exclusive operation lease boundary; reacquire only after this instant. */
-  operationLeaseExpiresAt: number;
 }
 
 export interface TerminalSandboxMutationLease {
@@ -81,6 +115,66 @@ export interface TerminalAcquisitionObservation {
   durationMs: number;
   repositorySelected: boolean;
   localFilesRetained: boolean;
+}
+
+/**
+ * Which conversation the coordinator's sandbox belongs to, and which one the
+ * run holding it executes in.
+ *
+ * The two differ only for a background agent, which uses the sandbox of the
+ * conversation that (transitively) started it. Then the lease it takes is
+ * held by a run whose row lives in another object, and `runsPort` is how the
+ * coordinator asks that object whether such a holder has yielded.
+ */
+export interface TerminalSandboxScope extends TerminalRunScope {
+  runsPort: HarnessRunPortFactory;
+}
+
+const YIELDED_RUN_STATUSES = new Set<string>(TERMINAL_YIELDED_RUN_STATUS_LIST);
+
+/**
+ * The Daytona name a conversation's sandbox is created under.
+ *
+ * The main conversation keeps the derivation every deployed sandbox was
+ * created with, so a work stream's existing sandbox is still found by name.
+ * Any other conversation folds its substream in: before it did, a private
+ * side thread of a work stream reserved the main conversation's name, the
+ * provider refused the duplicate, and the fallback lookup by name handed the
+ * thread the main conversation's sandbox under a second, independent lease.
+ */
+export async function terminalSandboxStableName(
+  workspaceId: string,
+  workstreamId: string,
+  substreamId: string,
+): Promise<string> {
+  const identity = substreamId === "0"
+    ? `${workspaceId}:${workstreamId}`
+    : `${workspaceId}:${workstreamId}:${substreamId}`;
+  const stableHash = await sha256(identity);
+  return `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+}
+
+/**
+ * Whether a row was reserved under a name that is not this conversation's.
+ *
+ * Before a sandbox belonged to a conversation, every conversation of a work
+ * stream derived the one name the main conversation still uses, so a side
+ * thread or background agent that used Terminal reserved its row under that
+ * name and was handed the main conversation's Daytona sandbox by the
+ * create-then-lookup fallback. Such a row names a sandbox this conversation
+ * does not own: readiness drops the row and reserves this conversation's own
+ * name, and the lifecycle sweep and the policy application, which now reach
+ * every conversation's row, refuse to stop, archive or delete through it.
+ * The main conversation's derivation is unchanged, so its rows never match.
+ */
+export async function isLegacyTerminalAliasRow(
+  row: { stableName: string | null },
+  workspaceId: string,
+  workstreamId: string,
+  substreamId: string,
+): Promise<boolean> {
+  if (substreamId === "0" || !row.stableName) return false;
+  return row.stableName !== await terminalSandboxStableName(workspaceId, workstreamId, substreamId);
 }
 
 function plusMinutes(now: Date, minutes: number): number {
@@ -152,7 +246,167 @@ export class TerminalSandboxCoordinator {
       context: HarnessToolContext,
       observation: TerminalAcquisitionObservation,
     ) => Promise<void>,
+    /**
+     * The main conversation, holding its own sandbox, unless the plugin says
+     * otherwise: the default is what every run was before a conversation's
+     * sandbox could be used by the agents it starts.
+     */
+    private readonly scope: TerminalSandboxScope = {
+      parentKind: "workstream",
+      runSubstreamId: "0",
+      authoritySubstreamId: "0",
+      runsPort: createHarnessRunPortFactory(env),
+    },
   ) {}
+
+  /**
+   * The conversation to record as the lease holder's, or `null` when the
+   * holder's run row is in the sandbox's own object and the storage can read
+   * its liveness itself.
+   */
+  /**
+   * The conversation this run executes in, when it is not the sandbox's own;
+   * what a lease claim and a task record carry so the owner's object can
+   * tell a holder it cannot see from one it can.
+   */
+  holderSubstreamId(): string | null {
+    return this.scope.runSubstreamId === this.scope.authoritySubstreamId
+      ? null
+      : this.scope.runSubstreamId;
+  }
+
+  /**
+   * What a sandbox generation is frozen to: the principal the run acts as and
+   * the repository it may use. A row whose fingerprint differs is another
+   * caller's bytes, whichever way the difference runs.
+   */
+  private authorityFingerprint(
+    context: HarnessToolContext,
+    repositoryAuthority: RepositoryAuthorityRow | null,
+  ): Promise<string> {
+    return sha256(JSON.stringify({
+      principal: executionPrincipalKey(context.executionPrincipal),
+      repository: repositoryAuthority ?? "scratch",
+    }));
+  }
+
+  /**
+   * Take the operation lease for one tool call on a sandbox this run already
+   * made ready.
+   *
+   * `acquire` returns holding the lease so its transitions are exclusive, and
+   * every tool call releases the lease when it ends, so the next call takes
+   * it again here rather than repeating the provider reads readiness paid
+   * for. The answer is `stale` when the row no longer describes the sandbox
+   * the caller was handed — another run replaced the generation, the sweep
+   * stopped it, or the policy moved it — and the caller then runs readiness
+   * again, which re-claims by the same run id and transitions under the lease
+   * this call may already hold. A lease someone else holds is `sandbox_busy`,
+   * as in `acquire`.
+   */
+  async claimForOperation(
+    context: HarnessToolContext,
+    sandbox: AcquiredTerminalSandbox,
+  ): Promise<"held" | "stale"> {
+    if (context.signal.aborted) {
+      throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before it took the workspace lease.");
+    }
+    const row = await this.terminal(context).sandbox();
+    if (!row || row.generation !== sandbox.generation) return "stale";
+    const claimed = await this.claimOperation(context, row, this.clock.now().getTime());
+    return claimed.lifecycleState === "running"
+      && claimed.sandboxId === sandbox.providerSandboxId
+      && claimed.appliedNetworkRevision === sandbox.networkRevision
+      ? "held"
+      : "stale";
+  }
+
+  /**
+   * Give the lease back; a no-op when this run does not hold it.
+   *
+   * Never throws: the call this follows has already produced its result, and
+   * a release that fails is not that result's failure. The release is fenced
+   * on this run being the holder, so a second attempt after a failed one
+   * repeats nothing the first already did; it is made once, because a hop
+   * that fails twice in a row is not going to be talked round by a third. A
+   * release that still fails leaves the lease with this run until its next
+   * call releases it, the run yields, or the lease deadline passes, and every
+   * sibling sees `sandbox_busy` until then, so the failure is logged with its
+   * reason rather than swallowed.
+   */
+  async release(context: HarnessToolContext): Promise<void> {
+    const attempt = () => this.terminal(context).releaseOperation({
+      runId: context.harnessRunId,
+      now: this.clock.now().getTime(),
+    });
+    try {
+      await attempt();
+    } catch {
+      try {
+        await attempt();
+      } catch (error) {
+        logStructuredEvent(this.env, "warn", "terminal_lease_release_failed", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          substream_id: this.scope.runSubstreamId,
+          terminal_substream_id: this.scope.authoritySubstreamId,
+          harness_run_id: context.harnessRunId,
+          tool_call_id: context.toolCallId,
+          reason: diagnosticErrorCode(error, "release_failed"),
+        });
+      }
+    }
+  }
+
+  /**
+   * The sandbox as a read may use it without taking the lease, or `null`
+   * when a read has to go through `acquire` after all.
+   *
+   * A read changes nothing, so it needs no exclusivity; it needs the sandbox
+   * to be running and to be *this caller's*: the authority fingerprint is
+   * checked here exactly as `acquire` checks it, because a read of another
+   * principal's files is the exposure that fingerprint exists to prevent.
+   * Whether the provider still has it running is read from the last
+   * observation rather than asked of Daytona on every read; a stale answer
+   * costs one failed read and a retry through readiness.
+   */
+  async peekRunning(context: HarnessToolContext): Promise<AcquiredTerminalSandbox | null> {
+    if (this.emergencyDisabled || context.signal.aborted) return null;
+    const terminal = this.terminal(context);
+    const [row, observation, repository] = await Promise.all([
+      terminal.sandbox(),
+      terminal.providerObservation(),
+      terminal.selectedRepository(),
+    ]);
+    if (!row?.sandboxId || row.lifecycleState !== "running") return null;
+    if (await isLegacyTerminalAliasRow(row, context.workspaceId, context.workstreamId, this.scope.authoritySubstreamId)) {
+      return null;
+    }
+    // Everything readiness checks before it hands a sandbox out is checked
+    // here too; a read is otherwise the one path that would run without it.
+    const repositoryAuthority = await this.loadRepositoryAuthority(context.workspaceId, context.workstreamId, repository);
+    if (row.authorityFingerprint !== await this.authorityFingerprint(context, repositoryAuthority)) return null;
+    // A repository selected but not yet bootstrapped into this generation is
+    // some run's preparation still in flight, and a read of a half-made
+    // checkout is a read of the wrong files.
+    if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
+    if (await this.hasRevokedImportedResource(context, row)) return null;
+    if (
+      observation
+      && observation.generation === row.generation
+      && observation.sandboxId === row.sandboxId
+      && observation.state !== null
+      && observation.state !== "running"
+    ) return null;
+    return {
+      providerSandboxId: row.sandboxId,
+      stableName: requireStableName(row),
+      generation: row.generation,
+      state: "running",
+      authorityFingerprint: row.authorityFingerprint,
+      networkRevision: row.appliedNetworkRevision,
+    };
+  }
 
   async claimMutation(context: HarnessToolContext): Promise<TerminalSandboxMutationLease> {
     if (this.emergencyDisabled) {
@@ -194,6 +448,17 @@ export class TerminalSandboxCoordinator {
 
   async acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
     const acquisitionStartedAt = Date.now();
+    /**
+     * The instant every provider wait below must not outlive: the same budget
+     * the calling tool's own deadline was sized from. Policy loading,
+     * authority replacement and network reconciliation all run before a
+     * sandbox is started and all spend it, as do the provider RPC hop and the
+     * adapter's sandbox lookup — so what is left is subtracted where it is
+     * spent, and this end point stays fixed for the whole acquisition.
+     */
+    const waitBudget: TerminalSandboxWaitOptions = {
+      deadlineAtMs: terminalAcquisitionDeadlineAt(acquisitionStartedAt),
+    };
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
@@ -220,12 +485,12 @@ export class TerminalSandboxCoordinator {
           : "Ask a workspace owner to save and verify the Terminal network policy." },
       );
     }
-    const authorityFingerprint = await sha256(JSON.stringify({
-      principal: executionPrincipalKey(context.executionPrincipal),
-      repository: repositoryAuthority ?? "scratch",
-    }));
+    const authorityFingerprint = await this.authorityFingerprint(context, repositoryAuthority);
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.terminal(context).sandbox();
+    if (row && await isLegacyTerminalAliasRow(row, context.workspaceId, context.workstreamId, this.scope.authoritySubstreamId)) {
+      row = await this.retireLegacyAliasRow(context, row, now);
+    }
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, now);
     }
@@ -253,11 +518,28 @@ export class TerminalSandboxCoordinator {
         policy.revision,
         domains,
         now,
+        waitBudget,
       );
       telemetryAction = "start_fresh";
       localFilesRetained = false;
     } else {
       const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
+      if (
+        (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked)
+        && this.scope.runSubstreamId !== this.scope.authoritySubstreamId
+      ) {
+        // The sandbox is another conversation's, and replacing it destroys
+        // that conversation's checkout. A background agent inherits its
+        // starter's principal, so its fingerprint matches its owner's unless
+        // the owner's own sandbox has gone stale; the owner's next call is
+        // what reprovisions it, and this run waits for that rather than
+        // doing it from underneath.
+        throw new TerminalToolError(
+          "sandbox_authority_mismatch",
+          "The sandbox this agent shares with the conversation that started it no longer matches that conversation's authority, or a resource imported into it was revoked. That conversation's next Terminal call reprovisions it.",
+          { reason: "Ask the conversation that started this agent to run a Terminal tool, then retry." },
+        );
+      }
       if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
         telemetryAction = "repository_replace";
         localFilesRetained = false;
@@ -274,7 +556,7 @@ export class TerminalSandboxCoordinator {
       }
 
       if (!row.sandboxId) {
-        row = await this.createReservedSandbox(context, row, domains, now);
+        row = await this.createReservedSandbox(context, row, domains, now, waitBudget);
       } else {
         const resumed = await this.resumeProviderSandbox(
           context,
@@ -284,6 +566,7 @@ export class TerminalSandboxCoordinator {
           policy.revision,
           domains,
           now,
+          waitBudget,
         );
         row = resumed.row;
         telemetryAction = resumed.action ?? telemetryAction;
@@ -316,7 +599,6 @@ export class TerminalSandboxCoordinator {
       state: "running",
       authorityFingerprint,
       networkRevision: policy.revision,
-      operationLeaseExpiresAt: row.operationLeaseExpiresAt ?? now,
     };
   }
 
@@ -357,27 +639,74 @@ export class TerminalSandboxCoordinator {
   ): Promise<TerminalSandboxRecord> {
     const terminal = this.terminal(context);
     const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
+    const runSubstreamId = this.holderSubstreamId();
     let claimed = await terminal.claimOperation({
       runId: context.harnessRunId,
+      runSubstreamId,
       generation: row.generation,
       leaseExpiresAt,
       now,
     });
+    let yieldedForeignHolder: { runId: string; substreamId: string } | null = null;
+    if (!claimed) {
+      // The storage could not read the holder's liveness if the holder ran in
+      // another conversation. Ask that conversation, and hand the answer back
+      // as an exact identity to take over from.
+      yieldedForeignHolder = await this.yieldedForeignHolder(context, row);
+      if (yieldedForeignHolder) {
+        claimed = await terminal.claimOperation({
+          runId: context.harnessRunId,
+          runSubstreamId,
+          generation: row.generation,
+          leaseExpiresAt,
+          now,
+          yieldedForeignHolder,
+        });
+      }
+    }
     if (!claimed) {
       claimed = await this.recoverYieldedOperation(
         context,
         row,
         now,
+        yieldedForeignHolder,
       );
     }
     if (!claimed) {
       throw new TerminalToolError(
         "sandbox_busy",
-        "Another agent run is changing this Terminal workspace. Wait for that run to finish, then retry the tool; do not repeat any earlier command.",
-        { retryAfterMs: 5_000, reason: "Wait for the current agent run to release the Terminal workspace, then retry." },
+        "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
+        { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
       );
     }
     return claimed;
+  }
+
+  /**
+   * The lease holder as an identity to take over from, when it ran in another
+   * conversation and that conversation says it has yielded; otherwise `null`.
+   *
+   * Asked over the wire rather than inside the claim because the holder's run
+   * row is in the other conversation's object. The answer cannot go stale: a
+   * yielded run never resumes its lease, and the takeover names the exact
+   * holder, so a lease that moved on in between is simply not taken.
+   */
+  private async yieldedForeignHolder(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+  ): Promise<{ runId: string; substreamId: string } | null> {
+    if (
+      !row.operationRunId
+      || !row.operationRunSubstreamId
+      || row.operationRunId === context.harnessRunId
+    ) return null;
+    const holder = await this.scope
+      .runsPort(context.workspaceId, context.workstreamId, row.operationRunSubstreamId)
+      .run({ runId: row.operationRunId });
+    // No row is what the storage's own predicate reads as yielded for a local
+    // holder: a run that does not exist cannot be executing.
+    if (holder && !YIELDED_RUN_STATUSES.has(holder.status)) return null;
+    return { runId: row.operationRunId, substreamId: row.operationRunSubstreamId };
   }
 
   /**
@@ -392,10 +721,12 @@ export class TerminalSandboxCoordinator {
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
     now: number,
+    yieldedForeignHolder: { runId: string; substreamId: string } | null = null,
   ): Promise<TerminalSandboxRecord | null> {
     const sandboxId = row.sandboxId;
     if (!sandboxId) return null;
     const terminal = this.terminal(context);
+    const runSubstreamId = this.holderSubstreamId();
     const claimId = newId(now);
     const renewClaim = async (): Promise<void> => {
       const renewedAt = this.clock.now().getTime();
@@ -416,6 +747,7 @@ export class TerminalSandboxCoordinator {
       claimId,
       claimExpiresAt: now + TERMINAL_OPERATION_LEASE_MS,
       now,
+      yieldedForeignHolder,
     });
     if (!recoveryClaimed) return null;
 
@@ -427,6 +759,7 @@ export class TerminalSandboxCoordinator {
       const recovered = sandboxRetired
         ? await terminal.retireYieldedOperationRecovery({
             runId: context.harnessRunId,
+            runSubstreamId,
             generation: row.generation,
             sandboxId,
             claimId,
@@ -436,6 +769,7 @@ export class TerminalSandboxCoordinator {
           })
         : await terminal.settleYieldedOperationRecovery({
             runId: context.harnessRunId,
+            runSubstreamId,
             generation: row.generation,
             sandboxId,
             claimId,
@@ -513,8 +847,11 @@ export class TerminalSandboxCoordinator {
   private async loadRepositoryAuthority(
     workspaceId: string,
     workstreamId: string,
+    selected?: TerminalRepositoryRecord | null,
   ): Promise<RepositoryAuthorityRow | null> {
-    const repository = await this.terminalPort(workspaceId, workstreamId).selectedRepository();
+    const repository = selected === undefined
+      ? await this.terminalPort(workspaceId, workstreamId).selectedRepository()
+      : selected;
     if (!repository) return null;
     const connection = await this.env.DB.prepare(
       `SELECT id FROM connector_connections
@@ -537,20 +874,61 @@ export class TerminalSandboxCoordinator {
     if (links.some((candidate) => candidate.state !== "completed")) return true;
     // The attachment join used to ride along with the import rows. It cannot:
     // the imports are object-local and the relationship rows are not, so the
-    // link check is its own statement against its own authority.
-    const attached = await this.resourcePort(context.workspaceId, context.workstreamId)
-      .attachedLinks({ resourceIds: links.map((candidate) => candidate.resourceId) });
-    if (new Set(attached.map((link) => link.resource_id)).size !== links.length) {
-      return true;
+    // link check is its own statement against its own authority. Which
+    // authority is the import's own: an import was authorized by an
+    // attachment of the conversation whose run made it, the sandbox's own
+    // unless the row names another, and stays authorized while that
+    // attachment stands. Asking the acquiring run's conversation instead
+    // would read a background agent's imports against its owner's
+    // attachments, and the owner's against the agent's, and revoke both.
+    const byConversation = new Map<string, Set<string>>();
+    for (const link of links) {
+      const substreamId = link.attachedSubstreamId ?? this.scope.authoritySubstreamId;
+      const resourceIds = byConversation.get(substreamId) ?? new Set<string>();
+      resourceIds.add(link.resourceId);
+      byConversation.set(substreamId, resourceIds);
     }
-    const placeholders = links.map(() => "?").join(", ");
+    for (const [substreamId, resourceIds] of byConversation) {
+      const attached = new Set((await this.resourcePort(context.workspaceId, context.workstreamId, substreamId)
+        .attachedLinks({ resourceIds: [...resourceIds] })).map((link) => link.resource_id));
+      for (const resourceId of resourceIds) {
+        if (!attached.has(resourceId)) return true;
+      }
+    }
+    const resourceIds = [...new Set(links.map((candidate) => candidate.resourceId))];
+    const placeholders = resourceIds.map(() => "?").join(", ");
     const resources = await this.env.DB.prepare(
       `SELECT id, provider FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
-    ).bind(context.workspaceId, ...links.map((candidate) => candidate.resourceId))
+    ).bind(context.workspaceId, ...resourceIds)
       .all<{ id: string; provider: string }>();
-    if (resources.results.length !== links.length) return true;
+    if (resources.results.length !== resourceIds.length) return true;
     return resources.results.some((candidate) => candidate.provider === "avalon_note");
+  }
+
+  /**
+   * Forget a row reserved under another conversation's name; see
+   * `isLegacyTerminalAliasRow`. Nothing here stops, archives or deletes the
+   * sandbox the row names, because it is the main conversation's: the row
+   * alone is dropped, with the imports and bootstrap mark that belonged to
+   * it, and the caller reserves this conversation's own name as if the row
+   * had never existed.
+   */
+  private async retireLegacyAliasRow(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<null> {
+    await this.terminal(context).resetSandbox({ generation: row.generation, now });
+    logStructuredEvent(this.env, "info", "terminal_legacy_alias_row_retired", {
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      substream_id: this.scope.runSubstreamId,
+      terminal_substream_id: this.scope.authoritySubstreamId,
+      harness_run_id: context.harnessRunId,
+      sandbox_generation: row.generation,
+    });
+    return null;
   }
 
   private async reserveFirstGeneration(
@@ -559,13 +937,17 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    const stableHash = await sha256(`${context.workspaceId}:${context.workstreamId}`);
-    const stableName = `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+    const stableName = await terminalSandboxStableName(
+      context.workspaceId,
+      context.workstreamId,
+      this.scope.authoritySubstreamId,
+    );
     return this.terminal(context).reserveFirstGeneration({
       stableName,
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
@@ -577,6 +959,7 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<TerminalSandboxRecord> {
     let created: TerminalSandboxSnapshot;
     try {
@@ -584,9 +967,13 @@ export class TerminalSandboxCoordinator {
         stableName: requireStableName(row),
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
+        substreamId: this.scope.authoritySubstreamId,
         generation: row.generation,
         domainAllowList: domains,
         environment: { AVALON_RESOURCE_DIR: TERMINAL_OUTPUT_ROOT },
+        ...(this.scope.parentKind === "automation"
+          ? { autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES }
+          : {}),
       });
     } catch {
       try {
@@ -606,7 +993,26 @@ export class TerminalSandboxCoordinator {
     }
     if (created.state !== "running") {
       if (created.state === "stopped" || created.state === "archived") {
-        await this.provider.startSandbox(created.id);
+        try {
+          await this.provider.startSandbox(created.id, waitBudget);
+        } catch {
+          // The same reasoning `resumeProviderSandbox` documents, and this
+          // call site now needs it for the same reason: the wait is bounded by
+          // the caller's deadline rather than a fixed minute, so running out
+          // of it is an ordinary outcome rather than a provider fault. A raw
+          // Daytona error escaping here would reach the model as an
+          // unclassified tool failure instead of a retryable
+          // `sandbox_unavailable` with guidance.
+          //
+          // The generation is deliberately not failed. The sandbox exists and
+          // is most likely still starting, and it is reachable by its stable
+          // name — the ambiguous-create reconcile above adopts it on the next
+          // attempt. Failing the generation here would discard a live sandbox
+          // over a wait that merely ran out.
+          const settled = await observeTerminalSandbox(this.provider, created.id)
+            .catch(() => undefined);
+          if (settled?.state !== "running") throw providerStateError(settled?.state ?? "unknown");
+        }
       } else {
         throw providerStateError(created.state);
       }
@@ -681,6 +1087,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<{
     row: TerminalSandboxRecord;
     action: TerminalAcquisitionObservation["action"] | null;
@@ -697,6 +1104,7 @@ export class TerminalSandboxCoordinator {
         networkRevision,
         domains,
         now,
+        waitBudget,
       ),
       action: "start_fresh",
     });
@@ -720,8 +1128,8 @@ export class TerminalSandboxCoordinator {
       throw providerStateError(observed.state);
     }
     try {
-      if (recover) await this.provider.recoverSandbox(sandboxId);
-      else await this.provider.startSandbox(sandboxId);
+      if (recover) await this.provider.recoverSandbox(sandboxId, waitBudget);
+      else await this.provider.startSandbox(sandboxId, waitBudget);
     } catch (error) {
       // A start that throws has not said what became of the sandbox. Ask,
       // rather than treating every failure as a lost workspace: a restore that
@@ -734,6 +1142,8 @@ export class TerminalSandboxCoordinator {
       logStructuredEvent(this.env, "info", "terminal_sandbox_start_settled_after_error", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
+        substream_id: this.scope.runSubstreamId,
+        terminal_substream_id: this.scope.authoritySubstreamId,
         harness_run_id: context.harnessRunId,
         sandbox_generation: row.generation,
         reason: error instanceof Error ? error.name : "unknown",
@@ -787,10 +1197,13 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitOptions,
   ): Promise<TerminalSandboxRecord> {
     logStructuredEvent(this.env, "warn", "terminal_sandbox_replaced_after_loss", {
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
+      substream_id: this.scope.runSubstreamId,
+      terminal_substream_id: this.scope.authoritySubstreamId,
       harness_run_id: context.harnessRunId,
       sandbox_generation: row.generation,
       lifecycle_state: row.lifecycleState,
@@ -801,11 +1214,12 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
     });
-    return this.createReservedSandbox(context, replaced, domains, now);
+    return this.createReservedSandbox(context, replaced, domains, now, waitBudget);
   }
 
   private async replaceForAuthority(
@@ -821,6 +1235,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,

@@ -9,7 +9,7 @@ import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from '../src/rout
 import { requireIdentityAuth } from '../src/middleware/auth';
 import { coarseTelemetryRoute, TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
 
 const epochId = '018f22f2-4c22-7abc-8def-0123456789ab';
 
@@ -69,7 +69,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('uses Cloudflare affirmative enterprise classification for a tokenless bootstrap', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const environment = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
       TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
@@ -95,7 +95,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('binds bootstrap to the signed route decision when Cloudflare country changes', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const environment = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
       TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
@@ -162,7 +162,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('returns a route-fixed bootstrap only from Global and maps malformed input safely', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const global = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
       TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
@@ -200,7 +200,7 @@ describe('telemetry HTTP bounds', () => {
     if (rejection.success) throw new Error('expected a rejection');
     vi.spyOn(TelemetryBootstrapService.prototype, 'bootstrap').mockRejectedValueOnce(rejection.error);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
 
     const response = await publicApp().request('/telemetry/bootstrap', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
@@ -251,7 +251,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('accepts public-site events through the coarse regional anonymous route', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const environment = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
       TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
@@ -293,7 +293,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('accepts valid multipart crash input and rejects invalid multipart before R2', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const put = vi.fn(async () => undefined);
     const environment = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
@@ -336,7 +336,7 @@ describe('telemetry HTTP bounds', () => {
   });
 
   it('enforces identity authentication and accepts a valid authenticated batch', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('00000000-0000-7000-8000-0000000000d1', 'google-1', 'user@example.com', 'User',

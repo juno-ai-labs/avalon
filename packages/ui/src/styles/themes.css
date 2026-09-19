@@ -21,9 +21,17 @@
 [data-theme='light'] {
   color-scheme: light;
 
-  /* Shared secondary controls, independent of message and sidebar geometry. */
+  /* Shared secondary controls, independent of message and sidebar geometry.
+   * `background-quiet` is the resting fill of a control drawn as a faint chip
+   * rather than as a bordered box — the composer’s round tools, the send and
+   * stop buttons, the collapsed sidebar’s search pill. It carries the same
+   * weight as `sys.color.state.hover` today and is named apart from it on
+   * purpose: one is what a control looks like at rest and the other is what
+   * any control looks like under the pointer, and a change to either should
+   * not have to argue about the other. */
   --av-cmp-control-radius: 8px;
   --av-cmp-control-font-size: 13px;
+  --av-cmp-control-background-quiet: rgba(119, 119, 119, 0.09);
 
   /* Shared secondary cards, dialogs and menus, independent of message bubbles. */
   --av-cmp-surface-radius: 12px;
@@ -89,6 +97,16 @@
   --av-sys-color-surface-raised-hover: rgba(119, 119, 119, 0.17);
   --av-sys-color-surface-elevated: #fcfcfc;
   --av-sys-color-surface-elevated-hover: #eeeeee;
+
+  /* The interaction washes, painted over whatever surface a control already
+   * sits on rather than replacing it. There is one hover wash for the whole
+   * product: a navigation row, a menu item, a header icon and a settings
+   * button are the same gesture under the pointer, and a reader who has to ask
+   * which wash a control takes is reading a decision that was never made. It
+   * is translucent in both appearances precisely so that one value can do that
+   * — an opaque fill has to know what is behind it, and `surface.raised-hover`
+   * did not on the canvas. */
+  --av-sys-color-state-hover: rgba(119, 119, 119, 0.09);
 
   /* Text tones, strongest to faintest. */
   --av-sys-color-text-on-media: #ffffff;
@@ -361,15 +379,15 @@
 
   /* Inside a navigation row. `height-dense` is the floor under the rows whose
    * height comes from their content; `height` is the floor for a single-line
-   * row. `background-hover` and `background-selected` are the fills; a theme
-   * that marks selection with the marker alone sets the latter to
-   * `transparent`. */
+   * row. `background-selected` is the selected fill; a theme that marks
+   * selection with the marker alone sets it to `transparent`. A row's hover is
+   * not here: it is `sys.color.state.hover`, which every control in the
+   * product shares. */
   --av-cmp-row-height: 46px;
   --av-cmp-row-padding: 9px 10px;
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
-  --av-cmp-row-background-hover: rgba(119, 119, 119, 0.09);
   --av-cmp-row-background-selected: rgba(119, 119, 119, 0.17);
 
   /* The band a group's label sits in. */
@@ -495,6 +513,7 @@
 
   --av-cmp-control-radius: 8px;
   --av-cmp-control-font-size: 13px;
+  --av-cmp-control-background-quiet: rgba(119, 119, 119, 0.17);
 
   --av-cmp-surface-radius: 12px;
 
@@ -538,6 +557,8 @@
   --av-sys-color-surface-raised-hover: #313131;
   --av-sys-color-surface-elevated: #2f2f2f;
   --av-sys-color-surface-elevated-hover: #3d3d3d;
+
+  --av-sys-color-state-hover: rgba(119, 119, 119, 0.17);
 
   --av-sys-color-text-on-media: #ffffff;
   --av-sys-color-text-on-inverse: #141414;
@@ -732,7 +753,6 @@
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
-  --av-cmp-row-background-hover: rgba(119, 119, 119, 0.17);
   --av-cmp-row-background-selected: rgba(119, 119, 119, 0.32);
 
   --av-cmp-group-label-height: 34px;

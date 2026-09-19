@@ -88,7 +88,7 @@ import {
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
-import { workstreamSidekickRows, type SidekickRow } from '../components/sidekick-section';
+import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
@@ -326,7 +326,7 @@ export function manualElicitationResponse(
 export function AddParticipantDialog({
   current,
   privateSubstream = false,
-  error,
+  failure,
   members,
   open,
   pending,
@@ -338,7 +338,7 @@ export function AddParticipantDialog({
   sharing?: React.ReactNode;
   current: WorkspaceMember[];
   privateSubstream?: boolean;
-  error?: string | undefined;
+  failure?: 'add' | 'remove' | undefined;
   members: WorkspaceMember[];
   open: boolean;
   pending: boolean;
@@ -366,7 +366,9 @@ export function AddParticipantDialog({
       open={open}
       title="Add a participant"
     >
-      {error ? <InlineError>{error}</InlineError> : null}
+      {failure ? <InlineError>{failure === 'add'
+        ? 'That participant couldn’t be added.'
+        : 'That participant couldn’t be removed.'}</InlineError> : null}
       {sharing}
       <div className="member-action-list">
         {listed.map((member) => {
@@ -432,7 +434,7 @@ export function AddResourceDialog({
   pending,
   loading,
   fetching,
-  error,
+  failure,
   search,
   hasMore,
   onAttach,
@@ -450,7 +452,7 @@ export function AddResourceDialog({
   pending: boolean;
   loading: boolean;
   fetching: boolean;
-  error?: string | undefined;
+  failure?: 'load' | 'attach' | undefined;
   search: string;
   hasMore: boolean;
   onAttach: (resource: WorkstreamResource) => void;
@@ -497,7 +499,9 @@ export function AddResourceDialog({
           />
         </label>
         {incomplete && <div role="status">Some resources are unavailable. <Button onClick={onRetry}>Retry</Button></div>}
-        {error ? <InlineError>{error}</InlineError> : null}
+        {failure ? <InlineError>{failure === 'load'
+          ? 'Resources couldn’t be loaded.'
+          : 'That resource couldn’t be added.'}</InlineError> : null}
         {loading ? (
           <LoadingState label="Finding resources…" />
         ) : available.length === 0 ? (
@@ -718,7 +722,7 @@ const NO_RESOURCES: WorkstreamDetail['resources'] = [];
 export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksError?: string | undefined;
+  sidekickFailure?: SidekickSectionFailure | undefined;
   loadSidekickOptions: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
@@ -759,7 +763,7 @@ export interface ConversationSurfaceProps {
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
-    sidekicksError: string | undefined;
+    sidekickFailure: SidekickSectionFailure | undefined;
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
@@ -1245,8 +1249,8 @@ export function ConversationSurface({
       snapshotId: snapshot.snapshotId,
       range: { startInclusive: searchSequence, endExclusive: searchSequence + 1 },
       resumeAfterEventSequence: snapshot.eventSequence,
-    }).catch((error: unknown) => {
-      if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOtherHistoryError(error instanceof Error ? error.message : 'The matching message could not be opened.');
+    }).catch(() => {
+      if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOtherHistoryError('The matching message couldn’t be opened. Try again.');
     });
   }, [conversationAddress, feedLive, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
     searchSequence, searchTurnId, setSearchParams, transcript, transcriptVirtualizer]);
@@ -1311,7 +1315,7 @@ export function ConversationSurface({
           pendingOlderAfterReconnectRef.current = true;
           return;
         }
-        setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
+        setOlderMessagesError('Earlier messages couldn’t be loaded. Try again.');
       }
     })();
     olderRequestsRef.current.set(conversationAddress, request);
@@ -1373,7 +1377,7 @@ export function ConversationSurface({
         pendingNewerAfterReconnectRef.current = true;
         return;
       }
-      setOtherHistoryError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
+      setOtherHistoryError('Newer messages couldn’t be loaded. Try again.');
     } finally {
       loadingNewerRef.current = false;
     }
@@ -1447,7 +1451,7 @@ export function ConversationSurface({
         pendingJumpAfterReconnectRef.current = true;
         return;
       }
-      setOtherHistoryError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
+      setOtherHistoryError('The latest messages couldn’t be loaded. Try again.');
     } finally {
       loadingNewerRef.current = false;
     }
@@ -1829,7 +1833,7 @@ export function ConversationSurface({
       try {
         await answerElicitation(activeElicitation.id, response.answer, response.customResponse);
       } catch (error) {
-        setSendError(error instanceof Error ? error.message : 'The response could not be sent.');
+        setSendError('The response couldn’t be sent. Try again.');
         throw error;
       } finally {
         pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
@@ -1941,7 +1945,7 @@ export function ConversationSurface({
           overlay.identity.type === 'client_message'
           && overlay.identity.clientMessageId === clientId
           && overlay.provenance.source === 'client_command'));
-      setSendError(error instanceof Error ? error.message : 'The message could not be sent.');
+      setSendError('The message couldn’t be sent. Try again.');
       throw error;
     } finally {
       pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
@@ -2117,22 +2121,44 @@ export function ConversationSurface({
     onChangeRecommendation: (sidekickId, attached) => removeSidekick.mutate({ sidekickId, attached,
       recommendation: true, workstreamId: id!, substreamId }),
   });
-  const sidekicksError = (readOwnedSidekickDetails ? ownedSidekicks.error?.message : undefined)
-    ?? attachedSidekicks.error?.message
-    ?? recommendedSidekicks.error?.message
-    ?? recommendationOptions.error?.message
-    ?? removeSidekick.error?.message;
+  // A server/provider message belongs in diagnostics, not in the sidebar.
+  // The API client already records request path, status and request id; this
+  // surface passes only failure presence to shared presentation, which owns
+  // the stable Rally copy.
+  const sidekickFailure: SidekickSectionFailure | undefined = removeSidekick.error
+    ? removeSidekick.variables?.recommendation
+      ? removeSidekick.variables.attached ? 'recommend' : 'unrecommend'
+      : 'remove'
+    : (readOwnedSidekickDetails && ownedSidekicks.error)
+      || attachedSidekicks.error
+      || recommendedSidekicks.error
+      ? 'load'
+      : undefined;
+  const loadSidekickOptions = (): void => {
+    // A failed removal remains visible until the person next engages with
+    // Sidekick management. At that point it describes the previous action,
+    // while the fresh options read owns any new failure of its own. A pending
+    // removal remains observed so its eventual failure is not lost.
+    if (removeSidekick.isError) removeSidekick.reset();
+    void recommendationOptions.refetch();
+  };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
+  // A persisted run result is an intentional user-facing product record, not a
+  // caught transport exception. Its notice pairs the text with a stable code
+  // and request id so support can identify the failed run.
+  // eslint-disable-next-line rally/no-diagnostic-message-in-presentation
+  const latestRunFailureMessage = detail.latestHarnessRun?.error?.message
+    ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout">
       {renderSidebar?.({
         sidekicks: sidekickRows,
-        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
-        sidekicksError,
+        loadSidekickOptions,
+        sidekickFailure,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -2186,8 +2212,8 @@ export function ConversationSurface({
       {renderHeader?.({
         detail: displayedDetail,
         sidekicks: sidekickRows,
-        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
-        sidekicksError,
+        loadSidekickOptions,
+        sidekickFailure,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
@@ -2309,7 +2335,9 @@ export function ConversationSurface({
               acceptingDraftFor={acceptProposedAutomation.isPending
                 ? acceptProposedAutomation.variables ?? null
                 : null}
-              acceptDraftError={acceptProposedAutomation.error?.message}
+              acceptDraftFailureFor={acceptProposedAutomation.error
+                ? acceptProposedAutomation.variables ?? null
+                : null}
               virtualizer={transcriptVirtualizer}
             />
           )}
@@ -2323,7 +2351,7 @@ export function ConversationSurface({
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
-              message={detail.latestHarnessRun.error?.message ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
+              message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}
@@ -2346,7 +2374,11 @@ export function ConversationSurface({
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
             attachments={attachmentDraft.attachments}
-            error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
+            error={sendError
+              ?? attachmentDraft.error
+              ?? (attachResource.error ? 'The resource couldn’t be added.' : undefined)
+              ?? (stop.error ? 'The run couldn’t be stopped.' : undefined)
+              ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
             fileInputRef={fileInputRef}
             members={visibleMembers}
             /* Locked, because a pin is written once when the conversation is
@@ -2390,10 +2422,13 @@ export function ConversationSurface({
         } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
-        error={watchResource.error?.message
-          ?? detachResource.error?.message
-          ?? refreshResource.error?.message
-          ?? attachResource.error?.message}
+        failure={watchResource.error
+          ? 'watch'
+          : detachResource.error
+            ? 'detach'
+            : refreshResource.error
+              ? 'refresh'
+              : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
         onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePreview?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
         {...(substreamId === '0' || resourcePreview?.workstreamScoped ? {
@@ -2405,11 +2440,11 @@ export function ConversationSurface({
         onOpenResourceVersion={openResourceVersion}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
-        resourceVersionsError={resourceVersions.error?.message}
+        resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={resourceManagementDetail}
         sidekicks={sidekickRows}
-        sidekicksError={sidekicksError}
+        sidekickFailure={sidekickFailure}
       />}
 
       <AddParticipantDialog
@@ -2417,7 +2452,7 @@ export function ConversationSurface({
           <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
-        error={addParticipant.error?.message ?? removeParticipant.error?.message}
+        failure={addParticipant.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
         members={visibleMembers}
         onAdd={(member) => {
           removeParticipant.reset();
@@ -2444,7 +2479,7 @@ export function ConversationSurface({
         incomplete={availableResources.data?.pages.some((page) => page.complete === false) ?? false}
         onRetry={() => { void availableResources.refetch(); }}
         current={resourceManagementDetail.resources}
-        error={availableResources.error?.message ?? attachResource.error?.message}
+        failure={availableResources.error ? 'load' : attachResource.error ? 'attach' : undefined}
         fetching={availableResources.isFetchingNextPage}
         hasMore={Boolean(availableResources.hasNextPage)}
         loading={availableResources.isLoading}

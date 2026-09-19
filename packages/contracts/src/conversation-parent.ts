@@ -104,6 +104,24 @@ export const ConversationParentListChildrenResultSchema = z.strictObject({
   })),
 });
 
+/**
+ * Every conversation of the parent that reports a Terminal deadline, with the
+ * deadline. A conversation that holds a Daytona sandbox always reports one —
+ * retention alone gives it an expiry — so this is also the list of the
+ * parent's conversations that own a sandbox.
+ */
+export const ConversationParentTerminalDeadlinesRequestSchema = z.strictObject(ParentAddressed);
+export const ConversationParentTerminalDeadlinesResultSchema = z.strictObject({
+  items: z.array(z.strictObject({
+    substreamId: SubstreamIdSchema,
+    nextTerminalActionAt: z.string().datetime({ offset: true }),
+  })),
+});
+export type ConversationParentTerminalDeadlinesRequest =
+  z.infer<typeof ConversationParentTerminalDeadlinesRequestSchema>;
+export type ConversationParentTerminalDeadlinesResult =
+  z.infer<typeof ConversationParentTerminalDeadlinesResultSchema>;
+
 const PrivateChildOperationAddress = {
   ...ParentAddressed,
   operationId: z.string().min(1).max(180),

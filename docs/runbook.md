@@ -176,13 +176,16 @@ The weekly snapshot rebuild (`.github/workflows/rebuild-terminal-snapshot.yml`)
 reads the same provider values from the `api-production` GitHub environment
 rather than from the Workers: `DAYTONA_API_KEY` as an environment secret, and
 `DAYTONA_API_URL`, `DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
-`TERMINAL_PROBE_PRIVATE_DNS_URL` as environment variables; the job fails at its
-first step naming whichever is absent. The base image is pinned in
-`apps/api/src/services/terminal/snapshot-manifest.ts`; a
-`TERMINAL_SNAPSHOT_BASE_IMAGE` variable overrides it for a one-off build. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
-and pull-requests write on this repository, so the adoption pull request it
-opens runs CI; without it GitHub starts no workflows for that pull request and
-the step summary says so. The two probe endpoints are Rally's own on
+`TERMINAL_PROBE_PRIVATE_DNS_URL` as environment variables; the job fails
+naming whichever Daytona value is absent. The base image and the sandbox size (2 vCPU / 4 GiB / 8 GiB,
+`TERMINAL_SNAPSHOT_RESOURCES`) are both pinned in
+`apps/api/src/services/terminal/snapshot-manifest.ts`, and both reach production
+only through a rebuild and its push to main. The image has an escape
+hatch for a one-off build, the `TERMINAL_SNAPSHOT_BASE_IMAGE` variable; the size
+has none, so changing it is a commit. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
+write on this repository, so the rebuild can push the adoption to main; without
+it the job fails before the build, because a `GITHUB_TOKEN` push would not start
+`deploy-api.yml`. The two probe endpoints are Rally's own on
 `rallywith.ai` (`probe-redirect`, a proxied record with a redirect rule to
 `https://example.org/`; `probe-private`, an unproxied A record to `10.0.0.1`).
 
@@ -347,12 +350,14 @@ email-name reservations use
 the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
 regional fallback registry.
 
-Email guest sign-in remains disabled until `EMAIL_LOGIN_POLICY_JSON` and the exact
-HTTPS `BROWSER_APP_ORIGIN` are configured alongside signing/encryption keys and
-the transactional sender. Choose the OTP/expiry/attempt and issuance/resend abuse
-policy before production enablement; see [email sign-in](email-login.md) and
-[browser sessions](browser-sessions.md). Sharing validates origin/keys before any
-participant-authority handoff, so incomplete configuration cannot migrate a room.
+Production email guest sign-in is configured through checked-in Global vars:
+`BROWSER_APP_ORIGIN=https://app.rallywith.ai` and `EMAIL_LOGIN_POLICY_JSON`.
+Do not duplicate these as Worker secrets. The policy is six digits, ten-minute
+expiry and five failed redemption attempts. The team explicitly chose to launch
+without issuance limits; see [email sign-in](email-login.md). Existing signing,
+encryption and transactional email credentials remain required. Both API and
+browser deployments must succeed before invitation recipients can sign in.
+Sharing validates origin/keys before participant-authority handoff.
 
 `RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
@@ -1116,10 +1121,11 @@ Because API deployment is continuous, a merge to `main` is a production release.
 The deploy job applies configured deployments' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
 Migrations `0090_drop_legacy_product_tables.sql`,
-`0094_retire_agent_inference_payload_ledger.sql`, and
-`0097_email_routes_use_full_address.sql` are deliberate reverse-order
-exceptions. Each deletes tables or columns the previous Worker still names, so
-applying either first would break live requests until deployment finished — or
+`0094_retire_agent_inference_payload_ledger.sql`,
+`0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`, and
+`0113_drop_legacy_observability_tables.sql` are deliberate reverse-order
+exceptions. These change schemas or deployment identifiers the previous Worker
+still expects, so applying them first can break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
 pending-migration ledger; when one configured Worker-first migration is the sole
 pending entry in a region, it deploys the replacement Workers first and applies
@@ -1135,6 +1141,14 @@ still has them. For 0097, the replacement Worker probes
 `workstream_email_routes`: before the migration it reserves and resolves by the
 legacy `local_part`; afterward it writes and resolves the full `email_address`.
 Its owner-reconciliation path preserves the regional full address in both shapes.
+For 0106, deploy support for configured deployment identifiers before rebuilding
+region-constrained tables. For 0113, stop querying legacy regional observability
+tables before dropping them; the dedicated telemetry and audit stores already
+serve all producers. The pre-retirement Global health check must pass before the
+drop. Rolling back to the old reaper afterward stops telemetry delivery because
+its first query names a removed table; roll forward with compatible code instead.
+A manual deploy with migrations disabled postpones the drop and leaves inactive
+legacy rows unreaped until a migration-enabled deploy completes the cleanup.
 Therefore a failed Worker deploy leaves the old schema untouched,
 while a failed migration leaves the compatible Worker serving the old schema.
 Detection comes from the remote ledger, not the triggering Git diff, so a
@@ -2002,7 +2016,7 @@ To distinguish capture from export failure without the web interface, query the
 Global D1 outbox and Queue metadata through the APIs/CLI:
 
 ```text
-pnpm --filter @rally/api exec wrangler d1 execute avalon-global --remote \
+pnpm --filter @rally/api exec wrangler d1 execute avalon-global-telemetry --remote \
   --command "SELECT event_id, analytics_lakehouse_state, accepted_at, analytics_lakehouse_delivered_at FROM telemetry_accepted_events WHERE event_id = '<event-uuid>'"
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse-dead-letter
@@ -2145,17 +2159,20 @@ children, and the final meeting-notes pass all read it**, worth doing when a pro
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 
-Two failure codes an operator will see, both distinct from
+Three failure codes an operator will see, all distinct from
 `harness_execution_failed`, which means Rally's own defect:
 
 | Code | Meaning | Triage |
 | --- | --- | --- |
 | `provider_unavailable` | Rally called and got nothing — no response, a 408, a 429, a 5xx, or an HTTP-200 stream declaring `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
 | `provider_circuit_open` | Rally did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Rally's credential or credit, so this code does not by itself accuse the provider. |
+| `context_length_exceeded` | Rally called and the endpoint refused the prompt as longer than it accepts, declaring `context_length_exceeded` in its 400 — after every other candidate for the model refused it too. | Rally's sizing, not the provider's health. Compare the deployment's own input limit against the `context_length` the catalog reports for that model: a deployment that accepts less is a window compaction is sizing against wrongly, and every long run on that model will reach it. Not to be read as `context_limit_exceeded`, which is Rally declining to send a run it could not make fit and says nothing about a deployment. |
 
-A run failing with either while the provider is healthy points at credentials or
-at the breaker's cooldown (60–120 seconds), not at a model outage. The reasoning
-behind the split and the retry is
+A run failing with either *provider* code while the provider is healthy points
+at credentials or at the breaker's cooldown (60–120 seconds), not at a model
+outage. A run failing with `context_length_exceeded` while the provider is
+healthy points at neither: the call was answered, and the answer was that the
+prompt did not fit. The reasoning behind the splits and the retry is
 [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 
 ### Ambiguous external write

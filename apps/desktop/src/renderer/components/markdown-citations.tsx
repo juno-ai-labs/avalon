@@ -4,6 +4,8 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
+import { httpHostname, useHostFavicon } from '../lib/host-favicon';
+
 import { AttachmentMediaTile } from './attachments';
 import { isVideoAttachment } from '../lib/attachment-media';
 
@@ -484,7 +486,16 @@ function CitationPill({ citation, number, onOpen }: {
   onOpen?: () => void;
 }): React.JSX.Element {
   const { still } = useCitationRender();
-  const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in preview';
+  const external = citation.target.scheme === 'external' ? citation.target.url : undefined;
+  const favicon = useHostFavicon(still ? undefined : external);
+  // The icon says which site at a glance; the host says it in words, for the
+  // reader whose glance did not land — an unfamiliar mark, a monochrome one
+  // against this appearance, or a marker reached by keyboard rather than by
+  // eye. It rides the line that was already there rather than adding one.
+  const host = external === undefined ? null : httpHostname(external);
+  const opens = external === undefined
+    ? 'Opens in preview'
+    : host === null ? 'Opens in your browser' : `${host} · Opens in your browser`;
   const label = typeof number === 'string' || typeof number === 'number'
     ? `Source ${String(number)}: ${citation.label}`
     : `Source: ${citation.label}`;
@@ -494,10 +505,12 @@ function CitationPill({ citation, number, onOpen }: {
         <Tooltip.Trigger asChild>
           <button
             aria-label={label}
-            className="citation-pill"
+            className={favicon.source ? 'citation-pill citation-pill-favicon' : 'citation-pill'}
             onClick={onOpen}
             type="button"
-          >{still ? number : '*'}</button>
+          >{favicon.source
+            ? <img alt="" aria-hidden="true" onError={favicon.onError} src={favicon.source} />
+            : still ? number : '*'}</button>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip citation-pill-popover" collisionPadding={12} side="top" sideOffset={6}>

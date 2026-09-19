@@ -1,6 +1,6 @@
 # Domain migration
 
-Avalon is becoming Rally, and its ten public hostnames are moving from
+Avalon is becoming Rally, and its legacy public hostnames are moving from
 `with-avalon.com` to `rallywith.ai`. **Both zones serve simultaneously.** Every
 URL the product mints is a Rally one; every Avalon one still answers. This
 document owns which hostnames exist, which is canonical, what each serves, and
@@ -47,7 +47,7 @@ deep-link scheme, and the work-stream email domain.
 | `automation.rallywith.ai` | Inbound work-stream and automation mail (Resend MX) | `automation.with-avalon.com` |
 | `downloads.rallywith.ai` | R2 custom domain for desktop installers and the update feed | `downloads.with-avalon.com` |
 
-Eight are attached to a Worker by a `routes` entry, listing the Rally pattern
+Seven are attached to a Worker by a `routes` entry, listing the Rally pattern
 and the Avalon pattern side by side. `automation.` is mail only and carries no
 Worker route. `downloads.` is an R2 custom domain, configured outside this
 repository.
@@ -61,6 +61,14 @@ API Worker. The dedicated entry point routes exact signed webhook bytes to the
 owning regional service and serves no connection-management or model endpoints.
 OAuth callbacks stay on the regional API hosts. Granola registrations retain their
 existing regional API URLs; adoption does not rewrite provider subscriptions.
+
+### New browser hostname
+
+`app.rallywith.ai` belongs to the `rally-browser` Worker and has no Avalon
+predecessor. It is the canonical guest invitation and browser sign-in origin;
+`rallywith.ai/app/*` remains the marketing site's desktop handoff. Global
+`BROWSER_APP_ORIGIN` and `ALLOWED_ORIGINS` include the browser origin. See
+[browser-client.md](browser-client.md) for deployment and rollback.
 
 ### What is canonical, and what that means
 
@@ -194,7 +202,7 @@ configured deployments and a connection completes on whichever origin the client
   compiled into every shipped DMG, so binaries in the field poll it forever. It
   outlives every other Avalon hostname.
 - **Every origin a live client sends appears in `ALLOWED_ORIGINS`.** That is the
-  four site origins *and* both renderer origins. An origin the browser actually
+  four site origins, the browser app origin, and both renderer origins. An origin the browser actually
   used but the Worker does not list is rejected by Chromium before any route
   code runs — the renderer sees a transport failure and no API request is
   logged, so the failure is invisible from the server side.

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { reconcileDueTerminalSandbox } from "../src/services/terminal/lifecycle";
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
   seedWorkstreamRun,
+  testHarnessRunPort,
   testHarnessRunPortFactory,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -83,6 +85,23 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.stopSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, idle_expires_at FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
+  });
+
+  it("drops a row a side thread reserved under the main conversation's name without touching its sandbox", async () => {
+    const thread = "00000000-0000-4000-8000-000000000077";
+    const { objectStore, provider } = fixture("running", { warm: "2026-08-13T10:05:00.000Z", archive: "2026-08-13T11:00:00.000Z", expire: "2026-09-12T10:00:00.000Z" });
+    // Reserved before a sandbox belonged to a conversation, under the work
+    // stream's one name, and holding the main conversation's sandbox.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET stable_name = ? WHERE id = 1", await terminalSandboxStableName(W, S, "0"));
+
+    await expect(reconcileDueTerminalSandbox(
+      testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW,
+      undefined, undefined, thread,
+    )).resolves.toEqual({ transition: "none" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.archiveSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
   });
 
   it("reconciles an active holder after its operation lease expires", async () => {
@@ -725,5 +744,57 @@ describe("Terminal scheduled lifecycle", () => {
       expire_due_at: null,
       final_diff_resource_id: "final-diff",
     });
+  });
+
+  it("holds a sandbox whose lease belongs to a run still active in another conversation", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    const worker = "40000000-0000-4000-8000-000000000088";
+    const workerRun = "40000000-0000-4000-8000-000000000089";
+    // A background agent's run row is in its own object; the sandbox's row
+    // names that conversation so the sweep asks there and not here.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: S, workspaceId: W });
+    seedWorkstreamRun(workerStore, { id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_workspace
+          SET operation_run_id = ?, operation_run_substream_id = ?, operation_lease_expires_at = ?
+        WHERE id = 1`,
+      workerRun,
+      worker,
+      NOW.getTime() + 60_000,
+    );
+    const runsPort = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      testHarnessRunPort(substreamId === worker ? workerStore : objectStore);
+
+    await expect(reconcileDueTerminalSandbox(runsPort, testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+
+    workstreamObjectRun(workerStore, "UPDATE runs SET status = 'completed' WHERE run_id = ?", workerRun);
+    await expect(reconcileDueTerminalSandbox(runsPort, testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("holds a running sandbox whose last tool call is inside the warm window", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    // No holder: the lease is held per call and this run is between calls.
+    // The claim's activity stamp is what says the sandbox is still in use.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET last_command_at = ? WHERE id = 1", NOW.getTime() - 60_000);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET last_command_at = ? WHERE id = 1", NOW.getTime() - 6 * 60_000);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
   });
 });

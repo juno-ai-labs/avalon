@@ -291,7 +291,11 @@ describe("Terminal file and command tools", () => {
       context,
       "report.md",
       expect.any(Uint8Array),
-      { previousText: "before\n" },
+      {
+        previousText: "before\n",
+        // The digest of the bytes the edit read, which the write replaces only while the file still holds them.
+        previousSha256: "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+      },
     );
   });
 
@@ -362,6 +366,17 @@ describe("Terminal file and command tools", () => {
     await expect(createTerminalToolExecutors(value).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
       message: expect.not.stringContaining("workspace root ("),
     });
+  });
+
+  it("leaves an envelope's paths to its parser rather than the unified header regex", async () => {
+    // A removed SQL comment `-- /tmp/old` is a `--- /tmp/old` line to the
+    // header regex; the envelope's parser, which the runtime runs before any
+    // provider I/O, is what validates the paths it names.
+    const { value } = runtime();
+    const applyPatch = vi.spyOn(value, "applyPatch");
+    const patch = ["*** Begin Patch", "*** Update File: notes.sql", "@@", "--- /tmp/old", "+-- /tmp/new", "*** End Patch"].join("\n");
+    await expect(createTerminalToolExecutors(value).apply_patch({ patch }, context)).resolves.toMatchObject({ summary: "Patched 0 files" });
+    expect(applyPatch).toHaveBeenCalledWith(context, patch);
   });
 
   it("names the parameter a tool actually has when it refuses a path", async () => {

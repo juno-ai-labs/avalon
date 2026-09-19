@@ -11,6 +11,12 @@ import { createObjectPort, type ObjectPortContract } from "./object-port";
 export type HarnessRunPortFactory = (
   workspaceId: string,
   workstreamId: string,
+  /**
+   * Which of the parent's conversations owns the run being asked about. The
+   * Terminal lease records the conversation its holder ran in, and a holder
+   * that ran in another conversation is only answered for by that one.
+   */
+  substreamId?: string,
 ) => HarnessRunObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamHarnessRunStorage, HarnessRunOperation> = {
@@ -25,8 +31,8 @@ export function createHarnessRunPortFactory(
   env: Env,
   localStorage?: WorkstreamHarnessRunStorage,
 ): HarnessRunPortFactory {
-  return (workspaceId, workstreamId) =>
-    createHarnessRunObjectPort(env, workspaceId, workstreamId, localStorage);
+  return (workspaceId, workstreamId, substreamId) =>
+    createHarnessRunObjectPort(env, workspaceId, workstreamId, localStorage, substreamId);
 }
 
 /** A Worker-side handle on one work stream's harness runs. */

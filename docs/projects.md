@@ -5,8 +5,10 @@ related work streams. `WorkspaceDO` is the authority for project identity,
 presentation, scope, participants, lifecycle generations, each person's
 project order, many-to-many membership, default-resource delivery targets, and
 reversible lifecycle state. The desktop presents V1 assignment as one active
-project per work stream while reads and storage remain plural-ready. The full
-behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
+project per work stream while reads and storage remain plural-ready. This is the
+shipped Project mechanism; its product design is now superseded by the planned
+[Spaces and Organization hierarchy](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md),
+which defines the eventual cutover and retirement of this module.
 
 ## Where the code lives
 
@@ -225,6 +227,24 @@ Default-resource target publication is the one external await: the WorkspaceDO a
 advances their durable retry gates, and then sends one Queue batch. A rejected
 send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
+
+### 2026-09-18 — Project sidebar failures carry operations, not response text
+
+**What changed:** The project sidebar represents reorder and work-stream
+assignment failures as a closed union whose exhaustive copy table owns the
+visible sentence.
+
+**Why:** Project actions share persistent navigation with unrelated requests;
+rendering an exception there can make a server diagnostic look like project
+content long after the rejected action.
+
+**Considered and rejected:** Keeping strings in mutation catch blocks. That
+leaves every caller able to pass arbitrary provider or transport text and makes
+new project actions choose copy without an exhaustive check.
+
+**Consequences:** Project mutations retain their diagnostics below the renderer,
+while adding another visible failure requires adding its authored copy to the
+same exhaustive table.
 
 ### 2026-09-10 — Add to project leaves the work-stream context menu
 
