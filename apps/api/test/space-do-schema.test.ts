@@ -100,10 +100,32 @@ describe("space_do schema", () => {
     expect(Object.keys(workstream.columns).length).toBeGreaterThan(20);
   });
 
-  it("given the space ledger, when its shape is read, then it is one immutable released version", () => {
-    expect(SPACE_DO_SCHEMA_MIGRATIONS.map((migration) => migration.version)).toEqual([1]);
-    // A new version is appended; version 1 is receipted by every Space that has
-    // ever been constructed and may not be edited.
-    expect(SPACE_DO_SCHEMA_MIGRATIONS[0]?.foreignKeys).toBeUndefined();
+  it("given the space ledger, when its shape is read, then every version is released and appended", () => {
+    expect(SPACE_DO_SCHEMA_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2]);
+    // A new version is appended; each earlier one is receipted by every Space
+    // that has ever been constructed and may not be edited.
+    for (const migration of SPACE_DO_SCHEMA_MIGRATIONS) {
+      expect(migration.foreignKeys).toBeUndefined();
+    }
+  });
+
+  it("given migration 18's statements, when both ledgers run them, then each renders the same access tables", () => {
+    const workstream = schemaOf(WORKSTREAM_DO_SCHEMA_MIGRATIONS, "workstream_do");
+    const space = schemaOf(SPACE_DO_SCHEMA_MIGRATIONS, "space_do");
+    // Named rather than left to the object-for-object comparison above: the
+    // drift this file exists to catch is a table added to one ledger and not
+    // the other, and the comparison passes trivially if *neither* ledger grew
+    // the tables the change was about.
+    for (const table of [
+      "workstream_direct_audience",
+      "workstream_space_access_sources",
+      "workstream_space_supplied_readers",
+      "workstream_access_operations",
+    ]) {
+      expect(Object.keys(space.columns)).toContain(table);
+      expect(space.columns[table]).toEqual(workstream.columns[table]);
+    }
+    expect((space.columns.scope_grants as { name: string }[]).map((column) => column.name))
+      .toEqual(["user_id", "scope_kind", "substream_id", "grant_json", "source_kind", "source_id"]);
   });
 });
