@@ -5837,30 +5837,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  async listSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_spaces");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal };
-    return WorkspaceSpaceDirectoryResultSchema.parse({
-      ok: true,
-      directory: this.spaceStorage().list(request.userId),
-    });
-  }
-
-  async listInactiveSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_inactive_spaces");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal };
-    return WorkspaceSpaceDirectoryResultSchema.parse({
-      ok: true,
-      directory: this.spaceStorage().listInactive(request.userId),
-    });
-  }
-
   async reorderSpaces(input: WorkspaceSpaceReorderRequest): Promise<WorkspaceSpaceDirectoryResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceReorderRequestSchema, input, "reorder_spaces");
