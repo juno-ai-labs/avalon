@@ -380,7 +380,7 @@ describe('TelemetryReporter', () => {
     });
   });
 
-  it('carries a realtime socket transition as a workspace-scoped renderer signal', async () => {
+  it('carries a realtime socket transition as an organization-scoped renderer signal', async () => {
     const { reporter, spool } = await harness({
       auth: {
         apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
@@ -455,7 +455,7 @@ describe('TelemetryReporter', () => {
     ]);
   });
 
-  it('spools correlated work-stream paint and socket-start measurements without content', async () => {
+  it('spools correlated channel paint and socket-start measurements without content', async () => {
     const { reporter, spool } = await harness({
       auth: {
         apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
@@ -659,7 +659,7 @@ describe('TelemetryReporter', () => {
     });
   });
 
-  it('routes pre-workspace enterprise onboarding intent immediately through its anonymous epoch', async () => {
+  it('routes pre-organization enterprise onboarding intent immediately through its anonymous epoch', async () => {
     const anonymous = {
       capability: 'c'.repeat(64),
       journeyId: '018f0000-0000-7000-8000-000000000004',

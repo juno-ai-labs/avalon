@@ -71,7 +71,7 @@ vi.mock('./lib/app-session', () => ({
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
   InvitationOnboarding: () => <div>invitations</div>,
-  RegionOnboarding: () => <div>workspace setup</div>,
+  RegionOnboarding: () => <div>organization setup</div>,
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./screens/guided-onboarding', () => ({

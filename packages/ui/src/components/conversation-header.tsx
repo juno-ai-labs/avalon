@@ -173,7 +173,7 @@ export function ConversationHeader({
       }}
     >
       <input
-        aria-label="Work stream name"
+        aria-label="Channel name"
         autoFocus
         className="workstream-title-input"
         disabled={renaming}
@@ -230,9 +230,9 @@ export function ConversationHeader({
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
           <div className="grokbot-conversation-title">
-              {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change work-stream icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
+              {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change channel icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
               {titleContent}
-              {renameFailed && <InlineError>That work stream couldn’t be renamed. Try again.</InlineError>}
+              {renameFailed && <InlineError>That channel couldn’t be renamed. Try again.</InlineError>}
           </div>
         )}
         <div className="grokbot-header-actions window-no-drag">
@@ -241,7 +241,7 @@ export function ConversationHeader({
             <Tooltip.Trigger asChild>
               <button
                 className="participant-header-button"
-                aria-label={substreamId === '0' ? 'Manage work-stream participants' : 'Manage substream participants'}
+                aria-label={substreamId === '0' ? 'Manage channel participants' : 'Manage breakout participants'}
                 aria-description={workstream.participants.map((person) => person.name).join(', ')}
                 onClick={onAddParticipant}
                 type="button"
@@ -260,7 +260,7 @@ export function ConversationHeader({
           {contextEnabled && <IconButton
             aria-pressed={showing('context')}
             className="grokbot-computer-button"
-            label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+            label={showing('context') ? 'Hide channel context' : 'Channel context'}
             onClick={() => toggleRail('context')}
           >
             <Monitor size={16} strokeWidth={1.8} />
@@ -274,7 +274,7 @@ export function ConversationHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => onShowNavigation()}><Menu size={16} /></IconButton>
-        {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change work-stream icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={30} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
+        {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change channel icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={30} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
         <div className="workstream-title-block">
           {/* The one place a title arriving on its own is worth announcing. A
               work stream created a second ago is named while its author is
@@ -295,7 +295,7 @@ export function ConversationHeader({
           </div>
           <div className="workstream-subtitle">
             {renameFailed ? (
-              <InlineError>That work stream couldn’t be renamed. Try again.</InlineError>
+              <InlineError>That channel couldn’t be renamed. Try again.</InlineError>
             ) : (
               <>
                 <StatusDot status={harnessMarkerStatus(workstream.harnessStatus)} />
@@ -318,21 +318,21 @@ export function ConversationHeader({
         {contextEnabled && <IconButton
           aria-pressed={showing('context')}
           className={clsx('panel-toggle', showing('context') && 'is-active')}
-          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+          label={showing('context') ? 'Hide channel context' : 'Channel context'}
           onClick={() => toggleRail('context')}
         >
           <PanelRight size={15} />
         </IconButton>}
         {actions}
         {(onCopyLink || onCopyEmail || onCopyId) && <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="More channel actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              {onCopyLink && <DropdownMenu.Item className="menu-item" onSelect={onCopyLink}><Copy size={14} /> Copy work-stream link</DropdownMenu.Item>}
+              {onCopyLink && <DropdownMenu.Item className="menu-item" onSelect={onCopyLink}><Copy size={14} /> Copy channel link</DropdownMenu.Item>}
               {workstream.emailAddress && onCopyEmail && (
-                <DropdownMenu.Item className="menu-item" onSelect={onCopyEmail}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item" onSelect={onCopyEmail}><Mail size={14} /> Copy channel email address</DropdownMenu.Item>
               )}
-              {onCopyId && <DropdownMenu.Item className="menu-item" onSelect={onCopyId}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>}
+              {onCopyId && <DropdownMenu.Item className="menu-item" onSelect={onCopyId}><Info size={14} /> Copy channel ID</DropdownMenu.Item>}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>}

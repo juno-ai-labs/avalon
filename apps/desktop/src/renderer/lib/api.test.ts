@@ -326,7 +326,7 @@ describe('Rally API wire adapter', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/runs`);
   });
 
-  it('lists a work stream\u2019s own Sidekicks from the Sidekick surface, not the legacy prefix', async () => {
+  it('lists a channel\u2019s own Sidekicks from the Sidekick surface, not the legacy prefix', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
       void init;
@@ -393,7 +393,7 @@ describe('Rally API wire adapter', () => {
     } satisfies Partial<ApiError>);
   });
 
-  it('carries a work stream’s model pin through to the renderer detail', () => {
+  it('carries a channel’s model pin through to the renderer detail', () => {
     // Every realtime snapshot replaces the cached detail through this mapper, so
     // a pin dropped here is a pin that survives the first load and disappears on
     // the next socket update — taking the composer's fallback with it for the
@@ -403,7 +403,7 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
   });
 
-  it('maps representative work-stream and resource wire records into renderer models', () => {
+  it('maps representative channel and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
       emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
@@ -525,7 +525,7 @@ describe('Rally API wire adapter', () => {
     await expect(api.getWorkspace()).rejects.toMatchObject(expected);
   });
 
-  it('accepts the empty success response from substream cancellation', async () => {
+  it('accepts the empty success response from breakout cancellation', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
     const api = new RallyApi('https://api.rally.test', session);
     await expect(api.cancelSubstream(workstreamId, 'cancel-operation')).resolves.toBeUndefined();
@@ -592,7 +592,7 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('uses identity-level onboarding endpoints before a workspace is selected', async () => {
+  it('uses identity-level onboarding endpoints before an organization is selected', async () => {
     const identitySession: DesktopSession = { ...session, workspace: null };
     const pending = {
       id: '00000000-0000-7000-8000-000000000009',
@@ -687,7 +687,7 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it('renames a work stream through the typed update endpoint', async () => {
+  it('renames a channel through the typed update endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, title: 'Launch planning' }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
@@ -702,7 +702,7 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
   });
 
-  it('changes who may read a work stream through the same update endpoint', async () => {
+  it('changes who may read a channel through the same update endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, scope: 'personal' }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
@@ -717,7 +717,7 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ scope: 'personal' });
   });
 
-  it('archives a work stream through the same update endpoint', async () => {
+  it('archives a channel through the same update endpoint', async () => {
     const archivedAt = '2026-08-25T12:00:00.000Z';
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, archivedAt }));
     vi.stubGlobal('fetch', fetchMock);
@@ -735,7 +735,7 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ archived: true });
   });
 
-  it('previews and enqueues a generic filtered work-stream batch update', async () => {
+  it('previews and enqueues a generic filtered channel batch update', async () => {
     const operationId = '00000000-0000-7000-8000-000000000099';
     const filter = {
       lastActivityAt: {
@@ -772,7 +772,7 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('creates an attachment-only work stream with its draft resource IDs', async () => {
+  it('creates an attachment-only channel with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
       turnId: messageId,
@@ -795,7 +795,7 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('given a project launcher, when a work stream is created, then the project is sent to the authorization gate', async () => {
+  it('given a project launcher, when a channel is created, then the project is sent to the authorization gate', async () => {
     const projectId = '00000000-0000-7000-8000-0000000000a7';
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
@@ -845,7 +845,7 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {
+  it('acknowledges visible messages and marks a channel unread through durable read-state endpoints', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({
         ...detail,
@@ -890,7 +890,7 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
 
-  it('acknowledges a read in a private substream against that substream, not its parent', async () => {
+  it('acknowledges a read in a private breakout against that breakout, not its parent', async () => {
     // The waterline being moved belongs to the child object. Addressed to the
     // work stream, this read landed on Main and the child's own unread divider
     // had nothing that could clear it.
@@ -1005,7 +1005,7 @@ describe('message mention resolution', () => {
     return fetchMock;
   }
 
-  it('does not fetch the workspace roster for plain message text', async () => {
+  it('does not fetch the organization roster for plain message text', async () => {
     const fetchMock = stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
 
@@ -1013,7 +1013,7 @@ describe('message mention resolution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('resolves selected guest mentions without workspace-directory discovery', async () => {
+  it('resolves selected guest mentions without organization-directory discovery', async () => {
     const fetchMock = stubRoster();
     const guestSession: CookieClientSession = { authentication: 'cookie', expiresAt: session.expiresAt,
       apiBaseUrl: '/regional/global/browser/api/' + workspaceId, user: session.user,
@@ -1025,7 +1025,7 @@ describe('message mention resolution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('fetches the workspace roster for durable person mention Markdown', async () => {
+  it('fetches the organization roster for durable person mention Markdown', async () => {
     const fetchMock = stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
 
@@ -1035,7 +1035,7 @@ describe('message mention resolution', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
   });
 
-  it('reuses a supplied workspace roster instead of fetching it again', async () => {
+  it('reuses a supplied organization roster instead of fetching it again', async () => {
     const fetchMock = stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
     const roster = [{
@@ -1221,7 +1221,7 @@ describe('socket ticket transport', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('afterSequence=0&speculative=true');
   });
 
-  it('requests the one workspace-scoped sync and command socket ticket', async () => {
+  it('requests the one organization-scoped sync and command socket ticket', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
       void init;
@@ -1241,7 +1241,7 @@ describe('socket ticket transport', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/socket');
   });
 
-  it('requests a WorkstreamDO control socket ticket separately from its substream feed', async () => {
+  it('requests a WorkstreamDO control socket ticket separately from its breakout feed', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       void input;
       return json({
@@ -1299,7 +1299,7 @@ describe('request correlation', () => {
     expect(new Headers(sent[0]?.headers).get('x-request-id')).toBe('trace-from-the-screen');
   });
 
-  it('correlates work-stream detail attempts separately from each request and socket start', async () => {
+  it('correlates channel detail attempts separately from each request and socket start', async () => {
     const sent: Array<RequestInit | undefined> = [];
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

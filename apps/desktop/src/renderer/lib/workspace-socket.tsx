@@ -214,7 +214,7 @@ export function WorkspaceSocketProvider({
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
     () => Promise.reject(new ApiError(
-      'The workspace is not connected.',
+      'The organization is not connected.',
       409,
       'workspace_socket_unavailable',
     )),
@@ -574,7 +574,7 @@ export function WorkspaceSocketProvider({
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
             ? new ApiError(
-              'You can no longer access this workspace.',
+              'You can no longer access this organization.',
               403,
               'workspace_access_revoked',
             )
@@ -648,7 +648,7 @@ export function WorkspaceSocketProvider({
       const timeout = window.setTimeout(() => {
         pendingDirectoryRequests.delete(requestId);
         reject(new ApiError(
-          'The work-stream directory could not be loaded. Try again.',
+          'The channel directory could not be loaded. Try again.',
           0,
           'workspace_directory_timeout',
         ));
@@ -671,7 +671,7 @@ export function WorkspaceSocketProvider({
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
       rejectPendingDirectoryRequests(new ApiError(
-        'The work-stream directory cannot be loaded while offline.',
+        'The channel directory cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
       ));
@@ -692,12 +692,12 @@ export function WorkspaceSocketProvider({
       localCacheMirror?.stop();
       releaseData();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
-        'The workspace is no longer connected.',
+        'The organization is no longer connected.',
         409,
         'workspace_socket_closed',
       ));
       rejectPendingDirectoryRequests(new ApiError(
-        'The workspace closed while loading the directory.',
+        'The organization closed while loading the directory.',
         409,
         'workspace_socket_closed',
       ));

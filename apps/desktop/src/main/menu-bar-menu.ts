@@ -219,7 +219,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
       'Pinned',
       content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
         .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream')),
-      'Pin a work stream to see it here',
+      'Pin a channel to see it here',
     );
   }
 
@@ -245,7 +245,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
       [],
       // A menu that silently loses its lower half reads as broken. Say which of
       // the two reasons it is: nothing to show, or nobody to show it to.
-      options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
+      options.signedIn ? 'No recent channels' : 'Sign in to Rally',
     );
   }
 

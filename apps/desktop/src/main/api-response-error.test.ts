@@ -17,7 +17,7 @@ describe('desktop API response errors', () => {
     }), { status: 401 }));
     const unavailable = await responseError(new Response(null, { status: 503 }));
     const membershipEnded = await responseError(new Response(JSON.stringify({
-      error: { code: 'workspace_access_denied', message: 'Workspace access is unavailable' },
+      error: { code: 'workspace_access_denied', message: 'Organization access is unavailable' },
     }), { status: 403 }));
 
     expect(invalidToken).toEqual(expect.objectContaining({

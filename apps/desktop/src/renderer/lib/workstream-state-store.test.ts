@@ -189,7 +189,7 @@ describe('applyVersionedWorkstreamState', () => {
     });
   });
 
-  it('does not put a facepile on a workspace-scoped row', () => {
+  it('does not put a facepile on an organization-scoped row', () => {
     const queryClient = new QueryClient();
     const personal = summary({
       title: 'Launch',

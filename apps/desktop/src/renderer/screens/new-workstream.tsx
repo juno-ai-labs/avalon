@@ -155,14 +155,14 @@ function ParticipantPicker({
 
   return (
     <Modal
-      description="Only individual workspace members can be added in this version."
+      description="Only individual organization members can be added in this version."
       footer={<Button ref={doneButtonRef} className="button-primary" onClick={() => onOpenChange(false)}>Done</Button>}
       initialFocusRef={availableMembers.length > 0 ? firstCheckboxRef : doneButtonRef}
       onOpenChange={onOpenChange}
       open={open}
       title="Add people"
     >
-      <div className="member-picker-list" role="group" aria-label="Workspace members">
+      <div className="member-picker-list" role="group" aria-label="Organization members">
         {availableMembers
           .map((member, index) => (
             <label className="member-picker-row" key={member.id}>
@@ -709,12 +709,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       </div>
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
-        <h2 className="sr-only" id="new-workstream-heading">Start a new work stream</h2>
+        <h2 className="sr-only" id="new-workstream-heading">Start a new channel</h2>
         {!launching && owningProjectId === undefined && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
           if (!open) setSearchParams((params) => { params.delete('import'); return params; }, { replace: true, state: location.state });
         }} />}
         {owningProjectId !== undefined && <div className="launch-modifiers">
-          <div className="new-workstream-modifiers" aria-label="Work-stream participants">
+          <div className="new-workstream-modifiers" aria-label="Channel participants">
             {owningProject?.scope === 'personal' ? (
               <Tooltip.Root delayDuration={300}>
                 <Tooltip.Trigger asChild>
@@ -790,7 +790,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
           )}
           <ComposerInput
             api={api ?? undefined}
-            ariaLabel="Opening work-stream message"
+            ariaLabel="Opening channel message"
             attachments={attachmentDraft.attachments}
             autoFocus
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
@@ -825,13 +825,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             placeholder={owningProjectId === undefined
               ? selectedMembers.length > 0
                 ? `Message ${selectedMembers.map((member) => member.name).join(', ')}`
-                : 'Message workspace'
+                : 'Message organization'
               : 'Describe a task or ask a question…'}
             ref={textareaRef}
             rows={owningProjectId === undefined ? 1 : 2}
             shouldSubmitOnEnter={() => mentionQuery === null}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
-            submitLabel="Create work stream"
+            submitLabel="Create channel"
             // Not a cosmetic state: it is what freezes the attachment tiles and
             // the file input while the files they stand for are already on
             // their way into a message.
@@ -840,7 +840,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             value={message}
           />
         </div>
-        {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
+        {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this channel with yourself.</p>}
       </section>
 
       {owningProjectId !== undefined && owningProject?.scope !== 'personal' && <ParticipantPicker

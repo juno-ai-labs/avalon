@@ -8,7 +8,7 @@ function useSocketOwnedProjectDirectory(
   return useQuery<ProjectDirectory>({
     queryKey,
     queryFn: () => {
-      throw new Error(`${queryKey[0]} is pushed by the workspace socket, never fetched`);
+      throw new Error(`${queryKey[0]} is pushed by the organization socket, never fetched`);
     },
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,

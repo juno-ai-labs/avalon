@@ -205,7 +205,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
 function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
   return {
     id: '00000000-0000-7000-8000-000000000001',
-    title: 'Canonical work stream',
+    title: 'Canonical channel',
     titleStatus: 'settled',
     harnessStatus: 'completed',
     scope: 'workspace',
@@ -306,7 +306,7 @@ function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<s
   return {
     id: '00000000-0000-7000-8000-000000000091',
     workspaceId: '00000000-0000-7000-8000-000000000001',
-    title: 'Wire work stream',
+    title: 'Wire channel',
     objective: 'Wire objective',
     createdByUserId: null,
     harnessStatus: 'completed',
@@ -1070,7 +1070,7 @@ describe('useWorkstreamSocket', () => {
       .toBeUndefined();
   });
 
-  it('reuses the same socket when returning to a recently viewed work stream', async () => {
+  it('reuses the same socket when returning to a recently viewed channel', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
@@ -1514,7 +1514,7 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual({ icon: 'atom', color: 'blue' });
   });
 
-  it('sends child-local commands to the addressed substream and resends them until receipt', async () => {
+  it('sends child-local commands to the addressed breakout and resends them until receipt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -2954,7 +2954,7 @@ describe('useWorkstreamSocket', () => {
     expect(canonical.map((message) => message.text)).not.toContain('observable partial');
   });
 
-  it('does not mark a work stream unread for the reader\'s own arriving turn', async () => {
+  it('does not mark a channel unread for the reader\'s own arriving turn', async () => {
     // The room advances the author's own read waterline in the write that
     // stores their message, so a client that guessed "unread" here would draw
     // an Unread messages divider above the turn the person just sent and light
@@ -3176,7 +3176,7 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
-  it('marks a work stream unread for a coworker\'s arriving turn', async () => {
+  it('marks a channel unread for a coworker\'s arriving turn', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-00000000070c';
@@ -3600,7 +3600,7 @@ describe('useWorkstreamSocket', () => {
     expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('One two');
   });
 
-  it('shows the name Rally gives a work stream in its header and its sidebar row', async () => {
+  it('shows the name Rally gives a channel in its header and its sidebar row', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000401';
@@ -3803,7 +3803,7 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
-  it('stops dialling a work stream it has just been shut out of', async () => {
+  it('stops dialling a channel it has just been shut out of', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -4153,7 +4153,7 @@ describe('useWorkstreamSocket', () => {
       sequence: 5,
       occurredAt: '2026-07-31T19:20:01.000Z',
       code: 'snapshot_unavailable',
-      message: 'Canonical work-stream state is unavailable.',
+      message: 'Canonical channel state is unavailable.',
     }));
     act(() => socket.message({
       type: 'harness_status_changed',

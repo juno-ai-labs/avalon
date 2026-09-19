@@ -27,7 +27,7 @@ const baseSession = {
 };
 
 describe('legacy encrypted desktop sessions', () => {
-  it('adds Pacific user and Global workspace defaults', () => {
+  it('adds Pacific user and Global organization defaults', () => {
     expect(normalizeLegacyStoredSession({
       user: { id: 'user-1' },
       workspace: { id: 'workspace-1', region: 'global' },
@@ -37,7 +37,7 @@ describe('legacy encrypted desktop sessions', () => {
     });
   });
 
-  it('adds the default timezone to an enterprise workspace without replacing stored values', () => {
+  it('adds the default timezone to an enterprise organization without replacing stored values', () => {
     expect(normalizeLegacyStoredSession({
       user: { timezone: 'Asia/Tokyo' },
       workspace: { region: 'enterprise' },

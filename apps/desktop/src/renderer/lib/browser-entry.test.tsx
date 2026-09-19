@@ -14,7 +14,7 @@ afterEach(() => { vi.useRealTimers(); history.replaceState(null, '', '/'); });
 
 // Renderer test: HTTP is the boundary; backend cookie/membership authority is
 // exercised by the API browser-session suites. The channel itself is real.
-it('revalidates other-tab session changes and same-user workspace changes without discarding drafts', async () => {
+it('revalidates other-tab session changes and same-user organization changes without discarding drafts', async () => {
   let signedIn = true;
   let allowed = true;
   let promoted = false;
@@ -27,7 +27,7 @@ it('revalidates other-tab session changes and same-user workspace changes withou
     if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
     if (path === '/workspace/select') {
       ++workspaceReads;
-      if (!allowed) return Response.json({ error: { message: 'Workspace access has ended' } }, { status: 403 });
+      if (!allowed) return Response.json({ error: { message: 'Organization access has ended' } }, { status: 403 });
       return Response.json({ ...metadata, workspace: promoted ? { ...workspace, accessClass: 'member', role: 'member' } : workspace });
     }
     throw new Error(`Unexpected browser request: ${input}`);
@@ -47,7 +47,7 @@ it('revalidates other-tab session changes and same-user workspace changes withou
     expect(workspaceReads).toBeGreaterThan(1);
     allowed = false;
     fireEvent.focus(window);
-    await screen.findByText('Workspace access has ended');
+    await screen.findByText('Organization access has ended');
     expect(screen.queryByRole('textbox', { name: 'Draft' })).not.toBeInTheDocument();
     signedIn = false;
     await act(async () => { channel.postMessage('session-changed'); });
@@ -136,7 +136,7 @@ it('does not overflow a session deadline longer than the browser timer range', a
   cancel();
 });
 
-it('restores the workspace picker for a legacy conversation link', async () => {
+it('restores the organization picker for a legacy conversation link', async () => {
   history.replaceState(null, '', '/app/workstreams/cccccccc-cccc-4ccc-8ccc-cccccccccccc');
   const fetcher = vi.fn(async (input: string) => input.endsWith('/workspaces')
     ? Response.json({ workspaces: [workspace] })
@@ -190,7 +190,7 @@ it('preserves renewal requested while a focus restore is in flight', async () =>
   } finally { view?.unmount(); }
 });
 
-it('does not publish an old account workspace list after focus restores another account', async () => {
+it('does not publish an old account organization list after focus restores another account', async () => {
   history.replaceState(null, '', '/login/email#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token');
   const other = { ...user, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', email: 'other@example.test' };
   let listReads = 0;
@@ -198,7 +198,7 @@ it('does not publish an old account workspace list after focus restores another 
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     if (input.endsWith('/workspaces')) {
       if (++listReads === 1) return new Promise<Response>((resolve) => { finish = resolve; });
-      return Response.json({ workspaces: [{ ...workspace, name: 'Other account workspace' }] });
+      return Response.json({ workspaces: [{ ...workspace, name: 'Other account organization' }] });
     }
     return Response.json({ user: input.endsWith('/email/redeem') ? user : other, workspace: null,
       expiresAt: new Date(Date.now() + 100_000).toISOString() });
@@ -207,10 +207,10 @@ it('does not publish an old account workspace list after focus restores another 
   fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
   await waitFor(() => expect(finish).toBeDefined());
   await act(async () => { window.dispatchEvent(new Event('focus')); });
-  await screen.findByRole('link', { name: /Other account workspace/ });
+  await screen.findByRole('link', { name: /Other account organization/ });
   await act(async () => { finish!(Response.json({ workspaces: [workspace] })); });
   expect(screen.queryByRole('link', { name: /Shared team/ })).toBeNull();
-  expect(screen.getByRole('link', { name: /Other account workspace/ })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /Other account organization/ })).toBeInTheDocument();
 });
 
 it('fills the invited mailbox into the sign-in form and accepts by the opaque token alone', async () => {

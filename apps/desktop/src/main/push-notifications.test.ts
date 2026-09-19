@@ -32,7 +32,7 @@ function fixture() {
 }
 function gate() { let resolve: () => void = () => {}; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
-it('registers workspace credentials and persists the device off preference', async () => {
+it('registers organization credentials and persists the device off preference', async () => {
   const { controller, credentials, request, dependencies } = fixture();
   credentials.push(credential('two'));
   await controller.initialize();
