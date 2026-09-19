@@ -137,10 +137,15 @@ export function ManageAccessDialog({
     ...(sources?.spaceIds ?? []).map((id) => id as string),
     ...bySpace.keys(),
   ])];
-  const publicThrough = spaceIds
-    .filter((id) => bySpace.get(id)?.scope === 'workspace')
-    .map((id) => spaces.find((space) => space.id === id)?.name)
-    .filter((name): name is string => name !== undefined);
+  // Every Organization-wide Space *source*: the Channel's own provenance rather
+  // than the Organization's membership list, because a source is what grants
+  // access now and a membership still being applied grants nothing yet. A Space
+  // this viewer's directory does not hold is named "a space" rather than
+  // dropped — losing it would leave the sentence below saying only the people
+  // in the Channel can read it, which is the one thing this screen may not say.
+  const publicThrough = (sources?.spaces ?? [])
+    .filter((source) => source.scope === 'workspace')
+    .map((source) => spaces.find((space) => space.id === source.spaceId)?.name ?? 'a space');
   const directIsPublic = sources?.direct.scope === 'workspace';
   return (
     <Modal
