@@ -459,7 +459,16 @@ export class WorkstreamObjectCreationService {
       await span.step("workstream.create.spaces.record", () =>
         this.recordSpaceSources(stages, workstreamId, title, requestedScope, body.participantUserIds));
 
-      created = await span.step("workstream.create.child.initialize", () => client.initialize({
+      // Started, not awaited. The flush below addresses the *parent*
+      // authority and this addresses the conversation, so they are two objects
+      // and neither waits on the other — which is how `66fef78` ran them. The
+      // serialization between them was introduced because the flush published
+      // the Channel while its placements were still `joining`; the settlement
+      // then moved ahead of `reserveChild`, so by the time either of these
+      // starts every placement is `active` and that reason is gone. What the
+      // flush reads is the reservation's own outbox rows at source version one,
+      // which `reserveChild` wrote and `initialize` does not touch.
+      const initialize = span.step("workstream.create.child.initialize", () => client.initialize({
         workspaceId: this.auth.workspaceId,
         workstreamId: asWorkstreamId(receipt.workstream_id),
         generation: control.generation,
@@ -501,11 +510,21 @@ export class WorkstreamObjectCreationService {
         } : {}),
         reason: options.reason ?? "opening_message",
       }));
-      await span.step("workstream.create.directory.flush", () =>
+      const directoryFlush = span.step("workstream.create.directory.flush", () =>
         workstream.flushProvisionalDirectory({
           workspaceId: this.auth.workspaceId,
           parentId: receipt.workstream_id,
         }));
+      // Settled rather than raced, so a rejection on one side does not leave
+      // the other unhandled — and reported in a fixed order, so a create that
+      // fails both ways fails for the same reason every time.
+      const [initializeResult, directoryResult] = await Promise.allSettled([
+        initialize,
+        directoryFlush,
+      ]);
+      if (initializeResult.status === "rejected") throw initializeResult.reason;
+      if (directoryResult.status === "rejected") throw directoryResult.reason;
+      created = initializeResult.value;
     } catch (error) {
       await this.cancelSpaceMemberships(workspace, stages);
       throw error;
