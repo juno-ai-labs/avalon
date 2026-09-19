@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { UserIdSchema, WorkstreamIdSchema } from "./identifiers";
+import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PALETTE_KEYS, PALETTE_RING } from "./palette";
 
 /**
@@ -226,10 +226,62 @@ export const UpdateSpaceAudienceRequestSchema = z.strictObject({
 });
 export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceRequestSchema>;
 
-export const ReorderSpacesRequestSchema = z.strictObject({
-  spaceIds: z.array(SpaceIdSchema),
+/**
+ * What a person may arrange by hand, named by the thing that contains it.
+ *
+ * Three lists in the product are ordered per person — the Organization's
+ * Spaces, the Channels placed in one Space, and the Breakouts under one
+ * Channel — and they are one mechanism rather than three because the question
+ * each answers is identical: in what order does *this* person want the items of
+ * *this* container. The kind says which list, the id says which container of
+ * that kind, and the items are ids of whatever that container holds.
+ *
+ * `organization` takes the workspace id rather than an implicit "this
+ * Organization", so a row says what it is about without the object it is stored
+ * in being part of the key.
+ */
+export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel"]);
+export type OrderedContainerKind = z.infer<typeof OrderedContainerKindSchema>;
+
+export const OrderedContainerSchema = z.strictObject({
+  kind: OrderedContainerKindSchema,
+  id: IdSchema,
 });
-export type ReorderSpacesRequest = z.infer<typeof ReorderSpacesRequestSchema>;
+export type OrderedContainer = z.infer<typeof OrderedContainerSchema>;
+
+/**
+ * One container's order for one person: the request that writes it, and the
+ * element of the ordering the socket delivers.
+ *
+ * One schema for both directions on purpose. The write is "put these items in
+ * this order", the delivery is "these items are in this order", and two
+ * declarations of the same pair would be two things to keep in step for no
+ * difference on the wire.
+ *
+ * What the authority may drop from `itemIds` differs by kind and is
+ * `docs/spaces.md`'s to state: the Organization's list is filtered to the
+ * Spaces this viewer can see, a Space's list to the Channels actually placed
+ * there that this viewer can read, and a Channel's Breakouts are stored as
+ * given — WorkspaceDO does not know a Channel's children, so the client drops
+ * whatever it cannot draw.
+ */
+export const ContainerOrderSchema = z.strictObject({
+  container: OrderedContainerSchema,
+  itemIds: z.array(IdSchema),
+});
+export type ContainerOrder = z.infer<typeof ContainerOrderSchema>;
+
+/**
+ * Every container this person has arranged, in one field.
+ *
+ * A list rather than a map keyed by container, because the key is a pair and a
+ * map would have to encode it into a string that each reader parses back —
+ * which is a second, undeclared format for something the pair already says.
+ * Order within the list carries nothing; each entry is addressed by its
+ * container.
+ */
+export const PersonalOrderSchema = z.array(ContainerOrderSchema);
+export type PersonalOrder = z.infer<typeof PersonalOrderSchema>;
 
 /**
  * What a Space hands down to its member Channels, as one kind-keyed value.
