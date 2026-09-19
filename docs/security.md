@@ -973,7 +973,8 @@ no unit test standing in for them.
 | `apps/site/test/site.test.ts` | Every public entry, route-before-identity behavior, storage failure isolation, and tracking disclosure. |
 | `pnpm --filter @rally/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
 | `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
-| The `secrets` CI job | Gitleaks over the full history, all branches. |
+| The `secrets` CI job | Gitleaks over the commits a pull request adds to its base branch — `HEAD_SHA --not <base tip>` — and not the base branch's own history. |
+| `scripts/ci-workflow.test.mjs` (`pnpm test:scripts`) | That the job keeps that range, the full-history checkout the range needs, and one Gitleaks invocation. The range is the difference between a red gate meaning "this change introduces a secret" and meaning "somebody has an unmerged branch". |
 
 The trap in the desktop suites is that they assert on the *stored* shape of a
 credential. A test that constructs an envelope by hand rather than through
