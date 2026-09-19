@@ -282,7 +282,7 @@ describe("a Channel's Space access sources", () => {
     // The effective audience would stay Organization-wide, so recording the
     // narrowing would leave the record disagreeing with the Channel.
     expect(await channel().setDirectScope({ ...address, scope: "personal", operationId: crypto.randomUUID() }))
-      .toEqual({ ok: false, code: "space_audience_incompatible" });
+      .toEqual({ ok: false, code: "channel_scope_locked_by_space" });
     expect(await channel().setDirectScope({ ...address, scope: "workspace", operationId: crypto.randomUUID() }))
       .toEqual({ ok: true, previousScope: "personal" });
   });

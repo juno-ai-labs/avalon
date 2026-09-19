@@ -388,7 +388,7 @@ export type ChannelAccess = z.infer<typeof ChannelAccessSchema>;
  *
  * Closed, and closed for the reason `docs/naming-a-schema-failure.md` gives: a
  * refusal that reaches a log, an operator, or the far side of an RPC hop has to
- * name what it rejected. A generic `space_error` would make the nine distinct
+ * name what it rejected. A generic `space_error` would make the ten distinct
  * remediations below indistinguishable in a log line.
  */
 export const SpaceErrorCodeSchema = z.enum([
@@ -402,6 +402,8 @@ export const SpaceErrorCodeSchema = z.enum([
   "space_membership_final",
   /** Removing this membership would leave a reader unable to discover any remaining Space. */
   "space_audience_incompatible",
+  /** A Space still makes this Channel Organization-wide; take it out of that Space first. */
+  "channel_scope_locked_by_space",
   /** The Channel holds retained content the proposed wider audience may not read. */
   "space_membership_content_fence",
   /** A default resource or Sidekick the full effective Channel audience cannot reach. */

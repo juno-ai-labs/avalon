@@ -377,6 +377,9 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
         `“${channelTitle}” holds retained content this audience cannot view`);
     case "space_audience_incompatible":
       return new ApiError(409, code,
+        `Everyone who can read “${channelTitle}” must still be able to find it through a Space`);
+    case "channel_scope_locked_by_space":
+      return new ApiError(409, code,
         `“${channelTitle}” is visible to the Organization through a Space, so it cannot be made private until it leaves that Space`);
     case "space_revision_conflict":
       return new ApiError(409, code, "The Space changed while this was being applied; try again");
