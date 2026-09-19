@@ -234,12 +234,20 @@ export function SpaceDefaultList({ disabled, emptyLabel, items, onRemove }: {
 }
 
 /**
- * One Channel in the Space's list: the host's own link, and the control that
- * takes it out of this Space.
+ * One conversation in the Space's list: the host's own link, and the control
+ * that takes it out of this Space when there is one.
  *
- * The link is the host's because a placement opens the canonical Channel, which
- * is a routing decision; the removal is a callback because whether it succeeds
- * is the server's answer and its refusals are the host's to render.
+ * The link is the host's because a placement opens the canonical conversation,
+ * which is a routing decision; the removal is a callback because whether it
+ * succeeds is the server's answer and its refusals are the host's to render.
+ *
+ * `onRemove` is omitted for a breakout, which follows its Channel and has no
+ * membership of its own to end. The control's box is still reserved, hidden:
+ * every row in the list then ends on the same edge and the activity times sit
+ * in one column, which a row that ran the full width would break for the rows
+ * around it. `visibility: hidden` is what keeps the reserved copy out of the
+ * accessibility tree and the tab order, so this is one row type with one
+ * control rather than two shapes a reader has to tell apart.
  */
 export function SpaceChannelRow({ link, onRemove, removeDisabled }: {
   link: ReactNode;
@@ -249,7 +257,9 @@ export function SpaceChannelRow({ link, onRemove, removeDisabled }: {
   return (
     <div className="space-channel-row">
       {link}
-      {onRemove && <Button disabled={removeDisabled} onClick={onRemove}>Remove</Button>}
+      {onRemove
+        ? <Button disabled={removeDisabled} onClick={onRemove}>Remove</Button>
+        : <span aria-hidden="true" className="space-channel-row-spacer"><Button disabled>Remove</Button></span>}
     </div>
   );
 }
