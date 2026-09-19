@@ -168,6 +168,37 @@ export const SpaceSummarySchema = z.strictObject({
    * screen could produce.
    */
   channelCount: z.number().int().nonnegative(),
+  /**
+   * The one signal that says this viewer's dashboard page is out of date.
+   *
+   * The dashboard's list is the Space's conversations *that currently need
+   * this viewer*, ordered by activity — so it goes stale on far more than a
+   * membership change: a message in a member Channel reorders it, a breakout
+   * finishing a run drops out of it, and this reader opening one takes it off
+   * their own list and nobody else's. None of that reaches the client, because
+   * a Space has no socket and breakouts are deliberately not published to the
+   * sidebar's.
+   *
+   * So this number moves whenever any of it happens, and the client refetches
+   * the page when it moves. It is the sum of two counters the Organization
+   * keeps: one per Space, advanced when a member conversation's shared row or
+   * its membership changes, and one per (Space, person), advanced when *that*
+   * person's viewer row on a member conversation changes. Two halves rather
+   * than one per-person counter because a message in an Organization-wide
+   * Channel would otherwise cost one write per member, and rather than one
+   * shared counter because every member would then refetch whenever any other
+   * member read anything.
+   *
+   * Only ever compare it with the last value you saw for the same Space and
+   * the same person: it counts events rather than naming a version, and two
+   * Spaces' numbers mean nothing to each other. It subsumes
+   * {@link channelCount} as a staleness signal — a settled membership advances
+   * it — which is why there is one refresh mechanism here and not two.
+   *
+   * Defaulted because a payload written before this field existed comes from a
+   * server whose dashboard refetched on the count alone.
+   */
+  conversationWaterline: z.number().int().nonnegative().default(0),
   defaultResourceIds: z.array(z.string().uuid()).default([]),
   defaultSidekickIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime({ offset: true }),
