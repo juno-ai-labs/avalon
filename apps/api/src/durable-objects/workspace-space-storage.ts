@@ -355,42 +355,6 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * The two counters behind {@link SpaceSummary.conversationWaterline}.
- * Migration 63.
- *
- * The Space dashboard lists the conversations in a Space that currently need
- * the viewer, newest activity first. That list changes on every message in a
- * member Channel or breakout, on every run that starts or stops, and on every
- * open, read or mention — none of which is a Space write and none of which
- * reaches a client, because a Space has no socket of its own and breakouts are
- * deliberately not published to the sidebar's. So the Organization counts the
- * events instead, and the client refetches when the count it can see moves.
- *
- * Split in two because the third option — one counter per (Space, person)
- * advanced for everybody — costs one write per member of an Organization-wide
- * Channel on every message, and the fourth — one shared counter — makes every
- * member refetch whenever any other member reads anything. A shared half for
- * facts that are the Organization's (activity, run state, membership) and a
- * personal half for facts that are one reader's (unread, mention, first open)
- * is the cheapest arrangement that is still per-viewer. The sum is what a
- * client compares, and both halves only ever increase, so it does too.
- */
-export const SPACE_CONVERSATION_WATERLINE_STATEMENTS: readonly string[] = [
-  `CREATE TABLE space_conversation_state (
-    space_id TEXT PRIMARY KEY,
-    waterline INTEGER NOT NULL CHECK (waterline >= 0),
-    updated_at INTEGER NOT NULL
-  ) STRICT`,
-  `CREATE TABLE space_conversation_viewer_state (
-    space_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    waterline INTEGER NOT NULL CHECK (waterline >= 0),
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (space_id, user_id)
-  ) STRICT`,
-];
-
-/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate
@@ -442,6 +406,26 @@ function liveForViewerSql(directory: "directory" | "breakout", viewer: "viewer" 
        OR ${directory}.latest_attention_ordinal > ${seen}
        OR ${viewer}.unseen = 1
        OR COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen})`;
+}
+
+/**
+ * Whether this person may know a Channel exists, in SQL.
+ *
+ * One code-owned text rendered wherever the question is asked, for the reason
+ * {@link liveForViewerSql} is one: the Space page counts rows against
+ * `SPACE_CHANNEL_PAGE_SIZE` and projects them afterwards, so a second spelling
+ * that drifted looser would produce silently short pages with a cursor that
+ * had already skipped the rows it dropped. The same test decides who a
+ * dashboard nudge is addressed to, which is the same question asked of a
+ * socket instead of a page.
+ *
+ * `viewer` is a left-joined alias fenced on the directory row's authority
+ * generation, so a missing or stale viewer row reads as "not a participant" —
+ * the right answer for a personal-scope Channel and irrelevant for an
+ * Organization-wide one.
+ */
+export function channelVisibleToViewerSql(directory: string, viewer: string): string {
+  return `(${directory}.scope = 'workspace' OR ${viewer}.is_participant = 1)`;
 }
 
 interface SpaceRow extends Record<string, SqlStorageValue> {
@@ -711,7 +695,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.advanceWaterline(createdAt);
-      return this.space(spaceId, request.userId);
+      return this.space(spaceId);
     });
   }
 
@@ -740,7 +724,7 @@ export class WorkspaceSpaceStorage {
     } catch (error) {
       const winner = this.generalSpaceId();
       if (winner === null) throw error;
-      return { space: this.space(winner, request.userId), created: false };
+      return { space: this.space(winner), created: false };
     }
   }
 
@@ -806,7 +790,7 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId)),
+      items: rows.map((row) => this.summary(row)),
     });
   }
 
@@ -1033,7 +1017,7 @@ export class WorkspaceSpaceStorage {
   /** One Space as this viewer may see it, archived or not. */
   readable(userId: string, spaceId: string): SpaceSummary | false {
     if (!this.canRead(userId, spaceId)) return false;
-    return this.space(spaceId, userId);
+    return this.space(spaceId);
   }
 
   /**
@@ -1058,7 +1042,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!updated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -1104,7 +1088,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -1322,7 +1306,7 @@ export class WorkspaceSpaceStorage {
             AND viewer.authority_generation = directory.authority_generation
           WHERE membership.space_id = ?2 AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
             AND ${liveForViewerSql("directory", "viewer")}
          UNION ALL
          SELECT 'breakout' AS kind,
@@ -1346,7 +1330,7 @@ export class WorkspaceSpaceStorage {
             AND breakout_viewer.authority_generation = breakout.authority_generation
           WHERE membership.space_id = ?2 AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
             AND breakout.archived_at IS NULL
             AND breakout_viewer.listable = 1
             AND ${liveForViewerSql("breakout", "breakout_viewer")}
@@ -1381,104 +1365,6 @@ export class WorkspaceSpaceStorage {
         })
         : null,
     };
-  }
-
-  /**
-   * Note that a member conversation's shared row moved, for every Space that
-   * holds it.
-   *
-   * Shared rather than per-person because what changed — activity, title, run
-   * state, archival — is the Organization's fact about the conversation, and
-   * it reorders or removes the row on everybody's page at once. Called with
-   * the *Channel* ids in both cases: a breakout's page position is a fact
-   * about the Spaces its parent Channel is in, because a breakout has no
-   * membership of its own.
-   *
-   * Returns whether anything moved, so the caller can decide whether the
-   * snapshot is worth republishing.
-   */
-  noteConversationChange(workstreamIds: readonly string[], now = Date.now()): boolean {
-    if (!this.ready() || workstreamIds.length === 0) return false;
-    let advanced = false;
-    for (const chunk of boundParameterChunks(workstreamIds)) {
-      advanced = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `INSERT INTO space_conversation_state (space_id, waterline, updated_at)
-         SELECT DISTINCT membership.space_id, 1, ?
-           FROM space_channel_memberships membership
-          WHERE membership.state = 'active'
-            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
-         ON CONFLICT(space_id) DO UPDATE SET
-           waterline = space_conversation_state.waterline + 1,
-           updated_at = excluded.updated_at
-         RETURNING space_id`,
-        now,
-        ...chunk,
-      ).toArray().length > 0 || advanced;
-    }
-    return advanced;
-  }
-
-  /** The same note, for a change only this person can see. */
-  noteConversationViewerChange(
-    workstreamIds: readonly string[],
-    userId: string,
-    now = Date.now(),
-  ): boolean {
-    if (!this.ready() || workstreamIds.length === 0) return false;
-    let advanced = false;
-    for (const chunk of boundParameterChunks(workstreamIds)) {
-      advanced = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `INSERT INTO space_conversation_viewer_state (space_id, user_id, waterline, updated_at)
-         SELECT DISTINCT membership.space_id, ?, 1, ?
-           FROM space_channel_memberships membership
-          WHERE membership.state = 'active'
-            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
-         ON CONFLICT(space_id, user_id) DO UPDATE SET
-           waterline = space_conversation_viewer_state.waterline + 1,
-           updated_at = excluded.updated_at
-         RETURNING space_id`,
-        userId,
-        now,
-        ...chunk,
-      ).toArray().length > 0 || advanced;
-    }
-    return advanced;
-  }
-
-  /** The same note for one Space directly, when a membership settled in it. */
-  private noteSpaceConversationChange(spaceId: string, now: number): void {
-    if (!this.ready()) return;
-    this.storage.sql.exec(
-      `INSERT INTO space_conversation_state (space_id, waterline, updated_at)
-       VALUES (?, 1, ?)
-       ON CONFLICT(space_id) DO UPDATE SET
-         waterline = space_conversation_state.waterline + 1,
-         updated_at = excluded.updated_at`,
-      spaceId,
-      now,
-    );
-  }
-
-  /**
-   * What one viewer compares to decide their dashboard page is stale.
-   *
-   * The sum of the two halves. Each half only increases and each event
-   * advances exactly one of them, so the sum strictly increases on every
-   * change this viewer's page could be affected by, and never moves for one it
-   * could not.
-   */
-  private conversationWaterline(spaceId: string, userId: string): number {
-    const shared = this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
-      "SELECT waterline FROM space_conversation_state WHERE space_id = ?",
-      spaceId,
-    ).toArray()[0]?.waterline ?? 0;
-    const personal = this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
-      `SELECT waterline FROM space_conversation_viewer_state
-        WHERE space_id = ? AND user_id = ?`,
-      spaceId,
-      userId,
-    ).toArray()[0]?.waterline ?? 0;
-    return shared + personal;
   }
 
   /**
@@ -1608,7 +1494,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         return {
           ok: true,
-          space: this.space(request.spaceId, request.userId),
+          space: this.space(request.spaceId),
           membershipGeneration: existing.generation,
         };
       }
@@ -1636,7 +1522,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration };
+      return { ok: true, space: this.space(request.spaceId), membershipGeneration };
     });
   }
 
@@ -1675,12 +1561,8 @@ export class WorkspaceSpaceStorage {
         request.membershipGeneration,
       ).toArray()[0];
       if (!activated) return false;
-      // A settled membership changes which conversations this page is about,
-      // so it moves the same signal a message in one of them moves. One
-      // mechanism keeps the dashboard from needing a second.
-      this.noteSpaceConversationChange(request.spaceId, now);
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -1699,7 +1581,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!cancelled) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -1757,7 +1639,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration: generation };
+      return { ok: true, space: this.space(request.spaceId), membershipGeneration: generation };
     });
   }
 
@@ -1807,12 +1689,8 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
         request.workstreamId,
       );
-      // A settled membership changes which conversations this page is about,
-      // so it moves the same signal a message in one of them moves. One
-      // mechanism keeps the dashboard from needing a second.
-      this.noteSpaceConversationChange(request.spaceId, now);
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -1888,7 +1766,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(spaceId, userId) };
+      return { ok: true, space: this.space(spaceId) };
     });
   }
 
@@ -1918,12 +1796,8 @@ export class WorkspaceSpaceStorage {
         now,
         spaceId,
       );
-      // A settled membership changes which conversations this page is about,
-      // so it moves the same signal a message in one of them moves. One
-      // mechanism keeps the dashboard from needing a second.
-      this.noteSpaceConversationChange(spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId, userId);
+      return this.space(spaceId);
     });
   }
 
@@ -1955,12 +1829,8 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.appendOrder(workspaceId, userId, spaceId, now);
-      // A settled membership changes which conversations this page is about,
-      // so it moves the same signal a message in one of them moves. One
-      // mechanism keeps the dashboard from needing a second.
-      this.noteSpaceConversationChange(spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId, userId);
+      return this.space(spaceId);
     });
   }
 
@@ -1989,7 +1859,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         const targets = this.pendingTargets(request, existing.generation);
         this.stageDefaultPublications(targets, request.userId, now);
-        return { ok: true, space: this.space(request.spaceId, request.userId), targets };
+        return { ok: true, space: this.space(request.spaceId), targets };
       }
       const defaultGeneration = (existing?.generation ?? 0) + 1;
       if (existing) {
@@ -2032,7 +1902,7 @@ export class WorkspaceSpaceStorage {
       for (const target of targets) this.insertDefaultTarget(target, now);
       this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), targets };
+      return { ok: true, space: this.space(request.spaceId), targets };
     });
   }
 
@@ -2052,7 +1922,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!removed) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId);
     });
   }
 
@@ -2981,8 +2851,13 @@ export class WorkspaceSpaceStorage {
    * it exists, and they could not move it either — so the list a refusal
    * carries is what the caller can act on, and the sentence beside it still has
    * to be true when the list comes back empty.
+   *
+   * A dashboard nudge is addressed with the same answer to the same question:
+   * a socket whose viewer cannot list the Channel that moved has no row to
+   * re-read, and naming the Space it moved in would disclose the Channel by
+   * another door.
    */
-  private listableChannelIds(userId: string, workstreamIds: readonly string[]): string[] {
+  listableChannelIds(userId: string, workstreamIds: readonly string[]): string[] {
     const listable: string[] = [];
     for (const chunk of boundParameterChunks(workstreamIds)) {
       for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
@@ -2993,7 +2868,7 @@ export class WorkspaceSpaceStorage {
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
           WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
           ORDER BY directory.workstream_id`,
         userId,
         ...chunk,
@@ -3016,6 +2891,36 @@ export class WorkspaceSpaceStorage {
         WHERE space_id = ? AND is_participant = 1 ORDER BY user_id`,
       spaceId,
     ).toArray().map((row) => row.user_id);
+  }
+
+  /**
+   * Which of these Spaces this viewer may be told about, archived ones
+   * included.
+   *
+   * The archive filter {@link visibleSpaceIds} applies is deliberately absent.
+   * This answers "may I name this Space on this person's socket", and a Space
+   * being archived is itself one of the events a dashboard holding its page
+   * has to hear about — filtering archived Spaces out here would drop exactly
+   * that notice.
+   */
+  visibleSpaceIdsAmong(userId: string, spaceIds: readonly string[]): string[] {
+    if (!this.ready() || spaceIds.length === 0) return [];
+    const visible: string[] = [];
+    for (const chunk of boundParameterChunks(spaceIds)) {
+      for (const row of this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT space.space_id
+           FROM workspace_space_directory space
+           LEFT JOIN workspace_space_viewers viewer
+             ON viewer.space_id = space.space_id
+            AND viewer.user_id = ? AND viewer.is_participant = 1
+          WHERE (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+            AND space.space_id IN (${chunk.map(() => "?").join(", ")})
+          ORDER BY space.space_id`,
+        userId,
+        ...chunk,
+      ).toArray()) visible.push(row.space_id);
+    }
+    return visible;
   }
 
   /** Active Spaces this viewer may see, in creation order. */
@@ -3085,27 +2990,27 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId)),
+      items: rows.map((row) => this.summary(row)),
     });
   }
 
-  private space(spaceId: string, userId: string): SpaceSummary {
+  private space(spaceId: string): SpaceSummary {
     return this.summary(this.storage.sql.exec<SpaceRow>(
       "SELECT * FROM workspace_space_directory WHERE space_id = ?",
       spaceId,
-    ).one(), userId);
+    ).one());
   }
 
   /**
-   * A Space as one person sees it.
+   * A Space as anybody sees it.
    *
-   * The viewer was threaded through every caller rather than left out of the
-   * mutation responses, because `conversationWaterline` is per-person and a
-   * mutation's answer replaces the client's copy of the row. A summary that
-   * answered zero there would have made the next real snapshot look like a
-   * change and cost a refetch on every Space write.
+   * Viewer-independent, deliberately: every field here is the Organization's
+   * fact about the Space, and the two that are not — which Spaces a person can
+   * see at all, and their order — are decided by the queries that select the
+   * rows rather than by this projection. A per-viewer field here would have to
+   * be recomputed for every socket on every publication.
    */
-  private summary(row: SpaceRow, userId: string): SpaceSummary {
+  private summary(row: SpaceRow): SpaceSummary {
     const appearance = row.appearance_json
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
@@ -3138,7 +3043,6 @@ export class WorkspaceSpaceStorage {
             AND directory.archived_at IS NULL`,
         row.space_id,
       ).one().count,
-      conversationWaterline: this.conversationWaterline(row.space_id, userId),
       defaultResourceIds: this.defaultIds(row.space_id, "resource"),
       defaultSidekickIds: this.defaultIds(row.space_id, "sidekick"),
       createdAt: new Date(row.created_at).toISOString(),

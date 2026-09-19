@@ -40,7 +40,6 @@ function space(overrides: Partial<{
     participants: (overrides.participantUserIds ?? [creatorId, participantId])
       .map((userId) => ({ userId })),
     channelCount: 0,
-    conversationWaterline: 0,
     defaultResourceIds: overrides.defaultResourceIds ?? [defaultResourceId],
     defaultSidekickIds: [],
     createdAt: "2026-09-19T00:00:00.000Z",

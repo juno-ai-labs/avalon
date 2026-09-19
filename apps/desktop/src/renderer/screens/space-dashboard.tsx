@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, FileText, FolderPlus, Plus, RotateCcw } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import {
   type SpaceColorKey,
@@ -35,7 +35,7 @@ import { useAppSession } from '../lib/app-session';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
-import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
@@ -129,7 +129,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // The Space's membership is paginated: General holds every Channel in the
   // Organization, so it is the one Space read that cannot ride the socket.
   const channelPages = useInfiniteQuery({
-    queryKey: ['space-channels', spaceId],
+    queryKey: spaceConversationsQueryKey(spaceId),
     queryFn: ({ pageParam, signal }) => api!.listSpaceChannels(spaceId!, pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
@@ -143,16 +143,25 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // an activity-ordered, state-filtered list goes stale on far more than a
   // membership change: a message in a member Channel or breakout reorders it,
   // a run finishing drops a row out of it, and opening one takes it off this
-  // reader's list and nobody else's. One signal covers all of it — the
-  // per-viewer `conversationWaterline` the Organization advances on every one
-  // of those, a settled membership included — so there is one refetch trigger
-  // here rather than one for Channels and another for breakouts.
-  const refreshSignal = spaces.data?.items.find((item) => item.id === spaceId)?.conversationWaterline
-    ?? inactiveSpaces.data?.items.find((item) => item.id === spaceId)?.conversationWaterline ?? null;
+  // reader's list and nobody else's. All of it arrives as one
+  // `space_conversations_changed` nudge, which `workspace-socket.tsx`
+  // invalidates this entry on — so there is one refetch trigger for Channels
+  // and breakouts rather than one each.
+  //
+  // This effect is the other half: a nudge sent while the socket was away is
+  // never re-sent, and nothing durable records that it happened, so a fresh
+  // connect payload is the client's only evidence that it may have missed one.
+  // `sidebarConnect.generation` is what the directory query already reads a
+  // reconnect from. The generation the screen mounted at is taken as observed:
+  // the query's own mount fetch is that read.
+  const connectGeneration = workspaceSocket?.sidebarConnect?.generation ?? null;
+  const observedConnect = useRef(connectGeneration);
   useEffect(() => {
-    if (spaceId === undefined || refreshSignal === null) return;
-    void queryClient.invalidateQueries({ queryKey: ['space-channels', spaceId] });
-  }, [queryClient, spaceId, refreshSignal]);
+    if (spaceId === undefined || connectGeneration === null) return;
+    if (connectGeneration === observedConnect.current) return;
+    observedConnect.current = connectGeneration;
+    void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+  }, [queryClient, spaceId, connectGeneration]);
   // A refusal belongs to the Space it was about. This screen is one component
   // for every Space, so without this "That space no longer exists" followed
   // the reader onto the next Space's dashboard and stayed there.

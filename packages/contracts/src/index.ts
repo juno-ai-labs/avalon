@@ -2541,6 +2541,35 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
   spacesReady: z.boolean(),
 });
 
+/**
+ * The Space dashboards whose page this viewer should read again.
+ *
+ * A nudge, not a payload: it carries no rows, no version and no count, only
+ * the Spaces whose list of "conversations that need you" could have moved for
+ * the socket it is sent to. The dashboard re-reads the page it is holding;
+ * every other surface ignores it.
+ *
+ * **Nothing durable stands behind it.** The list is re-read on mount, on
+ * reconnect and on this event, so a nudge lost to a closing socket costs one
+ * stale view until the next event or the next reconnect — which is cheaper to
+ * reverse than a per-viewer counter written on every message in the
+ * Organization. `docs/spaces.md` records why that trade was taken.
+ *
+ * The ids are the ones *this* viewer may see. A Space a person cannot see is
+ * never named: a personal Space's id on somebody else's socket is the
+ * existence of that Space leaking through a shared Channel.
+ */
+export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
+  type: z.literal("space_conversations_changed"),
+  occurredAt: TimestampSchema,
+  /**
+   * At least one, because a nudge naming no Space asks for nothing. No upper
+   * bound: a Channel may be in as many Spaces as somebody puts it in, and the
+   * Organization has no number for that to trip over.
+   */
+  spaceIds: z.array(IdSchema).min(1),
+});
+
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
   type: z.literal("workspace_workstream_state"),
@@ -2637,6 +2666,7 @@ export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPag
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
+export type WorkspaceSpaceConversationsEvent = z.infer<typeof WorkspaceSpaceConversationsEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
