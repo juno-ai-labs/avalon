@@ -203,6 +203,17 @@ the Channel already held directly, and a Space withdrawing from one leaves it
 active. So a grant the Channel also holds directly stays published and stays
 active when the Space leaves, whichever way the two writes race.
 
+The composition runs the other way too, and that direction grants nothing.
+**Being able to read a Channel discloses the mark and name of every Space it is
+placed in** — the Organization's fact about where the Channel lives, so a
+sidebar can draw it there — whether or not the reader is one of those Spaces'
+participants. That is a *discovery* disclosure and not an admission: it confers
+no read on the Space's other Channels, names none of its participants or
+defaults, counts only the Channels that reader can already see, and every write
+on the Space is refused `space_access_denied`.
+[`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns the predicate and
+what it withholds.
+
 ### Invitation admission
 
 [Scoped invitations](scope-invitations.md) use the same current grant policy for
@@ -311,6 +322,10 @@ not a switch controlling which authorization implementation serves the request.
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
   dispatcher can retry without reconstructing permissions from an old payload.
+- A Space's own visibility is discovery, in both directions. A Space source
+  admits a reader to a Channel; a readable Channel discloses its Space's mark
+  and name. Neither admits anything else — the second confers no read on the
+  Space's other Channels and no write on the Space at all.
 - A Space supplies one source of a Channel's audience; it never owns it. A
   reader the direct source or another Space still supplies survives a Space's
   departure, and the scope narrows only when nothing remaining is
@@ -464,6 +479,17 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-19 — A readable Channel discloses its Space's mark, and nothing else
+
+The composition now runs in both directions. A Space source admits a reader to
+a Channel, as this document already recorded; a Channel a person can read now
+also discloses the mark and name of every Space it is placed in, so the sidebar
+can draw the Channel where it lives instead of in a flat list of rows with no
+home. That is discovery rather than admission, and the invariant above says
+what it does not carry: no read on the Space's other Channels, no participant,
+no default, no count of what the reader cannot see, and no write. The reasoning
+and the predicate are in [`spaces.md`](spaces.md#changelog).
 
 ### 2026-09-19 — A Space-derived grant is admission without discovery
 

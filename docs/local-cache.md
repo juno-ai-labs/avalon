@@ -177,6 +177,16 @@ version went to **3** for the same reason in reverse: a version 2 row holds
 Project directories and Channel rows written before `spaceIds` existed, and a
 Channel in no Space is a state no surface is allowed to render.
 
+**Version 4 is a Space's `reach`**, and it is the other half of the same rule.
+A cached Space summary written before that field says nothing about *why this
+person* can see the Space, and a device holds nothing to derive it from — so
+`parse` has no reading to give it. Both absences it could be filled with are
+visibly wrong where a reader can see the row: the full relationship draws a
+plus, an **Add to space** entry and a drop target on a Space every write on
+which the server refuses, and the narrow one takes those controls off every
+Space on screen and puts them back a moment later.
+[`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns what the field means.
+
 After the first live payload the provider mirrors those entries back to the
 row: any change to any of them schedules one write, coalesced over
 `LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
@@ -514,6 +524,26 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-09-19 — The directory slice goes to version 4 for a field it cannot absorb
+
+**What changed:** `SpaceSummary` gained `reach` — why *this person* can see a
+Space — and the `directory` slice went from 3 to 4, dropping every cached row
+once.
+
+**Why:** It is the same rule the `ordering` key was measured against, reaching
+the opposite answer, and having both is what makes the rule readable. An
+absent `ordering` has a correct reading: this person has arranged nothing, and
+one launch is drawn in the natural order. An absent `reach` has none — the
+field is about the viewer's relationship to a Space and nothing on the device
+knows it — and both values it could be filled with are wrong in a way somebody
+sees: one draws controls the server refuses, the other takes the controls off
+every Space and puts them back. The cost is one cold launch per device.
+
+**Consequences:** The cache test that pins the `ordering` absorption now writes
+at version 4, because a row at an older version never reaches `parse` at all
+and would pass on the version gate while proving nothing. The next person to
+add a key to this row has to say which of the two it is.
 
 ### 2026-09-19 — The remembered directory carries the arrangement, without a version bump
 

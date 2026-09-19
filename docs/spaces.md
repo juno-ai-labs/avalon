@@ -25,7 +25,7 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL, the reads a dashboard nudge is addressed with, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL, the three ways a Space is visible (`spaceVisibleToViewerSql`, `spaceReachedThroughChannelSql`, `spaceReachSql`, and the `reach`/`canEdit` pair derived from them), the reads a dashboard nudge is addressed with, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
 | `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 63), and the generation-fenced applies over them. |
 | `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
@@ -255,7 +255,12 @@ answer is one this object already holds:
 - `organization` keeps the Space ordering's original semantics exactly. Every
   visible Space is appended first, on the read as well as on the write, because
   the Space directory is read *through* these rows and a Space with no row is
-  one the join cannot answer with. The request is then filtered to the Spaces
+  one the join cannot answer with. "Visible" is
+  [all three ways](#who-may-see-a-space-and-why), so a Space somebody reaches
+  only through a Channel in it is in their list and is theirs to drag: an
+  arrangement is one person's view preference and no part of it is visible to
+  anybody else, which is why it is the one Space write a `through_channel`
+  reach does not refuse. The request is then filtered to the Spaces
   this viewer can see, and the ids nobody mentioned keep their relative order
   behind the ones that were — which is what a sidebar sends when a search has
   hidden rows.
@@ -631,9 +636,83 @@ guest holds explicit Channel grants and no Organization-wide discovery, and is
 not waiting on a cutover. The relationship is read at accept time and pinned on
 the socket attachment, because nothing re-asks on the way out — an open socket
 is closed by the access-revocation queue rather than by a publisher querying D1
-again. And a Channel's `spaceIds` name only the Spaces *that* viewer may see: a
-Channel in somebody's personal Space would otherwise put that Space's id, and
-through `channelCount` its size, on every reader's row.
+again. And a Channel's `spaceIds` name only the Spaces *that* viewer may see,
+which is the section below.
+
+### Who may see a Space, and why
+
+**Three ways, and the third is what makes the hierarchy true of every Channel a
+person can read.** `spaceVisibleToViewerSql` is the one text; every query that
+decides this renders it.
+
+1. The Space's scope is `workspace`, so every active member of the Organization
+   reaches it.
+2. This person is one of its participants.
+3. This person can see a Channel placed in it — an **active** membership whose
+   Channel directory row is not archived and passes
+   `channelVisibleToViewerSql`, the Channel directory's own
+   `scope = 'workspace' OR is_participant` test. A breakout is visible only
+   through its parent Channel, so "or a breakout" reduces to this.
+
+The third exists because without it a Channel in somebody's participants-only
+Space is drawn under no Space at all for every *other* reader of that Channel.
+Every Channel belongs to at least one Space and the sidebar's whole job is to
+say where each one lives, so such a Channel fell out of the hierarchy into
+**Other channels** — a flat list whose only purpose was to keep it reachable —
+and the product could not say the obvious thing: it is in that Space.
+
+**What that discloses, and what it does not.** `SpaceSummary.reach` names why
+this viewer can see the Space: `participant`, `organization`, or
+`through_channel`. The strongest relationship wins, so a participant of an
+Organization-wide Space reads `participant`; only `through_channel` changes
+what a surface may draw, and the other two are told apart because "you are in
+this Space" is a fact "everyone is" does not imply. It is computed as a column
+by the query that selects the row — three comparisons over columns already
+joined — rather than asked per summary, which would be one more statement per
+Space per socket publication.
+
+A `through_channel` viewer's summary carries the id, name, icon, colour, scope,
+status, system role and revision, and **nothing else**: `participants` empty,
+`defaultResourceIds` and `defaultSidekickIds` empty, and a `channelCount` taken
+over the Channels *that viewer* can see. One summary shape with fields emptied
+rather than a second schema — empty is a state each of those fields already
+has, and a second shape is a second thing every reader has to branch on.
+
+The narrowed count is not a rounding of the disclosure; it is the disclosure
+this rule would otherwise make. `spaceIdsByChannel` shapes a Channel's
+`spaceIds` per viewer precisely so that a personal Space's id, *and through
+`channelCount` its size*, does not ride a Channel row to every reader. The id
+now does ride it, on purpose; the size still does not.
+
+**A `through_channel` reach implies an active Space.** An archive stages every
+membership out of `active` before it commits, so nobody reaches an archived
+Space through a Channel in it — and nothing draws a Channel under an archived
+Space, so there would be nothing for its mark and name to explain. The inactive
+list renders the same visibility text anyway, so a future change to what an
+archive stages carries here rather than being re-derived. A Channel whose every
+Space is archived therefore stays in **Other channels**, with the Channels of
+an Organization that is still opening.
+
+**Every write is refused, by name.** Each storage predicate that decided "may I
+see this Space" was also the whole of the check on a write, and it now answers
+yes for somebody nothing about the Space is theirs to change. `reach()` is the
+one predicate all of it is derived from; `canEdit` is `reach` that is not
+`through_channel`, and it is what those write paths ask. The *word* comes from
+two places, because two layers can reach a write first:
+`WorkspaceDO.spaceRefusalCode` takes the Space a write names and answers
+`space_access_denied` — the existing code for "you may not edit this Space",
+and the honest one, since `space_not_found` about a row the caller is looking
+at is a diagnosis nobody can act on. `SpaceService.editable` answers the same
+ahead of the four operations that write on the Space's *own* object before
+WorkspaceDO sees them (a rename, an appearance, an audience, a default);
+without it a rename was answered `404 workstream_not_found` by the Space's
+hidden conversation, which is the wrong authority saying the wrong word.
+
+Two writes deliberately do not name a Space to that gate. A creation has none
+yet, and `reorderContainer` is a person arranging their own view of a list —
+the Organization's Spaces, a Space's Channels, a Channel's Breakouts — which is
+theirs whatever their reach is, and whose per-kind filters already keep it to
+what they can see.
 
 **An Organization that has not reached migration 61 answers empty rather than
 failing.** The meeting-notes retirement holds an object at schema 57 until its
@@ -893,7 +972,23 @@ still gets all four.
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
-twice, with one unread state, one running state and one destination. That is why
+twice, with one unread state, one running state and one destination.
+
+**A Space this reader reaches only through a Channel in it is an ordinary
+row.** Mark, colour, name, expansion, its placements — limited to the Channels
+this reader can see, because that is what `spaceIds` on each row says — and the
+arrangement they have put those placements in. What it does not carry is a
+control: no **+**, no row action that writes, and it is not a drop target. A
+Channel released on it is ignored the way one released on a Space it is already
+in is ignored — the gesture changed nothing, and there is nothing here for a
+refusal to name. It is not offered under **Add to space** either. Every one of
+those is refused by the server by name, and drawing a control that can only
+fail teaches a reader that Rally's controls are suggestions.
+
+`SpaceRow`'s plus is therefore optional, which is the one capability
+[`shared-ui.md`](shared-ui.md) now lets a host withhold. The row's grid keeps
+its third column either way, so a list mixing the two kinds does not have its
+names in two different places. That is why
 `spaceIds` travels on the *common* half of `workspace_workstream_state`: it is
 the Organization's fact about the Channel, not the reader's, and WorkspaceDO
 republishes the row after every membership settlement.
@@ -930,6 +1025,13 @@ the Channel's own provenance and the Organization's memberships as one union —
 they agree in the steady state and disagree exactly while an operation is in
 flight, which is the thing it exists to show.
 
+A Space the reader reaches *through this Channel* is named, where the dialog
+used to say "a space you can't see" — which was the honest answer before there
+was a way for them to see it. It still carries no **Remove from space**, for
+the opposite reason to the row above it: not because the row cannot say what
+leaving would change, but because leaving is not theirs to do and the server
+refuses it by name.
+
 The dialog offers **Make private** only while no Space source is
 Organization-wide. The server refuses that narrowing with
 `channel_scope_locked_by_space` in exactly that state, and the sources saying so
@@ -943,6 +1045,16 @@ Every Space refusal on every one of these surfaces goes through one copy table,
 printing the diagnostic a Worker wrote for a log. A surface that knows what was
 being attempted supplies its own sentence for a refusal that carried no code —
 "Spaces couldn't be reordered" also accounts for the row that snapped back.
+
+**A `through_channel` viewer's dashboard is the header and the conversation
+list.** Mark, colour, name — and that list, which is already filtered to the
+Channels they can read by the same predicate that let them see the Space at
+all. Everything else on that screen is the Space's own: who is in it, who it is
+for, whether it lives, and what it hands down. None of it is theirs, and the
+summary they are handed carries no participants and no defaults at all, so the
+Resources and Sidekicks sections would be two empty lists under two controls
+that can only fail. The rename is withheld as an interaction rather than as a
+control — the field never opens — because that is the shape it has.
 
 Each dashboard action reports into its own slot, so a refused rename stays with
 the name instead of appearing inside every modal that is opened afterwards. The
@@ -968,13 +1080,18 @@ because the subsystem that writes it decides both its audience and its home.
 belongs to a Space, so the section above already says where each one lives and a
 second list of the same rows ordered by time was the same sidebar twice. What is
 left in its place is **Other channels**: the Channels whose `spaceIds` intersect
-this viewer's visible directory in nothing. A member can read a Channel whose
-only Spaces are ones they cannot see — **Manage access** already draws such a
-placement as a Space the viewer cannot see — and without that section the
-Channel would be in the sidebar nowhere at all. It is flat, ordered by recency,
+this viewer's visible directory in nothing. It is flat, ordered by recency,
 carries no group headings, and is absent when empty, which is the ordinary
 state. Pinned Channels are left out of it, as they were left out of the list it
 replaces: the section above already has them.
+
+**Two transient states produce one now, and neither is the state it was built
+for.** It was built for a Channel whose only placements are Spaces this reader
+cannot see; [the third way a Space becomes visible](#who-may-see-a-space-and-why)
+retired that case, because such a Channel is now drawn under the Space it is
+actually in. What is left is an Organization still opening — where the Spaces
+section draws its card instead of its rows, so *every* Channel is here — and a
+Channel whose every Space is archived, which has no active row to sit under.
 
 **"Visible directory" means the one that is on screen, not the one that
 arrived.** While the Organization is still opening, the Spaces section draws its
@@ -1028,6 +1145,13 @@ through to the Space row, which is what a placement is.
 
 ## Invariants
 
+- **Seeing a Space is not access to anything in it, and is not permission to
+  change it.** A person who reaches a Space only through a Channel placed in it
+  is told its mark, colour, name, audience setting and lifecycle, so that
+  Channel can be drawn where it lives. They are told no participant, no
+  default, no Channel they could not already read, and not how many Channels
+  are in it; every Space write is refused them `space_access_denied`. A future
+  field on `SpaceSummary` has to say which side of that line it is on.
 - **WorkspaceDO is the sole Space relationship authority.** Copying membership
   into a child object or D1 would give two objects an answer to "does this
   Channel have another Space", which is the question both the final-membership
@@ -1260,7 +1384,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
@@ -1475,6 +1599,17 @@ is a window every Space passes through between being reserved and its first
 projection, so a cancel that named only the id could delete whatever anybody
 else was in the middle of creating.
 
+**A Space's mark and name are disclosed by a Channel inside it.** A person who
+can read one Channel placed in a Space is told that Space's id, name, icon,
+colour, scope and lifecycle, whether or not they are a participant — because a
+Channel has to be drawn where it lives. Nothing else about the Space crosses:
+its participants, its defaults and the Channels this reader cannot see are all
+withheld, and its `channelCount` is narrowed to what they can see, so the size
+of a participants-only Space is not inferable from a Channel row. Every write
+is refused `space_access_denied` at two layers. The rule composes the other way
+too: a Space name is the one thing its participants choose that its member
+Channels' readers will see.
+
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content by themselves**: a
 Space source becomes access only by travelling through `ChannelAccessService` to
@@ -1584,6 +1719,93 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
+
+**What changed:** `WorkspaceSpaceStorage`'s visibility predicate gained a third
+clause — an active membership whose Channel this viewer can see, through the
+Channel directory's own `channelVisibleToViewerSql` text — and `SpaceSummary`
+gained one field, `reach`, naming which of the three ways admitted this viewer:
+`participant`, `organization`, or `through_channel`. A `through_channel`
+summary carries the id, name, icon, colour, scope, status, system role and
+revision, an empty participant list, no defaults, and a `channelCount` taken
+over the Channels *that viewer* can see. `reach()` is the one predicate every
+Space authorization decision is now derived from, and `canEdit` — `reach` that
+is not `through_channel` — is what every write predicate asks. The refusal is
+named twice: `WorkspaceDO.spaceRefusalCode` takes the Space a write is about,
+and `SpaceService.editable` guards the four operations that write on the
+Space's own object before WorkspaceDO sees them. The desktop draws such a Space
+as an ordinary sidebar row with no **+**, no drop, and no **Add to space**
+entry; its dashboard as header-and-list; and **Manage access** names it instead
+of saying "a space you can't see". The local cache's `directory` slice went to
+version 4.
+
+**Why:** Every Channel belongs to at least one Space, and the sidebar's whole
+job is to say where each one lives — but a Channel placed only in somebody
+else's participants-only Space had nowhere to be drawn, because its Space was
+invisible to every other reader of that Channel. **Other channels** existed for
+exactly that case, which meant the product's answer to "where does this live?"
+was a flat list that declined to say. The disclosure the third clause makes is
+the Space's *mark*: you already know the Channel exists, and being told the
+name of the folder it is in is what turns a homeless row into a placed one.
+
+The count is where the line actually is. `spaceIdsByChannel` has always shaped
+a Channel's `spaceIds` per viewer for one reason: a personal Space's id, *and
+through `channelCount` its size*, riding a Channel row to everybody who can
+read it. The id now rides it on purpose. Narrowing the count to the viewer is
+what keeps the second half from riding with it — and it makes the two agree by
+construction, because the narrowed count is exactly the set the third clause
+tests for existence, so such a viewer's count is never zero.
+
+`reach` is a field rather than something each surface re-derives because the
+inputs are withheld. A surface computing "am I a participant?" from `scope` and
+`participants` gets the wrong answer the moment `participants` is empty, and
+for this viewer it always is.
+
+**Considered and rejected:** *A separate metadata endpoint* — `GET
+/spaces/:id/card`, or a `spaceCards` field beside the directory, answering just
+the mark for Spaces the viewer cannot otherwise see. It is a second read path
+for a question the socket already answers, which is the thing
+[Reads](#reads) exists to refuse: the two would disagree across a mutation,
+and the client would have to merge two lists into one sidebar section and
+decide which one a row came from. *A second summary schema* — `SpacePlacement`,
+or `SpaceSummary` with half its fields optional. Optional fields are worse than
+empty ones here: `participants: []` and `defaultResourceIds: []` are states
+those fields already have and every existing reader already handles, while an
+absent field is a new branch at every call site and a strict client that
+predates it rejects the row outright. One shape with one field naming the
+reach is the smaller change and the one a future relationship extends.
+
+*Admitting a `removing` membership, so an archived Space stays reachable.* An
+archive stages every membership out of `active` before it commits, so today a
+`through_channel` reach implies an active Space. Widening to `removing` would
+put an archived Space in that viewer's inactive list with no Channel drawn
+under it anywhere, and a single-Channel removal in flight would keep a Space
+visible while the Channel leaves it. The inactive list renders the same
+visibility text anyway, so a future change to what an archive stages carries
+without being re-derived.
+
+*Refusing the ordering write too.* It was in the audit with every other write,
+and it is not one of them: an arrangement is one person's view preference,
+stored under their own user id and read by no other socket. Refusing it would
+mean a row they can see and cannot move.
+
+**Consequences:** **Other channels** is now two transient states — an
+Organization still opening, and a Channel whose every Space is archived —
+rather than the standing case it was written for. A Space name is now something
+its participants choose that every reader of its member Channels will see;
+that is the product decision the PRD's decision log records, and a future
+change that wants to hide a Space's name has nothing left to hide it behind.
+`SpaceRow`'s plus is optional, which is the first capability
+[`shared-ui.md`](shared-ui.md) lets a host withhold on that component. The
+`directory` local-cache slice is at version 4 because `reach` is a per-viewer
+fact a device cannot derive, so every device pays one cold launch;
+[`local-cache.md`](local-cache.md) holds that reasoning. And the guard that
+names a refusal now lives at two depths: a future Space write that reaches the
+Space's own object before WorkspaceDO has to go through `SpaceService.editable`
+or it will be answered `workstream_not_found` by the wrong authority.
+
+Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
 ### 2026-09-19 — A Space's hidden conversation can be rebuilt from storage, and its failures have a name
 

@@ -58,8 +58,6 @@ happened to build on its way past.
 
 The Space components follow the same split, one step further. A `SpaceRow` draws
 the geometry, the accordion, the hover-revealed plus and the motion keys, and
-requires both the drag handlers and the new-Channel action — a host that cannot
-place a Channel or start one in a Space has no business drawing the row — and
 takes the host's own navigation element as a slot — routing is a host decision
 under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
 treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
@@ -67,6 +65,17 @@ treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
 that is presentation; the host only ever learns the committed name. Nothing here
 fetches, and no component infers a capability from an omitted prop: a Space with
 no audience control is a host that decided not to draw one.
+
+`SpaceRow` still requires the drag handlers and **the new-Channel action is
+optional**, which is the one capability this component lets a host withhold. A
+host may hand a reader a Space they can see and may write nothing on — Rally
+does, for a Space reached only through a Channel placed in it
+([`spaces.md`](spaces.md#who-may-see-a-space-and-why)) — and a plus that can
+only fail is worse than no plus. The row's grid keeps its third column either
+way, so a list mixing the two kinds does not have its names in two different
+places; that is the same reservation `SpaceChannelRow` makes for the
+**Remove** a breakout has no use for, except that this one needs no hidden
+copy because the grid holds the column by itself.
 
 A Space's resources and its Sidekick recommendations are one list. They are one
 registry keyed by `kind` on the server, and nothing about the drawing depends on
@@ -121,6 +130,19 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-19 — A Space row may be drawn without its plus
+
+`SpaceRow` required `onNewChannel` on the argument that a host unable to start
+a Channel in a Space had no business drawing the row. Rally now has such a
+reader: somebody who reaches a Space only because they can read a Channel
+placed in it is shown its mark and name so that Channel has somewhere to be
+drawn, and every write on it is refused by name. The action is therefore
+optional, and the row's grid keeps its third column so the two kinds line up.
+This is the only capability the component lets a host withhold; the drag
+handlers are still required, because a row that cannot be arranged is a
+different component. The reasoning is in
+[`spaces.md`](spaces.md#changelog).
 
 ### 2026-09-19 — Space presentation is shared; hosts keep routing and authority
 
