@@ -105,7 +105,10 @@ What sits above that composer is the difference between the two entry points:
   faded out upward under a gradient mask and inert to the pointer. They say what
   is being branched out of. They are not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
-  those turns are the only part of it anybody is shown.
+  those turns are the only part of it anybody is shown. They are also part of
+  composing rather than part of the substream, so the keystroke that submits is
+  the last frame they are drawn on: anything still above the opening turn —
+  collapsing, faded, or merely inert — is height the swap has to take back.
 - **From the sidebar** — nothing, exactly as the work-stream launcher's body is
   empty. A substream started there branches from wherever the conversation has
   reached, so there is no particular moment to be looking at.
@@ -133,6 +136,27 @@ prepared on open, and cancelled what it had reserved on the way out, was the
 modal one. After submit there is nothing to cancel either, for the opposite
 reason: the operation has been claimed, so the control that leaves the surface
 is disabled rather than dropping a creation that would carry on without it.
+
+The turns above the composer sit at the *bottom* of the body while somebody is
+still typing, so that what is being branched from is the thing nearest the words
+about to be written — and only while somebody is still typing. On submit the
+column flows from the top like every conversation's does, because from that
+keystroke the surface is drawing what the created substream will draw. Bottom
+aligned through the launch, the typed turn sat just above the dock and jumped
+the height of the pane when the child arrived, which is the one jump this whole
+hand-off exists to remove.
+
+Nothing else moves at the swap either, and nothing is waited on for that to be
+true. The branch turns are gone and the header is at the created conversation's
+own row on the frame the optimistic turn is first drawn, rather than arriving
+there over a transition — because the surface does not control when the swap
+happens. Creation normally takes a second, but `prepare` returns an
+already-prepared receipt without doing any work, so a retry can land inside the
+220ms a transition would have wanted, and a header caught half-grown hands over
+to a 44px row. Measured on the first committed frame after the keystroke: header
+44px, scroll top 44px, turn top 83px easing to 76px — the 7px is the turn's own
+arrival, which the transcript has always played and which the created
+conversation plays again.
 
 On submit the surface draws the typed turn and a work timer, and the substream
 is created behind them: `POST …/substreams/prepare` freezes and
@@ -541,6 +565,45 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-19 — The launch surface draws the substream, from the keystroke
+
+**What changed:** Two things the surface kept through the launch now belong to
+composing alone. `.substream-launch-column` states no alignment of its own — the
+bottom alignment rides `.workstream-launch-screen:not(.is-launching)` — and the
+branch turns are rendered only while `launching` is null. From that keystroke the
+column holds what the created substream holds, in the order and the place it
+will hold it, on the first frame rather than at the end of a transition.
+
+**Why:** The optimistic turn is the created substream's turn — the whole point of
+drawing it is that nothing moves when the child arrives. Bottom-aligned, it was
+drawn just above the dock and jumped most of the pane's height at the swap; with
+the branch turns still above it, it then jumped their height as well. The
+hand-off was announcing itself exactly where it was supposed to be invisible.
+With the header's endpoint corrected in
+[`workstream-creation.md`](workstream-creation.md), the turn is drawn at the same
+pixel on both sides of the swap.
+
+**Considered and rejected:** Bottom-aligning the settled transcript to match the
+launch surface — that is the destination's geometry, shared with every other
+conversation, and the launch surface is the one that has to agree with it.
+Stating `justify-content` under `.is-launching`, which is the copy of the
+destination's geometry that `app.css.node.test.ts` exists to keep out of this
+surface. And, on review, easing the branch turns out instead of dropping them:
+a 220ms collapse (a grid row from `1fr` to `0fr`, with `inert` carrying the
+accessibility half) read better, but it leaves the opening turn displaced by
+whatever height the block still has, and the surface does not control when the
+swap happens — `prepare` returns an already-prepared receipt without doing any
+work, so a retry can finish inside the animation. Gating the hand-off on
+`transitionend` was rejected with it: it makes navigation wait on motion that
+reduced-motion settings and interrupted transitions can cut short or skip.
+
+**Consequences:** The faded turns disappear on the submit keystroke rather than
+fading, which is the cost of the guarantee and is paid on the frame the surface
+stops being a launcher. Anything added to this column from here — a notice, a
+picker, a second context block — has to decide which side of that keystroke it
+lives on, and anything that animates has to leave the opening turn's position
+alone while it does.
 
 ### 2026-09-18 — Warm the reserved child during preparation
 
