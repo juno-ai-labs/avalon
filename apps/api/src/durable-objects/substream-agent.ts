@@ -1069,14 +1069,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
-      if (this.objectStore.identity()) {
+      const constructedIdentity = this.objectStore.identity();
+      if (constructedIdentity) {
         const persistedSubstream = this.state.storage.sql.exec<{
           external_substream_id: string;
         }>(
           `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
         ).toArray()[0];
         if (!persistedSubstream) this.ensureSubstreamIdentity("0");
-        this.ensurePersistentLoop();
+        // A Space's hidden conversation has no loop to recover, and asking for
+        // one here is not a no-op: `ensurePersistentLoop` refuses a Space
+        // parent by design, and a throw inside the constructor's
+        // `blockConcurrencyWhile` breaks the object's input gate. So the first
+        // time a Space's conversation was rebuilt from storage — which is
+        // every time, because nothing opens it and it is evicted seconds after
+        // it is made — it could not be constructed at all, and every Space
+        // operation that addresses it answered 500: its audience, its name and
+        // appearance, its participants and its defaults, and the drain that
+        // carries its own directory projection to the Organization.
+        //
+        // The guard is here rather than in `ensurePersistentLoop` because the
+        // refusal is right everywhere else: a Space with an agent loop is the
+        // thing that must not exist, and every other caller is asking to run
+        // something. This one is only asking to *recover*, and there is
+        // nothing of the kind to recover.
+        if (constructedIdentity.parentKind !== "space") this.ensurePersistentLoop();
       }
     });
     const initialRecovery = this.initialized;

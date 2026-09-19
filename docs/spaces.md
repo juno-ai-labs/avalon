@@ -87,6 +87,53 @@ admitted**; and finally the appearance, through the same writer a Channel's icon
 and colour go through. Any failure cancels the reservation, so nothing ever
 renders a Space whose object never opened.
 
+### What the hidden conversation is asked
+
+Nothing in the product opens a Space's main conversation, but the Space
+authority writes six things on it, and those six are the whole of the traffic it
+has:
+
+| Operation | Reached from | What it writes |
+| --- | --- | --- |
+| `provision` and `setAppearance` at creation | `SpaceService.provisionSpaceObject` | the title, scope, creator and appearance that make the object a Space |
+| `update({ title })` and `setAppearance` | `PATCH /spaces/:id` | the name, icon and colour |
+| `update({ scope })` | `PATCH /spaces/:id/audience` | who the Space is for |
+| `addParticipant` / `removeParticipant` | `PATCH /spaces/:id/audience` | the Space's participants |
+| `attachResource` / `detachResource` | `POST`/`DELETE /spaces/:id/defaults` | a default resource |
+| `previewAudienceContainment` | the audience preflight | nothing — it is a read, and it is asked of a *member Channel's* conversation rather than this one |
+
+Everything else a conversation can do is not a Space operation: no message, no
+socket, no run, no archive through `/workstreams/:id`, and **no agent loop**.
+`ensurePersistentLoop` is the one place a loop is minted and it refuses a Space
+parent by name, which is the invariant rather than an optimization.
+
+**A refusal is not free where construction can reach it.** That refusal used to
+be reached from `SubstreamAgent`'s constructor, which mints the loop for every
+object that already has an identity so an isolate replacing another finds its
+run where it left it. A throw there is inside `blockConcurrencyWhile`, so it
+breaks the object's input gate — and the first time a Space's conversation was
+rebuilt from storage it could not be constructed at all. That is *every* time:
+nothing opens it, so it is evicted seconds after it is made. Every operation in
+the table above then answered 500, and the object's own drain could not run, so
+the Space's `directory_common` and `directory_user` effects stayed in its outbox
+and the Organization was left holding whatever the reservation had said. The
+guard is on the constructor rather than inside `ensurePersistentLoop`, because
+every other caller is asking to *run* something and the refusal is right for
+them; this one was only asking to recover, and a Space has nothing of the kind
+to recover.
+
+**A failure of this object is named `space_authority_unreachable`.** It is
+reached over Durable Object RPC, so a rejection that is not the object's own
+refusal arrives with no code on it, and a 500 from the object is the object
+saying it does not know what went wrong. Both used to reach a person as
+`internal_error` — the same word the Worker uses for every unhandled failure it
+has — so a Space whose authority could not answer was indistinguishable in a log
+from a bug in the route beside it, and the five operations above cost five
+separate diagnoses of one cause. `SpaceService.throughSpaceAuthority` is the one
+seam that names it; a refusal the object *chose* keeps its own code, because
+replacing `space_protected` or a content fence with a generic word would be the
+same mistake in the other direction.
+
 ### Membership
 
 Adding a Channel is staged. `prepareSpaceMembership` writes a `joining` row and
@@ -626,7 +673,7 @@ Organization membership and access class only.
 ## Failure modes and limits
 
 A malformed input fails strict contract parsing at the object boundary. Every
-refusal is one of the eleven closed `SpaceErrorCode` values, which is the code a
+refusal is one of the twelve closed `SpaceErrorCode` values, which is the code a
 route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
 `spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler
@@ -1011,6 +1058,48 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-19 — A Space's hidden conversation can be rebuilt from storage, and its failures have a name
+
+`SubstreamAgent`'s constructor mints the persistent agent loop for every object
+that already has an identity, so an isolate replacing another finds its run
+where it left it. `ensurePersistentLoop` refuses a Space parent by name — a
+Space's conversation is a participant and resource authority and no agent runs
+in it — and that refusal, raised from inside the constructor's
+`blockConcurrencyWhile`, broke the object's input gate. A Space's conversation
+is evicted within seconds of being made, because nothing opens it, so *every*
+rebuild failed: `PATCH /spaces/:id`, `PATCH /spaces/:id/audience`, the
+participant writes under it and the resource defaults all answered 500, and the
+object's own drain could not run, so the Space's `directory_common` and
+`directory_user` effects never left its outbox and the Organization kept
+whatever its reservation had said about the Space's name, appearance and scope.
+Archive and restore were the only whole-Space operations unaffected, because
+they never address that object.
+
+The guard is on the constructor rather than in `ensurePersistentLoop`, and that
+is the whole of the decision. Lifting the refusal was the alternative and it is
+the wrong one: every other caller of that function is asking to *run* something,
+and a Space with an agent loop is the thing that must not exist. The constructor
+is the one caller asking only to recover, and there is nothing of the kind to
+recover. A future change that adds a caller has to answer the same question the
+same way.
+
+The second half is the name. The Space's own authority is reached over Durable
+Object RPC, so a rejection that is not its own refusal crosses the hop with no
+code on it, and a 500 from the object is the object saying it does not know what
+went wrong; both reached a person as `internal_error`, which is what made one
+cause cost five diagnoses. `SpaceService.throughSpaceAuthority` names them
+`space_authority_unreachable` — a twelfth closed `SpaceErrorCode`, with its own
+sentence in the desktop copy table — while a refusal the object *chose* keeps
+its own code, because replacing `space_protected` or a content fence with a
+generic word is the same mistake pointing the other way. The containment
+preflight gets the same treatment: a member Channel's conversation that *throws*
+is now the same answer as one that returns `null`, `space_conversation_unreachable`,
+because in both the question was never asked.
+
+Found by staging a real window rather than by a suite, which is itself the
+finding: every Space suite enters below the route, or doubles the object that
+refuses. The layer that was missing is added in the change beside this one.
 
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 
