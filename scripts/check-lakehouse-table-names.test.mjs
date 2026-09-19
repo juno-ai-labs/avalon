@@ -63,6 +63,34 @@ test("leaves a bare mention outside a query alone", () => {
   );
 });
 
+test("catches a quoted identifier, which slips past a bare-word match", () => {
+  const found = misqualifiedReferences('FROM "rally"."llm_inference"\n', INFERENCE);
+
+  assert.equal(found.length, 1);
+  assert.equal(found[0].found, "rally.llm_inference");
+  assert.deepEqual(misqualifiedReferences('FROM "avalon"."llm_inference"\n', INFERENCE), []);
+});
+
+/**
+ * R2 SQL is backed by an Iceberg catalog, whose namespace names are
+ * case-sensitive, so a differently-cased qualifier names a table that does not
+ * resolve. The matcher is case-insensitive so the mention is found; the
+ * comparison is not, so it is reported.
+ */
+test("reports a qualifier that differs from the manifest only in case", () => {
+  assert.equal(misqualifiedReferences("FROM AVALON.llm_inference\n", INFERENCE).length, 1);
+});
+
+/** A manifest name is an identifier today; a future one must not be a pattern. */
+test("treats a table name as a literal rather than a pattern", () => {
+  const dotted = { namespace: "avalon", table: "llm.inference" };
+
+  // Unescaped, the manifest's `.` matches the `X` and reports a table that
+  // was never named.
+  assert.deepEqual(misqualifiedReferences("FROM rally.llmXinference\n", dotted), []);
+  assert.equal(misqualifiedReferences("FROM rally.llm.inference\n", dotted).length, 1);
+});
+
 test("reads the namespace and table from the checked-in manifests", async () => {
   const tables = await lakehouseTables();
 
