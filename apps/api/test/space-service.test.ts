@@ -67,9 +67,7 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
     recordSpaceIntentReceipt: vi.fn(async () => ({ recorded: true })),
-    prepareSpaceArchive: vi.fn(async () => ({
-      ok: true, space: summary(), membershipGeneration: 3,
-    })),
+    prepareSpaceArchive: vi.fn(async () => ({ ok: true, space: summary() })),
     finalizeSpaceArchive: vi.fn(async () => ({ ok: true, space: summary({ status: "archived" }) })),
     restoreSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     ...overrides,
@@ -248,7 +246,7 @@ describe("SpaceService lifecycle fan-out", () => {
     const workspace = workspaceDouble({
       prepareSpaceArchive: vi.fn(async () => {
         log.push("prepare");
-        return { ok: true, space: summary(), membershipGeneration: 3 };
+        return { ok: true, space: summary() };
       }),
       listSpaceMembers: vi.fn(async (input: { reach?: string }) => {
         log.push(`members:${input.reach}`);

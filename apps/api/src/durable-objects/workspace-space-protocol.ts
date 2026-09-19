@@ -56,6 +56,21 @@ export const WorkspaceSpaceRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpaceRequest = z.infer<typeof WorkspaceSpaceRequestSchema>;
 
+/**
+ * An archive, staged and settled under one operation id the caller owns.
+ *
+ * Separate from {@link WorkspaceSpaceRequestSchema} because the settlement has
+ * to name the intent the preflight staged, and the id it used to reconstruct
+ * that from — the Space revision, minus one, read back after the archive
+ * advanced it — was arithmetic over two writes in two objects. The caller
+ * already mints one for an audience change; an archive is the same shape.
+ */
+export const WorkspaceSpaceArchiveRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+  operationId: IdSchema,
+}).strict();
+export type WorkspaceSpaceArchiveRequest = z.infer<typeof WorkspaceSpaceArchiveRequestSchema>;
+
 export const WorkspaceSpaceReorderRequestSchema = SpaceActorSchema.extend({
   order: ReorderSpacesRequestSchema,
 }).strict();
