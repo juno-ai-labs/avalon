@@ -2,6 +2,7 @@ import {
   CreateSpaceRequestSchema,
   ReorderSpacesRequestSchema,
   SpaceChannelPageSchema,
+  SpaceDefaultKindSchema,
   SpaceDirectorySchema,
   SpaceIdSchema,
   SpaceSummarySchema,
@@ -13,7 +14,6 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { SpaceDefaultKindSchema } from "../durable-objects/workspace-space-protocol";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";

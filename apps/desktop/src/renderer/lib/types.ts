@@ -196,16 +196,6 @@ export interface WorkstreamSummary {
   spaceIds: string[];
 }
 
-/**
- * The two kinds of thing a Space hands down to its member Channels.
- *
- * Restated here rather than imported: the server's `SpaceDefaultKindSchema`
- * lives in `apps/api/src/durable-objects/workspace-space-protocol.ts`, which
- * the renderer cannot reach, and `@rally/contracts` does not re-export it. It
- * belongs in the contracts package beside the rest of the Space wire shapes.
- */
-export type SpaceDefaultKind = 'resource' | 'sidekick';
-
 export interface Participant extends WorkspaceMember {
   accent?: string;
   viewing?: boolean;

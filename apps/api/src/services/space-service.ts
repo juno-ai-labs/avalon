@@ -10,6 +10,7 @@ import {
   type CreateSpaceRequest,
   type SpaceChannelPage,
   type SpaceDirectory,
+  type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
   type SpaceSummary,
@@ -25,10 +26,10 @@ import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
-  type SpaceDefaultKind,
   type SpaceMember,
   type SpaceMembershipReach,
   type WorkspaceSpaceMembershipPlanResult,
@@ -174,6 +175,50 @@ export class SpaceService {
       }).catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * The Organization's General Space, opened if this caller is the first.
+   *
+   * `create`'s two halves under one idempotent front door. The reservation is
+   * the unique partial index's decision rather than a read — every caller here
+   * is a retry of another, and the loser is answered with the Space the winner
+   * made — and only the caller that *made* it opens the object, because
+   * provisioning the same Space twice would reserve its main conversation
+   * twice.
+   *
+   * Reached by every creation that names no Space and by the cutover, which is
+   * why it is here rather than inside either: a Channel created while the
+   * bootstrap is still running lands in the same General the bootstrap is
+   * placing everything else into.
+   */
+  async ensureGeneral(): Promise<SpaceSummary> {
+    const workspace = await this.workspace();
+    const result = WorkspaceSpaceGeneralResultSchema.parse(await workspace.ensureGeneralSpace({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "General");
+    if (!result.created) return result.space;
+    try {
+      await this.provisionSpaceObject(result.space.id, {
+        name: result.space.name,
+        iconKey: result.space.iconKey,
+        colorKey: result.space.colorKey,
+        scope: result.space.scope,
+      });
+    } catch (error) {
+      // The same undo `create` does, for the same reason: a reservation whose
+      // object never opened is a Space in every member's sidebar that answers
+      // nothing — and General is in every member's sidebar by construction.
+      await workspace.cancelSpaceReservation({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId: result.space.id,
+      }).catch(() => undefined);
+      throw error;
+    }
+    return this.summary(result.space.id);
   }
 
   /** Presentation belongs to the Space's own authority; this is its door. */

@@ -21,7 +21,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import { ProjectSnapshotSchema } from "./projects";
 import { SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
@@ -1661,8 +1661,17 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 );
 
 export const WorkstreamCreationFieldsSchema = z.object({
-  /** Optional organizer chosen by the caller; the API reauthorizes it. */
-  projectId: ProjectIdSchema.optional(),
+  /**
+   * The Spaces this Channel is born in; the API reauthorizes every one of them.
+   *
+   * A list rather than one id because a Channel belongs to as many Spaces as it
+   * was put in. Empty — which is what every connector, import, recovery and
+   * scheduled path sends — means General: every Channel has a home, and no
+   * caller without a person at a keyboard has one to choose. A Space named here
+   * is established with the Channel or the creation fails without publishing
+   * one, so there is no window in which a Channel exists outside the hierarchy.
+   */
+  spaceIds: z.array(SpaceIdSchema).default([]),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**
