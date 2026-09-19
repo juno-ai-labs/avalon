@@ -513,10 +513,20 @@ Four rules decide what a row holds:
 - **Whatever another tool documents as copied from this one stays.** A
   projection that drops an id does not save bytes, it breaks the tool that was
   documented to take it.
+- **A field with no other read path stays, however wide it is.** Width is a
+  reason to bound a field, never on its own a reason to drop it. `output.text`
+  on a check run is the widest field in the GitHub surface and is also the only
+  place this plugin can read *why* a check failed — no check-run get, no
+  annotations tool, no job-log tool — so dropping it would have taken a
+  capability with it. Search for the read path before deciding a field is
+  recoverable elsewhere.
 - **A field the provider sent as `null` stays `null`, at any depth**, because
   `merged_at: null` is the answer to "was it merged". A field the provider never
   sent stays absent, because a synthesized `null` claims it answered a question
-  nobody asked it.
+  nobody asked it — and so does an empty container standing where a field was
+  asked for, so `projectFields` attaches a nested object only once something
+  declared was found beneath it. A present but empty array is kept, because
+  "there are none" is a complete answer.
 - **Provider fields keep the provider's spelling.** A model that learned an API
   in pretraining reaches for `html_url` and `head.ref` (rule 2 above); only the
   envelope around the rows is ours to name.
