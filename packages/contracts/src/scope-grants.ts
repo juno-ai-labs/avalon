@@ -51,6 +51,22 @@ export const ScopeGrantMutationSchema = z.strictObject({
   active: z.boolean(),
   /** Zero asserts absence. Revoked rows retain a positive revision. */
   expectedRevision: z.number().int().nonnegative(),
+  /**
+   * The Space this grant is being written on behalf of, when it is not the
+   * Channel's own decision.
+   *
+   * Absent means direct, which is what every grant was before Spaces existed.
+   * It is carried on the mutation rather than inferred because the authority
+   * cannot tell the two apart: the same method writes the same row either way,
+   * and the difference decides whether the grant reaches the shared
+   * scope-grant directory. A Space-derived reader finds the Channel through
+   * the Space, so publishing one would put every Channel in General into every
+   * member's flat candidate index.
+   *
+   * Deliberately not part of {@link ScopeGrantSchema}: it is provenance the
+   * object keeps, not a fact the grant's readers are owed.
+   */
+  spaceSourceId: IdSchema.optional(),
 });
 export type ScopeGrantMutation = z.infer<typeof ScopeGrantMutationSchema>;
 
