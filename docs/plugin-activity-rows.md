@@ -148,8 +148,8 @@ absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
 other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
-row and uses Tabler's **stack-backward** glyph for `start_agent`,
-`list_agents`, `stop_agent`, `sidekicks_list` and `create_sidekick`.
+row and uses Tabler's **stack-backward** glyph for `list_agents`, `stop_agent`,
+`sidekicks_list` and `create_sidekick`.
 
 Three of its tools are not on that row, because their subject is a message or a
 worker rather than a plugin Rally reached for. All three are counted rather than
@@ -193,7 +193,23 @@ structured content is `AGENT_MESSAGE_CONTENT_KIND`. Which one it is depends on
 | --- | --- | --- |
 | none — a teammate's own message | **messages from a background agent** | **mail-ai** |
 | `finished_without_reply` | **background agents finished without replying** | **circle-check** |
-| `failed` | **background agents failed** | **alert-triangle** |
+| `failed` | **background agents failed: `<reason>`** | **alert-triangle** |
+
+A failure row names its diagnostic, and groups on it: two failures for one
+reason collapse into a row, two reasons stay two rows. The row is the reader's
+whole record of the failure — the body is not shown — so a bare "1 background
+agent failed" would name nothing anybody can act on, which is the generic code
+[`naming-a-schema-failure.md`](naming-a-schema-failure.md) calls a defect rather
+than a fallback. Aggregating two reasons into one row would have to drop one of
+them, so the reason is part of the group key.
+
+**These rows are drawn before the message is promoted, too.** A message reaches
+its recipient through the mailbox and can sit there until the next safe
+execution boundary, which for a busy recipient is a whole step;
+`pendingTranscriptInputOverlay` runs the same projection, so the feed does not
+show the raw prose for that window and then swap it for a counted row. The
+overlay also carries no delivery state, which keeps a teammate's message off the
+composer queue — a queued row is something a person wrote and can reorder.
 
 The two notices are written by the host on a run's behalf rather than by a
 model, and they travel the ordinary delivery path, so before `notice` existed
@@ -492,6 +508,17 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   and gone-elsewhere calls alike, which is what a plugin row has always
   reported. A run with no `toolCallIds`, or whose blocks have not all arrived,
   also keeps it: dropping a row on an unknown is the worse of the two failures.
+- **A counted row built from message turns carries the highest attention
+  ordinal it stands for.** This is the one place a row in this column carries
+  one. A grouped plugin row does not, because the tool turns behind it never
+  had one; an admitted agent message is a non-tool turn, so the server
+  allocates it an ordinal and the room's unread waterline moves with it. Null
+  it and no row carries it at all: `highestVisibleAttentionSequence` skips a
+  null, `conversationReadAcknowledgement` never advances `seen_attention_ordinal`,
+  and the work stream keeps an unread dot that reading it cannot clear — only
+  sending a message clears it. The *highest* rather than the first, because one
+  row stands for several messages: the divider belongs above it whenever any of
+  them is unread, and acknowledging it has to acknowledge all of them.
 - **A counted row reports no interval, and that is not the same as an unknown
   one.** A message is an event rather than a stretch of work, and
   `send_message` returns at once by contract, so a counted row carries no
@@ -812,7 +839,10 @@ each notice is a model-visible message in the owner's conversation, so it costs
 inference and changes how the owner behaves. [`agent-communication.md`](agent-communication.md)
 owns that call.
 
-**Consequences:** The message body is unreachable from the feed. Any group
+**Consequences:** The message body is unreachable from the feed, which is what
+makes the failure row's `reason` and the model-facing host attribution in
+`renderAgentMessage` load-bearing rather than cosmetic: they are what is left
+when the prose is gone. Any group
 given a `countPhrase` must leave `durationMs` null, or the row will print a
 number its own phrase contradicts, and must accept that `foldedStretchTotal`
 attributes it no time at all. A message stored before `notice` existed reads as
