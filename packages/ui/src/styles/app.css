@@ -5286,6 +5286,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .manage-access-source strong { align-items: center; display: flex; font-size: 13px; font-weight: 560; gap: 6px; min-width: 0; }
 .manage-access-source small { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .manage-access-source .inline-error { grid-column: 1 / -1; }
+/* The read failed and there is nothing to list: the message and its retry take
+   the place of the sources rather than standing over a spinner. */
+.manage-access-failed { display: grid; gap: 10px; justify-items: start; }
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
