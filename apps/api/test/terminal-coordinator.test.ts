@@ -7,6 +7,7 @@ import {
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
+import { TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS } from "../src/services/terminal/contract";
 import type {
   TerminalSandboxProvider,
   TerminalSandboxState,
@@ -247,7 +248,10 @@ describe("Terminal sandbox coordinator", () => {
     advance(10);
 
     const acquired = await coordinator.acquire(context());
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ waitMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ state: "running" });
     expect(workstreamObjectGet(
       objectStore,
@@ -271,9 +275,52 @@ describe("Terminal sandbox coordinator", () => {
 
     const acquired = await coordinator.acquire(context());
 
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ waitMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ providerSandboxId: "sandbox-1", state: "running" });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("gives a restore what is left of the tool's acquisition budget, not a provider default", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    advance(90);
+
+    // Acquisition spends wall-clock time before any sandbox is started: the
+    // workspace policy read, the repository-authority join and the provider
+    // state read-back all precede the restore. The wait Daytona is given is
+    // read at the moment the restore begins, so it is the budget minus what
+    // those already cost — never the whole budget, and never a fixed number of
+    // the adapter's own.
+    const spentBeforeRestore = 25_000;
+    let wallClock = Date.now();
+    let charged = false;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+    vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
+      if (!charged) {
+        charged = true;
+        wallClock += spentBeforeRestore;
+      }
+      return {
+        id: "sandbox-1",
+        name: requested,
+        state: "archived" as const,
+        domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+      };
+    });
+
+    try {
+      await coordinator.acquire(context());
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
+      waitMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS - spentBeforeRestore,
+    });
   });
 
   it.each([true, false, undefined])("honors provider recoverability %s before replacing an errored sandbox", async (recoverable) => {
@@ -360,7 +407,10 @@ describe("Terminal sandbox coordinator", () => {
 
     observeProviderState(provider, "sandbox-1", "archived");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ waitMs: expect.any(Number) }),
+    );
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
@@ -419,7 +469,10 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "archived");
     vi.mocked(provider.readFile).mockRejectedValueOnce(Object.assign(new Error("runner unavailable"), { status }));
     await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ waitMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))

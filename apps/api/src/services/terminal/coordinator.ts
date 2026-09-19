@@ -23,7 +23,10 @@ import type { ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
-import { TERMINAL_OUTPUT_ROOT } from "./contract";
+import {
+  remainingTerminalAcquisitionBudgetMs,
+  TERMINAL_OUTPUT_ROOT,
+} from "./contract";
 import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,
@@ -38,6 +41,7 @@ import {
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
+  type TerminalSandboxWaitBudget,
 } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 
@@ -194,6 +198,16 @@ export class TerminalSandboxCoordinator {
 
   async acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
     const acquisitionStartedAt = Date.now();
+    /**
+     * Every provider wait below is bounded by what is left of the same budget
+     * the calling tool's deadline was sized from, read at the moment the wait
+     * begins rather than once up front: policy loading, authority replacement,
+     * and network reconciliation all run before a sandbox is started, and each
+     * of them spends this.
+     */
+    const waitBudget: TerminalSandboxWaitBudget = () => ({
+      waitMs: remainingTerminalAcquisitionBudgetMs(Date.now() - acquisitionStartedAt),
+    });
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
@@ -253,6 +267,7 @@ export class TerminalSandboxCoordinator {
         policy.revision,
         domains,
         now,
+        waitBudget,
       );
       telemetryAction = "start_fresh";
       localFilesRetained = false;
@@ -274,7 +289,7 @@ export class TerminalSandboxCoordinator {
       }
 
       if (!row.sandboxId) {
-        row = await this.createReservedSandbox(context, row, domains, now);
+        row = await this.createReservedSandbox(context, row, domains, now, waitBudget);
       } else {
         const resumed = await this.resumeProviderSandbox(
           context,
@@ -284,6 +299,7 @@ export class TerminalSandboxCoordinator {
           policy.revision,
           domains,
           now,
+          waitBudget,
         );
         row = resumed.row;
         telemetryAction = resumed.action ?? telemetryAction;
@@ -577,6 +593,7 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitBudget,
   ): Promise<TerminalSandboxRecord> {
     let created: TerminalSandboxSnapshot;
     try {
@@ -606,7 +623,7 @@ export class TerminalSandboxCoordinator {
     }
     if (created.state !== "running") {
       if (created.state === "stopped" || created.state === "archived") {
-        await this.provider.startSandbox(created.id);
+        await this.provider.startSandbox(created.id, waitBudget());
       } else {
         throw providerStateError(created.state);
       }
@@ -681,6 +698,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitBudget,
   ): Promise<{
     row: TerminalSandboxRecord;
     action: TerminalAcquisitionObservation["action"] | null;
@@ -697,6 +715,7 @@ export class TerminalSandboxCoordinator {
         networkRevision,
         domains,
         now,
+        waitBudget,
       ),
       action: "start_fresh",
     });
@@ -720,8 +739,8 @@ export class TerminalSandboxCoordinator {
       throw providerStateError(observed.state);
     }
     try {
-      if (recover) await this.provider.recoverSandbox(sandboxId);
-      else await this.provider.startSandbox(sandboxId);
+      if (recover) await this.provider.recoverSandbox(sandboxId, waitBudget());
+      else await this.provider.startSandbox(sandboxId, waitBudget());
     } catch (error) {
       // A start that throws has not said what became of the sandbox. Ask,
       // rather than treating every failure as a lost workspace: a restore that
@@ -787,6 +806,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     domains: string[],
     now: number,
+    waitBudget: TerminalSandboxWaitBudget,
   ): Promise<TerminalSandboxRecord> {
     logStructuredEvent(this.env, "warn", "terminal_sandbox_replaced_after_loss", {
       workspace_id: context.workspaceId,
@@ -805,7 +825,7 @@ export class TerminalSandboxCoordinator {
       ...deadlines(this.clock.now()),
       now,
     });
-    return this.createReservedSandbox(context, replaced, domains, now);
+    return this.createReservedSandbox(context, replaced, domains, now, waitBudget);
   }
 
   private async replaceForAuthority(

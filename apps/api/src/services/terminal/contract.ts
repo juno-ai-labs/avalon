@@ -120,6 +120,28 @@ export const TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS = 180_000;
 export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
   TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
 
+/**
+ * What is left of the acquisition budget for a provider wait about to start
+ * inside it.
+ *
+ * The budget above sizes every tool deadline in this file, but it used to stop
+ * there: the coordinator never saw it, so the longest a sandbox restore could
+ * take was decided instead by the `60` seconds the Daytona adapter passed to
+ * `Sandbox.start`, which is that SDK method's own default re-typed as an
+ * argument. Half the advertised budget therefore went unused while archived
+ * restores past a minute were recorded as `sandbox_start` failures at exactly
+ * 60_000ms — a ceiling that censored the measurement anyone would need in
+ * order to choose a real one. One deadline, owned where it is advertised,
+ * replaces the two.
+ *
+ * Zero is a legitimate answer, not an error: acquisition has already outlived
+ * the deadline the model was given, and the provider call should ask for the
+ * start and stop waiting for it rather than spending time nobody is holding.
+ */
+export function remainingTerminalAcquisitionBudgetMs(elapsedMs: number): number {
+  return Math.max(0, TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS - Math.max(0, elapsedMs));
+}
+
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
     name: "read_file",
