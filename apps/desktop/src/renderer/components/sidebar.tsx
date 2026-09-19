@@ -1261,7 +1261,31 @@ export function Sidebar({
   // section has always drawn. Every other session reads its Channels under the
   // Space each one lives in.
   const spacesEnabled = spaces !== undefined;
-  const visibleSpaceIds = useMemo(() => new Set<string>((spaces ?? []).map((space) => space.id)), [spaces]);
+  /**
+   * The Spaces this sidebar is drawing as Spaces — the one answer every section
+   * that reasons about the hierarchy asks for.
+   *
+   * None in a shell with no Space navigation, and none while the Organization
+   * is still opening: the Spaces section draws its opening card *instead of*
+   * the rows until `spacesReady`, and a Channel placed in a Space that is not
+   * on screen is a Channel the reader cannot reach through the hierarchy. It is
+   * also where a Channel may be placed *from* a row, because the server refuses
+   * the membership with `space_bootstrap_pending` and a menu that could only
+   * fail is worse than one that is not there.
+   *
+   * One value rather than one per section, and this is why: the fallback list
+   * below decides what to draw by asking whether a Channel's Spaces are among
+   * these, so a section that disagreed with the hierarchy about which Spaces
+   * exist would leave every placed Channel in neither list.
+   */
+  const placementSpaces = useMemo(
+    () => (spaces !== undefined && spacesReady ? spaces : []),
+    [spaces, spacesReady],
+  );
+  const visibleSpaceIds = useMemo(
+    () => new Set<string>(placementSpaces.map((space) => space.id)),
+    [placementSpaces],
+  );
   /**
    * Channels this reader can open that none of their visible Spaces holds.
    *
@@ -1270,6 +1294,12 @@ export function Sidebar({
    * personal Space is readable and, without this, would be in the sidebar
    * nowhere at all. **Manage access** already draws such a placement as a Space
    * the viewer cannot see; this is the same fact in the navigation.
+   *
+   * While the Organization is still opening this is *every* Channel, which is
+   * the point: the Spaces above are showing an opening card rather than rows,
+   * and a member with the desktop open through their Organization's cutover
+   * would otherwise watch each page of Channels leave the sidebar as the walk
+   * placed it in General.
    *
    * Pinned Channels are left out, exactly as the list this replaces left them
    * out: the section above already has them, and a row in both would take its
@@ -1546,13 +1576,6 @@ export function Sidebar({
     setMenuFailure(null);
     void onAddChannelToSpace(spaceId, workstream.id).catch(() => setMenuFailure('add_to_space'));
   };
-
-  // Where a Channel could be placed from its row: nowhere in a shell without
-  // Space navigation, and nowhere until the Organization has finished opening
-  // — the section is showing its opening card instead of the hierarchy, and
-  // the server refuses the membership with `space_bootstrap_pending`. One
-  // decision for all three row sites.
-  const placementSpaces = spaces !== undefined && spacesReady ? spaces : [];
 
   const workstreamRowActions = {
     onAddToSpace: addToSpace,

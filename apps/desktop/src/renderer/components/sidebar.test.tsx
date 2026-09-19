@@ -3282,6 +3282,29 @@ describe('the sidebar without a recency list', () => {
     expect(screen.queryByText('Other channels')).not.toBeInTheDocument();
   });
 
+  /**
+   * The one-time cutover, with the desktop open.
+   *
+   * The Spaces section draws its opening card *instead of* the rows until the
+   * Organization has finished placing every Channel in General, and the
+   * directory already carries General while that is going on. A fallback list
+   * that read the directory without reading readiness would take each page of
+   * placed Channels out of **Other channels** as the walk placed it, and put it
+   * into a hierarchy nobody can see yet — a sidebar that empties itself, one
+   * page at a time, for as long as the cutover runs.
+   */
+  it('given an organization still opening, when the sidebar is drawn, then every channel is still reachable', () => {
+    const general = space('00000000-0000-7000-8000-0000000000f0', 'General');
+    const placed = placedIn(today, general.id);
+    renderSidebar({ spaces: [general], spacesReady: false, workstreams: [placed] });
+
+    // The hierarchy is not on screen: there is no row to find the Channel
+    // under, which is what makes the fallback the only place it can be.
+    expect(screen.queryByRole('button', { name: 'Expand General' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Other channels' }))
+      .getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+  });
+
   // The section above already holds it, and a row in both would take its order
   // from whichever the reader saw last — the same rule the list this replaces
   // was under.
