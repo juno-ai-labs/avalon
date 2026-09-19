@@ -433,6 +433,33 @@ describe("a Channel's Space access sources", () => {
     });
   });
 
+  it("given two audience changes interleaved, when the older one converges, then it is refused", async () => {
+    // Two audience changes on one Space, reaching this Channel out of order.
+    // Both converge by retract-then-apply, and the retraction is what deletes
+    // the row the application and the confirmation fence on — so the older one
+    // has to be refused *here* or it finds nothing to lose to and installs its
+    // stale roster over the newer audience.
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), spaceRevision: 2,
+    });
+
+    expect(await channel().retractSpaceAccessSource({
+      ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(),
+      expectedSpaceRevision: 1, channel: personal([OWNER, READER]),
+    })).toEqual({ ok: false, code: "space_revision_conflict" });
+    // Refused rather than partly applied: the source the newer change
+    // committed is still here, with its roster.
+    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
+      .toMatchObject({ spaces: [{ spaceId: SPACE_A, participantUserIds: [OWNER, READER] }] });
+
+    // The newer change's own convergence is not refused by its own fence.
+    expect(await channel().retractSpaceAccessSource({
+      ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(),
+      expectedSpaceRevision: 2, channel: personal([OWNER, READER]),
+    })).toMatchObject({ ok: true });
+  });
+
   it("given a source that is already gone, when it is retracted again, then it converges on an empty plan", async () => {
     // Access is live: a source that does not exist grants nothing, and a
     // retraction reissued under a new operation id after a crash has to finish.

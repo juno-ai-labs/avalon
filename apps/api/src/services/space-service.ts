@@ -238,7 +238,19 @@ export class SpaceService {
 
     const access = new ChannelAccessService(this.env, this.auth);
     for (const workstreamId of members) {
-      await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
+      // The Space, re-read each time round. Every step below is a cross-object
+      // await, so a later audience change can accept and overtake this one part
+      // way through the walk; carrying on would leave the Channels behind it on
+      // a roster nobody asked for. Abandoning here is safe because the newer
+      // change walks every member itself.
+      if ((await this.summary(spaceId)).revision !== updated.revision) {
+        await this.recordReceipt(operationId, "audience_superseded", true);
+        return this.summary(spaceId);
+      }
+      // The revision travels with the retraction as well as the application:
+      // the retraction deletes the row the application's fence reads, so
+      // without it an older convergence would be refused by nothing.
+      await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), updated.revision);
       await access.applySpaceSource(workstreamId, {
         spaceId,
         scope: input.scope,
@@ -557,7 +569,7 @@ export class SpaceService {
         return;
       }
       for (const workstreamId of await this.memberChannelIds(intent.spaceId)) {
-        await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
+        await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
         await access.applySpaceSource(workstreamId, {
           spaceId: intent.spaceId,
           scope: space.scope,
