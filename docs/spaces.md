@@ -861,6 +861,12 @@ rather than from here.
 Migrations 61 and 62 are visible through the existing Durable Object migration
 tracker, and **the tracker's forced pass is what starts the cutover**: it wakes
 every WorkspaceDO, and the alarm armed by construction claims the first page.
+The napkin sum for that fleet-wide burst on the shared activity Queue — one
+in-flight page per Organization, against the platform's published per-queue
+throughput — is in the comment beside the producer, in
+`workspace-space-default-publication.ts`, where
+[`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#deciding-without-measurement)
+asks for it.
 [`runbook.md`](runbook.md) holds the operator sequence — force the class, watch
 `spaceBootstrapStatus`, remediate blockers, confirm an empty dead-letter queue.
 
