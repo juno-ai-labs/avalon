@@ -30,6 +30,7 @@ import { z } from "zod";
 import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
 import {
+  SpaceBootstrapQueueMessageSchema,
   SpaceDefaultQueueMessageSchema,
   SpaceIntentResumeQueueMessageSchema,
 } from "../durable-objects/workspace-space-protocol";
@@ -65,6 +66,7 @@ import {
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
+import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
 
@@ -545,6 +547,54 @@ async function consumeOne(message: Message<unknown>, env: Env,
         workstream_id: target.workstreamId,
         kind: target.kind,
         reason: errorCode,
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+  const bootstrap = SpaceBootstrapQueueMessageSchema.safeParse(message.body);
+  if (bootstrap.success) {
+    const work = bootstrap.data;
+    if (work.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    // Nobody is signed in. The cutover's actor is resolved from current
+    // membership rather than carried on the message, because the message may
+    // be redelivered days later and the person it named may have left.
+    const driver = await spaceBootstrapDriver(env, work.workspaceId, env.AVALON_REGION);
+    if (!driver) {
+      // An Organization with no active member has nobody the disclosure could
+      // be attributed to, and nobody to render the hierarchy for either.
+      logInfo(env, "space_bootstrap_skipped", {
+        workspace_id: work.workspaceId,
+        outcome: "skipped",
+        reason: "no_active_member",
+      });
+      message.ack();
+      return;
+    }
+    try {
+      const cutover = new SpaceBootstrapService(env, driver);
+      if (work.kind === "general") await cutover.runGeneral();
+      else if (work.kind === "memberships") await cutover.runMemberships(work.cursor);
+      else await cutover.runFinalize();
+      message.ack();
+    } catch (error) {
+      if (isRetirementRefusal(error)) {
+        message.ack();
+        return;
+      }
+      // Said out loud, for the reason a resume says its own: the alarm
+      // republishes this on its retry gate as well, so a silent catch turns a
+      // half-migrated Organization into a dead-letter message with no reason
+      // on it.
+      logWarn(env, "space_bootstrap_failed", {
+        workspace_id: work.workspaceId,
+        kind: work.kind,
+        attempts: message.attempts,
+        reason: diagnosticErrorCode(error, "space_bootstrap_failed"),
       });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });

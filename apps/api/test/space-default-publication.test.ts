@@ -12,10 +12,12 @@ import { asSpaceId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
   publishSpaceIntentResumes,
 } from "../src/durable-objects/workspace-space-default-publication";
 import type {
+  SpaceBootstrapClaim,
   WorkspaceSpaceDefaultPublication,
   WorkspaceSpaceIntentClaim,
 } from "../src/durable-objects/workspace-space-storage";
@@ -55,6 +57,7 @@ const INTENT: WorkspaceSpaceIntentClaim = {
 };
 
 function storageDouble(input: {
+  bootstrap?: SpaceBootstrapClaim | null;
   publications?: WorkspaceSpaceDefaultPublication[];
   intents?: WorkspaceSpaceIntentClaim[];
 }) {
@@ -62,6 +65,7 @@ function storageDouble(input: {
     claimDefaultPublications: vi.fn(() => input.publications ?? []),
     acceptDefaultPublications: vi.fn(),
     claimIntentResumes: vi.fn(() => input.intents ?? []),
+    claimBootstrap: vi.fn(() => input.bootstrap ?? null),
   };
 }
 
@@ -155,5 +159,46 @@ describe("republishing unsettled Space intents", () => {
       membershipGeneration: null,
       requestedByUserId: OWNER,
     } }]);
+  });
+});
+
+describe("publishing the cutover's next page of work", () => {
+  it("given a claimed page, when the alarm publishes, then one message carries its kind and cursor", async () => {
+    const storage = storageDouble({ bootstrap: { kind: "memberships", cursor: CHANNEL_ID } });
+    const sendBatch = vi.fn(async () => undefined);
+
+    await expect(publishSpaceBootstrapWork({
+      storage,
+      queue: { sendBatch },
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      now: 1_000,
+      retryAt: (attempt) => 1_000 + attempt * 30_000,
+    })).resolves.toBe(1);
+
+    expect(sendBatch).toHaveBeenCalledWith([{
+      body: {
+        type: "space_bootstrap",
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        kind: "memberships",
+        cursor: CHANNEL_ID,
+      },
+    }]);
+  });
+
+  it("given a finished cutover, when the alarm publishes, then the Queue is not called", async () => {
+    const storage = storageDouble({ bootstrap: null });
+    const sendBatch = vi.fn(async () => undefined);
+
+    await expect(publishSpaceBootstrapWork({
+      storage,
+      queue: { sendBatch },
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      now: 1_000,
+      retryAt: (attempt) => 1_000 + attempt * 30_000,
+    })).resolves.toBe(0);
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 });
