@@ -80,8 +80,10 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
     <Tooltip.Provider>
       <MemoryRouter initialEntries={['/workstreams/new']}>
         <SpaceSidebarSection
+          hasMoreChannels={false}
           inactiveSpaces={[]}
           loading={false}
+          loadingMoreChannels={false}
           onAddChannel={async () => undefined}
           onCreate={async () => hiring}
           onReorder={async () => undefined}
@@ -112,8 +114,10 @@ function CreateFlowHarness({
   return (
     <>
       <SpaceSidebarSection
+        hasMoreChannels={false}
         inactiveSpaces={[]}
         loading={false}
+        loadingMoreChannels={false}
         onAddChannel={async () => undefined}
         onCreate={async (input) => {
           const created = await onCreate(input);
@@ -186,8 +190,10 @@ describe('the Spaces sidebar section', () => {
       <Tooltip.Provider>
         <MemoryRouter initialEntries={[`/spaces/${hiring.id}`]}>
           <SpaceSidebarSection
+            hasMoreChannels={false}
             inactiveSpaces={[]}
             loading={false}
+            loadingMoreChannels={false}
             onAddChannel={async () => undefined}
             onCreate={async () => hiring}
             onReorder={async () => undefined}
@@ -400,6 +406,46 @@ describe('the Spaces sidebar section', () => {
 
     expect(screen.queryByText('No channels')).not.toBeInTheDocument();
     expect(screen.queryByText(/open this space to see all/u)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The sidebar's own page trigger was the nav's scroll reaching the end of the
+   * time-grouped list of every Channel, and that list is gone for a member. An
+   * expanded Space is what is left that can tell the sidebar it is holding less
+   * than the Organization says exists.
+   */
+  it('given an expanded space short of its channels, when pages remain, then the next one is asked for', async () => {
+    const onLoadMoreChannels = vi.fn();
+    renderSection({
+      hasMoreChannels: true,
+      onLoadMoreChannels,
+      spaces: [space(hiring.id, 'Hiring', { channelCount: 3 })],
+      workstreams: [channel('00000000-0000-7000-8000-0000000000e1', 'Only one', '2026-08-27T01:00:00.000Z', hiring.id)],
+    });
+    // Collapsed, the Space is drawing nothing and is not short of anything.
+    expect(onLoadMoreChannels).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+
+    await waitFor(() => expect(onLoadMoreChannels).toHaveBeenCalled());
+  });
+
+  // The count is the Organization's rather than this viewer's, so a Space can
+  // be permanently "short" of Channels this person may not read. Running out of
+  // pages is what stops the asking; the count being reached is not.
+  it('given no pages left, when an expanded space is still short, then nothing is asked for', async () => {
+    const onLoadMoreChannels = vi.fn();
+    renderSection({
+      hasMoreChannels: false,
+      onLoadMoreChannels,
+      spaces: [space(hiring.id, 'Hiring', { channelCount: 3 })],
+      workstreams: [channel('00000000-0000-7000-8000-0000000000e1', 'Only one', '2026-08-27T01:00:00.000Z', hiring.id)],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Only one' })).toBeVisible());
+    expect(onLoadMoreChannels).not.toHaveBeenCalled();
   });
 
   it('given a dragged channel, when it is dropped on a space, then membership is requested', async () => {

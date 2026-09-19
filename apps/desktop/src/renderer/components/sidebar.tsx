@@ -1896,6 +1896,9 @@ export function Sidebar({
               onReorder={onReorderContainer}
               onRestore={onRestoreSpace}
               onRetry={onRetrySpaces}
+              hasMoreChannels={hasMoreWorkstreams}
+              loadingMoreChannels={loadingMoreWorkstreams}
+              onLoadMoreChannels={onLoadMoreWorkstreams}
               ordering={ordering}
               outOfDate={spacesOutOfDate}
               ready={spacesReady}
