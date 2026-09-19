@@ -452,9 +452,14 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
-### 2026-09-19 — A narrowed audience is a hop that asks the room who is still reading
+### 2026-09-19 — A Space is a hop that names children and closes nothing, and a narrowing asks the room who is still reading
 
-**What changed:** `workstream_audience_narrowed` joins the target union,
+**What changed:** The target union gains `{ scope: "space", spaceId }`, and the
+consumer resolves it through `SPACE_DOS`, calls `listChildren`, and publishes one
+`substream` message per child keyed by the Space id. It does not call
+`revokeSocketAccess`.
+
+`workstream_audience_narrowed` joins the target union,
 carried with `userId: null`, and `WorkstreamDO.revokeNarrowedAudienceAccess`
 closes the sockets it can no longer admit and answers with whose they were. The
 consumer turns each of those names into the ordinary `workstream` and
@@ -462,38 +467,17 @@ consumer turns each of those names into the ordinary `workstream` and
 when its plan sets `narrowScope`, and `WorkstreamService.update` when the
 Channel's own scope goes from `workspace` to `personal`.
 
-**Why:** Neither narrowing published anything at all. A work stream that stopped
+**Why:** A Space is `WorkstreamDO` under a role that refuses client socket
+upgrades, so the object itself holds nothing this queue exists to close. Its
+hidden main conversation is an ordinary `SubstreamAgent` and does hold what was
+opened against it, and only the Space knows that conversation exists.
+
+Neither narrowing published anything at all. A work stream that stopped
 being Organization-wide left every member who was reading it still reading it,
 because the room closes sockets only for somebody it was *told* about and a
 narrowing tells it about nobody. The set it takes access from is the
 Organization minus the participants, which no producer can enumerate and which
 would be absurd to publish a message per name for.
-
-**Considered and rejected:** publishing one per-user message for the departing
-Space's roster, which is bounded and was tempting. It is the wrong set twice
-over — those readers usually *keep* access through the seating the retraction
-does first, and it names none of the members who were reading through the wide
-scope. Also rejected: having the canonical `update` close the sockets inside the
-room. That reaches the room's own sockets and nothing else, and the automations
-it owns are exactly the case `workstream_automations` exists for.
-
-**What a future change has to respect:** the `userId` biconditional. Adding a
-target that names nobody means adding an object method that decides for itself
-who lost access, because `revokeSocketAccess` cannot be told "everybody" — and a
-per-user target that ever arrives without its user must fail by name rather than
-fan out.
-
-### 2026-09-19 — A Space is a hop that names children and closes nothing
-
-**What changed:** The target union gains `{ scope: "space", spaceId }`, and the
-consumer resolves it through `SPACE_DOS`, calls `listChildren`, and publishes one
-`substream` message per child keyed by the Space id. It does not call
-`revokeSocketAccess`.
-
-**Why:** A Space is `WorkstreamDO` under a role that refuses client socket
-upgrades, so the object itself holds nothing this queue exists to close. Its
-hidden main conversation is an ordinary `SubstreamAgent` and does hold what was
-opened against it, and only the Space knows that conversation exists.
 
 **Considered and rejected:** Reusing the `workstream` hop by passing the Space id
 as a work-stream id. It would resolve a *real object* — a different, empty one in
@@ -502,10 +486,24 @@ with nothing reporting a problem. Also rejected: calling `revokeSocketAccess`
 anyway for symmetry with the work-stream hop, which buys one subrequest per Space
 per revocation to be told what the role already guarantees.
 
+publishing one per-user message for the departing
+Space's roster, which is bounded and was tempting. It is the wrong set twice
+over — those readers usually *keep* access through the seating the retraction
+does first, and it names none of the members who were reading through the wide
+scope. Also rejected: having the canonical `update` close the sockets inside the
+room. That reaches the room's own sockets and nothing else, and the automations
+it owns are exactly the case `workstream_automations` exists for.
+
 **Consequences:** Nothing publishes this target yet — no product path creates a
 Space, and the workspace hop enumerates Spaces only once WorkspaceDO holds the
 Space directory. The hop and its fan-out are in place and tested so that the
 release which creates Spaces does not also have to add the walk.
+
+the `userId` biconditional. Adding a
+target that names nobody means adding an object method that decides for itself
+who lost access, because `revokeSocketAccess` cannot be told "everybody" — and a
+per-user target that ever arrives without its user must fail by name rather than
+fan out.
 
 ### 2026-09-16 — Recover membership and grant revocation publication
 
