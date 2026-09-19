@@ -6882,8 +6882,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // field. So the refusal is named here, ahead of the parse. The consumer
     // retries with backoff like any other throw, which is the behavior wanted:
     // the effect stays on the Queue for the release that can apply it.
-    const envelopes = (input as { envelopes?: readonly { parentKind?: string }[] }).envelopes ?? [];
-    if (envelopes.some((envelope) => envelope?.parentKind === "space")) {
+    // Read defensively, because this runs *before* the parse that would make
+    // the shape safe: a null input or an `envelopes` that is not an array must
+    // reach the schema below and be refused by name there, not throw a
+    // shapeless `TypeError` out of this guard.
+    const envelopes = input && typeof input === "object"
+      ? (input as { envelopes?: unknown }).envelopes
+      : undefined;
+    if (Array.isArray(envelopes) && envelopes.some((envelope: unknown) =>
+      envelope !== null && typeof envelope === "object"
+        && (envelope as { parentKind?: unknown }).parentKind === "space")) {
       throw new Error("space_directory_not_ready");
     }
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);

@@ -140,7 +140,9 @@ export function audienceSourceRetractionPlan(input: {
   // reader audience reports the scope and no roster, so a surviving source's
   // participants are re-seated rather than assumed. The canonical add is
   // idempotent, which is what makes re-seating cheap enough to be the rule.
-  const seated = narrowScope ? new Set<string>() : new Set(input.currentReaders.userIds);
+  const seated = input.currentReaders.scope === "workspace"
+    ? new Set<string>()
+    : new Set(input.currentReaders.userIds);
   return {
     narrowScope,
     seatUserIds: remaining.userIds.filter((userId) => !seated.has(userId)),
