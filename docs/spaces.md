@@ -548,8 +548,8 @@ transaction, and that is what the intents are for: an interruption leaves a
 | `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels the cutover claims in one Queue message, and therefore the Channels one consumer invocation places. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 
-Both are lower bounds rather than budgets, and both are transcriptions rather
-than measurements — the sections below say what each was transcribed from.
+Each is a lower bound rather than a budget, and each is a transcription rather
+than a measurement — the sections below say what each was transcribed from.
 
 **`SPACE_CHANNEL_PAGE_SIZE` is 250, and the number is the team's to set.** It
 bounds one page of `GET /spaces/:id/channels`, which without it grows with the
@@ -856,16 +856,17 @@ ones somebody placed. `WorkstreamCreationFields` carries `spaceIds` in place of
 `SpaceService.ensureGeneral` reserves *and* provisions in one place. A one-time
 cutover — `space_bootstrap`, a WorkspaceDO alarm phase, an activity-Queue
 handler and `SpaceBootstrapService` — walks every existing Organization's
-Channel directory in pages of 50 and places each Channel in General, acting as
-one of that Channel's own participants. A new Organization opens General inline,
-and the one connector path that provisions its own Channel places it the same
-way. `GET /spaces/:id/channels` answers Channel rows instead of bare ids, and
-the archive refusal now carries the Channels that blocked it. WorkspaceDO
-migration 62 deletes the eight Project tables behind a named shutdown barrier,
-and `ProjectService`, the Project storage, protocol and publisher, every Project
-RPC, the Project snapshot topic and the Project alarm phase go with them. A
-pre-cutover browser build is answered `426 client_update_required` on the two
-surfaces whose payloads changed.
+Channel directory in pages of 50: once read-only in `preflight`, asking whether
+each Channel may be widened, and again in `memberships`, placing each one in
+General as one of that Channel's own participants. A new Organization opens
+General inline, and the one connector path that provisions its own Channel
+places it the same way. `GET /spaces/:id/channels` answers Channel rows instead
+of bare ids, and the archive refusal now carries the Channels that blocked it.
+WorkspaceDO migration 62 deletes the eight Project tables after settling every
+undelivered Project effect, and `ProjectService`, the Project storage, protocol
+and publisher, every Project RPC, the Project snapshot topic and the Project
+alarm phase go with them. A pre-cutover browser build is answered
+`426 client_update_required` on the two surfaces whose payloads changed.
 
 **Why:** Every invariant in this document is written about *every* Channel in
 the Organization, and until this change none of them held for a Channel nobody
@@ -882,6 +883,18 @@ which is why an Organization can end the pass *incomplete*: a Channel whose
 retained content the Organization may not read stays personal and holds
 `spacesReady` false until somebody decides, which is a product decision rather
 than a migration's.
+
+Review changed three things about how that incompleteness behaves. The walk now
+runs twice, because a single pass discovered its blockers one placement at a
+time and left every Channel before the fenced one Organization-wide — the PRD
+says an unsafe Channel blocks its Organization "without partial mutation", and
+rollout step 3 asks the preflight to find every blocker before promotion. A
+`finalize` that refuses now sends the Organization *back* to that walk rather
+than leaving the phase where it was: nothing else takes a Channel off
+`blocked_json`, so a blocked Organization was permanent whatever anybody did to
+the Channel. And a refused connector placement reopens a finished cutover,
+because that is the one placement path with no page behind it and a `complete`
+Organization is never walked again.
 
 A pending cutover is also what makes every WorkspaceDO wake immediately: the
 `space_bootstrap` row is a derived alarm candidate due at the epoch until the
@@ -904,6 +917,14 @@ then found to be unplaceable. The containment preflight moved in front of the
 placement instead, so a fenced Channel gets no membership row and no mutation at
 all, and the phase slot became `finalize`.
 
+Also rejected: repairing the Project shutdown barrier rather than deleting it.
+It asserted that no `pending` Project row was left, counted immediately after
+the two statements that settled every one of them, so it read zero by
+construction; `finalizeSpaceBootstrap`'s matching `project_effects_pending`
+gate ran after the constructor had already dropped the tables. Making either
+one work would have held an Organization's whole hierarchy closed over
+undelivered Project defaults that PRD non-goal 5 discards on purpose.
+
 Also rejected: dropping the Project tables and letting a queued default fail on
 a missing table. The durable half of an at-least-once delivery is exactly what
 stops a message still in flight from attaching a resource to a Channel whose
@@ -917,10 +938,14 @@ memberships **before** it reserves the Channel's main conversation. Reserving
 arms the parent's recovery alarm, and that alarm delivers the deferred
 provisional directory row itself if it wins the race, so a settlement after it
 publishes a Channel that is Organization-wide and in no Space — which is what
-`space-creation.test.ts` found and now pins. Two known gaps stay open: the
-cutover has no operator-facing remediation beyond SQL on the `space_bootstrap`
-row, and `"projects"` remains in `WORKSPACE_SYNC_TOPICS` as a rolling-deploy
-affordance for clients whose exhaustive maps still name it.
+`space-creation.test.ts` found and now pins. A future change must also keep
+`memberships` unreachable except from a `preflight` that recorded nothing, and
+keep both re-walks on the claim's retry gate rather than clearing it: an
+Organization nobody remediates re-walks about once a minute, and zeroing the
+gate would turn that into a spin. Two known gaps stay open: the cutover has no
+operator-facing remediation beyond **Add to space** and SQL on the
+`space_bootstrap` row, and `"projects"` remains in `WORKSPACE_SYNC_TOPICS` as a
+rolling-deploy affordance for clients whose exhaustive maps still name it.
 
 ### 2026-09-19 — The desktop draws the hierarchy, and a row stops claiming to know an audience
 
