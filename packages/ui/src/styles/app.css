@@ -358,29 +358,25 @@ pre {
 }
 
 .button:hover:not(:disabled) {
-  background: var(--av-sys-color-surface-raised-hover);
+  background: var(--av-sys-color-state-hover);
   border-color: var(--av-ref-color-line-4);
   color: var(--av-sys-color-text-default);
 }
 
-/* Icon buttons are the borderless counterpart to `.button`. Hover used to
-   share the bordered fill, which made header controls next to the participant
-   stack and socket dot look like a different family. Keep the 1px transparent
-   border so the box does not shift; do not paint it. Open and keyboard-focus
-   match hover so a menu trigger does not snap back to empty, and so focus
-   gets the same wash as `.header-socket-state:focus-visible`.
+/* Icon buttons are the borderless counterpart to `.button`. Keep the 1px
+   transparent border so the box does not shift; do not paint it. Open and
+   keyboard-focus match hover so a menu trigger does not snap back to empty.
 
-   The wash is `surface-raised-hover`, not `surface-raised`: a hover state is a
-   step away from the surface the control sits on, and `raised` is only that in
-   dark, where it is #2f2f2f over a #070707 canvas. Light sets both to #fcfcfc,
-   so the fill was the canvas and there was nothing to see — the work-stream
-   header's own title button, on `raised-hover` already, lit up while every icon
-   beside it stayed blank. `raised-hover` is also the translucent one in light,
-   so it steps off a dialog or a menu as readably as off the canvas. */
+   `sys.color.state.hover` is the product's one hover wash and every control
+   here takes it — see the token's own entry in the registry for why there is
+   only one. It is translucent in both appearances, which is what lets a single
+   value work on the canvas, in a menu and inside a dialog: the opaque surface
+   fills this rule used to name each had to know what was behind them, and on
+   the light canvas `surface.raised` was the canvas. */
 .icon-button:hover:not(:disabled),
 .icon-button[data-state='open']:not(:disabled),
 .icon-button:focus-visible {
-  background: var(--av-sys-color-surface-raised-hover);
+  background: var(--av-sys-color-state-hover);
   color: var(--av-sys-color-text-default);
 }
 
@@ -861,7 +857,7 @@ pre {
    the text be dragged into a selection. It is a command: the same hand the
    buttons in the same menu already get, and nothing in it to highlight. */
 .menu-item { align-items: center; border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: var(--av-cmp-control-font-size); gap: 8px; min-height: 32px; outline: 0; padding: 6px 10px; text-align: start; user-select: none; width: 100%; }
-.menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.menu-item[data-highlighted] { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
 .menu-item-danger[data-highlighted] { background: var(--av-sys-color-danger-tint); color: var(--av-sys-color-danger-strong); }
@@ -1069,7 +1065,7 @@ pre {
 .settings-navigation-group button:hover,
 .settings-search-results > button:hover,
 .settings-search-results > button:focus-visible,
-.sidebar-row:hover { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
+.sidebar-row:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .sidebar-action.is-active,
 .settings-navigation-group button[aria-current='page'],
 .sidebar-row.is-active { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
@@ -1194,7 +1190,7 @@ pre {
   width: 32px;
 }
 .project-icon-grid button:hover,
-.project-color-grid button:hover { background: var(--av-sys-color-surface-raised-hover); }
+.project-color-grid button:hover { background: var(--av-sys-color-state-hover); }
 .project-icon-grid button.is-selected,
 .project-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
 /* Seven columns is what closes the palette ring across the row break; the
@@ -1232,7 +1228,7 @@ pre {
 }
 .sidebar-group-menu-trigger:hover,
 .sidebar-group-menu-trigger[data-state='open'] {
-  background: var(--av-sys-color-surface-subtle);
+  background: var(--av-sys-color-state-hover);
   color: var(--av-ref-color-neutral-12);
 }
 .sidebar-group-menu-trigger:focus-visible {
@@ -1338,7 +1334,7 @@ pre {
   position: relative;
 }
 
-.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }
+.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }
 .sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }
 
 
@@ -1507,7 +1503,7 @@ pre {
   width: calc(100% - 24px);
 }
 
-.account-trigger:hover { background: var(--av-sys-color-surface-subtle); }
+.account-trigger:hover { background: var(--av-sys-color-state-hover); }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
@@ -1633,7 +1629,7 @@ pre {
 }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
-.account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+.account-menu-item.menu-item[data-highlighted] { background: var(--av-sys-color-state-hover); }
 .account-menu-item > svg { height: 16px; stroke-width: 1.8; width: 16px; }
 .account-menu-item > span:not(.account-menu-value) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-menu-value { color: var(--av-sys-color-text-muted); justify-self: end; }
@@ -1646,7 +1642,7 @@ pre {
   box-shadow: var(--av-sys-elevation-shadow-lg);
 }
 
-[data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+[data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background: var(--av-sys-color-state-hover); }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
@@ -2036,7 +2032,7 @@ pre {
 }
 
 .settings-close:hover,
-.settings-icon-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.settings-icon-action:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 
 .settings-content-scroll {
   min-height: 0;
@@ -2299,7 +2295,7 @@ pre {
   padding: 5px 12px;
   transition: background 120ms, border-color 120ms, color 120ms;
 }
-.digest-preset:hover { background: var(--av-ref-color-neutral-4); color: var(--av-sys-color-text-default); }
+.digest-preset:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .digest-preset[aria-pressed='true'] {
   background: var(--av-ref-color-neutral-5);
   border-color: var(--av-sys-color-border-default);
@@ -2318,7 +2314,7 @@ pre {
   transition: background 120ms, border-color 120ms, color 120ms;
   width: 34px;
 }
-.digest-day:hover { background: var(--av-ref-color-neutral-4); color: var(--av-sys-color-text-default); }
+.digest-day:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .digest-day[aria-pressed='true'] {
   background: var(--av-sys-color-text-default);
   border-color: var(--av-sys-color-text-default);
@@ -2353,7 +2349,7 @@ pre {
   justify-content: center;
   width: 18px;
 }
-.digest-time button:hover { background: var(--av-ref-color-neutral-6); color: var(--av-sys-color-text-default); }
+.digest-time button:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 
 .digest-time-add { align-items: center; display: flex; gap: 8px; }
 .digest-time-add input {
@@ -2423,7 +2419,7 @@ pre {
   padding-right: 2px;
 }
 
-.dropdown-select-trigger:hover:not([data-disabled]) { background: var(--av-sys-color-surface-raised-hover); }
+.dropdown-select-trigger:hover:not([data-disabled]) { background: var(--av-sys-color-state-hover); }
 .dropdown-select-trigger:focus-visible { box-shadow: var(--av-sys-focus-ring-default); }
 .dropdown-select-trigger[data-disabled] { color: var(--av-sys-color-text-muted); cursor: not-allowed; opacity: .55; }
 .dropdown-select-chevron { color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 auto; }
@@ -2453,7 +2449,7 @@ pre {
   padding: 8px 10px;
   user-select: none;
 }
-.dropdown-select-item[data-highlighted] { background: var(--av-ref-color-neutral-6); }
+.dropdown-select-item[data-highlighted] { background: var(--av-sys-color-state-hover); }
 .dropdown-select-item[data-state="checked"] { background: var(--av-ref-color-neutral-6); }
 .dropdown-select-item-copy { display: flex; flex-direction: column; min-width: 0; }
 .dropdown-select-item-copy small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.4; margin-top: 3px; }
@@ -2661,7 +2657,7 @@ pre {
   padding: 16px;
   transition: background-color 130ms ease, border-color 130ms ease;
 }
-.provider-card:hover { background: var(--av-ref-color-neutral-1); border-color: var(--av-ref-color-line-3); }
+.provider-card:hover { background: var(--av-sys-color-state-hover); border-color: var(--av-ref-color-line-3); }
 .provider-card-heading { align-items: center; display: flex; gap: 10px; }
 .provider-card-heading > div:last-child { display: flex; flex-direction: column; min-width: 0; }
 .provider-card-heading strong { font-size: 14px; font-weight: 500; }
@@ -2919,7 +2915,7 @@ pre {
    tracks; they cannot consume the title, time, or chevron columns. The final
    fixed track puts every chevron on the same right edge. */
 .waiting-workstream-row { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: grid; gap: 10px; grid-template-columns: 130px auto minmax(0, 1fr) auto auto 15px; min-height: 44px; padding: 7px 10px; text-decoration: none; transition: background 130ms ease, border-color 130ms ease; }
-.waiting-workstream-row:hover { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-2); }
+.waiting-workstream-row:hover { background: var(--av-sys-color-state-hover); border-color: var(--av-ref-color-line-2); }
 .waiting-workstream-row:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 /* The label beside the dot is deliberately not coloured by state: the dot
    carries the marker here, exactly as it does in the sidebar.
@@ -2964,7 +2960,7 @@ pre {
 .onboarding-progress > span { background: var(--av-sys-color-brand-base); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
 .onboarding-items { display: grid; gap: 1px; }
 .onboarding-items > button { align-items: flex-start; background: transparent; border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); display: flex; gap: 8px; padding: 7px 3px; text-align: left; width: 100%; }
-.onboarding-items > button:hover { background: var(--av-sys-color-surface-raised); }
+.onboarding-items > button:hover { background: var(--av-sys-color-state-hover); }
 .onboarding-items > button:focus-visible { box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-default); outline: 0; }
 .onboarding-check { align-items: center; border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-on); display: flex; flex: 0 0 auto; height: 18px; justify-content: center; width: 18px; }
 .onboarding-item-copy { display: flex; flex-direction: column; min-width: 0; }
@@ -2979,7 +2975,7 @@ pre {
 .participant-modifier { font-size: 11px; gap: 7px; max-width: 310px; padding: 4px 9px 4px 5px; }
 .participant-modifier-add { justify-content: center; padding: 0; width: 34px; }
 .participant-modifier:hover,
-.participant-modifier-add:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-subtle); }
+.participant-modifier-add:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-subtle); }
 .participant-modifier:focus-visible,
 .participant-modifier-add:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 .participant-modifier > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2992,7 +2988,7 @@ pre {
 .member-picker-row,
 .member-action-row { align-items: center; background: transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 10px; min-height: 48px; padding: 7px 9px; position: relative; text-align: left; width: 100%; }
 .member-picker-row:hover,
-.member-action-row:hover { background: var(--av-sys-color-surface-raised); }
+.member-action-row:hover { background: var(--av-sys-color-state-hover); }
 .member-picker-row > input { opacity: 0; position: absolute; }
 .member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),
 .member-action-row > span:not(.avatar) { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
@@ -3015,7 +3011,7 @@ pre {
 .resource-picker > .empty-state { min-height: 150px; padding-bottom: 24px; padding-top: 38px; }
 .resource-picker-list { display: grid; gap: 4px; max-height: 330px; overflow-y: auto; }
 .resource-picker-list > button { align-items: center; background: transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 10px; min-height: 52px; padding: 7px 9px; text-align: left; width: 100%; }
-.resource-picker-list > button:hover { background: var(--av-sys-color-surface-raised-hover); }
+.resource-picker-list > button:hover { background: var(--av-sys-color-state-hover); }
 .resource-picker-list > button:focus-visible { box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-default); outline: 0; }
 .resource-picker-icon { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 auto; height: 31px; justify-content: center; width: 31px; }
 .resource-picker-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -3069,7 +3065,7 @@ pre {
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; transition: padding var(--sidebar-layout-motion); }
 .workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
-.workstream-context-row:hover { background: var(--av-cmp-row-background-hover); }
+.workstream-context-row:hover { background: var(--av-sys-color-state-hover); }
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
@@ -3158,7 +3154,7 @@ pre {
    grows to a wider max-width. */
 .workstream-title-button { --pill-overhang: 4px; background: transparent; border-radius: var(--av-sys-size-radius-sm); display: block; margin-left: calc(-1 * var(--pill-overhang)); max-width: calc(100% + var(--pill-overhang)); overflow: hidden; padding: 1px var(--pill-overhang); text-align: left; text-overflow: ellipsis; white-space: nowrap; width: max-content; }
 .workstream-title-button:not(:disabled) { cursor: text; }
-.workstream-title-button:hover { background: var(--av-sys-color-surface-raised-hover); }
+.workstream-title-button:hover { background: var(--av-sys-color-state-hover); }
 .workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
 .workstream-title-input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 13px; font-weight: 600; min-width: 90px; outline: 0; padding: 0 6px; width: 340px; }
 .workstream-title-input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
@@ -3178,7 +3174,7 @@ pre {
 .panel-toggle.is-active { background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, var(--av-sys-color-surface-raised)); color: var(--av-sys-color-brand-ink); }
 .panel-toggle.is-active:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 17%, var(--av-sys-color-surface-raised)); }
 .participant-header-button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: flex; gap: 4px; min-height: 30px; padding: 2px 5px; }
-.participant-header-button:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.participant-header-button:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
@@ -3601,7 +3597,7 @@ pre {
    unresolvable citation renders no element at all, so there is nothing to
    style for it. */
 .citation-chip { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-text-default); cursor: pointer; display: inline-flex; font: inherit; font-size: 0.92em; font-weight: 560; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px; text-align: left; vertical-align: middle; white-space: nowrap; }
-.citation-chip:hover { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); }
+.citation-chip:hover { background: var(--av-sys-color-state-hover); border-color: var(--av-sys-color-border-strong); }
 .citation-chip-icon { align-items: center; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 auto; }
 .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
 .citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -3611,7 +3607,7 @@ pre {
    and audio look like empty documents and survived after attachments moved on. */
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
 .citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: var(--space-2); width: min(340px, 100%); }
-.citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
+.citation-card.is-file:hover { background: var(--av-sys-color-state-hover); }
 .citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
 .citation-card.is-image:hover { filter: brightness(1.04); }
@@ -3710,7 +3706,7 @@ pre {
 .markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
 .markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
 .markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
-.markdown-code-block-header button:hover { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); }
+.markdown-code-block-header button:hover { background: var(--av-sys-color-state-hover); color: var(--av-ref-color-neutral-13); }
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
@@ -4002,7 +3998,7 @@ pre {
    This depends on the dock having no padding above the composer; give it some
    and the gap here grows by that much. */
 .jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); bottom: calc(100% + var(--space-2)); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; transform: translateX(-50%); width: 30px; z-index: 4; }
-.jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
+.jump-bottom:hover { background: var(--av-sys-color-state-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 .jump-bottom[aria-hidden="true"] { pointer-events: none; }
 
@@ -4074,7 +4070,7 @@ pre {
 .app-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: var(--space-3); grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: var(--space-2) var(--space-3); position: relative; }
 .app-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .app-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.app-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
+.app-shell .elicitation-option:hover { background: var(--av-sys-color-state-hover); }
 .app-shell .elicitation-option.is-selected,
 .app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
 .app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
@@ -4085,7 +4081,7 @@ pre {
 .app-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
 .app-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
 .app-shell .elicitation-actions .button { border-radius: 8px; }
-.app-shell .elicitation-skip { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
+.app-shell .elicitation-skip { background: var(--av-cmp-control-background-quiet); color: var(--av-sys-color-text-default); }
 .app-shell .elicitation-submit:not(:disabled),
 .app-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
 .app-shell .elicitation-submit kbd { color: inherit; }
@@ -4226,7 +4222,7 @@ pre {
 .attachment-file-download,
 .attachment-lightbox-action { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 auto; height: 34px; justify-content: center; padding: 0; width: 34px; }
 .attachment-file-download:hover,
-.attachment-lightbox-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.attachment-lightbox-action:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 
 .attachment-file-with-player { max-width: 100%; }
 .attachment-inline-audio { display: block; max-width: 100%; width: 280px; }
@@ -4292,7 +4288,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-lightbox-content.is-html { background: var(--av-sys-color-surface-default); overflow: hidden; }
 .attachment-lightbox-content.is-html iframe { background: var(--av-sys-color-surface-default); border: 0; height: 100%; width: 100%; }
 .attachment-lightbox-close { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; height: 34px; justify-content: center; width: 34px; }
-.attachment-lightbox-close:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.attachment-lightbox-close:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .attachment-lightbox-document { margin: 0 auto; max-width: 960px; min-height: 100%; padding: 44px 36px 96px; }
 .attachment-lightbox-text { color: var(--av-sys-color-text-default); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
 .attachment-lightbox-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
@@ -4365,7 +4361,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .socket-unavailable > span { background: var(--av-sys-color-warning-base); }
 .header-socket-state { border-radius: var(--av-sys-size-radius-md); justify-content: center; margin: 0 2px; min-height: 30px; min-width: 24px; }
 .header-socket-state:hover,
-.header-socket-state:focus-visible { background: var(--av-sys-color-surface-raised-hover); }
+.header-socket-state:focus-visible { background: var(--av-sys-color-state-hover); }
 .header-socket-state > span { height: 7px; width: 7px; }
 .microphone-control { align-items: center; display: flex; gap: 0; }
 .microphone-control .dictation-button { border-radius: var(--av-sys-size-radius-md) 0 0 var(--av-sys-size-radius-md); width: 27px; }
@@ -4428,7 +4424,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   visibility: visible;
 }
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-stop-slot .stop-button {
-  background: var(--av-cmp-row-background-hover);
+  background: var(--av-cmp-control-background-quiet);
   border: 0;
   border-radius: 50%;
   color: var(--av-sys-color-text-muted);
@@ -4776,13 +4772,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .suggested-prompt-list > h2 { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 520; margin: 0 0 5px; text-align: left; }
 .suggested-prompt-row { align-items: center; display: grid; grid-template-columns: minmax(0, 1fr) auto; position: relative; }
 .suggested-prompt-row > button:first-child { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: grid; gap: 8px; grid-template-columns: 17px minmax(0, 1fr) auto 14px; min-height: 34px; padding: 5px 8px; text-align: left; width: 100%; }
-.suggested-prompt-row > button:first-child:hover { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-default); }
+.suggested-prompt-row > button:first-child:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .suggested-prompt-row > button:first-child:disabled { cursor: wait; opacity: .7; }
 .suggested-prompt-row > button:first-child > svg:first-child { color: var(--av-ref-color-neutral-8); }
 .suggested-prompt-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .suggested-prompt-row small { color: var(--av-ref-color-neutral-8); font-size: 9.5px; white-space: nowrap; }
 .suggested-prompt-dismiss { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-8); display: flex; height: 25px; justify-content: center; margin-left: 2px; width: 25px; }
-.suggested-prompt-dismiss:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
+.suggested-prompt-dismiss:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .suggested-prompt-error { color: var(--av-sys-color-danger-base); font-size: 10px; margin: 4px 8px 0; text-align: left; }
 /* Part of the identity line, so it takes the line's size. The 9px it used to
    carry was fitted against an 8.5px timestamp that no longer exists, and a
@@ -5100,7 +5096,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .project-space-header { align-items: center; display: grid; gap: 14px; grid-template-columns: 44px minmax(0, 1fr) auto; margin-bottom: 40px; }
 .project-space-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; display: inline-flex; height: 42px; justify-content: center; padding: 0; width: 42px; }
 button.project-space-icon { cursor: pointer; }
-button.project-space-icon:hover { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-ref-color-line-4); }
+button.project-space-icon:hover { background: var(--av-sys-color-state-hover); border-color: var(--av-ref-color-line-4); }
 button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .project-space-header h1 { font-size: 26px; margin: 0; }
 .project-name-button { background: transparent; border: 0; color: inherit; cursor: default; font: inherit; letter-spacing: inherit; margin: 0; max-width: 100%; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
@@ -5492,7 +5488,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .sidebar-new-button:hover,
 .sidebar-new-button.is-active {
-  background: var(--av-cmp-row-background-hover);
+  background: var(--av-sys-color-state-hover);
   color: var(--av-sys-color-text-default);
 }
 .sidebar-new-button:active { transform: scale(.94); }
@@ -5507,7 +5503,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   flex: 0 0 auto;
   cursor: pointer;
   align-items: center;
-  background: var(--av-cmp-row-background-hover);
+  background: var(--av-cmp-control-background-quiet);
   border: 0;
   border-radius: 8px;
   box-shadow: inset 0 0 0 .5px var(--av-cmp-sidebar-border);
@@ -5554,7 +5550,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 2px 5px;
 }
 
-.sidebar-secondary-actions .sidebar-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.sidebar-secondary-actions .sidebar-action:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 
 .workstream-glyph {
   align-items: center;
@@ -5580,13 +5576,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 /* Chosen identity: fixed palette above an independently scrolling catalog.
    One picker; a work stream's header and a Sidekick's profile both open it. */
 .appearance-picker-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: var(--av-cmp-control-radius); background: transparent; cursor: pointer; flex-shrink: 0; }
-/* The row hover, not a surface one. The same hexagon in the sidebar hovers on
-   `--av-cmp-row-background-hover`, and a mark that fills differently depending
-   on which rail you found it in reads as two controls. It is also the correct
-   *weight*: `surface.raised-hover` is opaque in dark and, in light, is the
-   value `cmp.row.background-selected` holds — so the old fill announced a
-   selected row on something nothing had selected. */
-.appearance-picker-trigger:hover { background: var(--av-cmp-row-background-hover); }
+/* The product's one hover wash, which is also what the same hexagon takes as a
+   sidebar row: a mark that filled differently depending on which rail you found
+   it in read as two controls. */
+.appearance-picker-trigger:hover { background: var(--av-sys-color-state-hover); }
 .appearance-picker-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
 .appearance-picker-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
 .appearance-picker-colors, .appearance-picker-icons { display: grid; gap: 4px; }
@@ -5596,7 +5589,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .appearance-picker-colors { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .appearance-picker-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }
 .appearance-picker-choice { color: var(--av-sys-color-text-default); display: flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--av-cmp-control-radius); border: 1px solid transparent; cursor: pointer; outline: none; }
-.appearance-picker-choice[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
+.appearance-picker-choice[data-highlighted] { background: var(--av-sys-color-state-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
 .appearance-picker-choice[data-state='checked'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-text-default); }
 .appearance-picker-swatch { height: 20px; width: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); }
 .appearance-picker-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
@@ -5672,14 +5665,20 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .grokbot-conversation-title > h1 { font: inherit; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grokbot-conversation-title .inline-error { position: absolute; top: 100%; left: 0; max-width: 100%; padding: 6px; margin: 0; background: var(--av-sys-color-surface-raised); z-index: 1; }
 .grokbot-conversation-title .workstream-title-input { max-width: 100%; width: min(340px, 35vw); }
-button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
+button.grokbot-conversation-title:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .grokbot-computer-button.icon-button {
   color: var(--av-sys-color-text-muted);
   height: 28px;
   margin-right: -4px;
   width: 34px;
 }
-.grokbot-computer-button.icon-button:hover,
+.grokbot-computer-button.icon-button:hover {
+  background: var(--av-sys-color-state-hover);
+  color: var(--av-sys-color-text-default);
+}
+
+/* Pressed keeps the heavier elevated fill: it has to hold on its own once the
+   pointer has left, which the wash is deliberately too light to do. */
 .grokbot-computer-button.icon-button[aria-pressed='true'] {
   background: var(--av-sys-color-surface-elevated-hover);
   color: var(--av-sys-color-text-default);
@@ -5771,7 +5770,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   height: 54px;
   padding: 0 0 0 17.5px;
 }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background: var(--av-sys-color-state-hover); }
 .app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
 .app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
 /* Only ever rendered in the rail, and styled without reference to it: the
@@ -6336,7 +6335,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .icon-button {
-  background: var(--av-cmp-row-background-hover);
+  background: var(--av-cmp-control-background-quiet);
   border: 0;
   border-radius: 50%;
   box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
@@ -6403,7 +6402,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    is chrome, in both appearances — the tokens resolve per theme, so there is
    no dark rule restating this one. */
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
-  background: var(--av-cmp-row-background-hover);
+  background: var(--av-cmp-control-background-quiet);
   color: var(--av-sys-color-text-muted);
 }
 
@@ -6439,17 +6438,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 [data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
 [data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 [data-theme='dark'] .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
-[data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .icon-button {
-  background: var(--av-cmp-row-background-hover);
-  box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
-  color: var(--av-sys-color-text-muted);
-}
 [data-theme='dark'] .composer-action-menu {
   background: var(--av-sys-color-surface-elevated);
   border-color: var(--av-cmp-composer-border-color);
 }
 [data-theme='dark'] .composer-action-menu-item.menu-item { color: var(--av-sys-color-text-default); }
-[data-theme='dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+[data-theme='dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: var(--av-sys-color-state-hover); }
 
 
 .command-popover {
@@ -6496,7 +6490,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .command-popover > button:hover,
 .command-popover > button:focus-visible,
 .command-popover > button.is-selected {
-  background: var(--av-sys-color-surface-raised-hover);
+  background: var(--av-sys-color-state-hover);
 }
 
 .command-popover strong {
@@ -7058,7 +7052,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
   width: 100%;
 }
-.sidebar-row.automation-tile:hover { background: var(--av-cmp-row-background-hover); }
+.sidebar-row.automation-tile:hover { background: var(--av-sys-color-state-hover); }
 .sidebar-row.automation-tile.is-active,
 .sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
@@ -7115,7 +7109,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidekick-results-heading > span { font-size: 13px; color: var(--av-sys-color-text-muted); }
 .sidekicks-library-list { list-style: none; padding: 0; margin: 0 -12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
 .sidekicks-library-list a { display: flex; align-items: center; gap: 16px; height: 100%; padding: 20px 12px; border-radius: 16px; color: inherit; text-decoration: none; }
-.sidekicks-library-list a:hover { background: var(--av-sys-color-surface-raised-hover); }
+.sidekicks-library-list a:hover { background: var(--av-sys-color-state-hover); }
 .sidekick-list-glyph { width: 56px; height: 56px; flex-shrink: 0; }
 .sidekick-list-copy { flex: 1; min-width: 0; }
 .sidekick-list-copy h3 { font-size: 16px; font-weight: 500; margin: 0 0 5px; overflow-wrap: anywhere; }
@@ -7125,7 +7119,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidekick-detail { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-width: 0; }
 .sidekick-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 38px 20px 10px; border-bottom: 1px solid var(--av-sys-color-border-subtle); }
 .sidekick-back { display: inline-flex; align-items: center; gap: 4px; padding: 8px; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); text-decoration: none; }
-.sidekick-back:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.sidekick-back:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .sidekick-detail-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 0; }
 .sidekick-profile { overflow: auto; scrollbar-gutter: stable; border-right: 1px solid var(--av-sys-color-border-subtle); }
 .sidekick-conversation { min-width: 0; min-height: 0; }

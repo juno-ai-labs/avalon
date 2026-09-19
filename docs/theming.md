@@ -130,15 +130,21 @@ serves it through `rally-font://`.
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
   never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
   at equal specificity further down the file.
-- **A hover fill takes the hover token, never the surface the control sits on.**
-  The two appearances do not agree about what `sys.color.surface.raised` means:
-  dark paints it `#2f2f2f` over a `#070707` canvas, where it reads as a step,
-  and light sets it to the canvas's own `#fcfcfc`, where it reads as nothing at
-  all. `sys.color.surface.raised-hover` is the wash for answering a pointer, and
-  light declares it translucent, so it steps off a canvas, a dialog and a menu
-  alike. Three of the work-stream header's controls took `raised` and so had no
-  visible hover in light for as long as light has existed;
-  `app.css.node.test.ts` holds them on the wash now.
+- **There is one hover wash, and it is `sys.color.state.hover`.** Every neutral
+  control a pointer can cross — a navigation row, a menu item, a header icon, a
+  chip, a settings button — paints hover from that one token, and
+  `app.css.node.test.ts` fails a `:hover` or `[data-highlighted]` rule that
+  reaches for a neutral surface fill instead. Two kinds of rule are exempt and
+  say so: a hover carrying a semantic hue, where the hue is the point, and a
+  rule shared with a selected or pressed state, which is not a hover. The wash
+  is translucent in **both** appearances on purpose — an opaque fill has to know
+  what is behind it, which is how `sys.color.surface.raised` came to be a hover
+  on the light canvas that *was* the canvas.
+- **A control's resting chip fill is `cmp.control.background-quiet`, not the
+  hover wash.** They carry the same weight today and are still two tokens: the
+  composer's round tools rest on the quiet fill and hover a step above it, so a
+  single token would have collapsed their only feedback the moment either value
+  moved.
 - **Appearance files are data.** They cannot carry HTML or JavaScript, and the
   desktop registers no appearance-document protocol or iframe.
 
@@ -191,42 +197,44 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-09-19 — Hover is a token of its own, not a lighter reading of the surface
+### 2026-09-19 — One hover wash for the whole product
 
-**What changed:** `.icon-button`'s hover, open and focus-visible fill, along with
-`.participant-header-button:hover` and `.header-socket-state:hover`, moved from
-`sys.color.surface.raised` to `sys.color.surface.raised-hover`. The stream's top
-bar was the report — its share, participant and socket controls answered the
-pointer with nothing in light — but the rule is `.icon-button`'s, so the same
-blank hover was everywhere the primitive is used.
+**What changed:** `sys.color.state.hover` is new and is now the only fill a
+neutral hover may take; 46 rules moved onto it. `cmp.row.background-hover` is
+retired into it, and `cmp.control.background-quiet` is new for the five places
+that used that value as a control's *resting* chip fill rather than as a hover.
+`app.css.node.test.ts` gained a sweep that fails any future `:hover` or
+`[data-highlighted]` rule painting a neutral surface fill.
 
-**Why:** `surface.raised` is not a step above the canvas in both appearances.
-Dark separates the two by forty hex points; light sets them to the same
-`#fcfcfc`, so the hover painted the canvas back onto the canvas. Nothing about
-that was local to the header: the three rules had simply each named the surface
-where they meant the wash, and `.workstream-title-button` beside them, already on
-`raised-hover`, is what made the gap legible — the name lit up under the pointer
-and every icon next to it stayed blank.
+**Why:** hover was spelled seven ways — `surface.raised`, `surface.raised-hover`,
+`surface.elevated-hover`, `surface.subtle`, three steps of the neutral ramp, and
+the sidebar's own row token — and which one a control got was an accident of
+when it was written. `surface.raised` was the worst: it is a step above the
+canvas only in dark, and light sets it to the canvas's own `#fcfcfc`, so the
+work-stream header's icons had no visible hover at all while the title button
+beside them lit up. Fixing only those three would have left the same trap set
+for the next control, and left one bar hovering at four different weights.
 
-**Considered and rejected:** Giving light a darker `surface.raised`. That token
-is also the fill of menus, dialogs, cards and the segmented control's chosen
-pill, all of which are meant to be white against a white canvas and separated by
-their border; darkening it to fix a hover would have greyed every one of them.
-Scoping a one-off fill to the work-stream header was rejected for the reason the
-spacing invariant above gives: the defect is the primitive's, and overriding one
-consumer leaves the next three to find it again.
+**Considered and rejected:** darkening light's `surface.raised`, which is also
+the fill of menus, dialogs, cards and the segmented control's chosen pill — all
+meant to be white against a white canvas and separated by their border. Also
+rejected: pointing everything at `cmp.row.background-hover`, which has the right
+value but names a row, so an icon button reading it is the component tier
+leaking into the system tier.
 
-**Consequences:** In dark the fill moves `#2f2f2f` → `#313131`, which is below
-the threshold of noticing and was checked in a window. Tinted derivatives that
-mix a hue into `surface.raised` — `.icon-button-danger`, `.title-edit-save`,
-`.title-edit-cancel`, `.panel-toggle.is-active` — were left alone: their
-visibility comes from the hue, not from the base. `.appearance-picker-trigger`
-was also left on `cmp.row.background-hover`, and is now the faintest hover in
-that top bar; the note beside it argues that the hexagon has to fill the same way
-in the header as in the sidebar, and that in light `surface.raised-hover` is the
-value `cmp.row.background-selected` holds, so a mark nothing had selected would
-announce itself as selected. Pulling it into the family means answering that
-first.
+**Consequences:** the wash is translucent in both appearances, so one value
+works on the canvas, in a menu and inside a dialog; an opaque fill cannot, and
+that is the property to preserve if either number is re-fitted. Light hovers at
+`0.09` and dark at `0.17` — the sidebar's existing weights, unchanged, so the
+sidebar is the reference anything else should be compared against. Controls that
+used to hover heavier than that are now lighter: the work-stream title button
+and `.icon-button` both dropped from `0.17`, which is deliberate and is what
+makes the top bar read as one family. Two dark restatements that existed only
+because light and dark disagreed about hover — the account menu's highlighted
+row and the composer capsule's tool buttons — became no-ops and were deleted.
+`.grokbot-computer-button` had folded hover and `aria-pressed` into one
+declaration; pressed keeps the heavier `surface.elevated-hover`, because it has
+to hold once the pointer leaves and the wash is deliberately too light for that.
 
 ### 2026-09-18 — Share theme presentation between desktop and browser
 
