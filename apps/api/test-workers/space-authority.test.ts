@@ -16,7 +16,7 @@
  * its directory effects do.
  */
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -25,9 +25,11 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   conversationEffectHash,
+  WorkspaceSocketSyncEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   type ParentEffect,
   type SpaceId,
+  type WorkspaceSidebar,
   type WorkspaceSpaceSnapshotEvent,
   type WorkstreamId,
 } from "@rally/contracts";
@@ -288,7 +290,16 @@ function nextSpaceSnapshot(socket: WebSocket): Promise<WorkspaceSpaceSnapshotEve
   });
 }
 
-async function connectViewer(userId: string, suffix: string): Promise<WebSocket> {
+/**
+ * A subscribed workspace socket, and the connect payload it was answered with.
+ *
+ * The sidebar rides the `subscribe` answer, so it has to be read from that
+ * first message rather than asked for afterwards.
+ */
+async function connectViewer(userId: string, suffix: string): Promise<{
+  socket: WebSocket;
+  sidebar: WorkspaceSidebar;
+}> {
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
       Upgrade: "websocket",
@@ -306,8 +317,9 @@ async function connectViewer(userId: string, suffix: string): Promise<WebSocket>
   response.webSocket.accept();
   const initial = nextMessage(response.webSocket);
   response.webSocket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-  await initial;
-  return response.webSocket;
+  const answer = WorkspaceSocketSyncEventSchema.parse(JSON.parse(String((await initial).data)));
+  if (!answer.sidebar) throw new Error("workspace subscribe answered without a sidebar");
+  return { socket: response.webSocket, sidebar: answer.sidebar };
 }
 
 beforeEach(async () => {
@@ -703,7 +715,7 @@ describe("WorkspaceDO space authority", () => {
   });
 
   it("given a subscribed socket, when a Space is written, then it receives the whole snapshot", async () => {
-    const socket = await connectViewer(OWNER, "cf10");
+    const { socket } = await connectViewer(OWNER, "cf10");
     const snapshot = nextSpaceSnapshot(socket);
 
     const general = await workspace().ensureGeneralSpace({ workspaceId: WORKSPACE_ID, userId: OWNER });
@@ -716,6 +728,72 @@ describe("WorkspaceDO space authority", () => {
     // Organization-opening state rather than a half-built hierarchy.
     expect(event.spacesReady).toBe(false);
     socket.close();
+  });
+
+  it("given an Organization held at schema 57, when it connects, then the sidebar still answers", async () => {
+    // The meeting-notes retirement holds an object at 57 until its external
+    // cleanup finishes, so an Organization mid-cleanup has no Space tables at
+    // all. Every Space read has to answer empty there rather than abort with
+    // `no such table`, because the reads are on the connect payload: an
+    // unguarded one does not hide the Spaces, it stops the sidebar opening.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("DELETE FROM _sql_schema_migrations WHERE version > 57");
+      // The row the finalization migration's guard refuses to advance past.
+      sql.exec(
+        `INSERT OR REPLACE INTO retired_meeting_resources
+           (resource_id, note_id, content_ref, model_content_ref, objects_deleted)
+         VALUES (?, NULL, NULL, NULL, 0)`,
+        RESOURCE_ID,
+      );
+      for (const table of [
+        "space_default_publications", "space_default_targets", "space_defaults",
+        "space_channel_memberships", "space_intents", "space_bootstrap_receipts",
+        "space_bootstrap", "workspace_space_order", "workspace_space_viewers",
+        "workspace_space_state", "workspace_space_directory",
+      ]) sql.exec(`DROP TABLE ${table}`);
+    });
+    await evictDurableObject(workspace());
+
+    // Rebuilt from storage, and held: the guard sees unfinished cleanup and
+    // stops at 57, so 61 does not run and the Space tables stay absent.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT MAX(version) AS version FROM _sql_schema_migrations",
+      bindings: [],
+    })).toMatchObject({ rows: [{ version: 57 }] });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_space_directory'",
+      bindings: [],
+    })).toMatchObject({ rows: [] });
+
+    // Each read the connect payload makes answers empty rather than aborting.
+    // Asserted through the RPCs first, because the socket's own failure mode is
+    // a subscribe that never answers — true, and slower to read than this.
+    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({ ok: true, directory: { waterline: 0, items: [] } });
+    await expect(workspace().listInactiveSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({ ok: true, directory: { waterline: 0, items: [] } });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "pending", generalSpaceId: null, ready: false });
+    await expect(workspace().channelSpaces({
+      workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
+    })).resolves.toEqual({ spaceIds: [] });
+
+    const { socket, sidebar } = await connectViewer(OWNER, "cf11");
+    expect(sidebar.spaces).toEqual({
+      active: { waterline: 0, items: [] },
+      inactive: { waterline: 0, items: [] },
+    });
+    expect(sidebar.spacesReady).toBe(false);
+    socket.close();
+
+    // And a Space *write* is refused by name rather than aborting on a missing
+    // table, so the route renders a sentence instead of a 500.
+    await expect(workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      space: { name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+    })).resolves.toMatchObject({ ok: false, code: "space_bootstrap_pending" });
   });
 
   it("given the bootstrap row, when it is read, then it reports the phase and General", async () => {
