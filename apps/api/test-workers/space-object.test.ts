@@ -418,14 +418,22 @@ describe("a Space's Durable Object", () => {
     expect(JSON.parse(refused.bodyJson)).toMatchObject({
       error: "conversation_parent_kind_mismatch",
     });
-    // And the same request from the Space authority, which says what this
-    // object is, gets past the gate — so what is refused above is the address
-    // rather than a caller or an object that answers nothing.
+    // And the same request, stating the parent kind this object actually has,
+    // is answered by the object rather than by the address gate — so what is
+    // refused above is the address and not a caller or an object with nothing
+    // to say. This fixture wrote the identity and never provisioned the
+    // conversation, so the answer past the gate is the object's own readiness
+    // refusal, by name.
+    //
+    // Asserted positively. `not.toMatchObject({ error: … })` here was
+    // satisfied by any answer at all, a 500 included, which is exactly the
+    // shape of assertion the audience defect of 2026-09-19 survived.
     const asSpace = await conversation.handleProductRequest({
       operation: "update", parentKind: "space", auth, input: { archived: true },
     });
-    expect(JSON.parse(asSpace.bodyJson)).not.toMatchObject({
-      error: "conversation_parent_kind_mismatch",
+    expect(asSpace.status).toBe(503);
+    expect(JSON.parse(asSpace.bodyJson)).toMatchObject({
+      error: "workstream_maintenance",
     });
   });
 
