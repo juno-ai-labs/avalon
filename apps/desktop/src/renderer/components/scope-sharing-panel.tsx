@@ -28,16 +28,21 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       emails: recipients, targets, completeWorkstream: false, expiresAt: null });
     if (result.status !== 'created') throw new Error('scope invitation was not created');
     return result;
-  }, onSuccess: () => {
-    setEmails(''); setFailure(null); operation.current = null;
-    onShared?.();
-  }, onError: () => { setFailure('share'); } });
+  } });
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={invite.isPending}>
     <form onSubmit={(event) => {
       event.preventDefault(); setFailure(null);
       const parsed = CreateScopeInvitationsSchema.shape.emails.safeParse(emails.split(/[\s,;]+/u).filter(Boolean));
       if (!parsed.success) { setFailure('invalid_emails'); return; }
-      invite.mutate([...new Set(parsed.data)].sort());
+      // The outcome is handled per call rather than on the hook: a share the
+      // user dismissed mid-flight belongs to a panel that is gone, and these
+      // callbacks are skipped once it has unmounted. A hook-level `onSuccess`
+      // runs regardless, and would close whichever dialog was opened in its
+      // place, taking the newly typed addresses with it.
+      invite.mutate([...new Set(parsed.data)].sort(), {
+        onSuccess: () => { setEmails(''); setFailure(null); operation.current = null; onShared?.(); },
+        onError: () => { setFailure('share'); },
+      });
     }}>
       <label className="form-field">Email addresses<textarea aria-label="Email addresses" value={emails} disabled={invite.isPending}
         onChange={(event) => setEmails(event.target.value)} placeholder="person@example.com" rows={2} /></label>

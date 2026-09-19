@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RallyApi } from '../lib/api';
 import { ScopeSharingPanel, ShareConversationDialog } from './scope-sharing-panel';
@@ -85,5 +85,39 @@ it('dismisses the share dialog once the invitation is created, and not before', 
 
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share conversation' })).toBeNull());
   expect(create).toHaveBeenCalledTimes(2);
+  client.clear();
+});
+
+it('leaves a reopened dialog alone when the share it was closed during settles', async () => {
+  const api = new RallyApi('https://api.test', null);
+  let settle: ((result: unknown) => void) | undefined;
+  const create = vi.spyOn(api, 'createScopeInvitations')
+    .mockImplementation(() => new Promise((resolve) => { settle = resolve; }) as never);
+  const client = new QueryClient();
+  function Host(): React.JSX.Element {
+    const [open, setOpen] = useState(true);
+    return <><button type="button" onClick={() => setOpen(true)}>Open share</button>
+      <ShareConversationDialog api={api} workspaceId={workspaceId} parentId={parentId}
+        substreamId="0" open={open} onOpenChange={setOpen} /></>;
+  }
+  render(<QueryClientProvider client={client}><Host /></QueryClientProvider>);
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'ada@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+
+  // Dismissed while the request is still in flight, then opened again for a
+  // second recipient: the first share's success belongs to a panel that is gone.
+  fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share conversation' })).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Open share' }));
+  await screen.findByRole('dialog', { name: 'Share conversation' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'bob@example.test' } });
+
+  await act(async () => { settle?.({ status: 'created', invitations: [{ email: 'ada@example.test' }] }); });
+  await act(async () => { await Promise.resolve(); });
+
+  expect(screen.getByRole('dialog', { name: 'Share conversation' })).toBeVisible();
+  expect(screen.getByRole('textbox', { name: 'Email addresses' })).toHaveValue('bob@example.test');
   client.clear();
 });
