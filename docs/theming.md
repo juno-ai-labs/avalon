@@ -209,6 +209,36 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-19 — The lightbox stops hiding the window it covers
+
+**What changed:** `sys.color.scrim.veil` is new — `scrim.solid`'s colour at half
+opacity — and `.attachment-lightbox-overlay` takes it, with its blur raised from
+1px to 6px. Both lightboxes read that rule: the attachment preview and the
+inspector's resource lightbox.
+
+**Why:** asked for. The overlay took `scrim.solid`, which is `0.98` in both
+appearances and opaque in practice, so opening a preview replaced the window
+rather than covering it — a person lost where they were, and nothing behind the
+dialog said what it belonged to. The 1px blur beside it had never drawn anything,
+because there was nothing visible left to blur; raising the radius without
+thinning the wash would have been the same no-op.
+
+**Considered and rejected:** `color-mix()` on `scrim.solid` in the rule. It reads
+the same on screen and puts a number that decides an appearance back into
+`app.css`, where a theme cannot reach it — the thing the registry exists to
+prevent. Also rejected: reusing `scrim.default`, which is a *darkening* scrim in
+both appearances (`0.34`/`0.72`) and would tint the light appearance grey rather
+than wash it with the surface colour.
+
+**Consequences:** the two values are deliberately the same colour at two
+strengths, so a theme that re-fits `scrim.solid` has to move `veil` with it or
+the pair stops reading as one material. The reduced-motion block still drops the
+blur, which now leaves the backdrop legible rather than hidden — that is the
+trade it was already making and is the place to look if the unblurred backdrop
+reads as busy. The media viewer shares the overlay and keeps its own shadow and
+radius on the image, which is what separates a pale image from the lighter
+backdrop now behind it.
+
 ### 2026-09-19 — One hover wash for the whole product
 
 **What changed:** `sys.color.state.hover` is new and is now the only fill a
