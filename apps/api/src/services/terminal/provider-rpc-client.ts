@@ -8,10 +8,12 @@ import type {
   TerminalProviderRpcBinding,
   TerminalProviderRpcCallbacks,
   TerminalProviderRpcCallbackResult,
+  TerminalProviderRpcInstrumentation,
   TerminalProviderRpcResult,
   TerminalProviderRpcSession,
 } from "./provider-rpc-contract";
 import { TerminalToolError } from "./tools";
+import { bindToTerminalToolTrace } from "./tracing";
 
 async function callbackResult(callback: () => Promise<void>): Promise<TerminalProviderRpcCallbackResult> {
   try {
@@ -62,7 +64,13 @@ export function createTerminalProviderRpcClient(
 ): TerminalSandboxProvider {
   let sessionPromise: Promise<TerminalProviderRpcSession> | undefined;
   const session = (): Promise<TerminalProviderRpcSession> => {
-    sessionPromise ??= binding.createSession(configuration, instrumentation);
+    // Only the session-scoped part of the instrumentation crosses here. A
+    // callback sent this way becomes a stub the provider Worker holds for the
+    // life of the session, so anything that belongs to a single call — every
+    // per-request measurement — is sent with that call instead.
+    sessionPromise ??= binding.createSession(configuration, {
+      ...(instrumentation.observe ? { observe: instrumentation.observe } : {}),
+    } satisfies TerminalProviderRpcInstrumentation);
     return sessionPromise;
   };
   const callbacks = (input?: {
@@ -70,6 +78,9 @@ export function createTerminalProviderRpcClient(
     assertSubmissionAuthority?: () => Promise<void>;
     onSubmitted?: (providerTaskId: string) => Promise<void>;
   }): TerminalProviderRpcCallbacks => {
+    // Built inside the tool invocation about to issue the request, which is
+    // where the trace still is; see `bindToTerminalToolTrace`.
+    const observeRequest = instrumentation.observeRequest;
     const signal = input?.signal;
     const assertSubmissionAuthority = input?.assertSubmissionAuthority;
     const onSubmitted = input?.onSubmitted;
@@ -89,6 +100,15 @@ export function createTerminalProviderRpcClient(
         })
       : undefined;
     return {
+      ...(observeRequest ? {
+        // Awaited, not fired: the contract lets a caller report asynchronously,
+        // and dropping its promise here would resolve the RPC callback early
+        // and reintroduce the very race this per-call delivery exists to close
+        // — with any rejection becoming an unhandled one on the way.
+        observeRequest: bindToTerminalToolTrace(async (measurement) => {
+          await observeRequest(measurement);
+        }),
+      } : {}),
       ...(assertSubmissionAuthority ? {
         assertSubmissionAuthority: () => callbackResult(assertSubmissionAuthority),
       } : {}),

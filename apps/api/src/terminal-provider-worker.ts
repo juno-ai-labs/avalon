@@ -10,7 +10,9 @@ import type {
 } from "./services/terminal/provider-contract";
 import { withTerminalProviderRpcAbort } from "./services/terminal/provider-rpc-cancellation";
 import {
+  observeTerminalProviderRequest,
   requireTerminalProviderRpcCallback,
+  terminalProviderRequestObserved,
   terminalProviderRpcCall,
 } from "./services/terminal/provider-rpc-result";
 import type {
@@ -36,89 +38,110 @@ function disposeRpcCallback(callback: unknown): void {
   if (typeof dispose === "function") dispose.call(callback);
 }
 
-class TerminalProviderSessionTarget extends RpcTarget implements TerminalProviderRpcSession {
+/**
+ * Exported for `terminal-provider-session-target.test.ts`, which drives every
+ * method against an injected provider. Each one has to hand its own callbacks
+ * to `terminalProviderRpcCall` for a measurement to reach the caller, and
+ * omitting that on one method is both the likeliest slip here and invisible:
+ * the method still works and only its instrumentation goes quiet.
+ */
+export class TerminalProviderSessionTarget extends RpcTarget implements TerminalProviderRpcSession {
   private readonly provider: DaytonaTerminalProvider;
   private readonly observe: TerminalProviderRpcInstrumentation["observe"];
-  private readonly observeRequest: TerminalProviderRpcInstrumentation["observeRequest"];
 
   constructor(
     ctx: ExecutionContext,
     configuration: SupportedTerminalConfiguration,
     instrumentation?: TerminalProviderRpcInstrumentation,
+    provider?: DaytonaTerminalProvider,
   ) {
     super();
     this.observe = retainRpcCallback(instrumentation?.observe);
-    this.observeRequest = retainRpcCallback(instrumentation?.observeRequest);
     const observe = this.observe;
-    const observeRequest = this.observeRequest;
-    this.provider = createDaytonaTerminalProvider(configuration, undefined, {
+    this.provider = provider ?? createDaytonaTerminalProvider(configuration, undefined, {
+      // A lifecycle observation needs nothing but the caller's environment, so
+      // it can outlive the call that produced it.
       ...(observe ? {
         observe: (measurement) => ctx.waitUntil(
           Promise.resolve(observe(measurement)).catch(() => undefined),
         ),
       } : {}),
-      ...(observeRequest ? {
-        observeRequest: (measurement) => ctx.waitUntil(
-          Promise.resolve(observeRequest(measurement)).catch(() => undefined),
-        ),
-      } : {}),
+      // A request measurement belongs to one caller's one call, and is routed
+      // to it by `terminalProviderRpcCall` rather than held on this session.
+      observeRequest: (measurement) => observeTerminalProviderRequest(measurement),
+      requestObserved: () => terminalProviderRequestObserved(),
     });
   }
 
   [Symbol.dispose](): void {
     disposeRpcCallback(this.observe);
-    disposeRpcCallback(this.observeRequest);
   }
 
-  createSandbox(input: Parameters<TerminalSandboxProvider["createSandbox"]>[0]) {
-    return terminalProviderRpcCall(() => this.provider.createSandbox(input));
+  createSandbox(
+    input: Parameters<TerminalSandboxProvider["createSandbox"]>[0],
+    callbacks?: TerminalProviderRpcCallbacks,
+  ) {
+    return terminalProviderRpcCall(() => this.provider.createSandbox(input), callbacks);
   }
 
-  prepareSandbox(idOrName: string, allowList: string[]) {
-    return terminalProviderRpcCall(() => this.provider.prepareSandbox(idOrName, allowList));
+  prepareSandbox(idOrName: string, allowList: string[], callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.prepareSandbox(idOrName, allowList), callbacks);
   }
 
-  getSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.getSandbox(idOrName));
+  getSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.getSandbox(idOrName), callbacks);
   }
 
-  recoverSandbox(idOrName: string, options?: TerminalSandboxWaitOptions) {
-    return terminalProviderRpcCall(() => this.provider.recoverSandbox(idOrName, options));
+  recoverSandbox(
+    idOrName: string,
+    options?: TerminalSandboxWaitOptions,
+    callbacks?: TerminalProviderRpcCallbacks,
+  ) {
+    return terminalProviderRpcCall(() => this.provider.recoverSandbox(idOrName, options), callbacks);
   }
 
-  startSandbox(idOrName: string, options?: TerminalSandboxWaitOptions) {
-    return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName, options));
+  startSandbox(
+    idOrName: string,
+    options?: TerminalSandboxWaitOptions,
+    callbacks?: TerminalProviderRpcCallbacks,
+  ) {
+    return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName, options), callbacks);
   }
 
-  stopSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.stopSandbox(idOrName));
+  stopSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.stopSandbox(idOrName), callbacks);
   }
 
-  archiveSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.archiveSandbox(idOrName));
+  archiveSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.archiveSandbox(idOrName), callbacks);
   }
 
-  deleteSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.deleteSandbox(idOrName));
+  deleteSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.deleteSandbox(idOrName), callbacks);
   }
 
-  updateNetworkPolicy(idOrName: string, allowList: string[] | null) {
-    return terminalProviderRpcCall(() => this.provider.updateNetworkPolicy(idOrName, allowList));
+  updateNetworkPolicy(
+    idOrName: string,
+    allowList: string[] | null,
+    callbacks?: TerminalProviderRpcCallbacks,
+  ) {
+    return terminalProviderRpcCall(() => this.provider.updateNetworkPolicy(idOrName, allowList), callbacks);
   }
 
   configureGitHubReadAccess(
     idOrName: string,
     input: Parameters<TerminalSandboxProvider["configureGitHubReadAccess"]>[1],
+    callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return terminalProviderRpcCall(() => this.provider.configureGitHubReadAccess(idOrName, input));
+    return terminalProviderRpcCall(() => this.provider.configureGitHubReadAccess(idOrName, input), callbacks);
   }
 
-  clearGitHubReadAccess(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.clearGitHubReadAccess(idOrName));
+  clearGitHubReadAccess(idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.clearGitHubReadAccess(idOrName), callbacks);
   }
 
-  readFile(idOrName: string, path: string) {
-    return terminalProviderRpcCall(() => this.provider.readFile(idOrName, path));
+  readFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => this.provider.readFile(idOrName, path), callbacks);
   }
 
   writeFile(
@@ -128,7 +151,7 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
     return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
-      this.provider.writeFile(idOrName, path, bytes, signal)));
+      this.provider.writeFile(idOrName, path, bytes, signal)), callbacks);
   }
 
   runUtilityCommand(
@@ -137,7 +160,7 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
     return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
-      this.provider.runUtilityCommand(idOrName, { ...input, signal })));
+      this.provider.runUtilityCommand(idOrName, { ...input, signal })), callbacks);
   }
 
   runCommand(
@@ -163,14 +186,15 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
             onSubmitted(providerTaskId),
           ),
         } : {}),
-      })));
+      })), callbacks);
   }
 
   cleanupCommand(
     idOrName: string,
     taskName: string,
+    callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return terminalProviderRpcCall(() => this.provider.cleanupCommand(idOrName, taskName));
+    return terminalProviderRpcCall(() => this.provider.cleanupCommand(idOrName, taskName), callbacks);
   }
 }
 

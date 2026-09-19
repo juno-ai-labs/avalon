@@ -116,3 +116,21 @@ export function recordTerminalAcquisition(input: { durationMs: number; cacheHit:
   trace.acquisitionDurationMs += input.durationMs;
   trace.acquisitionCacheHit = input.cacheHit;
 }
+
+/**
+ * Bind a callback to the tool trace that is active *now*, so it still records
+ * into that trace whenever something else invokes it later.
+ *
+ * `AsyncLocalStorage` follows an async chain inside one Worker, and a callback
+ * the Terminal provider Worker invokes arrives here off that chain. Binding at
+ * the point the callback is *created*, which is still on it, carries the trace
+ * across the hop explicitly. `docs/terminal-workspaces.md` has the account of
+ * what that cost when it was missing.
+ */
+export function bindToTerminalToolTrace<A extends unknown[], R>(
+  callback: (...args: A) => R,
+): (...args: A) => R {
+  const trace = terminalToolTraceStorage.getStore();
+  if (!trace) return callback;
+  return (...args: A) => terminalToolTraceStorage.run(trace, () => callback(...args));
+}
