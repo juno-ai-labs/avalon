@@ -3384,25 +3384,61 @@ function replaceSystemMessage(messages: ProviderMessages, content: string): void
 
 /**
  * The machine code every OpenAI-compatible endpoint uses to refuse a prompt
- * longer than it accepts, and the shapes it arrives in.
- *
- * Azure, OpenAI, and the Foundry deployments behind them all answer HTTP 400
- * with `error.code` set to this string, so the direct read covers them. The
- * nested pattern is for OpenRouter, which does *not* adopt the upstream code:
- * it reports its own numeric `400` and forwards the endpoint's envelope inside
- * `metadata.raw`, where the code survives as an escaped JSON pair. Matching it
- * there reads a bounded machine code out of the body Rally already captured,
- * which is the same thing `providerDeclaredTransportFailure` does below — not a
- * search of the provider's prose, which is free text that changes without
- * notice and would classify an unrelated rejection that happens to mention a
- * length.
+ * longer than it accepts.
  */
 const CONTEXT_LENGTH_REJECTION_CODE = "context_length_exceeded";
-const NESTED_CONTEXT_LENGTH_REJECTION_CODE =
-  /\\?"code\\?"\s*:\s*\\?"context[_-]length[_-]exceeded\\?"/i;
+
+/** A provider's machine code, normalized for casing and separator only. */
+function normalizedProviderCode(value: unknown): string | null {
+  return typeof value === "string" ? value.trim().toLowerCase().replaceAll("-", "_") : null;
+}
+
+/**
+ * The upstream endpoint's own `error.code`, out of an envelope OpenRouter
+ * forwarded rather than adopted.
+ *
+ * OpenRouter reports its own numeric `400` for a rejection the endpoint behind
+ * it made, and carries that endpoint's envelope in `error.metadata.raw` — a
+ * JSON *string* in every shape seen so far, and defensively also accepted as an
+ * already-decoded object. Only `error.code` inside it is read.
+ *
+ * This is parsed rather than pattern-matched because the text it is parsed out
+ * of is the whole response body: `openRouterProviderError` sets `detail` to the
+ * entire body, not to `metadata.raw`, so a substring search here would also
+ * see the provider's free-text `message`, and a provider that echoes the
+ * rejected request back or lists codes in prose would be read as a
+ * context-length refusal. An earlier revision of this function did exactly
+ * that, and its own comment claimed it did not.
+ */
+function forwardedUpstreamErrorCode(detail: string | undefined): string | null {
+  if (detail === undefined) return null;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(detail);
+  } catch {
+    return null;
+  }
+  const raw = (envelope as { error?: { metadata?: { raw?: unknown } } })?.error?.metadata?.raw;
+  let upstream: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      upstream = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return normalizedProviderCode((upstream as { error?: { code?: unknown } })?.error?.code);
+}
 
 /**
  * Did the endpoint refuse this request because the prompt was too long?
+ *
+ * Two shapes, because the transports differ. Azure, OpenAI and the Foundry
+ * deployments behind them answer HTTP 400 with `error.code` set to the machine
+ * code, which `openRouterProviderError` captures directly. OpenRouter does not
+ * adopt that code, so its envelope is parsed for the one the upstream endpoint
+ * sent. Both read a bounded machine code and neither reads the provider's
+ * prose, which is free text that changes without notice.
  *
  * A 400 is Rally's request shape, and the invariant in `docs/agent-harness.md`
  * is that a request Rally owns is never named as the provider's. This does not
@@ -3414,21 +3450,18 @@ const NESTED_CONTEXT_LENGTH_REJECTION_CODE =
  * generic code on a path that had the reason in hand is a defect — see the
  * rule in `CLAUDE.md` — and this is that path.
  *
- * Both envelope shapes are covered through `runHarness` rather than here: what
- * is worth pinning is that a run reports the code, and a predicate that agrees
- * with a fixture while the catch above it drops the answer proves nothing.
+ * Both transports are covered through `runHarness` rather than here, on models
+ * whose route policy terminates on the transport under test: a predicate that
+ * agrees with a fixture proves nothing about the arm the terminal catch
+ * actually reaches.
  */
 function isProviderContextLengthRejection(error: unknown): boolean {
   if (!(error instanceof OpenRouterError || error instanceof AzureOpenAIError)) return false;
   const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
     ?.providerError;
   if (!providerError) return false;
-  if (
-    typeof providerError.code === "string"
-    && providerError.code.trim().toLowerCase().replaceAll("-", "_") === CONTEXT_LENGTH_REJECTION_CODE
-  ) return true;
-  return providerError.detail !== undefined
-    && NESTED_CONTEXT_LENGTH_REJECTION_CODE.test(providerError.detail);
+  if (normalizedProviderCode(providerError.code) === CONTEXT_LENGTH_REJECTION_CODE) return true;
+  return forwardedUpstreamErrorCode(providerError.detail) === CONTEXT_LENGTH_REJECTION_CODE;
 }
 
 function providerDeclaredTransportFailure(details: unknown): {
