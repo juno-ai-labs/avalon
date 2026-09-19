@@ -25,7 +25,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
@@ -98,6 +98,24 @@ beforeEach(async () => {
  * derive one from; the address allocator needs one, and it is configuration,
  * not behaviour under test.
  */
+/**
+ * A personal Space to start a Channel in, reserved and not provisioned.
+ *
+ * Creation reads the Space's scope and participants out of WorkspaceDO and
+ * never addresses `SpaceDO`, so a reservation is the whole fixture. What it
+ * buys is a Channel whose audience is its creator's rather than the
+ * Organization's.
+ */
+async function personalSpace(): Promise<SpaceId> {
+  const reserved = await workspace().reserveSpace({
+    workspaceId: WORKSPACE_ID,
+    userId: USER_ID,
+    space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+  });
+  if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+  return asSpaceId(reserved.space.id);
+}
+
 function creationEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
@@ -121,8 +139,16 @@ describe("creating a work stream", () => {
       env.DB.prepare("INSERT INTO users(id,email,name,avatar_url,timezone,created_at) VALUES (?,'recipient@example.test','Recipient',NULL,'UTC','2026-09-17T00:00:00.000Z')")
         .bind(recipient),
     ]);
+    // In a *personal* Space, which is what a Channel with an audience of its
+    // own now means: a creation that names none is placed in General, and
+    // General is Organization-wide, so the Channel this case is about — one
+    // somebody is invited into rather than one the Organization can already
+    // read — has to name a Space whose audience is the creator's.
     const created = await new WorkstreamObjectCreationService(creationEnv(), AUTH).createPrepared({
-      title: "Connector admission", clientMessageId: "connector-admission", participantUserIds: [],
+      title: "Connector admission",
+      clientMessageId: "connector-admission",
+      participantUserIds: [],
+      spaceIds: [await personalSpace()],
     }, { messages: [{ role: "user", text: "A prepared start" }] });
     const parentId = asWorkstreamId(created.workstream.id);
     const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, parentId));
