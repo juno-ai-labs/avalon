@@ -33,18 +33,16 @@ and renders `./<path>`.
 
 **Load.** A producer finds a block and calls `recordLoaded`. A block already in
 context at that content is reported as already resident and nothing happens.
-The known set a producer's gate checks against (`residentBlocks`) holds only
-blocks the model has seen: recorded, delivered, current. A block recorded but
-not yet delivered is not in it, so a second mutation in the same batch is
-refused like the first, and the retry after the settled step, when the message
-has landed, proceeds.
+The known set a producer checks against (`residentBlocks`) holds only blocks
+the model has seen: recorded, delivered, current. A block recorded but not yet
+delivered is not in it, so a second read in the same batch reports the same
+file again and the ledger records nothing twice.
 Otherwise every other content for the same id is retired (a transcript block to
 `none`, a prompt-resident one flagged `superseded` so the prefix does not change
 mid-run), and the new block is written in `transcript` residency with a pending
-delivery. The Terminal kind loads from a probe that rides the tool's own sandbox
-command: after a read, or before a mutation in `abort` mode, where a candidate
-that is not yet resident stops the command with exit 52 before anything
-changes and the tool returns `instructions_pending`. The probe's JSON trailer
+delivery. The Terminal kind loads from a probe that rides a read's own sandbox command,
+after the read, and reports what it found; no mutation carries one or waits
+for one. The probe's JSON trailer
 starts with a marker minted for that one invocation, and the parser is handed
 the same value; the tool's own output, which is untrusted and precedes the
 trailer, cannot contain it. The repository bootstrap,
@@ -140,23 +138,16 @@ including the exception this subsystem introduces
   `terminal_instruction_probe_failed` and leaves the tool's or bootstrap's own
   outcome alone; the next touch retries, and the root is rediscovered by every
   chain and by the next run's `refreshed` bootstrap.
-- The first ledger failure in a run (the known set could not be read, a record
-  failed, a stopped command printed no trailer) turns the gate off for the rest
-  of that run: every later probe runs in report mode, so discovery and
-  recording keep being attempted and no mutation waits on a ledger that is not
-  answering. A mutation the probe had already stopped when that happened is
-  refused once with `instructions_unavailable`, which tells the model the retry
-  proceeds. Without this, a stopped mutation would be refused again on every
-  retry for instructions that never arrive.
-- A mutation whose governing file is not resident returns `instructions_pending`
-  having changed nothing; the instructions are recorded, arrive with that batch,
-  and the retry after the settled step proceeds. A second mutation beneath the
-  same file in the same batch is refused the same way, because the model has
-  not seen the message yet. The `read_file` tool never waits; the read that
-  precedes an edit does, because the edit will. `run_command` and `import_resource`
-  probe in a command of their own before the mutation, since neither the model's
-  command nor the resource bridge can carry the fragment; every other tool's
-  probe rides its own command.
+- A ledger failure (the known set could not be read, a record failed) is
+  reported the same way and changes nothing about the read; the next read
+  records again.
+- A mutation never waits for its instructions. They arrive through the read an
+  edit starts with, which the Terminal prompt requires, or through `read_file`;
+  a whole-file write, a patch, a command or an import beneath a file no read
+  has touched proceeds without them, and the next read delivers them. The
+  `instructions_pending` refusal that held a mutation until then was removed on
+  2026-09-19; [`terminal-workspaces.md`](terminal-workspaces.md#changelog)
+  records why.
 - Two limits are defined and, at the time of writing, open placeholders in
   `blocks.ts`, per
   [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md):
