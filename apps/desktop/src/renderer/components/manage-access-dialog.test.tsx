@@ -110,13 +110,40 @@ describe('Manage access', () => {
     await waitFor(() => expect(onChangeScope).toHaveBeenCalledWith('workspace'));
   });
 
-  // The client cannot know in advance whether narrowing is allowed — a Space
-  // may be holding the Channel open — so it offers it and renders the refusal.
-  it('turns a scope locked by a space into copy naming what must change first', async () => {
+  // The server refuses `channel_scope_locked_by_space` exactly while an
+  // Organization-wide Space holds the Channel, and those sources are on this
+  // screen — so the control is not drawn rather than drawn to fail.
+  it('given an organization-wide space holds the channel, then narrowing it is not offered', async () => {
     renderDialog({
       direct: { scope: 'workspace', participantUserIds: [] },
       spaces: [{ spaceId: general.id, scope: 'workspace', participantUserIds: [] }],
       spaceIds: [general.id],
+    });
+
+    expect(await screen.findByText(/public through General/u)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Make private' })).not.toBeInTheDocument();
+  });
+
+  it('given only a personal space holds the channel, then narrowing it is offered and applied', async () => {
+    const onChangeScope = vi.fn(async () => undefined);
+    renderDialog({
+      direct: { scope: 'workspace', participantUserIds: [] },
+      spaces: [{ spaceId: hiring.id, scope: 'personal', participantUserIds: [person] }],
+      spaceIds: [hiring.id],
+    }, { onChangeScope });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Make private' }));
+
+    await waitFor(() => expect(onChangeScope).toHaveBeenCalledWith('personal'));
+  });
+
+  // The sources on screen are the ones the read answered with; a Space widened
+  // since is the race the refusal exists for, and its copy is what says so.
+  it('turns a scope locked by a space into copy naming what must change first', async () => {
+    renderDialog({
+      direct: { scope: 'workspace', participantUserIds: [] },
+      spaces: [{ spaceId: hiring.id, scope: 'personal', participantUserIds: [person] }],
+      spaceIds: [hiring.id],
     }, {
       onChangeScope: async () => {
         throw new ApiError('A Channel in “General” is public through an Organization-wide Space', 409, 'channel_scope_locked_by_space');
