@@ -5,8 +5,10 @@ related work streams. `WorkspaceDO` is the authority for project identity,
 presentation, scope, participants, lifecycle generations, each person's
 project order, many-to-many membership, default-resource delivery targets, and
 reversible lifecycle state. The desktop presents V1 assignment as one active
-project per work stream while reads and storage remain plural-ready. The full
-behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
+project per work stream while reads and storage remain plural-ready. This is the
+shipped Project mechanism; its product design is now superseded by the planned
+[Spaces and Organization hierarchy](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md),
+which defines the eventual cutover and retirement of this module.
 
 ## Where the code lives
 
