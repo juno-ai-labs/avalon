@@ -32,7 +32,9 @@ import { Daytona, Image } from "@daytona/sdk";
 import { parseTerminalRegionConfiguration } from "../src/services/terminal/contract";
 import {
   TERMINAL_SNAPSHOT_BASE_IMAGE,
+  TERMINAL_SNAPSHOT_RESOURCES,
   terminalSnapshotImageBuildCommand,
+  terminalSnapshotResourceMismatches,
 } from "../src/services/terminal/snapshot-manifest";
 
 const configuration = parseTerminalRegionConfiguration(process.env);
@@ -66,15 +68,33 @@ const image = Image.base(baseImage)
   .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt })
   .runCommands(terminalSnapshotImageBuildCommand());
 
-process.stdout.write(`Building Terminal snapshot ${configuration.snapshot} from ${baseImage} (built-at ${builtAt})\n`);
+process.stdout.write(
+  `Building Terminal snapshot ${configuration.snapshot} from ${baseImage} (built-at ${builtAt}) at ${TERMINAL_SNAPSHOT_RESOURCES.cpu} vCPU / ${TERMINAL_SNAPSHOT_RESOURCES.memory} GiB / ${TERMINAL_SNAPSHOT_RESOURCES.disk} GiB\n`,
+);
 
+// A sandbox created from a snapshot inherits the snapshot's size, and the
+// snapshots API has no way to resize one afterwards, so the resources have to be
+// requested here or every sandbox runs on Daytona's 1 vCPU / 1 GiB / 3 GiB
+// default. `memory` and `disk` are GiB.
 const created = await daytona.snapshot.create(
-  { name: configuration.snapshot, image },
+  { name: configuration.snapshot, image, resources: TERMINAL_SNAPSHOT_RESOURCES },
   { onLogs: (line: string) => process.stdout.write(`${line}\n`) },
 );
 
+// Accepting the request is not carrying the size. An under-sized snapshot passes
+// every probe the acceptance gate runs and only shows up as a work stream the
+// kernel killed, so the build fails here instead, naming each field that differs.
+const mismatches = terminalSnapshotResourceMismatches(created);
+if (mismatches.length > 0) {
+  throw new Error(
+    `Daytona built ${created.name} with resources Rally did not request: ${mismatches.join(", ")}`,
+  );
+}
+
 process.stdout.write(
-  `\nBuilt Terminal snapshot ${created.name} (id ${created.id}, state ${created.state}, created ${created.createdAt}, base ${baseImage}).\n`
+  `\nBuilt Terminal snapshot ${created.name} (id ${created.id}, state ${created.state}, `
+  + `created ${created.createdAt}, base ${baseImage}, `
+  + `${created.cpu} vCPU / ${created.mem} GiB / ${created.disk} GiB).\n`
   + "It is not adopted yet. Run the real-provider acceptance gate against it first:\n"
   + "  pnpm --filter @rally/api terminal:verify-provider\n",
 );
