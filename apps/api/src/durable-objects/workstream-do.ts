@@ -2744,7 +2744,18 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 }
 
-applyRetirementGate(WorkstreamDO, {
+/**
+ * How this class classifies the doors it overrides for itself.
+ *
+ * Exported so `SpaceDO` registers the *same object* rather than a copy.
+ * Dispositions resolve up the prototype chain, so a subclass that declares
+ * nothing already inherits these — what its own registration adds is the
+ * wrapping of any method it comes to define itself, which an inherited
+ * registration cannot reach. A second literal would have bought that at the
+ * price of two door lists to keep in step, and a door missing from one of them
+ * is a retired object still answering.
+ */
+export const WORKSTREAM_RETIREMENT_POLICY = {
   // The shared classification is inherited from ConversationParentDurableObject;
   // this call is what wraps the doors *this* class overrides for itself.
   drop: {
@@ -2761,4 +2772,6 @@ applyRetirementGate(WorkstreamDO, {
     webSocketError: () => Promise.resolve(),
     alarm: () => Promise.resolve(),
   },
-});
+} as const;
+
+applyRetirementGate(WorkstreamDO, WORKSTREAM_RETIREMENT_POLICY);

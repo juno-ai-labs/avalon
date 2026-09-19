@@ -16,13 +16,13 @@ import "../../../tests/isolated-region";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asAutomationId, asWorkspaceId } from "@rally/contracts";
+import { asAutomationId, asSpaceId, asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
 } from "@rally/contracts/durable-object-migrations";
 
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
+import { automationDOName, spaceDOName, workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
   reportForcedMigration,
@@ -175,7 +175,40 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["AutomationDO", "SidekickDO", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
+      .toEqual(["AutomationDO", "SidekickDO", "SpaceDO", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
+  });
+
+  it("forces a Space onto the space_do ledger and reports it as a SpaceDO", async () => {
+    // `SpaceDO` is `WorkstreamDO` under a role, and the role is the only thing
+    // saying so: a plan that reported the inherited class or the inherited
+    // component would have this object refuse its own command, and would file
+    // its schema version under the work-stream rollup.
+    const objectId = env.SPACE_DOS.idFromName(spaceDOName(
+      "global",
+      asWorkspaceId("00000000-0000-7000-8000-000000006101"),
+      asSpaceId("00000000-0000-7000-8000-000000006102"),
+    )).toString();
+    const result = await applyMigrationCommand(env, command({ className: "SpaceDO", objectId }));
+    expect(result).toMatchObject({
+      className: "SpaceDO",
+      component: "space_do",
+      schemaVersion: MIGRATION_COMMAND_HEADS.SpaceDO,
+    });
+    // One version, not the work stream's seventeen: a Space has no history to
+    // replay, so its ledger renders that history's current shape at version 1.
+    expect(MIGRATION_COMMAND_HEADS.SpaceDO).toBe(1);
+
+    // The class fence, asked of the object itself. Routing the same command
+    // through `WORKSTREAM_DOS` cannot reach this — the platform refuses an id
+    // minted in another namespace first — so the mismatch is exercised where
+    // the plan is read.
+    await runInDurableObject(
+      env.SPACE_DOS.get(env.SPACE_DOS.idFromString(objectId)),
+      async (instance) => {
+        await expect(instance.forceMigration(command({ className: "WorkstreamDO", objectId })))
+          .rejects.toThrow(/durable_object_migration_command_class_mismatch/u);
+      },
+    );
   });
 
   it("accepts renamed and already-queued legacy Sidekick migration commands", async () => {

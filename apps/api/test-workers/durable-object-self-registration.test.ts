@@ -18,12 +18,13 @@
  */
 import { env } from "cloudflare:workers";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSpaceId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -36,6 +37,7 @@ import {
 } from "./helpers/substream-fixture";
 
 const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004b1");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000004b4");
 
 /**
  * The internals these tests read on purpose.
@@ -162,6 +164,42 @@ describe("a Durable Object's registration of its own identity", () => {
       // separates them — and it still does, whether or not the two namespaces
       // happen to hash a name to the same id.
       expect(selfFor(held.env, env.SUBSTREAM_AGENTS, name)).toBeNull();
+    });
+  });
+
+  it("lets a SpaceDO recognize itself under its own binding and name", async () => {
+    // The registration the role supplies, which is the half a subclass most
+    // easily gets wrong: `SpaceDO` inherits the constructor that registers, so
+    // an inherited `env.WORKSTREAM_DOS` and `workstreamDOName` would make every
+    // Space resolve its own name out through the work-stream namespace and land
+    // on a different object — with nothing failing on either side.
+    const name = spaceDOName("global", WORKSPACE_ID, SPACE_ID);
+    const stub = env.SPACE_DOS.get(env.SPACE_DOS.idFromName(name));
+    await boot(stub);
+
+    await runInDurableObject(stub, (instance, state) => {
+      const held = internals(instance);
+      expect(selfFor(held.env, env.SPACE_DOS, name)).not.toBeNull();
+
+      state.storage.sql.exec(
+        `INSERT INTO workstream_metadata
+           (id, workspace_id, workstream_id, region, authority_generation, title,
+            description, preview, scope, exact_state, last_activity_at,
+            created_at, updated_at)
+         VALUES (1, ?, ?, 'global', 1, 'Hiring', '', '', 'workspace', 'idle', 1, 1, 1)`,
+        WORKSPACE_ID,
+        SPACE_ID,
+      );
+
+      // With identity written, the name is derived — and it is the Space name,
+      // not the work-stream name the same id would have produced.
+      expect(selfFor(held.env, env.SPACE_DOS, name)).not.toBeNull();
+      expect(selfFor(
+        held.env,
+        env.SPACE_DOS,
+        workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(SPACE_ID)),
+      )).toBeNull();
+      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
   });
 
