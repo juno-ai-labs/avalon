@@ -117,6 +117,38 @@ export function spaceRefusal(
 }
 
 /**
+ * How a resumed Space intent ended.
+ *
+ * `abandoned` carries the receipt the intent was settled with, because the
+ * consumer is what writes the log line and an operation that settled without
+ * doing its work is otherwise a row nobody looks at. A resume that throws is
+ * neither of these: it stays unsettled and is retried.
+ */
+export type SpaceIntentResumeOutcome =
+  | { readonly outcome: "settled" }
+  | { readonly outcome: "abandoned"; readonly reason: string };
+
+/**
+ * The participant roster a walk may re-apply, refusing a summary that is not
+ * the Organization's answer.
+ *
+ * `SpaceSummary` is viewer-scoped in exactly one way, and it is this one: a
+ * `through_channel` viewer's `participants` is empty *by design*, because they
+ * are told a Space's mark so the Channel they can read has somewhere to be
+ * drawn and nothing about who is in it. Applying that roster to a member
+ * Channel is not "narrow this Space" — it is "withdraw every reader this Space
+ * supplies", and the application would report success.
+ *
+ * {@link SpaceService.resumeIntent} refuses such a requester before any branch
+ * runs; this is the fence at the point of use, so the next consumer to read a
+ * summary and hand its roster to `applySpaceSource` fails by name instead.
+ */
+function rosterOf(space: SpaceSummary): UserId[] {
+  if (space.reach === "through_channel") throw new Error("space_roster_viewer_scoped");
+  return space.participants.map((participant) => participant.userId);
+}
+
+/**
  * The regional facade over the Organization's Space authority.
  *
  * Three objects have to agree for a Space to mean anything, and this is where
@@ -698,6 +730,10 @@ export class SpaceService {
    * An intent whose Space has moved on is abandoned rather than forced. The
    * work it describes was staged against a Space that no longer exists in that
    * shape, and re-running it would apply an audience nobody asked for.
+   *
+   * Every way of giving up is named to the caller rather than swallowed here,
+   * because the consumer is what writes the log line and an intent that
+   * settled without doing its work is the thing nobody would otherwise notice.
    */
   async resumeIntent(intent: {
     operationId: string;
@@ -707,13 +743,38 @@ export class SpaceService {
     spaceRevision: number;
     membershipGeneration: number | null;
     cursor: string | null;
-  }): Promise<void> {
+  }): Promise<SpaceIntentResumeOutcome> {
     const workspace = await this.workspace();
     // Settling an intent is what takes it out of the alarm's claim, so giving
     // up on one is a receipt like any other rather than a second operation.
-    const abandon = (reason: string): Promise<void> =>
-      this.recordReceipt(intent.operationId, reason, true);
+    const abandon = async (reason: string): Promise<SpaceIntentResumeOutcome> => {
+      await this.recordReceipt(intent.operationId, reason, true);
+      return { outcome: "abandoned", reason };
+    };
     const space = await this.summary(intent.spaceId);
+    // The resume runs as the person who staged the intent, and `summary` is
+    // *their* view of the Space. Somebody taken out of a Space between staging
+    // an operation and its resume still reaches it through a Channel placed in
+    // it, so this read no longer refuses them — it answers `through_channel`,
+    // whose roster is empty by design. Every branch below re-applies that
+    // roster to member Channels, so the walk would withdraw every reader this
+    // Space supplies, seat nobody, and settle itself as a success.
+    //
+    // Terminal rather than retried, the way `requester_inactive` is: no later
+    // delivery gives the requester their reach back, so republishing this
+    // forever would cost an alarm wake and a dead-letter message per delivery
+    // and never converge. The reason goes on the row as well as into the
+    // consumer's log — `recordIntentFailure` only writes while the intent is
+    // unsettled, so it goes on before the receipt that settles it.
+    if (space.reach === "through_channel") {
+      await workspace.recordSpaceIntentFailure({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        operationId: intent.operationId,
+        errorCode: "requester_reach_lost",
+      });
+      return abandon("requester_reach_lost");
+    }
     const access = new ChannelAccessService(this.env, this.auth);
     if (intent.kind === "add") {
       // Both fences are written by the staging and neither is nullable for
@@ -721,9 +782,13 @@ export class SpaceService {
       // operation to re-run. Named rather than re-run, and named for what is
       // missing rather than for the kind.
       if (!intent.workstreamId || !intent.membershipGeneration) {
-        await abandon("add_fences_missing");
-        return;
+        return abandon("add_fences_missing");
       }
+      // A fence against a Space whose *audience* moved, and nothing more. A
+      // viewer projection flips `is_participant` without touching `revision`,
+      // so this guard does not see a requester who has been taken out of the
+      // Space — which is why the reach check above it is the one that covers
+      // an emptied roster, for this branch as much as for the walks.
       if (space.revision !== intent.spaceRevision) {
         await workspace.cancelSpaceMembership({
           workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -733,13 +798,12 @@ export class SpaceService {
           spaceRevision: intent.spaceRevision,
           membershipGeneration: intent.membershipGeneration,
         });
-        await abandon("add_superseded");
-        return;
+        return abandon("add_superseded");
       }
       await access.applySpaceSource(intent.workstreamId, {
         spaceId: intent.spaceId,
         scope: space.scope,
-        participantUserIds: space.participants.map((participant) => participant.userId),
+        participantUserIds: rosterOf(space),
         spaceRevision: intent.spaceRevision,
         membershipGeneration: intent.membershipGeneration,
         operationId: uuidV7(),
@@ -752,12 +816,11 @@ export class SpaceService {
         spaceRevision: intent.spaceRevision,
         membershipGeneration: intent.membershipGeneration,
       });
-      return;
+      return { outcome: "settled" };
     }
     if (intent.kind === "remove") {
       if (!intent.workstreamId || !intent.membershipGeneration) {
-        await abandon("remove_fences_missing");
-        return;
+        return abandon("remove_fences_missing");
       }
       await access.retractSpaceSource(intent.workstreamId, intent.spaceId, uuidV7());
       await workspace.finalizeSpaceMembershipRemoval({
@@ -768,7 +831,7 @@ export class SpaceService {
         spaceRevision: intent.spaceRevision,
         membershipGeneration: intent.membershipGeneration,
       });
-      return;
+      return { outcome: "settled" };
     }
     if (intent.kind === "audience") {
       // A superseded audience change is still an interrupted one. The request
@@ -801,7 +864,7 @@ export class SpaceService {
           await access.applySpaceSource(workstreamId, {
             spaceId: intent.spaceId,
             scope: space.scope,
-            participantUserIds: space.participants.map((participant) => participant.userId),
+            participantUserIds: rosterOf(space),
             spaceRevision: space.revision,
             membershipGeneration,
             operationId: uuidV7(),
@@ -814,7 +877,7 @@ export class SpaceService {
         superseded ? "audience_superseded" : "audience_settled",
         true,
       );
-      return;
+      return { outcome: "settled" };
     }
     if (intent.kind === "archive") {
       // `reaching`, for the reason `archive` uses it: the prepare that staged
@@ -838,7 +901,7 @@ export class SpaceService {
         spaceId: intent.spaceId,
         operationId: intent.operationId,
       });
-      return;
+      return { outcome: "settled" };
     }
     if (intent.kind === "restore") {
       // The audience walk minus the retraction. The archive is what took this
@@ -854,7 +917,7 @@ export class SpaceService {
           await access.applySpaceSource(workstreamId, {
             spaceId: intent.spaceId,
             scope: space.scope,
-            participantUserIds: space.participants.map((participant) => participant.userId),
+            participantUserIds: rosterOf(space),
             spaceRevision: space.revision,
             membershipGeneration,
             operationId: uuidV7(),
@@ -863,7 +926,7 @@ export class SpaceService {
         },
       });
       await this.recordReceipt(intent.operationId, "restored", true);
-      return;
+      return { outcome: "settled" };
     }
     // Every kind that stages an intent has a branch above, and
     // `SpaceIntentKindSchema` admits no others — so this is unreachable rather
