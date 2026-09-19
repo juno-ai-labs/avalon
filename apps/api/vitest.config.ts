@@ -1,8 +1,23 @@
+import { readFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    {
+      // A `.py` import is the file's text, as the Worker's `rules` (Text
+      // modules) in `wrangler.global.jsonc` make it, so the vendored applier
+      // under `src/services/terminal/vendor/` is one file that the runtime
+      // imports as a string and a test reads back from disk.
+      name: "rally:text-modules",
+      enforce: "pre",
+      async load(id) {
+        if (!id.split("?")[0]!.endsWith(".py")) return null;
+        return { code: `export default ${JSON.stringify(await readFile(id.split("?")[0]!, "utf8"))};`, map: null };
+      },
+    },
+  ],
   resolve: {
     alias: {
       "cloudflare:workers": fileURLToPath(new URL("./test/helpers/cloudflare-workers.ts", import.meta.url)),

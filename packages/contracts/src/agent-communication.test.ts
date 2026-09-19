@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { asSubstreamId } from "./identifiers";
 import {
-  agentAddressForId, agentIdForAddress, AgentIdSchema, StartAgentInputSchema,
-  SendAgentMessageInputSchema, ReplyToAgentMessageInputSchema,
+  agentAddressForId, agentIdForAddress, AgentIdSchema, AgentMessageResultSchema, StartAgentInputSchema,
+  StartAgentResultSchema, SendAgentMessageInputSchema, ReplyToAgentMessageInputSchema,
 } from "./agent-communication";
 
 const parentId = "00000000-0000-4000-8000-000000000001";
@@ -38,5 +38,15 @@ describe("agent communication contracts", () => {
     expect(SendAgentMessageInputSchema.safeParse({ agentId, message: " " }).success).toBe(false);
     expect(ReplyToAgentMessageInputSchema.safeParse({ agentId, messageId: otherParentId, ...content }).success).toBe(false);
     expect(SendAgentMessageInputSchema.safeParse({ agentId, messageId: otherParentId, ...content }).success).toBe(false);
+  });
+
+  it("returns the delivery sentence with every started agent and accepted message", () => {
+    const agentId = agentIdForAddress({ parentKind: "workstream", parentId, substreamId: main });
+    const next = "Its reply will arrive here as a message.";
+    expect(StartAgentResultSchema.parse({ agentId, name: "Research", next })).toEqual({ agentId, name: "Research", next });
+    expect(StartAgentResultSchema.safeParse({ agentId }).success).toBe(false);
+    expect(StartAgentResultSchema.safeParse({ agentId, name: "Research", next, status: "executing" }).success).toBe(false);
+    expect(AgentMessageResultSchema.parse({ messageId: otherParentId, next })).toEqual({ messageId: otherParentId, next });
+    expect(AgentMessageResultSchema.safeParse({ messageId: otherParentId }).success).toBe(false);
   });
 });
