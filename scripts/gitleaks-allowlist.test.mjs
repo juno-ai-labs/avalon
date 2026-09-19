@@ -56,7 +56,7 @@ test("every allowlisted pattern is one this file has reasoned about", () => {
   // adding one here is deliberately not optional.
   assert.equal(
     allowlistRegexes(config).length,
-    4,
+    5,
     "a new .gitleaks.toml allowlist pattern needs a test in this file proving what it still rejects",
   );
 });
@@ -141,4 +141,26 @@ test("the generated PEM exception admits source interpolation but no key materia
   const material = Buffer.from("ephemeral key material").toString("base64");
   const withKeyMaterial = source.replace("${Buffer.from(await crypto.subtle.exportKey('pkcs8', keys.privateKey)).toString('base64')}", material);
   assert.doesNotMatch(withKeyMaterial, allowlist);
+});
+
+test("the invitation fixture exception admits exactly one dead value", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("inv_"));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+
+  // What it is for: one `inv_` fixture that two renderer tests carried before
+  // they were rewritten to build the shape out of a padded sentence. The scan
+  // reads the whole commit range, so the commit that introduced it keeps being
+  // found after the tree is clean.
+  const fixture = "inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2";
+  assert.match(fixture, allowlist);
+
+  // What it must never admit: any other token of this shape. A real one is 43
+  // base64url characters of `crypto.getRandomValues`, and an `inv_` shape
+  // exception would hide every invitation ever minted.
+  assert.doesNotMatch("inv_Qz4Wne9Lf2YsMk8Ux3Vc5Jt7Hd1Kb0Bg6Sv2Pl4Mi3", allowlist);
+  assert.doesNotMatch(`${fixture}a`, allowlist);
+  assert.doesNotMatch(`a${fixture}`, allowlist);
+  assert.doesNotMatch(fixture.slice(0, -1), allowlist);
+  assert.doesNotMatch(fixture.slice(4), allowlist);
 });
