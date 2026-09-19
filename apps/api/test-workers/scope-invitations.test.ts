@@ -41,12 +41,12 @@ async function deliveredLink(id: string, parent = parentId): Promise<URL> {
 
 const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
 
-async function deliveredText(id: string, parent = parentId): Promise<string> {
+async function deliveredParts(id: string, parent = parentId): Promise<{ text: string; html?: string }> {
   const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
     new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
   const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
-  return (JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
-    env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string }).text;
+  return JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
+    env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string; html?: string };
 }
 
 async function tokenFor(id: string, parent = parentId): Promise<string> {
@@ -246,7 +246,7 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
 it("names the sender and the workspace, and still sends when the conversation cannot be previewed", async () => {
   const created = await room().createScopeInvitations(invitation());
   if (created.status !== "created") throw new Error(JSON.stringify(created));
-  const text = await deliveredText(created.invitations[0]!.id);
+  const { text, html } = await deliveredParts(created.invitations[0]!.id);
   expect(text.split("\n")[0]).toBe("Adam Owner invited you to Shared workspace on Rally.");
   expect(text).toContain("Sign in with guest@example.test and accept:");
   expect(text).toContain((await deliveredLink(created.invitations[0]!.id)).toString());
@@ -256,6 +256,11 @@ it("names the sender and the workspace, and still sends when the conversation ca
   // preview cannot be read. An invitation is not a preview: it goes anyway,
   // with nothing quoted.
   expect(text).not.toContain(">");
+  // Both parts are composed once and stored together, so a delivery retry
+  // sends the message that was composed rather than one rendered again later.
+  expect(html).toContain("Adam Owner");
+  expect(html).toContain("Shared workspace");
+  expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
 });
 
 it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {

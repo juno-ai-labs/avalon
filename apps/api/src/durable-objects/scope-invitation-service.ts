@@ -10,7 +10,7 @@ import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelat
 import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
 import { issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
-import { scopeInvitationEmailText } from "../services/scope-invitation-email";
+import { scopeInvitationEmailParts } from "../services/scope-invitation-email";
 import { logStructuredEvent } from "../observability/logger";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
@@ -26,7 +26,8 @@ const PREVIEW_TURNS = 5;
 const PREVIEW_WORDS = 100;
 
 const SealedSchema = z.strictObject({ ciphertext: z.string(), iv: z.string() });
-const DeliverySchema = z.strictObject({ recipientEmail: z.string().email(), text: z.string() });
+/** `html` is optional for one reason: an invitation recorded before this email had an HTML part still delivers. */
+const DeliverySchema = z.strictObject({ recipientEmail: z.string().email(), text: z.string(), html: z.string().optional() });
 const denied = (reason: Extract<ScopeInvitationResult, { status: "denied" }>["reason"]): ScopeInvitationResult => ({ status: "denied", reason });
 
 /** Validate enablement before any forward-only participant handoff. */
@@ -103,7 +104,7 @@ export class ScopeInvitationService {
       const link = scopeInvitationLinkUrl(origin, await issueScopeInvitationLink(this.env,
         { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token },
         request.expiresAt));
-      const delivery = { recipientEmail: email, text: scopeInvitationEmailText({
+      const delivery = { recipientEmail: email, ...scopeInvitationEmailParts({
         ...introduction, ...offered, recipientEmail: email, link: link.toString() }) };
       return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         tokenHash: await this.tokenHash(id, token),
@@ -257,7 +258,11 @@ export class ScopeInvitationService {
     const sealed = SealedSchema.parse(JSON.parse(current.deliveryEncrypted));
     const delivery = DeliverySchema.parse(JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
       this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)));
-    await sendResendEmail(this.env, { ...delivery, subject: "An invitation to collaborate in Rally",
+    await sendResendEmail(this.env, { recipientEmail: delivery.recipientEmail, text: delivery.text,
+      // Absent rather than undefined: an invitation composed before this email
+      // had an HTML part delivers as the text it was composed as.
+      ...(delivery.html ? { html: delivery.html } : {}),
+      subject: "An invitation to collaborate in Rally",
       idempotencyKey: `scope-invitation:${id}`, category: "scope_invitation", region: this.env.AVALON_REGION,
       sender: "transactional", errors: {
         unavailable: { code: "scope_invitation_delivery_unavailable", message: "Invitation email is not configured" },

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { readConversationPreview, truncateWords } from "../src/services/conversation-preview";
-import { scopeInvitationEmailText } from "../src/services/scope-invitation-email";
+import { scopeInvitationEmailParts } from "../src/services/scope-invitation-email";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { seedCanonicalConversationTurn, seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -15,7 +15,7 @@ const preview = (turns: Array<{ author: string; text: string; truncated?: boolea
   ({ earlier, turns: turns.map((turn) => ({ truncated: false, ...turn })) });
 
 it("leads with who is asking and into what, and closes with what Rally is", () => {
-  const body = scopeInvitationEmailText({
+  const { text: body } = scopeInvitationEmailParts({
     recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
     inviterName: "Adam Juhasz", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: preview([{ author: "Adam Juhasz", text: "Draft is up." }]),
@@ -34,7 +34,7 @@ it("falls back to the sentence it carried before, one missing name at a time", (
   const content = { recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
     conversationTitle: null, preview: null };
   const heading = (inviterName: string | null, workspaceName: string | null) =>
-    scopeInvitationEmailText({ ...content, inviterName, workspaceName }).split("\n")[0];
+    scopeInvitationEmailParts({ ...content, inviterName, workspaceName }).text.split("\n")[0];
   expect(heading("Adam Juhasz", null)).toBe("Adam Juhasz invited you to collaborate in Rally.");
   expect(heading(null, "Juno Labs")).toBe("You have been invited to Juno Labs on Rally.");
   expect(heading(null, null)).toBe("You have been invited to collaborate in Rally.");
@@ -45,16 +45,74 @@ it("falls back to the sentence it carried before, one missing name at a time", (
 });
 
 it("says how much of the conversation it is not showing", () => {
-  const body = (earlier: number) => scopeInvitationEmailText({
+  const body = (earlier: number) => scopeInvitationEmailParts({
     recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
     inviterName: "Adam Juhasz", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: preview([{ author: "Priya", text: "Shipping Friday.", truncated: true }], earlier),
-  });
+  }).text;
   expect(body(0)).not.toContain("earlier");
   expect(body(1)).toContain("1 earlier message\n");
   expect(body(14)).toContain("14 earlier messages\n");
   // A cut turn says so where it was cut.
   expect(body(14)).toContain("> Priya: Shipping Friday.…");
+});
+
+it("styles the same message with only what every client renders", () => {
+  const { html, text } = scopeInvitationEmailParts({
+    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: "Adam Juhasz", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
+    preview: preview([{ author: "Priya Shah", text: "Shipping Friday." }], 14),
+  });
+  // Tables and inline styles. A `<style>` block is dropped in several of
+  // Gmail's surfaces, so nothing load-bearing may live in one, and the layout
+  // techniques below each fail somewhere popular.
+  expect(html).not.toContain("<style");
+  expect(html).not.toContain("@media");
+  expect(html).not.toContain("@font-face");
+  for (const unsupported of ["display:flex", "display:grid", "position:absolute", "position:fixed", "background-image", "!important"]) {
+    expect(html).not.toContain(unsupported);
+  }
+  expect(html).toContain('<table role="presentation"');
+  expect(html).toContain("max-width:560px");
+  // Everything the text part says, said again.
+  expect(html).toContain("Adam Juhasz");
+  expect(html).toContain("Juno Labs");
+  expect(html).toContain('href="https://app.test/invite#inv_token"');
+  expect(html).toContain("Pricing revamp");
+  expect(html).toContain("14 earlier messages");
+  expect(html).toContain("Priya Shah");
+  expect(html).toContain("Shipping Friday.");
+  expect(html).toContain(text.trimEnd().split("\n").at(-1)!);
+  // The button is above anything a member wrote, in both parts.
+  expect(html.indexOf("Accept invitation")).toBeLessThan(html.indexOf("Shipping Friday."));
+  // Gmail clips a message past 102 KiB, which would cut the footer off.
+  expect(html.length).toBeLessThan(102 * 1024);
+});
+
+it("renders member-written turns as text, never as markup", () => {
+  const { html } = scopeInvitationEmailParts({
+    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: "<script>alert(1)</script>", workspaceName: "Juno & Co",
+    conversationTitle: "Pricing <b>revamp</b>",
+    preview: preview([{ author: "Priya \"PS\" Shah", text: "Ship it <img src=x onerror=alert(1)>" }]),
+  });
+  expect(html).not.toContain("<script");
+  expect(html).not.toContain("<img src=x");
+  expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  expect(html).toContain("Juno &amp; Co");
+  expect(html).toContain("Pricing &lt;b&gt;revamp&lt;/b&gt;");
+  expect(html).toContain("Priya &quot;PS&quot; Shah");
+  expect(html).toContain("Ship it &lt;img src=x onerror=alert(1)&gt;");
+});
+
+it("has no preview block when there is nothing to quote", () => {
+  const { html } = scopeInvitationEmailParts({
+    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: null, workspaceName: null, conversationTitle: null, preview: null,
+  });
+  expect(html).toContain("Join the conversation");
+  expect(html).toContain("You have been invited to collaborate in Rally.");
+  expect(html).not.toContain("border-left");
 });
 
 it("keeps whole words and collapses what a transcript turn carries", () => {

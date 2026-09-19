@@ -135,6 +135,27 @@ unsend what was quoted in it. That is the accepted cost of an invitation a
 recipient can recognize; a future change that widens what is quoted is changing
 that bargain, not extending it.
 
+The message goes out as both parts, composed once and stored together so a
+delivery retry sends what was composed rather than something rendered again
+later. The styled part is the same template Rally's workspace invitation uses:
+one 560-pixel table, inline styles, the brand mark, the black accept button, the
+quoted turns behind a left rule.
+
+**What that template may use is decided by where it is read.** Gmail drops a
+`<style>` block in several of its surfaces, so nothing load-bearing lives in
+one, and there is no `@media` query to lose: `width:100%` under a `max-width` is
+the whole of the responsive behaviour. No flexbox, no grid, no positioning, no
+`@font-face`, no background images, since each fails somewhere popular and none
+is needed to lay out one column. The brand mark is the only remote asset and the
+layout does not depend on it loading. Every value interpolated into it is
+escaped, so a member's message is text in both parts and markup in neither. A
+test asserts each of those, because the rule is invisible in a template that
+happens to render correctly in a browser.
+
+Gmail clips a message past 102 KiB and shows a "view entire message" link, which
+would cut off the footer; five turns of a hundred words is a few kilobytes, and
+the test holds the whole body under that ceiling.
+
 Everything in the heading and the preview is cosmetic, and none of it can fail
 an invitation. The names are read from D1 and the turns from another object; a
 failure of either sends the invitation without that part, and the heading has a
@@ -299,9 +320,13 @@ each of its fallbacks, a name carrying a newline, the quoted turns, the singular
 and plural earlier-message line, word truncation, and `readConversationPreview`
 against a real seeded transcript — reading order, the count of what is not
 shown, an author named from D1, the agent, and a conversation nobody has spoken
-in. The runtime suite proves the delivered body carries the sender and the
-workspace, and that an invitation whose conversation cannot be previewed is
-still sent. The deliberate SQL failure is caught inside the real object because
+in. It also covers the styled part: that it carries everything the
+text part says, that it uses none of the CSS its clients drop, that a script
+tag, an image tag and quote characters written into a message or a name arrive
+as text, and that the whole body stays under Gmail's clipping ceiling. The
+runtime suite proves the delivered payload carries both parts with the sender
+and the workspace in them, and that an invitation whose conversation cannot be
+previewed is still sent. The deliberate SQL failure is caught inside the real object because
 the test RPC bridge otherwise reports its expected rejection twice.
 `message-to-output-pipeline.test.ts` additionally exercises invitation-triggered
 handoff against real Main and child agents, including refusal to transfer for a
@@ -362,6 +387,16 @@ The preview reads another object's transcript, so every part of it is written to
 fail quietly: a transcript, a workspace name or a sender name that cannot be
 read is left out and the invitation goes anyway. An invitation that failed
 because a title could not be rendered would be the worst of both.
+
+Both parts are composed together and stored together. The styled one reuses the
+workspace invitation's template rather than introducing a second look for the
+same product, and it is restricted to what its readers actually render: tables
+and inline styles, no `<style>` block, no media query, no flexbox or grid. Those
+are not stylistic preferences and they are asserted in a test, because a
+template that renders correctly in a browser says nothing about the clients it
+is read in. `html` is optional in the stored payload for exactly one reason: an
+invitation recorded before this change still delivers, as the text it was
+composed as.
 
 ### 2026-09-19 — Dismiss the share dialog, and drop the invited-address notice
 
