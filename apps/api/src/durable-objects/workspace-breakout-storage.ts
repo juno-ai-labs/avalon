@@ -2,6 +2,8 @@ import type { SqlStorageValue } from "@cloudflare/workers-types";
 
 import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 
+import { projectionSupersedes, type StoredProjection } from "./projection-fence";
+
 /**
  * The Organization's projection of a Channel's breakouts.
  *
@@ -28,7 +30,34 @@ import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects
  * socket.
  */
 
-/** WorkspaceDO's breakout directory tables. Migration 63. */
+/**
+ * WorkspaceDO's breakout directory tables. Migration 63.
+ *
+ * **Neither table has a foreign key, and that is a measured decision rather
+ * than an omission.** `workspace_workstream_viewers` cascades from the Channel
+ * directory, and the obvious reading is that these two should cascade the same
+ * way — from the Channel directory, and from the breakout directory. Both were
+ * tried on real workerd and both are wrong, because Durable Object SQLite
+ * enforces foreign keys and cannot be asked not to:
+ *
+ * - A breakout's projection can reach the Organization before its Channel's
+ *   own `directory_common` does. `reserveChild` writes a provisional row for a
+ *   *Channel* before anything else it publishes; nothing reserves a breakout.
+ *   A key on `workstream_id` rejects that arrival outright.
+ * - A breakout's `directory_user` effect can reach it before its
+ *   `directory_common`. They are two Queue messages under two projection keys
+ *   and the Queue orders neither; `workstream-do.ts` says so where the forward
+ *   is decided, and calls a viewer row that arrives first harmless because the
+ *   page joins the directory and lists nothing for it. A composite key on
+ *   `(workstream_id, substream_id)` turns that harmless case into a rejected
+ *   envelope, redelivered until it reaches the dead-letter queue.
+ *
+ * What a cascade would have bought is a deletion nothing performs: no path
+ * deletes a Channel directory row outside migration 62. So the rule lives here
+ * instead, for whoever writes the first one — **deleting a Channel's directory
+ * row must delete its breakout rows in the same transaction**, because there
+ * is no key that will do it for you.
+ */
 export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
   // Keyed by `(workstream_id, substream_id)` rather than by the substream id
   // alone. The substream id is unique on its own, but every read here starts
@@ -181,36 +210,25 @@ export class WorkspaceBreakoutStorage {
   /**
    * Apply one breakout's shared projection, fenced generation-then-version.
    *
-   * The same fence the Channel directory applies, against the same two
-   * failures: an out-of-order redelivery must not overwrite a newer row, and
-   * two different payloads claiming one version are a conflict rather than a
-   * silent last-writer-wins.
+   * The fence is {@link projectionSupersedes}, which is the Channel
+   * directory's too: an out-of-order redelivery must not overwrite a newer
+   * row, and two different payloads claiming one version are a conflict rather
+   * than a silent last-writer-wins. The code it throws names this table, so a
+   * log says which projection was rejected.
    */
   applyCommon(envelope: ParentEffectEnvelope, now: number): boolean {
     if (!this.ready()) return false;
     if (envelope.effect.kind !== "directory_common" || envelope.substreamId === undefined) return false;
     const effect = envelope.effect;
-    const current = this.storage.sql.exec<{
-      authority_generation: number;
-      waterline: number;
-      payload_hash: string;
-    } & Record<string, SqlStorageValue>>(
+    const current = this.storage.sql.exec<StoredProjection & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, waterline, payload_hash
          FROM workspace_breakout_directory WHERE workstream_id = ? AND substream_id = ?`,
       envelope.parentId,
       envelope.substreamId,
     ).toArray()[0];
-    if (current
-      && envelope.generation === current.authority_generation
-      && envelope.sourceVersion === current.waterline
-      && envelope.payloadHash !== current.payload_hash) {
-      throw new Error("workspace_breakout_projection_version_conflict");
+    if (!projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
+      return false;
     }
-    const applies = !current
-      || envelope.generation > current.authority_generation
-      || (envelope.generation === current.authority_generation
-        && envelope.sourceVersion > current.waterline);
-    if (!applies) return false;
     this.storage.sql.exec(
       `INSERT INTO workspace_breakout_directory
          (workstream_id, substream_id, authority_generation, waterline, source_event_id,
@@ -281,11 +299,7 @@ export class WorkspaceBreakoutStorage {
         effect.userId,
       ).toArray().length === 1;
     }
-    const current = this.storage.sql.exec<{
-      authority_generation: number;
-      waterline: number;
-      payload_hash: string;
-    } & Record<string, SqlStorageValue>>(
+    const current = this.storage.sql.exec<StoredProjection & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, waterline, payload_hash
          FROM workspace_breakout_viewers
         WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
@@ -293,17 +307,9 @@ export class WorkspaceBreakoutStorage {
       envelope.substreamId,
       effect.userId,
     ).toArray()[0];
-    if (current
-      && envelope.generation === current.authority_generation
-      && envelope.sourceVersion === current.waterline
-      && envelope.payloadHash !== current.payload_hash) {
-      throw new Error("workspace_breakout_viewer_version_conflict");
+    if (!projectionSupersedes(envelope, current, "workspace_breakout_viewer_version_conflict")) {
+      return false;
     }
-    const applies = !current
-      || envelope.generation > current.authority_generation
-      || (envelope.generation === current.authority_generation
-        && envelope.sourceVersion > current.waterline);
-    if (!applies) return false;
     this.storage.sql.exec(
       `INSERT INTO workspace_breakout_viewers
          (workstream_id, substream_id, user_id, authority_generation, waterline,

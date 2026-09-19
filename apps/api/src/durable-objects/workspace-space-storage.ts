@@ -1347,10 +1347,13 @@ export class WorkspaceSpaceStorage {
     userId: string,
     spaceId: string,
     cursor: string | null,
-  ): SpaceConversationPage | false {
+  ): SpaceConversationPage | "invalid_cursor" | false {
     if (!this.canRead(userId, spaceId)) return false;
     const after = cursor === null ? null : decodeConversationCursor(cursor);
-    if (cursor !== null && after === null) return false;
+    // Named apart from "no such Space", which is what an unreadable cursor was
+    // answered with. The two ask opposite things of the caller: one says stop,
+    // the other says drop the cursor and read the first page.
+    if (cursor !== null && after === null) return "invalid_cursor";
     const rows = this.storage.sql.exec<{
       kind: "channel" | "breakout";
       workstream_id: string;

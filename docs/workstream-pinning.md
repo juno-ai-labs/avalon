@@ -405,24 +405,6 @@ rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
-### 2026-09-19 — The Channel directory stays one row per Channel
-
-**What changed:** Nothing in this module's code. The invariant that
-`workspace_workstream_directory` holds exactly one row per Channel is now
-written down, because a change outside this module could have broken it.
-
-**Why:** The Space dashboard needed the Organization to know about a Channel's
-breakouts, and the cheap way to do that was a `substream_id` column on this
-module's directory table. Every query here — the paged walk, the pin join, the
-cursor, the live-state supplement, the visible-ids page — would then have
-needed a filter none of them has, and the first one written without it would
-have put a breakout in somebody's sidebar. The breakouts went into tables of
-their own instead. [`spaces.md`](spaces.md) holds the full entry.
-
-**Consequences:** A future conversation kind that wants to be listed somewhere
-gets its own projection table. Adding a discriminator column to this one is a
-change to every query in this document.
-
 ### 2026-09-18 — Sidebar actions own their failure copy
 
 **What changed:** Pin, unpin, visibility, archive, and pinned-order failures now cross into the
