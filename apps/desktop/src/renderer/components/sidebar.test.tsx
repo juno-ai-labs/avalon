@@ -602,13 +602,18 @@ describe('Sidebar channel markers', () => {
       .not.toBeInTheDocument();
   });
 
-  it('given a space placement, when the accordion opens, then the child is the same channel row as the recent list', () => {
+  // A placement is not a copy: the rows under an expanded Space go through the
+  // same component the rest of the sidebar draws a Channel with, so a Channel
+  // in two Spaces is one record shown twice rather than two rows that can
+  // drift.
+  it('given a channel in two spaces, when both accordions open, then each placement is the same channel row', () => {
     const memberId = '00000000-0000-7000-8000-0000000000e1';
-    const placement = space();
+    const hiring = space();
+    const company = space('00000000-0000-7000-8000-0000000000f3', 'Company');
     const member = placedIn({
       ...workstream(memberId, 'Ship the launch', 'completed'),
       preview: 'Draft the announcement',
-    }, placement.id);
+    }, hiring.id, company.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -616,7 +621,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            spaces={[placement]}
+            spaces={[hiring, company]}
             workspace={workspace}
             workstreams={[member]}
           />
@@ -625,8 +630,9 @@ describe('Sidebar channel markers', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Company' }));
     const rows = screen.getAllByRole('link', { name: /Ship the launch/u });
-    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row).toHaveClass('sidebar-row', 'workstream-row');
       expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
@@ -1610,6 +1616,9 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
+    // The row lives under the Space that holds it; there is no second, flat
+    // list of the same Channel to reach it through.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -1818,8 +1827,9 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
     const rows = screen.getAllByRole('link', { name: /Quarterly planning/u });
-    // One under each Space, plus the recent list's own.
-    expect(rows).toHaveLength(3);
+    // One under each Space, and nowhere else: every Channel belongs to a
+    // Space, so there is no second flat list of the same rows to find it in.
+    expect(rows).toHaveLength(2);
     for (const row of rows) expect(row).toHaveAttribute('href', `/workstreams/${target.id}`);
   });
 
@@ -2619,22 +2629,28 @@ describe('pinned channels', () => {
       ]);
     });
 
-    it('scopes a space\'s placements apart from the recent list', () => {
-      const placement = space('00000000-0000-7000-8000-0000000000f2', 'Launch');
+    it('scopes each space\'s placements apart from the others', () => {
+      const launch = space('00000000-0000-7000-8000-0000000000f2', 'Launch');
+      const hiring = space('00000000-0000-7000-8000-0000000000f3', 'Hiring');
       const member = placedIn(
         workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed'),
-        placement.id,
+        launch.id,
+        hiring.id,
       );
       render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[placement]} workspace={workspace} workstreams={[member]} />
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
       const rows = screen.getAllByRole('link', { name: /Roadmap review/u }).map((link) => link.closest('[data-motion-key]'));
       expect(rows).toHaveLength(2);
+      // One record shown twice, and the motion has to be told that: without a
+      // scope per Space it would take the two placements for one row that had
+      // moved from under one Space to under the other.
       const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
-      expect(scopes).toEqual(expect.arrayContaining([`space:${placement.id}`, null]));
+      expect(scopes).toEqual(expect.arrayContaining([`space:${launch.id}`, `space:${hiring.id}`]));
       expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
     });
 
@@ -3170,5 +3186,284 @@ describe('Sidebar channel paging', () => {
     // No standing invitation to scroll: a list that ends on a page boundary
     // would otherwise claim forever that there is more.
     expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Every Channel belongs to a Space, so a member's sidebar says where each one
+ * lives rather than listing them all again by time. The guest shell has no
+ * hierarchy to say it with and keeps the flat list.
+ */
+describe('the sidebar without a recency list', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function renderSidebar(props: Partial<React.ComponentProps<typeof Sidebar>>): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+            {...props}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+
+  it('given a member session, when the sidebar is drawn, then no time-grouped list is', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByRole('heading', { name: 'Today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /actions$/u })).not.toBeInTheDocument();
+    // Under the Space that holds it, and nowhere else.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
+  });
+
+  // The guest shell is handed no Space directory at all — Space discovery is
+  // deferred for a guest, and the host decides that rather than the component
+  // inferring it. Absent is not empty, so this is the one session that keeps
+  // the flat list.
+  it('given a guest shell, when the sidebar is drawn, then the time-grouped list is untouched', () => {
+    // The group a row lands in is read off the clock, so the clock is held.
+    vi.useFakeTimers({ now: new Date('2026-08-01T12:00:00.000Z'), toFake: ['Date'] });
+    renderSidebar({ workstreams: [today] });
+
+    expect(screen.getByRole('heading', { name: 'Today' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Today actions' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+  });
+
+  it('given a channel in no visible space, when the sidebar is drawn, then it is under Other channels', () => {
+    const hiring = space();
+    const placed = placedIn(today, hiring.id);
+    // Readable, and every one of its Spaces is somebody else's personal one:
+    // **Manage access** already draws such a placement as a Space the viewer
+    // cannot see, and without this section the Channel would be in the
+    // sidebar nowhere at all.
+    const elsewhere = placedIn(
+      workstream('ws-elsewhere', 'Quarterly planning', 'completed'),
+      '00000000-0000-7000-8000-0000000000ff',
+    );
+    renderSidebar({ spaces: [hiring], workstreams: [placed, elsewhere] });
+
+    const section = screen.getByRole('region', { name: 'Other channels' });
+    expect(within(section).getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(within(section).queryByRole('link', { name: /Roadmap review/u })).not.toBeInTheDocument();
+  });
+
+  it('given every channel placed where the reader can see it, then there is no Other channels section', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByRole('region', { name: 'Other channels' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Other channels')).not.toBeInTheDocument();
+  });
+
+  // The section above already holds it, and a row in both would take its order
+  // from whichever the reader saw last — the same rule the list this replaces
+  // was under.
+  it('given an unplaced channel that is pinned, then it is in Pinned and not in Other channels', () => {
+    const hiring = space();
+    const unplaced = pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0);
+    renderSidebar({ spaces: [hiring], workstreams: [unplaced] });
+
+    expect(within(screen.getByRole('region', { name: 'Pinned' }))
+      .getByRole('link', { name: /Launch tracking/u })).toBeVisible();
+    expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
+  });
+
+  it('given a stored space order, when the section is drawn, then it is in that order', () => {
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'Alpha');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Bravo');
+    renderSidebar({
+      spaces: [first, second],
+      ordering: [{ container: { kind: 'organization', id: workspace.id }, itemIds: [second.id, first.id] }],
+    });
+
+    const section = screen.getByRole('region', { name: 'Spaces' });
+    expect(within(section).getAllByRole('link').map((link) => link.textContent))
+      .toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+  });
+});
+
+/**
+ * The two lists inside the Spaces section, arranged by hand.
+ *
+ * Through `Sidebar` rather than the section alone, because the gesture is the
+ * row's and the section's together: the row carries the drag handlers and the
+ * section decides what a release means.
+ */
+describe('reordering the channels inside a space', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  const hiring = space();
+  const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
+  const alpha = placedIn(workstream('ws-alpha', 'Alpha', 'completed', '2026-08-02T09:00:00.000Z'), hiring.id);
+  const bravo = placedIn(workstream('ws-bravo', 'Bravo', 'completed', '2026-08-01T09:00:00.000Z'), hiring.id);
+
+  /**
+   * jsdom implements no `DataTransfer`, and this drag needs two of its fields:
+   * `types`, which is how a Space row tells a Channel's drag from its own, and
+   * `dropEffect`, which is how `dragend` tells a release the list took from one
+   * backed out of.
+   */
+  function channelTransfer(dropEffect: 'move' | 'none' = 'move'): {
+    dropEffect: string; effectAllowed: string; types: string[];
+    setData: (type: string, value: string) => void; getData: (type: string) => string;
+  } {
+    const data = new Map<string, string>();
+    const transfer = {
+      dropEffect,
+      effectAllowed: '',
+      types: [] as string[],
+      setData: (type: string, value: string) => {
+        data.set(type, value);
+        if (!transfer.types.includes(type)) transfer.types.push(type);
+      },
+      getData: (type: string) => data.get(type) ?? '',
+    };
+    return transfer;
+  }
+
+  function renderSidebar(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[hiring, launch]}
+            workspace={workspace}
+            workstreams={[alpha, bravo]}
+            {...props}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+  }
+
+  function placementTitles(): string[] {
+    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    if (!list) throw new Error('The space has no placement list');
+    return within(list as HTMLElement).getAllByRole('link').map((row) => row.textContent ?? '');
+  }
+
+  function dragTarget(name: RegExp): HTMLElement {
+    const wrapper = screen.getByRole('link', { name }).parentElement?.closest('.sidebar-context-target');
+    if (!wrapper) throw new Error('The channel row has no drag wrapper');
+    return wrapper as HTMLElement;
+  }
+
+  it('given a placement dropped inside its own space, then that space\'s order is saved', async () => {
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onReorderContainer });
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+
+    const transfer = channelTransfer();
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    // The list settles under the pointer rather than jumping once at the end.
+    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+    fireEvent.drop(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
+
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
+      container: { kind: 'space', id: hiring.id },
+      itemIds: [bravo.id, alpha.id],
+    }));
+  });
+
+  // The two meanings of one gesture. A release inside the list the Channel is
+  // already in is a reorder; a release on another Space is a placement, and it
+  // must not also commit the arrangement the pointer built on its way out.
+  it('given a placement dropped on another space, then it is placed and nothing is reordered', async () => {
+    const onAddChannelToSpace = vi.fn(async () => undefined);
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onAddChannelToSpace, onReorderContainer });
+
+    const transfer = channelTransfer();
+    const target = screen.getByText('Launch').closest('.space-sidebar-item')!;
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(target, { dataTransfer: transfer });
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
+
+    await waitFor(() => expect(onAddChannelToSpace).toHaveBeenCalledWith(launch.id, bravo.id));
+    expect(onReorderContainer).not.toHaveBeenCalled();
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  });
+
+  // Every drag in the sidebar has one, so the feature is reachable without a
+  // pointer. Alt rather than a bare arrow: the arrows move focus through the
+  // sidebar, and a row must stay readable by somebody who is not rearranging.
+  it('given a placement, when Alt+ArrowUp is pressed, then the new order is saved', async () => {
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onReorderContainer });
+
+    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
+
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
+      container: { kind: 'space', id: hiring.id },
+      itemIds: [bravo.id, alpha.id],
+    }));
+  });
+
+  it('given a refused reorder, then the placements snap back and the section says so', async () => {
+    renderSidebar({
+      onReorderContainer: async () => { throw new Error('The space changed while this was applied'); },
+    });
+
+    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
+
+    expect(await screen.findByText('The channels in that space couldn’t be reordered.')).toBeVisible();
+    // The list shows what the server holds, which is what this person's other
+    // windows are showing — not a local order nothing took.
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+    expect(screen.queryByText('The space changed while this was applied')).not.toBeInTheDocument();
+  });
+
+  it('given a stored order for a space, then its placements are drawn in it rather than by recency', () => {
+    renderSidebar({
+      ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [bravo.id, alpha.id] }],
+    });
+
+    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
   });
 });

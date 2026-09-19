@@ -16,6 +16,34 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 export interface ConversationRowTarget { substreamId: string; title: string }
+
+/**
+ * Arranging the Breakouts under a Channel by hand, for whoever is reading.
+ *
+ * The rail draws the order it is given and reports the gesture; the order
+ * itself is the host's, because it is stored per person on the Organization
+ * and the same helper arranges the Spaces and the Channels in the sidebar. One
+ * object for the list rather than one per row, since every row's handler is
+ * the same function of its own id.
+ *
+ * Absent for a reader who cannot have one — a guest, whose order the
+ * Organization refuses to store — and then the rows are not draggable at all,
+ * rather than offering a gesture whose write would be turned down.
+ */
+export interface SubstreamListDrag {
+  /** The Breakout under the pointer's own row, which is drawn as lifted. */
+  draggingSubstreamId: string | null;
+  onDragStart: (substreamId: string) => void;
+  /** The Breakout whose slot the pointer is over. */
+  onDragOver: (substreamId: string) => void;
+  /** `cancelled` is a drag backed out of rather than dropped on the list. */
+  onDragEnd: (cancelled: boolean) => void;
+  /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
+  onMove: (substreamId: string, direction: -1 | 1) => void;
+}
+
+/** The one element carrying the keyboard-reorder instruction for the rail. */
+const SUBSTREAM_DRAG_HINT_ID = 'breakout-drag-hint';
 export interface ConversationRowActions {
   onMakePublic?: (() => void) | undefined;
   publicDisabled?: boolean | undefined;
@@ -56,7 +84,7 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, substreamDrag, mainActions }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -91,6 +119,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   onParticipants: () => void;
   onFocusTranscript: () => void;
   substreamActions?: ConversationRowActions | undefined;
+  /** Reordering the Breakouts by hand; see {@link SubstreamListDrag}. */
+  substreamDrag?: SubstreamListDrag | undefined;
   mainActions?: ConversationRowActions | undefined;
 }): React.JSX.Element {
   const sidebar = useRef<HTMLElement>(null);
@@ -189,18 +219,79 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             <span className="workstream-context-copy"><span>{workstream.title}</span></span>
           </button>
         </ConversationRowMenu>}
-        <div className="workstream-substream-list">
-          {workstream.privateChildren?.map((child) => {
+        <div
+          aria-describedby={substreamDrag ? SUBSTREAM_DRAG_HINT_ID : undefined}
+          className="workstream-substream-list"
+          // The whole list is the drop target, so a release in the gap between
+          // two rows counts as a drop: `dragend` reads a release nothing
+          // accepted as a cancellation, and the arrangement would be thrown
+          // away rather than saved.
+          onDragOver={substreamDrag ? (event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          } : undefined}
+          onDrop={substreamDrag ? (event) => event.preventDefault() : undefined}
+        >
+          {/* Said once for the list rather than on every row: as a per-row
+              description it lands inside each button's accessible name, so
+              somebody arrowing through hears the instruction again before
+              every title. */}
+          {substreamDrag && <p className="sr-only" id={SUBSTREAM_DRAG_HINT_ID}>
+            Hold Alt and press the up or down arrow to move a breakout.
+          </p>}
+          {workstream.privateChildren?.map((child, index) => {
             // Compact hides the title, and a rail of identical arrows says
             // only that these are substreams, not which is which. The first
             // letter is the only part of the title a 36px mark can hold.
             const initial = [...child.title.trim()][0]?.toUpperCase();
+            const position = `${index + 1} of ${workstream.privateChildren?.length ?? 0}`;
             const row = (
               <button
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
-                aria-label={`Go to breakout: ${child.title}`}
-                className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === child.substreamId && 'is-current')}
+                aria-label={[`Go to breakout: ${child.title}`, substreamDrag ? position : undefined]
+                  .filter(Boolean).join(', ')}
+                className={clsx(
+                  'workstream-context-row workstream-conversation-row',
+                  currentSubstreamId === child.substreamId && 'is-current',
+                  substreamDrag && 'is-draggable',
+                  substreamDrag?.draggingSubstreamId === child.substreamId && 'is-dragging',
+                )}
+                draggable={substreamDrag !== undefined}
                 onClick={() => onSelectSubstream?.(child.substreamId)}
+                onDragStart={substreamDrag ? (event) => {
+                  // Chromium refuses to start a drag with an empty payload,
+                  // and the id is what any other surface would want anyway.
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', child.substreamId);
+                  substreamDrag.onDragStart(child.substreamId);
+                } : undefined}
+                onDragOver={substreamDrag ? (event) => {
+                  // `preventDefault` is what makes this a drop target at all,
+                  // and the effect is what a release here reports back to
+                  // `dragend`; without it a finished drag is indistinguishable
+                  // from an abandoned one. The reorder happens here rather
+                  // than on `drop` so the list settles under the pointer as it
+                  // moves instead of jumping once at the end. The row the
+                  // event reached is the slot: nothing animates these rows, so
+                  // the row drawn under the pointer is the row laid out there.
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  substreamDrag.onDragOver(child.substreamId);
+                } : undefined}
+                onDragEnd={substreamDrag
+                  // A drag nothing accepted reports `none`. Treated as
+                  // cancelled when the browser gives no `dataTransfer` at all,
+                  // because a drop this list handled always leaves one behind.
+                  ? (event) => substreamDrag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') === 'none')
+                  : undefined}
+                onKeyDown={substreamDrag ? (event) => {
+                  // Alt rather than a bare arrow: the arrows move focus
+                  // through the rail, and a Breakout must stay reachable by
+                  // somebody who is reading rather than rearranging.
+                  if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+                  event.preventDefault();
+                  substreamDrag.onMove(child.substreamId, event.key === 'ArrowUp' ? -1 : 1);
+                } : undefined}
                 title={child.title}
                 type="button"
               >

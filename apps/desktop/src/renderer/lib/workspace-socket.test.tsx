@@ -940,6 +940,7 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:01:00.000Z',
       spacesReady: true,
+      ordering: [],
       spaces: {
         active: { waterline: 4, items: [] },
         inactive: { waterline: 4, items: [] },
@@ -963,8 +964,9 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'feature-flags',
-      'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
+    const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'personal-order',
+      'feature-flags', 'workstream-state-waterlines', 'workspace-directory-waterlines']
+      .map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);
     socket.send.mockImplementation((frame: string) => {
@@ -1354,6 +1356,9 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:01:00.000Z',
       spacesReady: true,
+      // Required on this event and optional on the connect payload: a server
+      // that sends this message is a server that has the ordering.
+      ordering: [{ container: { kind: 'space', id: space.id }, itemIds: [] }],
       spaces: {
         active: { waterline: 4, items: [space] },
         inactive: { waterline: 4, items: [] },
@@ -1361,11 +1366,14 @@ describe('WorkspaceSocketProvider', () => {
     }));
     expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 4, items: [space] });
     expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 4, items: [] });
+    expect(queryClient.getQueryData(['personal-order']))
+      .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
 
     act(() => socket.message({
       type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:02:00.000Z',
       spacesReady: false,
+      ordering: [],
       spaces: {
         active: { waterline: 3, items: [] },
         inactive: { waterline: 3, items: [{ ...space, status: 'archived' }] },
@@ -1376,6 +1384,10 @@ describe('WorkspaceSocketProvider', () => {
     // The dropped snapshot's `spacesReady` is dropped with it: an older payload
     // must not put the organization-opening state back over a finished cutover.
     expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
+    // And its ordering, for the same reason: the arrangement on screen must
+    // not be replaced by one a stale payload carried.
+    expect(queryClient.getQueryData(['personal-order']))
+      .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
@@ -1673,6 +1685,7 @@ describe('the organization socket over the local cache', () => {
       automations: [],
       spaces: { waterline: 2, items: [] },
       inactiveSpaces: { waterline: 2, items: [] },
+      ordering: [],
     });
     const conversation = {
       detail: {
