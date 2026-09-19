@@ -413,21 +413,45 @@ async function connectViewer(userId: string, suffix: string): Promise<{
   return { socket: response.webSocket, sidebar: answer.sidebar };
 }
 
+let ticketSequence = 0;
+
+/**
+ * The Space directories as a client actually reads them.
+ *
+ * There is deliberately no `GET /spaces`: Space state comes down the workspace
+ * socket's connect payload and nowhere else, so this is the production read
+ * path and asserting through it is asserting on what a person is shown. It is
+ * also the path that appends a viewer's missing order rows, which is why the
+ * ordering cases go through here rather than through a read of their own.
+ */
+async function spaceDirectories(userId: string): Promise<NonNullable<WorkspaceSidebar["spaces"]>> {
+  ticketSequence += 1;
+  const { socket, sidebar } = await connectViewer(userId, `d${ticketSequence.toString(16)}`);
+  socket.close();
+  // Optional on the wire so a client talking to a server without the cutover is
+  // not permanently opening; a server that has it always sends it, and a
+  // missing pair here is a regression rather than a case to tolerate.
+  if (!sidebar.spaces) throw new Error("workspace sidebar answered without Space directories");
+  return sidebar.spaces;
+}
+
 beforeEach(async () => {
   await reset();
   effectSequence = 0;
+  ticketSequence = 0;
   await establishWorkspace();
 }, 30_000);
 
 describe("WorkspaceDO space authority", () => {
-  it("given a reserved Space, when members list Spaces, then scope decides who sees it", async () => {
+  it("given a reserved Space, when members read their sidebar, then scope decides who sees it", async () => {
     await reserve("Hiring", "personal");
     await reserve("Company", "workspace");
 
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
-      .resolves.toMatchObject({ ok: true, directory: { items: [{ name: "Hiring" }, { name: "Company" }] } });
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
-      .resolves.toMatchObject({ ok: true, directory: { items: [{ name: "Company" }] } });
+    expect((await spaceDirectories(OWNER)).active.items)
+      .toMatchObject([{ name: "Hiring" }, { name: "Company" }]);
+    // The personal Space is the creator's: another member's sidebar has to be
+    // shaped for the relationship, not just filtered on the way out.
+    expect((await spaceDirectories(MEMBER)).active.items).toMatchObject([{ name: "Company" }]);
   });
 
   it("given a guest relationship, when it reaches any Space RPC, then it is refused", async () => {
@@ -436,12 +460,16 @@ describe("WorkspaceDO space authority", () => {
     // Guest access to Spaces is deferred: a guest holds explicit Channel grants
     // and no Organization-wide discovery, so admitting one here would put every
     // Organization-wide Space in their sidebar.
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: GUEST }))
-      .resolves.toEqual({ ok: false, code: "space_access_denied" });
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId }))
       .resolves.toMatchObject({ ok: false, code: "space_access_denied" });
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: INACTIVE }))
-      .resolves.toEqual({ ok: false, code: "space_access_denied" });
+    await expect(workspace().listSpaceChannels({
+      workspaceId: WORKSPACE_ID, userId: GUEST, spaceId, cursor: null,
+    })).resolves.toMatchObject({ ok: false, code: "space_access_denied" });
+    // A removed member is refused by the same gate. It is one recheck of
+    // active membership and access class, so a relationship that has ended and
+    // one that was never a member's read alike here.
+    await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: INACTIVE, spaceId }))
+      .resolves.toMatchObject({ ok: false, code: "space_access_denied" });
   });
 
   it("given a reservation, when the Space's own directory effect lands, then it supersedes it", async () => {
@@ -769,8 +797,11 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().finalizeSpaceArchive({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
     })).resolves.toMatchObject({ ok: true, space: { status: "archived" } });
-    await expect(workspace().listInactiveSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
-      .resolves.toMatchObject({ ok: true, directory: { items: [{ id: spaceId }] } });
+    // The archived Space leaves the active directory for the inactive one,
+    // which is what the sidebar's restore control is drawn from.
+    const directories = await spaceDirectories(OWNER);
+    expect(directories.inactive.items).toMatchObject([{ id: spaceId }]);
+    expect(directories.active.items.map((item) => item.id)).not.toContain(spaceId);
   });
 
   it("given an archive, when the fan-out runs, then the Space's source is off every member Channel", async () => {
@@ -1019,12 +1050,10 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [] });
 
     // Each read the connect payload makes answers empty rather than aborting.
-    // Asserted through the RPCs first, because the socket's own failure mode is
-    // a subscribe that never answers — true, and slower to read than this.
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
-      .resolves.toMatchObject({ ok: true, directory: { waterline: 0, items: [] } });
-    await expect(workspace().listInactiveSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
-      .resolves.toMatchObject({ ok: true, directory: { waterline: 0, items: [] } });
+    // The two server-to-server ones are asserted first, because the socket's
+    // own failure mode is a subscribe that never answers — true, and slower to
+    // read than this; the directories themselves come off the payload below,
+    // which is the only way a client reads them.
     await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
       .resolves.toMatchObject({ phase: "pending", generalSpaceId: null, ready: false });
     await expect(workspace().channelSpaces({
@@ -1099,13 +1128,16 @@ describe("WorkspaceDO space authority", () => {
   it("given a viewer's order, when they reorder Spaces, then only their own order moves", async () => {
     const first = await reserve("Company");
     const second = await reserve("Recruiting");
-    await workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: MEMBER });
+    // Reading the sidebar is what gives a viewer their order rows, so this is
+    // what makes the member's order exist to be left alone.
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([first, second]);
 
     await expect(workspace().reorderSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [second, first] },
     })).resolves.toMatchObject({ ok: true, directory: { items: [{ id: second }, { id: first }] } });
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
-      .resolves.toMatchObject({ ok: true, directory: { items: [{ id: first }, { id: second }] } });
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([first, second]);
   });
 
   it("given a reservation whose object never opened, when it is cancelled, then nothing remains", async () => {
@@ -1114,8 +1146,7 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().cancelSpaceReservation({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
     })).resolves.toEqual({ cancelled: true });
-    await expect(workspace().listSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER }))
-      .resolves.toMatchObject({ ok: true, directory: { items: [] } });
+    expect((await spaceDirectories(OWNER)).active.items).toEqual([]);
 
     // And only the reservation this caller made. `source_version = 0` is a
     // window every Space passes through between being reserved and its first
