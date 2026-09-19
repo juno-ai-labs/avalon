@@ -11423,6 +11423,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           now,
         );
       }
+      // Archived Spaces too. What is being closed is an object, not a product
+      // surface: an archived Space is still a `SpaceDO` holding a hidden main
+      // conversation, and a graph that skipped it would report the
+      // Organization retired with one of its objects still open and still
+      // answering. The walk retires that conversation before the Space, the
+      // way it does for a Channel, because a Space is the same class.
+      for (const spaceId of this.spaceStorage().allSpaceIds()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('space', ?, ?, NULL)`,
+          spaceId,
+          now,
+        );
+      }
     });
     await this.retireObject(input);
     return { nodes: this.retirementGraphNodes() };
