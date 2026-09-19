@@ -20,11 +20,11 @@ export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
 
 export interface TerminalSnapshotResources {
   /** Cores. */
-  cpu: number;
+  readonly cpu: number;
   /** GiB. */
-  memory: number;
+  readonly memory: number;
   /** GiB. */
-  disk: number;
+  readonly disk: number;
 }
 
 /**
@@ -45,27 +45,6 @@ export interface TerminalSnapshotResources {
  * instead is a size the next adoption pull request silently reverts.
  */
 export const TERMINAL_SNAPSHOT_RESOURCES: TerminalSnapshotResources = { cpu: 2, memory: 4, disk: 8 };
-
-/**
- * Names the resource fields a built snapshot did not come back with.
- *
- * A create response that accepted the request is not proof the image carries the
- * size, and an under-sized snapshot is invisible afterwards: every probe passes,
- * every command runs, and the only symptom is a work stream killed at 1 GiB. The
- * provider reports memory as `mem`.
- */
-export function terminalSnapshotResourceMismatches(
-  reported: { cpu?: number; mem?: number; disk?: number },
-): string[] {
-  const fields: [string, number, number | undefined][] = [
-    ["cpu", TERMINAL_SNAPSHOT_RESOURCES.cpu, reported.cpu],
-    ["memory", TERMINAL_SNAPSHOT_RESOURCES.memory, reported.mem],
-    ["disk", TERMINAL_SNAPSHOT_RESOURCES.disk, reported.disk],
-  ];
-  return fields
-    .filter(([, requested, built]) => built !== requested)
-    .map(([field, requested, built]) => `${field} (requested ${requested}, built ${built ?? "unreported"})`);
-}
 
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },

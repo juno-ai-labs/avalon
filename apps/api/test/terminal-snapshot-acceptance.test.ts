@@ -17,6 +17,18 @@ describe("Terminal snapshot acceptance", () => {
     expect(removeRejected).not.toHaveBeenCalled();
   });
 
+  it("names every field a snapshot built at Daytona's default gets wrong", async () => {
+    // 1 vCPU / 1 GiB / 3 GiB is what a build that passes no `resources` comes
+    // back with, so it is the shape a dropped request would hand over.
+    await expect(acceptBuiltTerminalSnapshot(
+      { name: "rally-terminal-candidate", cpu: 1, mem: 1, disk: 3 },
+      async () => undefined,
+    )).rejects.toThrow(
+      `Daytona built rally-terminal-candidate with resources Rally did not request: `
+      + `cpu (requested ${cpu}, built 1), memory (requested ${memory}, built 1), disk (requested ${disk}, built 3)`,
+    );
+  });
+
   it("deletes an under-sized snapshot before failing the build", async () => {
     const events: string[] = [];
     const removeRejected = vi.fn(async () => { events.push("deleted"); });
