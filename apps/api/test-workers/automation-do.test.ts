@@ -570,7 +570,9 @@ describe("AutomationDO", () => {
     submitDraftOnNextTurn = true;
     const sent = await root.fetch("https://object.test/internal/product", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "create_message", auth: {
+      // `parentKind` as the Worker sends it: this conversation belongs to the
+      // Sidekick, and a product request that claimed a Channel is refused.
+      body: JSON.stringify({ operation: "create_message", parentKind: "automation", auth: {
         sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
       }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary" } }),
     });
