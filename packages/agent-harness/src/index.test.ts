@@ -1172,6 +1172,102 @@ describe("agent harness", () => {
     });
   });
 
+  /**
+   * A repaired call is billed twice and was recorded once. The response that
+   * triggered the repair produced a `model_request` row and no terminal one,
+   * so its spend never reached the lakehouse and its request row dangled.
+   */
+  it("records the spend of a response that triggered repair", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    let call = 0;
+    const fetcher = vi.fn(async () => {
+      call += 1;
+      return Response.json({
+        id: `gen-${call}`,
+        model: "test/model",
+        choices: [{
+          message: { content: call === 1 ? "not json at all" : '{"ok":true}' },
+          finish_reason: "stop",
+        }],
+        usage: {
+          prompt_tokens: 40,
+          completion_tokens: 8,
+          total_tokens: 48,
+          cost: call === 1 ? 0.000111 : 0.000222,
+        },
+      });
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 1,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "repair_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).resolves.toEqual({ ok: true });
+
+    // Both provider calls were paid for, so both owe a terminal diagnostic —
+    // the lakehouse writes an attempt row for `complete` and nothing else.
+    const terminal = diagnostics.filter((diagnostic) => diagnostic.stage === "complete");
+    expect(terminal.map((diagnostic) => ({
+      success: diagnostic.success,
+      failureKind: diagnostic.failureKind,
+      costCents: diagnostic.costCents,
+    }))).toEqual([
+      { success: false, failureKind: "invalid_json", costCents: 0.0111 },
+      { success: true, failureKind: undefined, costCents: 0.0222 },
+    ]);
+    // One terminal diagnostic per provider request, joinable to its own
+    // `model_request` row.
+    expect(new Set(terminal.map((diagnostic) => diagnostic.inferenceRequestId)).size).toBe(2);
+  });
+
+  it("keeps the cost of a response whose validation then failed", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async () => Response.json({
+      id: "gen-1",
+      model: "test/model",
+      choices: [{ message: { content: '{"ok":"wrong type"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48, cost: 0.000333 },
+    })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "failed_validation_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => z.object({ ok: z.boolean() }).parse(value),
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "ZodError" });
+
+    // The repair retry is spent first, then the second rejection is terminal.
+    // Every one of those responses arrived and was billed.
+    const terminal = diagnostics.filter((diagnostic) => diagnostic.stage === "complete");
+    expect(terminal).toHaveLength(2);
+    expect(terminal.every((diagnostic) => diagnostic.success === false)).toBe(true);
+    expect(terminal.map((diagnostic) => diagnostic.costCents)).toEqual([0.0333, 0.0333]);
+    expect(terminal.at(-1)).toMatchObject({
+      failureKind: "validation_error",
+      inputTokens: 40,
+      outputTokens: 8,
+    });
+  });
+
   it("emits a failure diagnostic for every failed structured provider attempt", async () => {
     const diagnostics: StructuredModelDiagnostic[] = [];
     const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;

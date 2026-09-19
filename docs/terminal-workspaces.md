@@ -1071,16 +1071,23 @@ tool that asked for it across an RPC hop. The caller's tool trace lives in
 `AsyncLocalStorage`, which follows an async chain inside one Worker and does
 not survive that hop: a callback the provider Worker invokes arrives in the API
 Worker as a fresh entry point with no trace in scope. Two things carry it
-across. `bindToTerminalToolTrace` binds the reporting callback to the trace
-that is live where the callback is *created* — inside the tool invocation about
-to issue the request — and the callback travels with that one call rather than
+across.
+
+`bindToTerminalToolTrace` binds the reporting callback to the trace that is
+live where the callback is *created* — inside the tool invocation about to
+issue the request — and the callback travels with that one call rather than
 with the session, because one session serves every concurrent tool on a run and
-could not say which of them a measurement belongs to. `terminalProviderRpcCall`
-holds that callback for the duration of the call it arrived with, and the
-provider awaits delivery before the request completes, so a tool's totals are
-whole by the time it writes its own row. **A measurement reported out of band —
-through a session callback, or fired and not awaited — is not measured at all:
-it lands with no trace, or after the row it belonged in.**
+could not say which of them a measurement belongs to.
+`terminalProviderRpcCall` holds that callback for the duration of the call it
+arrived with.
+
+Delivery is then awaited at every hop it crosses: the provider awaits the
+report before its request completes, and the client awaits the caller's own
+reporting, which the contract types as `void | Promise<void>` and so may
+itself be asynchronous. A tool's totals are whole by the time it writes its
+own row. **A measurement reported out of band — through a session callback, or
+fired and not awaited at any one of those hops — is not measured at all: it
+lands with no trace, or after the row it belonged in.**
 
 `terminal_plugin_activation_finished` uses the same acquisition and provider
 timing fields under the fixed `terminal_plugin_activation` tool identity. It
@@ -1125,8 +1132,10 @@ client builds it inside the tool invocation that is about to issue the request
 and wraps it in `bindToTerminalToolTrace`, a new primitive in `tracing.ts` that
 captures the ambient tool trace and re-enters it when the callback is invoked
 from elsewhere. `terminalProviderRpcCall` scopes the callback to the one call
-it arrived with, and `measureRequest` in the Daytona provider now awaits
-delivery instead of leaving it to `waitUntil`. Only `observe`, which needs
+it arrived with, and delivery is awaited at each hop: `measureRequest` in the
+Daytona provider awaits the report instead of leaving it to `waitUntil`, and
+the client awaits the caller's own reporting rather than discarding its
+promise. Only `observe`, which needs
 nothing but the environment, still crosses as a session callback.
 
 **Why:** `provider_duration_ms` read `0` on 100% of `terminal_tool_finished`
