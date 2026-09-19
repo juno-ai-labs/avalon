@@ -12,6 +12,7 @@ import { withTerminalProviderRpcAbort } from "./services/terminal/provider-rpc-c
 import {
   observeTerminalProviderRequest,
   requireTerminalProviderRpcCallback,
+  terminalProviderRequestObserved,
   terminalProviderRpcCall,
 } from "./services/terminal/provider-rpc-result";
 import type {
@@ -68,6 +69,7 @@ export class TerminalProviderSessionTarget extends RpcTarget implements Terminal
       // A request measurement belongs to one caller's one call, and is routed
       // to it by `terminalProviderRpcCall` rather than held on this session.
       observeRequest: (measurement) => observeTerminalProviderRequest(measurement),
+      requestObserved: () => terminalProviderRequestObserved(),
     });
   }
 

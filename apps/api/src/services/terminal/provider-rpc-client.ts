@@ -68,10 +68,9 @@ export function createTerminalProviderRpcClient(
     // callback sent this way becomes a stub the provider Worker holds for the
     // life of the session, so anything that belongs to a single call — every
     // per-request measurement — is sent with that call instead.
-    const sessionInstrumentation: TerminalProviderRpcInstrumentation = {
+    sessionPromise ??= binding.createSession(configuration, {
       ...(instrumentation.observe ? { observe: instrumentation.observe } : {}),
-    };
-    sessionPromise ??= binding.createSession(configuration, sessionInstrumentation);
+    } satisfies TerminalProviderRpcInstrumentation);
     return sessionPromise;
   };
   const callbacks = (input?: {
@@ -79,10 +78,8 @@ export function createTerminalProviderRpcClient(
     assertSubmissionAuthority?: () => Promise<void>;
     onSubmitted?: (providerTaskId: string) => Promise<void>;
   }): TerminalProviderRpcCallbacks => {
-    // Built inside the tool invocation that is about to issue the request, so
-    // the tool trace is still on this async chain and can be captured. By the
-    // time the provider Worker calls back it is not, which is the whole reason
-    // this is bound here rather than resolved there.
+    // Built inside the tool invocation about to issue the request, which is
+    // where the trace still is; see `bindToTerminalToolTrace`.
     const observeRequest = instrumentation.observeRequest;
     const signal = input?.signal;
     const assertSubmissionAuthority = input?.assertSubmissionAuthority;

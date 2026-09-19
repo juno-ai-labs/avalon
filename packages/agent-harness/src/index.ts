@@ -1516,8 +1516,8 @@ function serializeOpenRouterChatRequest(input: {
       ...JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>,
       // OpenRouter reports `usage.cost` only when the request opts into usage
       // accounting; without this the usage object arrives complete in every
-      // respect except the one Rally bills on, and `cost_cents` is a
-      // structurally sound zero all the way into the lakehouse. It is set
+      // respect except the one Rally bills on, and the reported cost is a
+      // structurally sound zero all the way into `cost_microusd`. It is set
       // after the SDK serializer rather than through it because this SDK
       // release has no typed field for it and drops unknown keys. Azure is
       // priced from Rally's own rate card and never reaches this function.
