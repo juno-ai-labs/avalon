@@ -142,7 +142,9 @@ reject legitimate diagnostic handling outside presentation.
 
 **Consequences:** Rail components own stable copy for each action. The guarded
 file registry has an executable scope test; new nonstandard adapter names must
-be added there, while lower layers remain free to retain rich errors for diagnosis.
+be added there. The rule follows catch bindings and their immutable aliases,
+while respecting lexical shadowing; lower layers remain free to retain rich
+errors for diagnosis.
 
 ### 2026-09-01 — Cold API schema families construct on first use
 
