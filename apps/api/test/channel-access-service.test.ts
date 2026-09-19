@@ -93,7 +93,10 @@ function environment(input: {
     }),
     ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>({
       send: async (body: unknown) => {
-        input.calls.push(`queue:revoke(${(body as { userId: string }).userId})`);
+        const message = body as { userId: string | null; target: { scope: string } };
+        input.calls.push(message.userId === null
+          ? `queue:${message.target.scope}`
+          : `queue:revoke(${message.userId})`);
       },
     }),
   });
@@ -352,6 +355,11 @@ describe("retracting a Space access source", () => {
       "object:retract",
       `canonical:add(${OTHER}:space)`,
       "canonical:update(personal)",
+      // The narrowing announces itself: the room closes sockets for somebody it
+      // was told about, and the readers a narrowing drops are every member who
+      // is not a participant — a set nothing here can name. The hop asks the
+      // room which of them is still reading.
+      "queue:workstream_audience_narrowed",
       `canonical:remove(${READER}:space)`,
       `queue:revoke(${READER})`,
     ]);

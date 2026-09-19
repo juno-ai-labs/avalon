@@ -110,6 +110,8 @@ about; each child becomes its own message on the same queue.
 workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [automationIds] + [artifactIds]
 workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
 workstream             ──▶ WorkstreamDO   ──▶ [substreamIds]
+workstream_audience_narrowed
+                       ──▶ WorkstreamDO   ──▶ [closedUserIds]  (revokeNarrowedAudienceAccess)
 automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
 space                  ──▶ SpaceDO        ──▶ [substreamIds]   (listChildren; it holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
@@ -158,6 +160,27 @@ more way to lose a reader: the room removes a participant, a write the room
 makes locally that no membership revocation follows. The room's writer
 publishes a `workstream_automations` hop, and WorkspaceDO names the room's
 automations for it.
+
+A **narrowed audience** is the one hop that names nobody. Every other message
+is about one person, because every other way access ends names one: a member is
+removed, a session is revoked, a participant is taken out of a room. A work
+stream that stops being Organization-wide takes access from every member who is
+not a participant, which is a set nothing outside the room can enumerate and
+nobody wants one message per name for. What *is* enumerable is who is holding a
+socket right now, and only the room knows that — so the hop asks it to close
+what it can no longer admit and to answer with whose sockets those were. Each
+of those names then becomes an ordinary `workstream` hop, which reaches the
+substreams, and an ordinary `workstream_automations` hop, which reaches the
+automations the room owns. The message carries `userId: null`, and the schema
+refuses that in any other combination: a per-user hop that lost its user would
+close every socket it found.
+
+This is the one place an object re-asks its own admission question, and it is
+not the polling the invariant below rules out. It runs once, because the
+audience it is about was just written; it is the same `authorizeViewer` a
+reconnect would run; and a holder it cannot confidently admit is closed rather
+than spared, which costs a reconnect where sparing keeps a reader reading a
+room that no longer admits them.
 
 A **Space** is the third sibling, and the simplest hop here. It is
 `WorkstreamDO` under a role whose `admitsClientSockets` is false, so it admits
@@ -224,6 +247,11 @@ room would go on seeing an evicted reader listed as present.
 - **The producer publishes in the request that wrote the fact.** A fact written
   without a message is a socket that stays open until it reconnects. If you add a
   way to end access, you add a producer; there is nothing else to catch it.
+- **A message names one person, or one room's whole audience, never half of
+  each.** `workstream_audience_narrowed` is the only target carried with
+  `userId: null`, and the only one that may be; the schema enforces the
+  biconditional and names `userId` when it is broken. A per-user hop that lost
+  its user would close every socket it found.
 - **A message with a `sessionId` closes only that session's sockets.** Closing
   the rest would sign a person out of every window because one of them logged
   out.
@@ -398,6 +426,37 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-19 — A narrowed audience is a hop that asks the room who is still reading
+
+**What changed:** `workstream_audience_narrowed` joins the target union,
+carried with `userId: null`, and `WorkstreamDO.revokeNarrowedAudienceAccess`
+closes the sockets it can no longer admit and answers with whose they were. The
+consumer turns each of those names into the ordinary `workstream` and
+`workstream_automations` hops. Both narrowings publish it: a Space's retraction
+when its plan sets `narrowScope`, and `WorkstreamService.update` when the
+Channel's own scope goes from `workspace` to `personal`.
+
+**Why:** Neither narrowing published anything at all. A work stream that stopped
+being Organization-wide left every member who was reading it still reading it,
+because the room closes sockets only for somebody it was *told* about and a
+narrowing tells it about nobody. The set it takes access from is the
+Organization minus the participants, which no producer can enumerate and which
+would be absurd to publish a message per name for.
+
+**Considered and rejected:** publishing one per-user message for the departing
+Space's roster, which is bounded and was tempting. It is the wrong set twice
+over — those readers usually *keep* access through the seating the retraction
+does first, and it names none of the members who were reading through the wide
+scope. Also rejected: having the canonical `update` close the sockets inside the
+room. That reaches the room's own sockets and nothing else, and the automations
+it owns are exactly the case `workstream_automations` exists for.
+
+**What a future change has to respect:** the `userId` biconditional. Adding a
+target that names nobody means adding an object method that decides for itself
+who lost access, because `revokeSocketAccess` cannot be told "everybody" — and a
+per-user target that ever arrives without its user must fail by name rather than
+fan out.
 
 ### 2026-09-19 — A Space is a hop that names children and closes nothing
 
