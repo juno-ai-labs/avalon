@@ -19,6 +19,13 @@ import { PROJECT_COLOR_DEFAULT, projectColorCells } from '../lib/project-palette
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
+type ProjectSectionFailure = 'reorder' | 'add_workstream';
+
+const projectSectionFailureCopy: Record<ProjectSectionFailure, string> = {
+  reorder: 'Projects couldn’t be reordered.',
+  add_workstream: 'That work stream couldn’t be added to the project.',
+};
+
 function label(value: string): string {
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
@@ -118,8 +125,8 @@ export function ProjectSidebarSection({
   const [colorKey, setColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [sectionError, setSectionError] = useState<string | null>(null);
+  const [modalFailure, setModalFailure] = useState<'create' | 'restore' | null>(null);
+  const [sectionFailure, setSectionFailure] = useState<ProjectSectionFailure | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
   const ordered = dragOrder
@@ -133,21 +140,21 @@ export function ProjectSidebarSection({
     setIconKey('briefcase');
     setColorKey(PROJECT_COLOR_DEFAULT);
     setScope('personal');
-    setModalError(null);
+    setModalFailure(null);
   };
 
   const submit = async (): Promise<void> => {
     if (!name.trim() || saving) return;
     setSaving(true);
-    setModalError(null);
+    setModalFailure(null);
     try {
       const created = await onCreate({ name: name.trim(), iconKey, colorKey, scope });
       setExpanded((current) => new Set(current).add(created.id));
       setSaving(false);
       closeCreate();
       void navigate(`/projects/${created.id}`);
-    } catch (cause) {
-      setModalError(cause instanceof Error ? cause.message : 'The project could not be created.');
+    } catch {
+      setModalFailure('create');
       setSaving(false);
     }
   };
@@ -159,11 +166,11 @@ export function ProjectSidebarSection({
 
   const commit = async (ids: string[]): Promise<void> => {
     setDragOrder(ids);
-    setSectionError(null);
+    setSectionFailure(null);
     try {
       await onReorder(ids);
-    } catch (cause) {
-      setSectionError(cause instanceof Error ? cause.message : 'Projects could not be reordered.');
+    } catch {
+      setSectionFailure('reorder');
     } finally {
       setDragOrder(null);
     }
@@ -174,7 +181,7 @@ export function ProjectSidebarSection({
       <section aria-labelledby="projects-heading" className="sidebar-section projects-section">
         <div className="sidebar-section-heading">
           <h2 id="projects-heading">Projects</h2>
-          <IconButton className="project-sidebar-action" label="New project" onClick={() => { setModalError(null); setCreateOpen(true); }}>
+          <IconButton className="project-sidebar-action" label="New project" onClick={() => { setModalFailure(null); setCreateOpen(true); }}>
             <IconPlus size={15} stroke={1.8} />
           </IconButton>
         </div>
@@ -214,8 +221,8 @@ export function ProjectSidebarSection({
                     event.preventDefault();
                     event.stopPropagation();
                     dragging.current = null;
-                    void onAddWorkstream(project.id, workstreamId).catch((cause: unknown) => {
-                      setSectionError(cause instanceof Error ? cause.message : 'The work stream could not be added.');
+                    void onAddWorkstream(project.id, workstreamId).catch(() => {
+                      setSectionFailure('add_workstream');
                     });
                   }}
                   onDragStart={(event) => {
@@ -306,7 +313,7 @@ export function ProjectSidebarSection({
             })}
           </div>
         )}
-        {sectionError && <InlineError>{sectionError}</InlineError>}
+        {sectionFailure && <InlineError>{projectSectionFailureCopy[sectionFailure]}</InlineError>}
       </section>
       <Modal
         footer={<>
@@ -336,24 +343,24 @@ export function ProjectSidebarSection({
               value={scope}
             />
           </div>
-          {modalError && <InlineError>{modalError}</InlineError>}
+          {modalFailure === 'create' && <InlineError>The project couldn’t be created.</InlineError>}
         </form>
       </Modal>
       <Modal
-        footer={<Button onClick={() => { setModalError(null); setRecoveryOpen(false); }}>Cancel</Button>}
-        onOpenChange={(open) => { if (!open) setModalError(null); setRecoveryOpen(open); }}
+        footer={<Button onClick={() => { setModalFailure(null); setRecoveryOpen(false); }}>Cancel</Button>}
+        onOpenChange={(open) => { if (!open) setModalFailure(null); setRecoveryOpen(open); }}
         open={recoveryOpen}
         title="Restore archived project"
       >
         <div className="project-recovery-list">{inactiveProjects.map((project) => (
           <Button key={project.id} onClick={() => {
-            setModalError(null);
+            setModalFailure(null);
             void onRestore(project.id)
               .then(() => { setRecoveryOpen(false); void navigate(`/projects/${project.id}`); })
-              .catch((cause: unknown) => setModalError(cause instanceof Error ? cause.message : 'The project could not be restored.'));
+              .catch(() => setModalFailure('restore'));
           }}><ProjectIcon project={project} /> {project.name}</Button>
         ))}</div>
-        {modalError && <InlineError>{modalError}</InlineError>}
+        {modalFailure === 'restore' && <InlineError>The project couldn’t be restored.</InlineError>}
       </Modal>
     </>
   );

@@ -382,6 +382,23 @@ rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
+### 2026-09-18 — Sidebar actions own their failure copy
+
+**What changed:** Pin, unpin, visibility, archive, and pinned-order failures now cross into the
+sidebar as a closed operation union. The sidebar maps each operation to stable
+title and recovery copy.
+
+**Why:** Persistent navigation outlives the request that failed. A server
+sentence shown there reads as product content, and styling the recovery sentence
+as a second red alert made the otherwise calm dialog visually contradictory.
+
+**Considered and rejected:** Filtering specific router messages. The next
+unknown response would still become UI copy by default.
+
+**Consequences:** The reassuring modal body keeps ordinary modal styling, and
+transport diagnostics remain available below the presentation boundary but are
+not navigation text.
+
 ### 2026-09-09 — Warm the root landing before workspace details finish
 
 Startup and the root route now share the pin-then-viewer-recency selection.

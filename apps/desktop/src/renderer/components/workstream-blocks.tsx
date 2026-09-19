@@ -1870,13 +1870,13 @@ function DraftProposedCard({
   messageId,
   onAccept,
   accepting,
-  error,
+  failed,
 }: {
   detail: NonNullable<Message['draftProposed']>;
   messageId: string;
   onAccept?: (automationId: string) => void;
   accepting?: boolean;
-  error?: string | undefined;
+  failed?: boolean | undefined;
 }): React.JSX.Element {
   const scope = detail.suggestedScope === 'workstream'
     ? 'This work stream'
@@ -1896,7 +1896,7 @@ function DraftProposedCard({
         {/* Who will be able to see and change it, which cannot be changed after
             acceptance and is therefore the part worth reading before pressing. */}
         <p className="system-message-text"><small>{scope} can manage it.</small></p>
-        {error && <p className="system-message-text">{error}</p>}
+        {failed && <p className="system-message-text">That Sidekick couldn’t be created. Try again.</p>}
         <div className="automation-draft-actions">
           {detail.ready ? (
             <button
@@ -2333,8 +2333,8 @@ export function ElicitationPanel({
     setError(null);
     try {
       await onAnswer(answer, customResponse);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Your response could not be saved.');
+    } catch {
+      setError('Your response couldn’t be saved. Try again.');
     } finally {
       setSubmitting(false);
     }
@@ -2345,8 +2345,8 @@ export function ElicitationPanel({
     setError(null);
     try {
       await onAnswer(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'This question could not be skipped.');
+    } catch {
+      setError('This question couldn’t be skipped. Try again.');
     } finally {
       setSubmitting(false);
     }
@@ -2513,7 +2513,7 @@ interface MessageBlockProps {
   /** Creates the automation a proposal card names. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
-  acceptDraftError?: string | undefined;
+  acceptDraftFailureFor?: string | null;
   /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
   connectorConnectionCards?: boolean;
   connectedConnectorSelections?: ReadonlySet<string>;
@@ -2533,7 +2533,7 @@ export function MessageBlock({
   rowDisclosure,
   onAcceptDraft,
   acceptingDraftFor,
-  acceptDraftError,
+  acceptDraftFailureFor,
   connectorConnectionCards = false,
   connectedConnectorSelections,
   onConnectorConnected,
@@ -2649,7 +2649,7 @@ export function MessageBlock({
       <DraftProposedCard
         accepting={acceptingDraftFor === message.draftProposed.automationId}
         detail={message.draftProposed}
-        error={acceptDraftError}
+        failed={acceptDraftFailureFor === message.draftProposed.automationId}
         messageId={message.id}
         {...(onAcceptDraft ? { onAccept: onAcceptDraft } : {})}
       />
