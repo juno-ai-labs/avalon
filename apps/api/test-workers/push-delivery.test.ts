@@ -44,7 +44,8 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'Test', 'global', NULL)`).bind(workspaceId),
     env.DB.prepare(`INSERT INTO users VALUES (?, 'person@example.test', 'Person')`).bind(userId),
-    env.DB.prepare(`INSERT INTO workspace_members VALUES (?, ?, 'active', 'member')`).bind(workspaceId, userId),
+    env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role)
+      VALUES (?, ?, 'active', 'member')`).bind(workspaceId, userId),
     env.DB.prepare(`INSERT INTO sessions VALUES ('session', ?, NULL, '2099-01-01')`).bind(userId),
     ...splitSqlStatements(migration).map(sql => env.DB.prepare(sql)),
   ]);
