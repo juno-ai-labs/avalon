@@ -84,6 +84,9 @@ export function spaceRefusal(code: SpaceErrorCode, spaceName: string, unreachabl
       return new ApiError(409, code, "The Space changed while this was being applied; try again");
     case "space_bootstrap_pending":
       return new ApiError(409, code, "This Organization is still being prepared");
+    case "channel_scope_locked_by_space":
+      return new ApiError(409, code,
+        `A Channel in ${subject} is public through an Organization-wide Space, so its own audience cannot narrow`);
   }
 }
 
