@@ -1886,21 +1886,16 @@ export class WorkspaceSpaceStorage {
     };
   }
 
-  /** The Channels on this page a previous delivery already finished. */
-  bootstrapReceipted(workstreamIds: readonly string[], phase: string): Set<string> {
-    const receipted = new Set<string>();
-    if (!this.ready()) return receipted;
-    for (const chunk of boundParameterChunks(workstreamIds)) {
-      for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT workstream_id FROM space_bootstrap_receipts
-          WHERE phase = ? AND workstream_id IN (${chunk.map(() => "?").join(", ")})`,
-        phase,
-        ...chunk,
-      ).toArray()) receipted.add(row.workstream_id);
-    }
-    return receipted;
-  }
-
+  /**
+   * One row per Channel a pass finished, which is the PRD's durable receipt.
+   *
+   * Nothing reads it back: `bootstrapPage` decides what is already done from
+   * the membership row itself, which is the state a placement actually
+   * produces and cannot disagree with. This is the operator's record of *when*
+   * each Channel was finished — the forensics for a cutover that stopped part
+   * way — and it is deliberately not a second source of truth for whether one
+   * was.
+   */
   recordBootstrapReceipts(
     workstreamIds: readonly string[],
     phase: string,
