@@ -1358,7 +1358,7 @@ misrouted product statement now fails because the table or column is absent.
 - **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same; a child of an automation, or any substream other than `0`, additionally accepts the parent's forwarded viewer decision, because its own participant row is narrower than what the parent admits. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
-- **A Channel's readers are the union of one direct source and every Space source that still reaches it, and a source can only widen.** `lib/channel-audience.ts` is the only place that union is derived, and it is written over `sourceId` rather than over Spaces, so a second kind of source composes by being passed in. `workspace` anywhere makes the whole audience Organization-wide; otherwise the readers are the union of every source's participants, and nothing lets one source remove a reader another supplies. Withdrawing a source therefore removes only the readers *that source seated* who no remaining source still supplies, and narrows the scope only when nothing left is Organization-wide. A retraction that recomputed the audience instead of reading the provenance would take out somebody who was added directly or named in a message and happens to appear on the departing Space's roster.
+- **A Channel's readers are the union of one direct source and every Space source that still reaches it, and a source can only widen.** `lib/channel-audience.ts` is the only place that union is derived, and it is written over `sourceId` rather than over Spaces, so a second kind of source composes by being passed in. `workspace` anywhere makes the whole audience Organization-wide; otherwise the readers are the union of every source's participants, and nothing lets one source remove a reader another supplies. Withdrawing a source therefore removes only the readers *that source seated* who no remaining source still supplies, and narrows the scope only when nothing left is Organization-wide. A retraction that recomputed the audience instead of reading the provenance would take out somebody who was added directly or named in a message and happens to appear on the departing Space's roster. The readers a retraction *seats* are attributed the same way: to each remaining source that supplies them, never to the source that is leaving, whose row is gone by then and whose name the attribution could not commit under at all.
 - **This object records why somebody may read; it never admits them.** Admission is `resolveScopeAccess` over the grant ledger, or the main conversation's scope and participant rows on a Channel that has never been shared. The RPCs in `workstream-access-protocol.ts` return a *plan*, and applying it goes back through the Channel's canonical scope and participant operations — which is where `assertRetainedContentContains` and the retained-content triggers run. A second writer beside them would be a second place an audience could widen without the fence.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
@@ -1849,6 +1849,41 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+
+### 2026-09-19 — A retraction's survivors are seated under a Space that remains
+
+**What changed:** `ChannelAccessService.applyRetraction` reads the sources that
+survived the retraction and seats each survivor under one that actually supplies
+them — with no `spaceSourceId` at all when none does, because that reader is the
+direct source's — then attributes them with `confirmSpaceAccessSource` for
+*every* remaining Space that lists them.
+
+**Why:** It seated all of them under the departing Space and confirmed nothing.
+That is not a mislabelling that a later read could correct: the retraction has
+already deleted that source's row, so the attribution could not have committed
+even if it had been attempted — `confirmSpaceAccessSource` answers
+`space_not_found` for a source that is gone. The reader ends up seated with a
+grant naming a Space that does not exist and no `workstream_space_supplied_readers`
+row anywhere, so the Space that really supplies them retracts later with no
+provenance for them and leaves behind a reader the Channel itself never
+admitted. `narrowDirectScope` already seated and attributed per supplying Space;
+the other path into the same state did not.
+
+**Considered and rejected:** Carrying the suppliers in
+`SpaceAccessRetractionSchema`, so the plan said who to seat *and* under whose
+authority. It is the more honest shape — the applier genuinely cannot know —
+but it widens an RPC contract and its stored operation receipts to fix a caller,
+and the service already reads the sources on the neighbouring path. Reading them
+*after* the retraction, not before, is what makes the read exactly "the sources
+that survived", with no filtering and nothing to go stale between the plan and
+the attribution.
+
+**What a future change has to respect:** A reader seated on behalf of a source
+is attributed to a source that exists, and to every one of them when several
+supply the same reader — access is the live union, so any one departing has to
+leave the others' claim standing. A survivor no source lists is seated as the
+Channel's own; giving them a Space would hand that Space's next retraction a
+licence to take them out.
 
 ### 2026-09-19 — A Space's directory effects are routed by parent kind at the workspace
 
