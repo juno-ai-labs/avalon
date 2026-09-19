@@ -390,6 +390,16 @@ object* `WorkstreamDO` exports, and what it adds is the tombstone wrapping of an
 method `SpaceDO` comes to define itself — which is precisely the omission that
 would be invisible in a class that currently defines none.
 
+**Where a Space's directory effects land.** The same two effects a Channel
+publishes, routed by parent kind at the workspace handoff:
+`applyWorkstreamDirectoryEffects` partitions its envelopes and sends the `space`
+ones to the Space directory rather than to `workspace_workstream_directory`. A
+Space in the Channel directory would be a Space in the Channel sidebar, and the
+two directories answer different questions. Everything else about the Space
+relationship — membership, order, defaults, General — belongs to WorkspaceDO and
+is documented in [`spaces.md`](spaces.md); this class owns only what a Space
+*is*.
+
 **What the Space role does not change.** The schema. `space_do` version 1
 renders the same tables, indexes and triggers `workstream_do` versions 1–17 end
 at, because the class is the same code and an inherited method that met a
@@ -1832,6 +1842,25 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+
+### 2026-09-19 — A Space's directory effects are routed by parent kind at the workspace
+
+**What changed:** WorkspaceDO's directory handoff admits `parentKind: "space"`
+beside `"workstream"` and routes those envelopes to the Space directory that
+migration 61 added, replacing the `space_directory_not_ready` refusal this
+object's effects used to meet. Nothing about the role or this class changed; the
+Organization-side authority, its tables and its invariants are
+[`spaces.md`](spaces.md).
+
+**Why:** A Space publishes the same `directory_common` and `directory_user`
+effects a Channel does — that is the point of it being this class — so both
+reach one handoff, and the only thing that can tell them apart there is the
+parent kind the effect already carries.
+
+**Consequences:** The refusal is gone, so the first Space ever created is no
+longer born into an alarm retry loop. A Space's other effects are still refused
+at that handoff and still dropped by the role before they reach the outbox.
+
 ### 2026-09-19 — Space-derived access is provenance here, applied through the Channel's own operations
 
 **What changed:** Migration 18 adds `workstream_direct_audience`,
