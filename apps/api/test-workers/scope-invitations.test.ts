@@ -15,6 +15,8 @@ import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { workstreamDOName } from "../src/durable-objects/names";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000092");
@@ -168,8 +170,15 @@ it("commits all target grants with acceptance, or retries after rolling every gr
 
 it("does not use an invitation after the sharer's membership is replaced", async () => {
   const request = await create();
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
+    .toMatchObject({ status: "ready" });
   await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId).run();
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "sharing_required" });
+  // The preview goes with it. It answers what acceptance would answer, or it is
+  // a mailbox oracle: a name for an invitation nobody can accept any more, and
+  // one the holder could not have learned by accepting.
+  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
+    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
 });
 
 async function bearer(userId: typeof actorId, sessionId: string, workspace: typeof workspaceId | null) {
@@ -264,11 +273,13 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
   expect(await filled.json()).toEqual({ email: "guest@example.test" });
   const edited = `${credential.link.slice(0, -1)}${credential.link.endsWith("A") ? "B" : "A"}`;
   expect((await preview({ link: edited })).status).toBe(403);
-  // Links already in inboxes spell their address out; they still open, and the
-  // secret in them is still what is checked.
+  // The addressed body is refused here, though acceptance still takes it. On
+  // that branch nothing is looked up, so the caller's own identifiers would
+  // reach a Durable Object stub with no session behind the request at all —
+  // and a link minted in that format never carried a mailbox to prefill.
   const addressed = { workspaceId, parentId, invitationId, token: await tokenFor(invitationId) };
-  expect(await (await preview(addressed)).json()).toEqual({ email: "guest@example.test" });
-  expect((await preview({ ...addressed, token: "wrong" })).status).toBe(403);
+  expect((await preview(addressed)).status).toBe(400);
+  expect((await preview({ ...addressed, parentId: crypto.randomUUID() })).status).toBe(400);
 
   const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
   const acceptance = await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify(credential) }, env);
@@ -276,6 +287,57 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
   expect(await acceptance.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
   expect((await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify({ link: edited }) }, env)).status).toBe(403);
+});
+
+/**
+ * A real conversation object with a real transcript in it, so a preview reads
+ * one rather than failing. Every other test in this file leaves these objects
+ * unprovisioned, which is what makes the preview absent there.
+ */
+async function seedConversation(substreamId: string, turns: Array<{ text: string; messageType?: "text" | "system" }>) {
+  await seedOpenWorkstreamAuthority(env.DB);
+  const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    conversationObjectName("global", workspaceId, parentId, asSubstreamId(substreamId))));
+  await boot(stub);
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    // The fixture's root always calls itself Main; a child object has to say
+    // which substream it is, or the port refuses the read as a misroute.
+    state.storage.sql.exec("UPDATE substream_agent_identity SET external_substream_id = ? WHERE id = 1", substreamId);
+    let sequence = 0;
+    for (const turn of turns) {
+      sequence += 1;
+      await seedParticipantMessage(state, {
+        id: `00000000-0000-7000-8000-${substreamId.slice(-4)}${String(sequence).padStart(8, "0")}`,
+        sequence, text: turn.text, authorType: "human", messageType: turn.messageType ?? "text",
+      });
+    }
+  });
+}
+
+it("quotes the conversation being offered and nothing beside it", async () => {
+  await seedConversation("0", [{ text: "Main transcript, not shared here." }]);
+  await seedConversation(childId, [
+    { text: "A system notice, which is not conversation.", messageType: "system" },
+    { text: "Child transcript, which is what was offered." },
+  ]);
+
+  const offered = await room().createScopeInvitations(invitation([child]));
+  if (offered.status !== "created") throw new Error(JSON.stringify(offered));
+  const { text } = await deliveredParts(offered.invitations[0]!.id);
+  // The whole point of a scoped invitation: an offer of one conversation must
+  // not put a sibling's or the parent's work into an unauthenticated mailbox.
+  expect(text).toContain("Child transcript, which is what was offered.");
+  expect(text).not.toContain("Main transcript");
+  // And only what people said. Tool output and system notices are not
+  // conversation and never leave the product this way.
+  expect(text).not.toContain("A system notice");
+
+  const whole = await room().createScopeInvitations(invitation([main]));
+  if (whole.status !== "created") throw new Error(JSON.stringify(whole));
+  const mainParts = await deliveredParts(whole.invitations[0]!.id);
+  expect(mainParts.text).toContain("Main transcript, not shared here.");
+  expect(mainParts.text).not.toContain("Child transcript");
 });
 
 it("names the sender and the workspace, and still sends when the conversation cannot be previewed", async () => {

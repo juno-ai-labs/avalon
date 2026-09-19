@@ -162,9 +162,8 @@ export class ScopeInvitationService {
       .bind(request.userId, initial.summary.email).first();
     if (!verified) return denied("verified_email_required");
     if (!this.usable(initial)) return denied("invitation_unavailable");
-    if (!this.targetsReady(initial.summary.targets)) return denied("migration_pending");
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, initial.actorUserId);
-    if (actor?.incarnation !== initial.actorIncarnation || !this.canShare(initial.summary.targets, actor)) return denied("sharing_required");
+    const blocked = await this.unofferable(initial);
+    if (blocked) return denied(blocked);
     // Cross-authority saga: an interruption may leave a relationship without a
     // share. That grants no conversation access and a retry resumes this step.
     if (initial.summary.status === "accepted" && initial.summary.acceptedByUserId !== request.userId) return denied("invitation_unavailable");
@@ -204,13 +203,20 @@ export class ScopeInvitationService {
    * replayable for the person who already holds the grant. Replaying an
    * acceptance is idempotence; releasing a mailbox is a disclosure, and a
    * deadline that has passed ends it.
+   *
+   * Everything else acceptance would refuse it for is checked through the same
+   * {@link offerable} predicate acceptance uses. A preview that outlives
+   * acceptance's conditions is a mailbox oracle: it would keep naming who an
+   * invitation was for after the sharer lost the share it rests on, which is
+   * not something the holder could have found out by accepting.
    */
   async describe(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
     const request = DescribeScopeInvitationSchema.parse(input);
     const current = this.invitations.read(request.invitationId);
     const presented = await this.tokenHash(request.invitationId, request.token);
     const expired = current !== null && current.summary.expiresAt !== null && current.summary.expiresAt <= Date.now();
-    if (!current || !timingSafeEqualText(current.tokenHash, presented) || expired || !this.usable(current)) {
+    if (!current || !timingSafeEqualText(current.tokenHash, presented) || expired || !this.usable(current)
+      || await this.unofferable(current) !== null) {
       return ScopeInvitationDescriptionSchema.parse({ status: "denied", reason: "invitation_unavailable" });
     }
     return ScopeInvitationDescriptionSchema.parse({ status: "ready", email: current.summary.email });
@@ -309,6 +315,28 @@ export class ScopeInvitationService {
         failed: { code: "scope_invitation_delivery_failed", message: "Invitation email could not be delivered" },
       } });
     this.invitations.acknowledgeDelivery(id);
+  }
+
+  /**
+   * What still stops this invitation from being offered, or null: its targets
+   * have finished their participant migration, and the sharer still holds the
+   * share they offered, in the membership incarnation they offered it from.
+   *
+   * One predicate for both the preview and acceptance, because a preview that
+   * outlives acceptance's conditions is a mailbox oracle. It returns the reason
+   * rather than a boolean so acceptance can keep answering `migration_pending`
+   * and `sharing_required` separately; the preview collapses every reason into
+   * the one sentence it is allowed to say. Acceptance still re-reads the actor
+   * inside its own flow and commits under that read — this is the gate they
+   * share, not the whole of either.
+   */
+  private async unofferable(record: ScopeInvitationRecord): Promise<"migration_pending" | "sharing_required" | null> {
+    if (!this.targetsReady(record.summary.targets)) return "migration_pending";
+    const target = record.summary.targets[0];
+    if (!target) return "sharing_required";
+    const actor = await readWorkspaceRelationship(this.env.DB, target.workspaceId, record.actorUserId);
+    return actor?.incarnation === record.actorIncarnation && this.canShare(record.summary.targets, actor)
+      ? null : "sharing_required";
   }
 
   private usable(record: ScopeInvitationRecord): boolean {
