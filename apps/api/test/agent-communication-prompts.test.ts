@@ -21,6 +21,18 @@ describe('agent coordination role guidance', () => {
     expect(guidance).toContain('schedule one wake-up for that time, not a repeating one');
   });
 
+  it('tells a delegate, and only a delegate, that it works in its coordinator\'s sandbox', () => {
+    // The delegate needs the fact to use the files it was sent to work on; the
+    // coordinator gets the same fact from `start_agent`, where it decides what
+    // to hand over. Naming it in every role would put a Terminal detail in the
+    // prompt of runs that never load Terminal.
+    const shared = 'sandbox and checkout of the conversation that started you';
+    expect(agentCoordinationRoleGuidance({ parentKind: 'workstream', backgroundAgent: true })).toContain(shared);
+    expect(agentCoordinationRoleGuidance({ parentKind: 'automation', backgroundAgent: true })).toContain(shared);
+    expect(agentCoordinationRoleGuidance({ parentKind: 'workstream' })).not.toContain(shared);
+    expect(agentCoordinationRoleGuidance({ parentKind: 'automation' })).not.toContain(shared);
+  });
+
   it('reserves participant responsiveness for foreground workstreams', () => {
     expect(agentCoordinationRoleGuidance({ parentKind: 'workstream' })).toContain('Stay available to participants');
     expect(agentCoordinationRoleGuidance({ parentKind: 'automation' })).not.toContain('Stay available to participants');

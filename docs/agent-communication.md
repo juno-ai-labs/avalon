@@ -60,7 +60,11 @@ that started it, through any further delegation, under a mutation lease held
 per tool call, so a worker's write waits with `sandbox_busy` only while a
 sibling or its owner is mid-call, and its reads take no lease, waiting only
 for a sandbox that is not yet running or whose checkout is still being
-prepared ([`terminal-workspaces.md`](terminal-workspaces.md)).
+prepared ([`terminal-workspaces.md`](terminal-workspaces.md)). The worker is
+told so by its role guidance and its coordinator by `start_agent`'s
+description, because a shared checkout makes a path sufficient context to
+delegate with, and an unannounced one makes a sibling's write look like
+corruption.
 
 Creation reserves the child and obtains the current generation in one parent RPC.
 Child reservation refuses archived parents. Bootstrap, identity provisioning and

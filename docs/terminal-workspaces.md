@@ -66,6 +66,17 @@ agent's port reaches the owning conversation's object over the wire, and the
 lease it takes there records which conversation its run executes in, because
 the owner's object cannot read that run's liveness from its own tables.
 
+The model is told this rather than left to infer it. The plugin prompt says the
+sandbox is shared with the background agents the conversation starts — one
+filesystem, one checkout, one branch, interleaved a call at a time — and draws
+the two consequences the sharing exists for: delegate by naming a path rather
+than by copying a file's contents, and do not assume a file you wrote is still
+as you left it. The catalog line a model reads before loading the plugin says
+the same in a clause; it described the sandbox as `isolated` until 2026-09-19.
+`start_agent` carries the coordinator's half of the fact and a delegate's role
+guidance carries its own ([`agent-communication.md`](agent-communication.md)),
+so neither side has to have loaded Terminal to know what delegation shares.
+
 The lease is held for one tool call, not one run. Readiness — creating,
 starting or restoring the sandbox under the run's authority and policy, and
 preparing its repository — is paid once per run and cached; each write tool
@@ -1098,6 +1109,49 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — The prompt says the sandbox is shared
+
+**What changed:** `TERMINAL_PLUGIN_SYSTEM_MESSAGE` states that the conversation
+and every background agent it starts work in one filesystem, one checkout and
+one branch, a call at a time, and draws the two consequences: delegate by naming
+a path rather than by copying file contents, and do not assume a file you wrote
+is unchanged. The plugin's catalog description no longer calls the sandbox
+`isolated` and says who it is shared with. `start_agent` says the new agent
+works in this conversation's sandbox and checkout, and a background agent's role
+guidance (`agent-communication-prompts.ts`) says the same from the other side.
+No runtime behavior changed.
+
+**Why:** The entry below on a sandbox belonging to a conversation made sharing
+a decision — "the shared files are the point of delegation" — and nothing the
+model reads said so. The prompt described `/workspace` as if the run owned it,
+the catalog line called the sandbox isolated, and `start_agent` asked for "the
+full assignment and needed context" with no hint that a path is context. A model
+reading that has no way to use the sharing — it copies a file's contents into
+the delegation instead of naming it — and no way to respect it: it trusts its
+own last write, and reads `sandbox_busy` as a fault rather than as a sibling
+mid-call. The design was sound and undiscoverable, which is the same as absent
+at the only place it gets used.
+
+**Considered and rejected:** Putting the coordinator's half in the agents plugin
+system message, beside "New agents receive only the instructions and attachments
+you provide" — the sentence a model reasons from when it decides what to copy.
+That plugin is preloaded, so it costs the same tokens either way; the fact went
+to `start_agent`'s description because it is read at the moment of the call,
+saying it in both places would say it twice, and `agent-communication.md` keeps
+a tool's own behavior in its definition rather than in role prose. Leaving the
+delegate's half to the Terminal prompt alone: a delegate that has not loaded
+Terminal would not know the paths in its assignment resolve, which is exactly
+when it re-derives the work instead. Documenting the sharing only here: this
+document is not in the prompt.
+
+**Consequences:** The prompt now makes two promises the runtime has to keep —
+that a delegate reaches the same files, and that `sandbox_busy` clears in
+seconds. The first is the authority walk in `authority.ts`; the second is the
+per-call lease. A change that makes either less true has to change this prose in
+the same commit, and `terminal-contract.test.ts` pins both halves, including
+that the catalog description may never again promise isolation. The added prose
+is 380 characters in the prompt of every Terminal run.
 
 ### 2026-09-19 — A sandbox restore is bounded by the acquisition budget, not the SDK's default
 

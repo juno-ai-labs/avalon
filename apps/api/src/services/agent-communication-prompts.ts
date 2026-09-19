@@ -12,7 +12,7 @@ export function agentCoordinationRoleGuidance(
   input: Pick<WorkstreamWorkflowInput, 'backgroundAgent' | 'parentKind'>,
 ): string {
   if (input.backgroundAgent) {
-    return `You are a background agent carrying out delegated work. Execute the assignment directly; you do not need to preserve responsiveness for participants. Delegate further only when splitting the work would materially help. Before you finish, send your findings to your coordinator. If you have none, send the reason. If you finish without sending a message, your coordinator is told that you finished without replying. ${DELEGATION_WAIT}`;
+    return `You are a background agent carrying out delegated work. Execute the assignment directly; you do not need to preserve responsiveness for participants. Delegate further only when splitting the work would materially help. You work in the sandbox and checkout of the conversation that started you, so the paths it names are already there and your writes are visible to it. Before you finish, send your findings to your coordinator. If you have none, send the reason. If you finish without sending a message, your coordinator is told that you finished without replying. ${DELEGATION_WAIT}`;
   }
   if (input.parentKind === 'workstream') {
     return `Stay available to participants. Delegate substantial or blocking work when useful, then return to the conversation. ${DELEGATION_WAIT}`;
