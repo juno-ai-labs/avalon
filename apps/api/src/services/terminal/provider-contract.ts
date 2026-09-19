@@ -66,9 +66,22 @@ export interface CreateTerminalSandboxInput {
   stableName: string;
   workspaceId: string;
   workstreamId: string;
+  /**
+   * The conversation whose `SubstreamAgent` owns this sandbox. Carried as a
+   * provider label so a Daytona event can be routed back to that conversation;
+   * a sandbox created before the label existed belongs to the main one.
+   */
+  substreamId: string;
   generation: number;
   domainAllowList: string[];
   environment: Record<string, string>;
+  /**
+   * Have the provider delete the sandbox this many minutes after it stops.
+   * Absent, the provider never deletes on its own and Rally's lifecycle sweep
+   * is the only thing that retires the sandbox; set for a sandbox no sweep
+   * reaches, which today is any under an automation.
+   */
+  autoDeleteAfterStoppedMinutes?: number;
 }
 
 /**

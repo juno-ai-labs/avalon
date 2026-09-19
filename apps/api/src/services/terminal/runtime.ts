@@ -55,6 +55,8 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
 const MAXIMUM_PUBLISH_BYTES = 25_000_000;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
+/** An edit's target no longer holds the bytes the edit was computed from. */
+const FILE_CHANGED_EXIT_CODE = 48;
 const FILE_NOT_UTF8_EXIT_CODE = 49;
 const FILE_TOO_LARGE_EXIT_CODE = 50;
 const FILE_LINE_TOO_LARGE_EXIT_CODE = 51;
@@ -293,9 +295,36 @@ function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommand
   };
 }
 
+/**
+ * Every method gives the lease back when it returns or throws.
+ *
+ * Wrapped once here rather than written into each body: a body that returns
+ * early on a refusal, or throws from a provider call, would otherwise have to
+ * remember to release on every path, and the one that forgot would hold the
+ * workspace for sixteen minutes. A method that never took the lease costs
+ * nothing here; the bookkeeping decides.
+ */
+function releasingAfterEachCall<T extends object>(
+  runtime: T,
+  release: (context: HarnessToolContext) => Promise<void>,
+): T {
+  return Object.fromEntries(Object.entries(runtime).map(([name, value]) => [
+    name,
+    typeof value === "function"
+      ? async (context: HarnessToolContext, ...rest: unknown[]) => {
+          try {
+            return await (value as (...args: unknown[]) => Promise<unknown>)(context, ...rest);
+          } finally {
+            await release(context);
+          }
+        }
+      : value,
+  ])) as T;
+}
+
 export function createDaytonaTerminalRuntime(
   terminalPort: TerminalPortFactory,
-  coordinator: Pick<TerminalSandboxCoordinator, "acquire">,
+  coordinator: Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning" | "holderSubstreamId">,
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
@@ -336,7 +365,74 @@ export function createDaytonaTerminalRuntime(
     return recorded.stdout;
   }
 
-  async function acquire(
+  /**
+   * The calls of a run that currently need the lease, by tool call id.
+   *
+   * The lease is the run's; the calls are what hold it. A call that made the
+   * sandbox ready, or claimed the lease for its own work, records itself
+   * here, and the release after that call gives the lease back only when no
+   * other call of the same run is recorded — activation's readiness and the
+   * first tool can overlap, and the tool's claim must not be released out
+   * from under it by activation finishing first.
+   */
+  const holdsByCall = new Map<string, string>();
+  function markHeld(context: HarnessToolContext): void {
+    holdsByCall.set(context.toolCallId, context.harnessRunId);
+  }
+  async function releaseAfterCall(context: HarnessToolContext): Promise<void> {
+    endTurn(context);
+    if (!holdsByCall.delete(context.toolCallId)) return;
+    for (const runId of holdsByCall.values()) {
+      if (runId === context.harnessRunId) return;
+    }
+    // The coordinator retries and logs a release that fails; nothing here
+    // turns a finished call's result into a failure.
+    await coordinator.release(context);
+  }
+
+  /**
+   * A run's write calls, one at a time.
+   *
+   * The lease is re-entrant for a run: a claim by the run that already holds
+   * it is answered "held", which is what lets a call's readiness and its own
+   * claim coexist. The harness runs a turn's tool calls in parallel, so
+   * without this two write calls of one run would both be answered "held"
+   * and reach the sandbox at once. The turn is in-process because every call
+   * of a run executes in the isolate that holds this runtime; a sibling run
+   * is kept out by the lease itself. A read takes no turn, as it takes no
+   * lease, and a call that already has the turn keeps it through the reads
+   * it makes on the way.
+   */
+  const turns = new Map<string, Promise<void>>();
+  const turnEndByCall = new Map<string, () => void>();
+  async function takeTurn(context: HarnessToolContext): Promise<void> {
+    if (turnEndByCall.has(context.toolCallId)) return;
+    const previous = turns.get(context.harnessRunId) ?? Promise.resolve();
+    let end!: () => void;
+    const mine = new Promise<void>((resolve) => { end = resolve; });
+    turnEndByCall.set(context.toolCallId, end);
+    turns.set(context.harnessRunId, previous.then(() => mine));
+    await previous;
+  }
+  function endTurn(context: HarnessToolContext): void {
+    const end = turnEndByCall.get(context.toolCallId);
+    if (!end) return;
+    turnEndByCall.delete(context.toolCallId);
+    end();
+  }
+
+  /**
+   * The sandbox this run has made ready: created, started or restored under
+   * the run's authority and policy, with its repository prepared.
+   *
+   * Paid once per run and shared by every call, activation included. The
+   * coordinator returns holding the lease, because the transitions it makes
+   * need exclusivity, and the call that ran it records the hold; the call's
+   * end releases it. This is readiness only: whether the row still describes
+   * this sandbox is decided per call, in `acquire` or `readable`, not by a
+   * deadline on the cache.
+   */
+  async function ready(
     context: HarnessToolContext,
     preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
   ): Promise<AcquiredTerminalSandbox> {
@@ -347,21 +443,18 @@ export function createDaytonaTerminalRuntime(
     if (cached) {
       const startedAt = cacheNow();
       const sandbox = await cached;
-      if (sandbox.operationLeaseExpiresAt > cacheNow()) {
-        recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
-        return sandbox;
-      }
-      if (acquiredByRun.get(context.harnessRunId) === cached) {
-        acquiredByRun.delete(context.harnessRunId);
-      }
+      recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
+      return sandbox;
     }
     const startedAt = cacheNow();
+    markHeld(context);
     const pending = (async () => {
       const sandbox = await coordinator.acquire(context);
       await preparation?.(context, sandbox, provider);
       return sandbox;
     })();
     acquiredByRun.set(context.harnessRunId, pending);
+    void pending.then(() => settledHandles.add(pending), () => settledHandles.add(pending));
     try {
       return await pending;
     } catch (error) {
@@ -372,6 +465,68 @@ export function createDaytonaTerminalRuntime(
     } finally {
       recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: false });
     }
+  }
+
+  /** Readiness promises that have settled; a settled handle may be stale, a pending one cannot be. */
+  const settledHandles = new WeakSet<Promise<AcquiredTerminalSandbox>>();
+
+  function evict(context: HarnessToolContext): void {
+    acquiredByRun.delete(context.harnessRunId);
+  }
+
+  /**
+   * The sandbox, with this call holding the operation lease.
+   *
+   * Readiness is the cached handle; the lease is taken here, per call, and
+   * released when the call ends. A claim that finds the row moved on — the
+   * generation replaced, the sandbox stopped by the sweep or a policy change
+   * — runs readiness again, which transitions the sandbox under the lease
+   * and hands back a handle that matches the row.
+   */
+  async function acquire(
+    context: HarnessToolContext,
+    preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
+  ): Promise<AcquiredTerminalSandbox> {
+    await takeTurn(context);
+    const sandbox = await ready(context, preparation);
+    if (await coordinator.claimForOperation(context, sandbox) === "held") {
+      markHeld(context);
+      return sandbox;
+    }
+    evict(context);
+    return ready(context, preparation);
+  }
+
+  /**
+   * The sandbox as a read may use it: running, this caller's, and taking no
+   * lease.
+   *
+   * A read never blocks on another run's call and never blocks one; the
+   * bargain is that it can observe a file another run is mid-way through
+   * writing. When the sandbox is not simply running — stopped by the sweep,
+   * never started, replaced — the read goes through readiness like a write,
+   * which takes the lease to start it and releases it after the call.
+   */
+  async function readable(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
+    const startedAt = cacheNow();
+    // A readiness still in flight — activation's, usually — is this run
+    // starting the sandbox or preparing its checkout. The row is marked
+    // running before the preparation ends, so it is joined first: a read that
+    // peeked past it would see a checkout half made.
+    const inFlight = acquiredByRun.get(context.harnessRunId);
+    if (inFlight && !settledHandles.has(inFlight)) return ready(context);
+    const peeked = await coordinator.peekRunning(context);
+    if (peeked) {
+      recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
+      return peeked;
+    }
+    // A readiness another call of this run started while this one was
+    // peeking is joined rather than evicted; a burst of reads on a sandbox
+    // that is not yet running starts it once.
+    const started = acquiredByRun.get(context.harnessRunId);
+    if (started && !settledHandles.has(started)) return ready(context);
+    evict(context);
+    return ready(context);
   }
 
   async function cleanupTemporaryFile(providerSandboxId: string, path: string): Promise<void> {
@@ -647,8 +802,8 @@ export function createDaytonaTerminalRuntime(
     return { size: Number(match[1]), sha256: match[2]! };
   }
 
-  return {
-    prepare: acquire,
+  const runtime: DaytonaTerminalRuntime = {
+    prepare: ready,
     async checkoutRepository(context, input) {
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
@@ -658,9 +813,13 @@ export function createDaytonaTerminalRuntime(
       // bootstrap's clone and the checkout's replacement would otherwise run
       // against one sandbox at once. A rejected acquisition is exactly what a
       // checkout repairs, so only its end matters here, not its outcome.
+      await takeTurn(context);
       const inFlight = acquiredByRun.get(context.harnessRunId);
       if (inFlight) await inFlight.then(() => undefined, () => undefined);
       acquiredByRun.delete(context.harnessRunId);
+      // The selector takes the lease itself, for the replacement; this call
+      // is what gives it back.
+      markHeld(context);
       const selected = await selector.checkout(context, input);
       acquiredByRun.delete(context.harnessRunId);
       // The old checkout's instructions have no successor message to supersede
@@ -669,7 +828,7 @@ export function createDaytonaTerminalRuntime(
       return selected;
     },
     async readFile(context, filePath) {
-      const sandbox = await acquire(context);
+      const sandbox = await readable(context);
       const path = absolutePath(filePath);
       // The read that precedes an edit: the probe rides it, so the file's
       // instructions arrive with the edit's batch.
@@ -715,7 +874,7 @@ export function createDaytonaTerminalRuntime(
     },
 
     async readFilePage(context, filePath, offset, limit) {
-      const sandbox = await acquire(context);
+      const sandbox = await readable(context);
       const path = absolutePath(filePath);
       const probe = await probeFragment([filePath]);
       const read = `python3 -c ${shellQuote(TERMINAL_READ_TEXT_PAGE_PYTHON)} ${shellQuote(ROOT)} ${shellQuote(path)} ${offset} ${limit} ${256 * 1_024} ${10 * 1_048_576}`;
@@ -778,8 +937,16 @@ export function createDaytonaTerminalRuntime(
             `temporary=${shellQuote(temporary)}`,
             'trap \'rm -f -- "$temporary"\' EXIT',
             ...(options ? [
+              // An edit replaces the bytes it was computed from and nothing
+              // else: the read that produced them took no lease, so another
+              // run's write may have landed since, and one that has is a
+              // conflict for the model to resolve by reading again.
               "created=0",
               `previous_lines=${lineCount(options.previousText)}`,
+              `expected=${shellQuote(options.previousSha256)}`,
+              `if [ ! -e "$target" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
+              'actual=$(sha256sum -- "$target" | cut -d " " -f 1) || exit 47',
+              `if [ "$actual" != "$expected" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
             ] : [
               ...containmentCommands(),
               "created=1",
@@ -805,6 +972,13 @@ export function createDaytonaTerminalRuntime(
         throw error;
       }
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      if (result.exitCode === FILE_CHANGED_EXIT_CODE) {
+        throw new TerminalToolError(
+          "file_changed",
+          "The file changed since it was read. Read it again and rebuild the edit from the current text.",
+          { filePath, reason: `Call read_file for ${filePath} again, then rebuild oldString and newString from the current text.` },
+        );
+      }
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with run_command before replacing it.", { filePath });
       }
@@ -957,6 +1131,7 @@ export function createDaytonaTerminalRuntime(
       const taskAdmitted = await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
+        runSubstreamId: coordinator.holderSubstreamId(),
         effectIntentId,
         sandboxGeneration: sandbox.generation,
         sandboxId: sandbox.providerSandboxId,
@@ -1201,4 +1376,5 @@ export function createDaytonaTerminalRuntime(
       return publisher.publishBranchAndPr(context, input, sandbox, provider);
     },
   };
+  return releasingAfterEachCall(runtime, releaseAfterCall);
 }

@@ -1,3 +1,4 @@
+import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { runWorkspaceScheduleTarget } from "../src/services/workspace-schedule-execution";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,8 +56,11 @@ function fixture() {
     readFile: unexpected, writeFile: unexpected, runUtilityCommand: unexpected, runCommand: unexpected,
     cleanupCommand: unexpected,
   }) };
+  // The main conversation's object under the work stream's own id; a side
+  // thread's is added under `<workstreamId>:<substreamId>` by the test that has one.
+  const objectStores = new Map([[S, store]]);
   const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global",
-    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores: new Map([[S, store]]) }),
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     DAYTONA_API_KEY: "test-key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_REGION_CAPABILITY: "supported",
     DAYTONA_ORGANIZATION_ID: "org-1", DAYTONA_WEBHOOK_SECRET: secret, TERMINAL_PROVIDER: binding });
@@ -69,7 +73,7 @@ function fixture() {
     return app.request("https://api.example.com/ingest/daytona", { method: "POST", body,
       headers: headers ?? signedDaytonaHeaders(secret, body) }, env);
   };
-  return { send, getSandbox, terminal, store, env, snapshot };
+  return { send, getSandbox, terminal, store, objectStores, env, snapshot };
 }
 const event = { event: "sandbox.state.updated", organizationId: "org-1", id: "sandbox-1", newState: "deleted" };
 describe("Daytona webhook reconciliation", () => {
@@ -100,7 +104,10 @@ describe("Daytona webhook reconciliation", () => {
     const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
     const context = { env: f.env, workspaceEnv: f.env, workspaceId: W,
       directory: { workstreamScheduleTargets: unused },
-      notificationIntents: { notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused } };
+      notificationIntents: { notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused },
+      // The work stream's parent is not built here; the main conversation is
+      // the one this fixture's sandbox row belongs to.
+      dueTerminalSubstreams: async () => [] };
     const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
     expect(await runWorkspaceScheduleTarget(context, target, new Date())).toEqual({ waitMs: 30_000 });
     expect(await f.terminal.providerObservation()).toMatchObject({ state: "archived" });
@@ -111,6 +118,33 @@ describe("Daytona webhook reconciliation", () => {
     f.getSandbox.mockResolvedValue({ ok: false, error: { kind: "not_found", message: "deleted" } });
     await runWorkspaceScheduleTarget(context, target, new Date());
     expect(await f.terminal.providerObservation()).toMatchObject({ state: "absent" });
+  });
+
+  it("the workspace scheduler reconciles every conversation the parent lists as due", async () => {
+    const f = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    const threadStore = testWorkstreamObjectStore();
+    databases.push(threadStore);
+    seedWorkstreamObjectRoot(threadStore, { workspaceId: W, workstreamId: S });
+    threadStore.exec(`INSERT INTO terminal_workspace
+      (id, provider, lifecycle_state, stable_name, sandbox_id, generation, authority_fingerprint,
+       applied_network_revision, version, created_at, updated_at, expire_due_at)
+      VALUES (1, 'daytona', 'running', '${await terminalSandboxStableName(W, S, thread)}', 'sandbox-2', 1, 'authority', 1, 1, 0, 0, 9999999999999)`);
+    f.objectStores.set(`${S}:${thread}`, threadStore);
+    f.getSandbox.mockImplementation(async (id) => ({ ok: true, value: { ...f.snapshot, id, labels: { ...f.snapshot.labels, ...(id === "sandbox-2" ? { "rally.substream": thread } : {}) } } }));
+    const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
+    const context = { env: f.env, workspaceEnv: f.env, workspaceId: W,
+      directory: { workstreamScheduleTargets: unused },
+      notificationIntents: { notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused },
+      // The parent lists both conversations as due; each is reconciled on its own row.
+      dueTerminalSubstreams: async () => ["0", thread] };
+    const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
+
+    await runWorkspaceScheduleTarget(context, target, new Date());
+    expect(f.getSandbox.mock.calls.map(([id]) => id).sort()).toEqual(["sandbox-1", "sandbox-2"]);
+    expect(await f.terminal.providerObservation()).toMatchObject({ sandboxId: "sandbox-1", state: "archived" });
+    expect(await testTerminalPortFactory(threadStore)(W, S, thread).providerObservation())
+      .toMatchObject({ sandboxId: "sandbox-2", state: "archived" });
   });
 
   it("keeps the last observation on provider failure and can observe deletion without a webhook", async () => {

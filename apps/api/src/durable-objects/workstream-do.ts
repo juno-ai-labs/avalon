@@ -2524,6 +2524,62 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     ).toArray().map((row) => WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)));
   }
 
+  /**
+   * The main conversation's projection, carrying the earliest Terminal
+   * deadline of *any* conversation under this work stream.
+   *
+   * The workspace directory has one Terminal deadline per work stream and the
+   * sweep it wakes asks this object which conversations are due, so the row
+   * has to hold the earliest of them or a side thread's sandbox would idle
+   * until the main conversation's own deadline — or forever, when the main
+   * conversation has no sandbox at all. Everything else in the row stays the
+   * main conversation's: a side thread's title or state is its own affair.
+   */
+  protected override aggregateCommon(): DirectoryCommonEffect {
+    return { ...super.aggregateCommon(), nextTerminalActionAt: this.earliestChildTerminalDeadline() };
+  }
+
+  private earliestChildTerminalDeadline(): string | null {
+    return first(this.parentSql.exec<{ due_at: string | null }>(
+      `SELECT MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
+         FROM substream_directory
+        WHERE json_extract(effect_json, '$.kind') = 'directory_common'
+          AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL`,
+    ))?.due_at ?? null;
+  }
+
+  /**
+   * Re-publish the common projection when a non-main conversation moved the
+   * earliest Terminal deadline.
+   *
+   * Only the main conversation's projections are aggregated and forwarded;
+   * a side thread's arrives, is stored, and stops here. Its sandbox deadline
+   * is the one thing in it the workspace has to hear about, because the
+   * workspace alarm is the only thing that ever stops, archives, or deletes
+   * that sandbox. Enqueueing dedupes on the payload, so a projection that
+   * changed nothing about the earliest deadline sends nothing.
+   */
+  private forwardChildTerminalDeadline(now: number): void {
+    const main = first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_directory WHERE substream_id = '0'`,
+    ));
+    // Until the main conversation has projected there is no row to carry the
+    // deadline; its first projection aggregates every child's.
+    if (!main) return;
+    const aggregate = this.aggregateCommon();
+    const dueAt = epoch(aggregate.nextTerminalActionAt);
+    const current = this.metadataRow();
+    if (!current || current.next_terminal_action_at === dueAt) return;
+    this.parentSql.exec(
+      `UPDATE workstream_metadata
+          SET next_terminal_action_at = ?, revision = revision + 1, updated_at = ?
+        WHERE id = 1`,
+      dueAt,
+      now,
+    );
+    this.enqueueProjection("common", aggregate, now);
+  }
+
   protected override userProjection(userId: string): z.infer<typeof WorkstreamDirectoryUserEffectSchema> | null {
     const row = first(this.parentSql.exec<{ effect_json: string }>(
       `SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`,
@@ -2588,6 +2644,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     now: number,
   ): void {
     if (substreamId === "0") return;
+    // Before the background-agent return: a worker never owns a sandbox, but
+    // the deadline it used to report may have been the earliest, and a
+    // projection that clears it is what lets the earliest move on.
+    this.forwardChildTerminalDeadline(now);
     if (effect.backgroundAgent) {
       this.parentSql.exec("UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1", now);
       return;
