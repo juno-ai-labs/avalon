@@ -145,6 +145,24 @@ export function terminalAcquisitionDeadlineAt(startedAtMs: number): number {
   return startedAtMs + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS;
 }
 
+/**
+ * The same, for the one restore that does not run inside `acquire`.
+ *
+ * Repository checkout takes the mutation lease rather than acquiring, and
+ * restores an archived sandbox itself before backing it up. Left unbudgeted it
+ * kept the SDK's `60` implicitly — the literal this file's other deadline
+ * exists to delete — and went on emitting `sandbox_start` / `archived`
+ * failures at 60_000ms. `report-terminal-analytics.mjs` buckets on operation
+ * and source state alone, so those samples land in the same **Restore archived
+ * sandbox** row as the budgeted ones: a tail mixing two ceilings, read by
+ * whoever is deciding whether the acquisition budget needs to move. One
+ * unowned number on one call site was enough to make the report unreadable
+ * again, which is the whole failure this change exists to end.
+ */
+export function terminalRepositoryPreparationDeadlineAt(startedAtMs: number): number {
+  return startedAtMs + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
+}
+
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
     name: "read_file",

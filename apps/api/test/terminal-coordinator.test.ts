@@ -1,6 +1,6 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   TerminalSandboxCoordinator,
@@ -283,39 +283,49 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
-  it("gives a restore the tool's acquisition deadline, not a provider default", async () => {
-    const { objectStore, env, provider, clock, advance } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
-    await coordinator.acquire(context());
-    advance(90);
+  describe("acquisition deadline", () => {
+    // Installed and restored in hooks rather than the test body, per
+    // docs/testing.md: a restore a throwing assertion can skip is not a
+    // restore.
+    const ACQUISITION_STARTED_AT = 1_700_000_000_000;
+    let wallClock = ACQUISITION_STARTED_AT;
 
-    // The deadline is anchored to when acquisition began, so everything it
-    // spends before the restore — the workspace policy read, the
-    // repository-authority join, the provider state read-back — comes out of
-    // the same budget rather than resetting it. Handing the provider an
-    // instant rather than a duration is what makes that true across the RPC
-    // hop and the adapter's own lookup as well.
-    const acquisitionStartedAt = 1_700_000_000_000;
-    let wallClock = acquisitionStartedAt;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => wallClock);
-    vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
-      wallClock += 25_000;
-      return {
-        id: "sandbox-1",
-        name: requested,
-        state: "archived" as const,
-        domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
-      };
+    beforeEach(() => {
+      wallClock = ACQUISITION_STARTED_AT;
     });
 
-    try {
-      await coordinator.acquire(context());
-    } finally {
-      nowSpy.mockRestore();
-    }
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
 
-    expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
-      deadlineAtMs: acquisitionStartedAt + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
+    it("gives a restore the tool's acquisition deadline, not a provider default", async () => {
+      const { objectStore, env, provider, clock, advance } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      await coordinator.acquire(context());
+      advance(90);
+
+      // The deadline is anchored to when acquisition began, so everything it
+      // spends before the restore — the workspace policy read, the
+      // repository-authority join, the provider state read-back — comes out of
+      // the same budget rather than resetting it. Handing the provider an
+      // instant rather than a duration is what makes that true across the RPC
+      // hop and the adapter's own lookup as well.
+      vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+      vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
+        wallClock += 25_000;
+        return {
+          id: "sandbox-1",
+          name: requested,
+          state: "archived" as const,
+          domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+        };
+      });
+
+      await coordinator.acquire(context());
+
+      expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
+        deadlineAtMs: ACQUISITION_STARTED_AT + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
+      });
     });
   });
 

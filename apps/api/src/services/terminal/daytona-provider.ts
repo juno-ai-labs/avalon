@@ -319,12 +319,17 @@ export function createDaytonaTerminalProvider(
    * It reads `0` as "wait forever", so a deadline already reached must not
    * arrive as `0` — one second is the smallest finite wait the SDK accepts,
    * and that sub-second overshoot is the floor's unavoidable cost rather than
-   * a grace anyone chose. And it spends the same number on the start request
-   * itself (`{ timeout: seconds * 1000 }`) before giving the remainder to its
-   * poll loop, which is why a nearly-spent deadline yields a short request
-   * timeout: the result of a request nobody is still waiting for is not worth
-   * a minute, and Daytona begins restoring whether or not this client stays to
-   * see it. `undefined` leaves the SDK's own default (60 seconds) in place.
+   * a grace anyone chose. And it spends the same number twice: on the start
+   * request itself (`{ timeout: seconds * 1000 }`) and then on the poll loop.
+   *
+   * That last one bounds what a reached deadline can promise. At the floor the
+   * start request carries a 1000ms timeout of its own, so if Daytona's control
+   * plane takes longer than that to answer, the client aborts the request
+   * rather than the wait and nothing re-issues it. The start was sent; it may
+   * not have been accepted. Only `resumeProviderSandbox` re-observing settles
+   * which — and it does that on every path, so the caller is never left
+   * assuming a restore that is not happening. `undefined` leaves the SDK's own
+   * default (60 seconds) in place.
    */
   const waitSeconds = (options?: TerminalSandboxWaitOptions): number | undefined => (
     options?.deadlineAtMs === undefined
