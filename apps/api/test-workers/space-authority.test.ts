@@ -662,6 +662,32 @@ describe("WorkspaceDO space authority", () => {
     expect(again).toMatchObject({ created: false, space: { id: general.space.id } });
   });
 
+  it("given two callers racing for General, when both run, then the Organization has one", async () => {
+    // Both reserve; the index refuses the loser, and the answer it owes is the
+    // Space the winner made. There is no read in front of the insert to lose
+    // the race in, which is the point — a check-then-write here is how an
+    // Organization ends up with two fallbacks.
+    const [first, second] = await Promise.all([
+      workspace().ensureGeneralSpace({ workspaceId: WORKSPACE_ID, userId: OWNER }),
+      workspace().ensureGeneralSpace({ workspaceId: WORKSPACE_ID, userId: MEMBER }),
+    ]);
+    if (!first.ok || !second.ok) throw new Error("ensureGeneralSpace refused");
+
+    expect(second.space.id).toBe(first.space.id);
+    expect([first.created, second.created].filter(Boolean)).toHaveLength(1);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT space_id FROM workspace_space_directory WHERE system_role = 'general'",
+      bindings: [],
+    })).toMatchObject({ rows: [{ space_id: first.space.id }] });
+    // And the loser left nothing behind: a reservation writes a viewer row and
+    // an order row beside the directory row, and the refused one rolls all
+    // three back rather than orphaning them under an id nothing names.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT COUNT(*) AS count FROM workspace_space_directory",
+      bindings: [],
+    })).toMatchObject({ rows: [{ count: 1 }] });
+  });
+
   it("given a default, when a Channel joins after it, then it is staged for that Channel too", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
