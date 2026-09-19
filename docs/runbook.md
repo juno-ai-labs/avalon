@@ -911,13 +911,14 @@ to be signed in.
    closes itself with no further command, and one nobody remediates re-walks
    about once a minute until somebody does.
 
-4. **`project_effects_pending` is the one blocker with an operator remedy.** It
-   means a Project default was still queued when the cutover tried to close. The
-   in-flight messages are on the regional activity Queue: let it drain, confirm
-   no new dead letters, and force `WorkspaceDO` again. Migration 62 asserts the
-   same condition inside the transaction and aborts by that name, so an
-   Organization that cannot pass it keeps its Project tables intact rather than
-   getting a partial retirement.
+4. **Project retirement needs no operator step.** Migration 62 settles every
+   undelivered Project default in the same transaction that drops the tables —
+   targets to `terminal` with `project_retired`, publications to `accepted` —
+   and the activity consumer acknowledges a message published before the
+   cutover with `reason: "projects_retired"`. Nothing is held back for it, and
+   nothing is owed: the PRD deletes Projects rather than converting them, so a
+   default that never reached a Channel is dropped on purpose. Do not wait for
+   the Queue to drain before forcing the class.
 
 5. **Confirm the finish.** `phase = 'complete'` with an empty `blocked_json` in
    every Organization, and an empty regional activity dead-letter queue — a

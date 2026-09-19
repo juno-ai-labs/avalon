@@ -1115,10 +1115,9 @@ const PROJECT_CASCADE_DEPENDENTS = [
 ] as const;
 
 /**
- * Retire Projects, behind a barrier that has to read zero before anything is
- * dropped.
+ * Retire Projects: settle every undelivered effect, then drop the tables.
  *
- * Three steps in one transaction, and the order is the whole point.
+ * Two steps in one transaction, and the order is the whole point.
  *
  * **Invalidate.** Every unsettled default target becomes `terminal` with
  * `project_retired` on it, and every unaccepted publication is accepted. Those
@@ -1128,17 +1127,20 @@ const PROJECT_CASCADE_DEPENDENTS = [
  * nothing current. The consumer leg stays for the platform's retry window and
  * acknowledges every redelivery as a tombstone.
  *
- * **Assert.** A table whose one column may only be zero, inserted from the
- * counts above. If anything is still unsettled the insert aborts with
- * `CHECK constraint failed: project_effects_pending`, the transaction rolls
- * back, and the object refuses to open rather than dropping work somebody is
- * owed. `docs/runbook.md` says what an operator does with that: drain the
- * regional activity Queue and force the migration again.
- *
  * **Drop.** Children before parents, because `PRAGMA foreign_keys = OFF` is
  * silently a no-op once anything in the same Durable Object event has touched
  * SQLite (`docs/durable-object-sqlite.md`), so a parent dropped first would
  * cascade its children away and hide whichever of them still held rows.
+ *
+ * **There is no barrier in between, and there cannot be one.** This shipped
+ * with a scratch table whose CHECK asserted that no `pending` row was left —
+ * counted after the statements above had just settled every one of them, so
+ * the count was zero by construction and the assertion could only ever pass.
+ * A barrier that reads its own writes is not a gate. The PRD's "zero unsettled
+ * Project effects" is met by the invalidation plus the tombstone consumer
+ * rather than by an assertion: an undelivered Project default is *dropped*,
+ * which is what PRD non-goal 5 asks for — Projects are deleted rather than
+ * converted, so a default that never reached a Channel is not owed to anybody.
  *
  * Applied Channel state is untouched. A resource a Project delivered is
  * attached to the Channel's own authority, and this deletes the Organization's
@@ -1153,13 +1155,6 @@ const PROJECT_RETIREMENT_STATEMENTS: readonly string[] = [
       SET state = 'accepted', accepted_at = unixepoch() * 1000,
           updated_at = unixepoch() * 1000
     WHERE state = 'pending'`,
-  `CREATE TABLE _project_retirement_barrier (
-    unsettled INTEGER NOT NULL CONSTRAINT project_effects_pending CHECK (unsettled = 0)
-  ) STRICT`,
-  `INSERT INTO _project_retirement_barrier (unsettled)
-     SELECT (SELECT COUNT(*) FROM project_default_resource_targets WHERE state = 'pending')
-          + (SELECT COUNT(*) FROM project_default_resource_publications WHERE state = 'pending')`,
-  `DROP TABLE _project_retirement_barrier`,
   ...[...PROJECT_CASCADE_DEPENDENTS].reverse().map((table) => `DROP TABLE ${table}`),
   `DROP TABLE workspace_project_state`,
   `DROP TABLE projects`,
@@ -6410,12 +6405,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Close the cutover, or say why it cannot close yet.
    *
-   * Three gates, and the third is the PRD's shutdown barrier: no Channel
-   * outside every Space, no Channel the cutover is blocked on, and no Project
-   * effect still queued for delivery. A Project target that has not settled is
-   * work aimed at a Channel whose audience this cutover has just changed, so
-   * letting the Organization report complete with one pending would publish a
-   * hierarchy that a stale delivery can still write into.
+   * Two gates: no Channel outside every Space, and no Channel the cutover is
+   * blocked on. There was a third — no Project effect still queued — and it
+   * could not fire: migration 62 runs in the constructor, so by the time any
+   * caller reaches this the Project tables are gone and the question has no
+   * rows to ask. What actually retires those effects is the invalidation
+   * inside that migration and the tombstone consumer that acknowledges a
+   * redelivery, both of which happen without this being consulted.
    */
   async finalizeSpaceBootstrap(input: { workspaceId: string }): Promise<WorkspaceSpaceBootstrapFinalizeResult> {
     await this.initialized;
@@ -6423,9 +6419,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       z.strictObject({ workspaceId: IdSchema }), input, "finalize_space_bootstrap",
     );
     this.assertWorkspace(request.workspaceId);
-    if (this.spaceStorage().pendingProjectEffects()) {
-      return { outcome: "project_effects_pending" };
-    }
     const outcome = this.spaceStorage().completeBootstrap();
     if (outcome === "complete") this.publishSpaceSnapshot();
     return WorkspaceSpaceBootstrapFinalizeResultSchema.parse({ outcome });
