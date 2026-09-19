@@ -23,7 +23,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
-| `apps/desktop/src/renderer/lib/host-favicon.tsx` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, mount-scoped lifetime and object-URL revocation behind one. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
+| `apps/desktop/src/renderer/lib/host-favicon.ts` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, its object-URL revocation, and a result that is *target*-scoped rather than merely mount-scoped — it is read only for the `{api, hostname}` it was fetched for, and dies with the URL it names. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
@@ -256,6 +256,17 @@ object URL, marks the image presentational, and revokes the URL when the link
 unmounts. A missing or failed favicon changes nothing about the link. Glances
 remain inert text and synchronous still exports do not start asynchronous
 decoration.
+
+Markers are requesters in their own right, not free riders on the links: a
+lifted definition's link is never rendered, so before markers wore icons those
+hosts were fetched only when the body also linked them. The endpoint answers
+`private, no-cache` and `RallyApi` coalesces only *in-flight* calls, so every
+mount asks again and a miss is not remembered in the client — a scroll back
+through a grounded answer in a virtualised transcript re-requests every marker's
+host. The 30-day KV entry absorbs that, and this is deliberately not the place
+to invent a client cache; `host-favicon.ts` is simply the one module that would
+own a `Map<hostname, Promise<Blob | null>>` if the churn ever shows up as a
+cost.
 
 The API resolves a deep hostname and its registrable domain in parallel. The
 exact host returns as soon as it produces an icon, without waiting for the
@@ -822,6 +833,8 @@ The traps, both of which have bitten:
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
 
+## Changelog
+
 ### 2026-09-19 — A web source's footnote marker is the site's favicon
 
 **What changed:** A lifted footnote whose target is an HTTP(S) URL draws that
@@ -829,7 +842,7 @@ host's favicon as its inline marker in place of the asterisk, through the same
 authenticated endpoint and cache the link decoration already uses. It keeps the
 asterisk pill's plate and sits inside it. The fetch,
 the mount-scoped lifetime and the object-URL revocation moved out of
-`workstream-blocks.tsx` into `lib/host-favicon.tsx`, which both callers now
+`workstream-blocks.tsx` into `lib/host-favicon.ts`, which both callers now
 share; `favicon-api.tsx` stays what it was, the context that narrows the session
 to one capability. Everything without a host, without an icon, or without an API
 to ask keeps the asterisk, and a still keeps its numbers and asks for nothing.
@@ -856,12 +869,30 @@ appearance the case it would have to fix is a light glyph, which a light ground
 turns from faint into invisible.
 
 **Consequences:** The icon is decoration only — the source still reaches
-assistive technology through the pill's `aria-label` and its popover, both
-unchanged. `useHostFavicon` returns an `onError` alongside the source and its
-result carries the `api` and `hostname` it was fetched for: a target that
-changes under a mount React keeps, and a blob that will not decode, both
-degrade to the asterisk rather than leaving a broken image where the marker
-belongs. `app.css.node.test.ts` now guards both inline-icon rules — this one and
+assistive technology through the pill's `aria-label`, and the popover now also
+names the host, so "which source" has an answer in words for a reader whose
+glance did not land on the mark. `useHostFavicon` returns an `onError` alongside
+the source, its result carries the `api` and `hostname` it was fetched for, and
+that result dies with the object URL it names: a target that changes under a
+mount React keeps, one that changes and comes back, a request that rejects, and
+a blob that will not decode all degrade to the asterisk rather than leaving a
+broken or empty plate where the marker belongs.
+
+Shape and format are not special-cased: a non-square mark is letterboxed into
+the square box by `object-fit: contain` rather than distorted or allowed to
+change the plate, and an SVG blob paints like any other — with the `onError`
+above as the answer for one that does not.
+
+**One case is accepted rather than fixed:** a favicon that is a *light* glyph on
+a transparent field, in light appearance, is a plate with nothing legible in it.
+The ground that rescues the dark case makes this one worse rather than better,
+and it is what a browser's own light tab strip does with the same file, so it is
+a property of that artwork rather than of this surface —
+[`using-company-brand-icons.md`](using-company-brand-icons.md) is where the same
+comparison was run for connector marks, whose answer was to draw them in
+`currentColor`, which is not available to a favicon. What keeps this from being
+an invisible citation is the plate: the marker is still there to be found and
+hovered, and the popover names the host. `app.css.node.test.ts` now guards both inline-icon rules — this one and
 `.markdown-link-favicon` — because the margin collision below is invisible to
 every DOM assertion. The icon rule is qualified as
 `.markdown-body .citation-pill-favicon img` and sets `margin: 0`: the

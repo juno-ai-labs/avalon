@@ -500,6 +500,57 @@ describe('footnote citations', () => {
     expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('keeps the marker an asterisk when the favicon request is rejected outright', async () => {
+    // `getFavicon` throws rather than resolving null for a non-404 failure or a
+    // response that is not an image. In front of a link that is empty space
+    // either way; here the fallback is the marker a reader has to be able to
+    // find, so the rejected path is worth its own case.
+    faviconApi.getFavicon.mockRejectedValue(new Error('The favicon response was not an image.'));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledWith('example.com'));
+    const pill = screen.getByRole('button', { name: 'Source 2: Margin memo' });
+    expect(pill.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
+  it('names the host in the popover, so an unreadable icon is not the only answer', async () => {
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    fireEvent.focus(screen.getByRole('button', { name: 'Source 2: Margin memo' }));
+    const tip = await screen.findByText('example.com · Opens in your browser');
+    expect(tip).toBeInTheDocument();
+  });
+
+  it('does not resurrect a revoked icon when a marker returns to a host it already showed', async () => {
+    // The guard on the stored record is about *reading* it; the record itself
+    // survives the target leaving. Coming back to a host whose URL was already
+    // revoked on the way out would match the guard again and hand back bytes
+    // that no longer exist — an <img> pointing at nothing, which is an empty
+    // plate rather than the asterisk.
+    const marker = (url: string) => `Margin held.[^mar]\n\n[^mar]: [Margin memo](${url})\n`;
+    faviconApi.getFavicon.mockImplementation(async (hostname) => (
+      hostname === 'first.example' ? new Blob([Uint8Array.from([0x89])], { type: 'image/png' }) : null
+    ));
+
+    const { rerender } = render(<MarkdownBody citations={context()}>{marker('https://first.example/a')}</MarkdownBody>);
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', minted[0]!));
+
+    rerender(<MarkdownBody citations={context()}>{marker('https://second.example/b')}</MarkdownBody>);
+    await waitFor(() => expect(revoked).toContain(minted[0]));
+
+    faviconApi.getFavicon.mockResolvedValue(null);
+    rerender(<MarkdownBody citations={context()}>{marker('https://first.example/a')}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledTimes(3));
+    const pill = document.querySelector('.citation-pill');
+    expect(pill?.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
   it('falls back to the asterisk when the fetched icon will not paint', async () => {
     // The endpoint validates that it is serving an image and serves SVG among
     // others, so a blob can be a good response and still fail to decode here.

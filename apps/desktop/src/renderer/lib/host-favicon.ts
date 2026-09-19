@@ -56,7 +56,8 @@ export interface HostFavicon {
  * holds its bytes for the life of the window.
  *
  * **What the result is answering for travels with it**, which is why this holds
- * a record rather than a bare string. A caller's target can change under a
+ * a record rather than a bare string, and why the record dies with the object
+ * URL it names. A caller's target can change under a
  * mount that React keeps — a footnote marker holds its position across a
  * re-parse, so a definition re-pointed at another host hands the same component
  * a new hostname — and the effect that revokes the old object URL runs *after*
@@ -87,7 +88,14 @@ export function useHostFavicon(href: string | undefined): HostFavicon {
       .catch(() => undefined);
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (!objectUrl) return;
+      URL.revokeObjectURL(objectUrl);
+      // Drop the record with the URL it names. Not reading it is enough while
+      // the target has moved on, but the record outlives that: a marker
+      // re-pointed away and then back — A, B, A — would match the guard again
+      // and hand back bytes revoked on the way out, which is an `<img>`
+      // pointing at nothing and so an empty plate rather than the asterisk.
+      setResolved((current) => (current?.source === objectUrl ? null : current));
     };
   }, [api, hostname]);
   const source = resolved !== null && resolved.api === api && resolved.hostname === hostname ? resolved.source : null;
