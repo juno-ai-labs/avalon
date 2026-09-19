@@ -12,6 +12,9 @@ import {
   ApplyWorkstreamBatchRequestSchema,
   ChannelAccessSourcesSchema,
   CreateWorkstreamRequestSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
   IdSchema,
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
@@ -25,6 +28,8 @@ import {
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
@@ -326,9 +331,23 @@ workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValida
  */
 workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
-  const sources = await new ChannelAccessService(c.env, getAuth(c))
-    .readSources(c.req.valid("param").id);
-  return c.json(ChannelAccessSourcesSchema.parse(sources));
+  const auth = getAuth(c);
+  const workstreamId = c.req.valid("param").id;
+  const sources = await new ChannelAccessService(c.env, auth).readSources(workstreamId);
+  // The Organization's memberships beside the Channel's own provenance. They
+  // agree in the steady state; while an operation is in flight or has been
+  // interrupted they do not, and that difference is what **Manage access** has
+  // to be able to show rather than average away.
+  const workspace = await durableObjectStubForWorkspace(
+    c.env, c.env.WORKSPACE_DOS, auth.workspaceId,
+    workspaceDOName(c.env.AVALON_REGION, auth.workspaceId),
+  );
+  const memberships = await workspace.channelSpaces({
+    workspaceId: asWorkspaceId(auth.workspaceId),
+    userId: asUserId(auth.userId),
+    workstreamId: asWorkstreamId(workstreamId),
+  });
+  return c.json(ChannelAccessSourcesSchema.parse({ ...sources, spaceIds: memberships.spaceIds }));
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");

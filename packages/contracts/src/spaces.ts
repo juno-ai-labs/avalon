@@ -364,6 +364,20 @@ export const ChannelAccessSourcesSchema = z.strictObject({
     scope: SpaceScopeSchema,
     participantUserIds: z.array(UserIdSchema),
   })),
+  /**
+   * The Spaces the *Organization* says currently hold this Channel.
+   *
+   * Deliberately a second list beside `spaces`, not a derivation of it. That
+   * one is the Channel's own record of which sources reach it — provenance,
+   * owned by WorkstreamDO — and this is the membership, owned by WorkspaceDO.
+   * They agree in the steady state and disagree exactly while an operation is
+   * in flight or has been interrupted, which is the thing **Manage access** has
+   * to be able to show rather than hide behind one merged answer.
+   *
+   * Defaulted because a response written before the Space authority existed
+   * described a Channel with no memberships to report.
+   */
+  spaceIds: z.array(SpaceIdSchema).default([]),
 });
 export type ChannelAccessSources = z.infer<typeof ChannelAccessSourcesSchema>;
 
