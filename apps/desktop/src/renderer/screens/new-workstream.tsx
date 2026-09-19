@@ -322,15 +322,14 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
         attachmentCount: input.attachmentIds.length,
         openingMessageLength: input.openingMessage.length,
       });
-      // The Space this Channel is being started in is deliberately not sent:
-      // `WorkstreamCreationFieldsSchema` still carries `projectId` and has no
-      // `spaceIds`, and the creation paths that place a new Channel — in the
-      // named Space, or in General when none was named — are Phase 4 and Phase 5
-      // of the Spaces plan. Sending the old field would name an authority that
-      // no longer exists.
+      // The launcher's Space, or nothing. Sending nothing is not an omission:
+      // a creation that names no Space is placed in General by the server,
+      // which is the only way every Channel can have a home without the
+      // top-level composer asking somebody to choose one.
       return trace.step('create_request', () => api!.createWorkstream({
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
+        ...(owningSpaceIds.length > 0 ? { spaceIds: owningSpaceIds } : {}),
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
         requestId: trace.traceId,
         operationId: trace.traceId,
