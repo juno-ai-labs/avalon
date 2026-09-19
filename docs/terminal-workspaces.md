@@ -21,7 +21,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
-| `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
+| `apps/api/scripts/build-terminal-snapshot.ts`, `terminal-snapshot-acceptance.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox, and refuses one Daytona built smaller than requested. Does not adopt it; the acceptance probe above is still the gate. |
+| `apps/api/src/services/terminal/snapshot-manifest.ts` (`TERMINAL_SNAPSHOT_RESOURCES`) | The one source of how large every Terminal sandbox is. Checked in rather than configured, because the weekly rebuild builds from the repository — read the Operations section before moving it to a GitHub variable. |
 | `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and opens the labelled adoption pull request. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. The network policy is the whole of the **Internet access** page, a child of Workspace in the settings navigation. |
@@ -419,6 +420,11 @@ network proxy, or a general GitHub administration surface.
   probe. The emergency switch keeps the plugin and its complete tool family
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
+- A sandbox gets 2 vCPU, 4 GiB of memory, and 8 GiB of disk, fixed by the
+  snapshot it was created from. Nothing inside reports the ceiling, so exhausting
+  memory is an OOM kill of whatever the model was running, and exhausting disk is
+  a write failure; neither reaches the model as a Terminal error code. Raising it
+  is a snapshot rebuild and its adoption merge, described under Operations.
 - Activation never fails the model. A provider failure during the background
   acquisition is a `terminal_plugin_activation_finished` row at `warn` and
   reaches the model on the first Terminal tool, which reacquires and reports
@@ -633,7 +639,10 @@ reconciliation.
 
 ### The owned snapshot and its weekly rebuild
 
-Configured deployments create sandboxes from `rally-terminal-1`, built by
+Configured deployments create sandboxes from the snapshot
+`DAYTONA_TERMINAL_SNAPSHOT` names — `rally-terminal-20260914-0610` as of this
+writing, adoption having replaced the original `rally-terminal-1` with dated
+names — built by
 `pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
 as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
 (`daytonaio/sandbox:0.9.0`; the environment variable of the same name
@@ -642,7 +651,8 @@ on their own, and the manifest cannot see a stale-but-working base, so
 `.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
 06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
 runs `terminal:verify-provider` against it, and opens a pull request labelled
-`daytona-snapshot-upgrade` that points both Wrangler configs at the result.
+`daytona-snapshot-upgrade` that points `wrangler.global.jsonc` — the one config
+that carries the variable — at the result.
 Adoption is that merge, rollback is its revert, and existing sandboxes are
 untouched either way. A red Monday job means the current snapshot keeps serving
 and the gap to Daytona's base widens by a week; an unmerged adoption pull
@@ -650,6 +660,31 @@ request means the same. Each build stamps its Dockerfile with a build time so
 Daytona cannot hand back a cached image, and the stamp is readable inside every
 sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
 is a reused image, not a rebuild.
+
+Sandbox size is set by the snapshot, not by the create call that makes a sandbox
+from it. Daytona fixes a snapshot's size when the image is built — the snapshots
+API creates, activates, deactivates and removes a snapshot, and never resizes one,
+while `resources` exists only on the SDK's create-*from-image* parameters — so a
+sandbox created from a snapshot inherits whatever that snapshot was built with.
+One live sandbox can still be changed afterwards through `Sandbox.resize`, which
+grows CPU and memory hot and disk only while it is stopped; that is the lever for
+a single sandbox in trouble, not for what new ones get, and Rally's create path
+does not call it. Builds request
+`TERMINAL_SNAPSHOT_RESOURCES` from `snapshot-manifest.ts`, 2 vCPU / 4 GiB / 8 GiB,
+and fail naming each field that came back short, because an under-sized image
+passes every capability probe the acceptance gate runs and surfaces only as a
+work stream the kernel killed. A field the provider rounds up is reported in the
+build log instead: it is Rally's size and more, and a cost nobody chose is worth
+seeing without taking the rebuild red. A rejected candidate is
+deleted before the build throws, so a run that keeps failing does not leave one
+unusable snapshot per attempt under the organization's quota. That decision lives
+in `scripts/terminal-snapshot-acceptance.ts` rather than in the build script, so
+it is exercised against a stubbed delete the way the provider lifecycle helper
+beside it is. Changing the size is therefore
+a rebuild and an adoption merge like any other, existing sandboxes keep the size
+they were created at, and the number belongs in the checked-in manifest: the
+weekly job builds from the repository, so a size set as a GitHub variable is one
+the next adoption pull request silently reverts.
 
 The workflow reads its configuration from the `api-production` GitHub
 environment: the `DAYTONA_API_KEY` secret and the `DAYTONA_API_URL`,
@@ -674,7 +709,16 @@ and its first Terminal tool, against an ~18s median cold start. A
 restored durable activation remains lazy so an unrelated later run does not
 allocate merely because an earlier run used Terminal. Reuse is scoped to one
 work stream. Five-minute warm stop reduces compute time, sixty-minute archive
-reduces retained live-disk cost, and thirty-day deletion bounds provider storage. Only user-visible generated files,
+reduces retained live-disk cost, and thirty-day deletion bounds provider storage.
+
+Sandbox size multiplies both against the Daytona organization's quota. Memory is
+bounded by concurrency — 4 GiB each means the organization's memory limit divided
+by four the number of work streams that can hold a live sandbox at once, and
+exhausting it shows up as creation failing rather than as anything slower. Disk
+is not bounded that way: 8 GiB is held by every sandbox that exists, including
+stopped ones, until the thirty-day deletion reclaims it, so it accumulates with
+how many work streams have ever used Terminal rather than with how many are
+running now. That makes disk the size worth watching first as usage grows. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
 Rally does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from local `terminal_workspace` and
@@ -771,6 +815,45 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — Terminal sandboxes are built at 2 vCPU / 4 GiB / 8 GiB
+
+**What changed:** `TERMINAL_SNAPSHOT_RESOURCES` in `snapshot-manifest.ts` gives
+the Rally-owned snapshot 2 vCPU, 4 GiB of memory, and 8 GiB of disk, and
+`build-terminal-snapshot.ts` requests it and fails the build when the snapshot
+Daytona reports back is smaller in `cpu`, `mem`, or `disk`, deleting the rejected
+candidate first so repeated failures do not accumulate unusable snapshots. A
+field the provider rounds up is printed rather than rejected, so a runner minimum
+cannot take the weekly rebuild red over an image that works. Nothing about how a sandbox is created changes; the weekly rebuild
+carries the size into the next adoption pull request.
+
+**Why:** Every Terminal sandbox had been running at 1 vCPU / 1 GiB / 3 GiB — not
+a decision, but Daytona's default for a build that passes no `resources`, which
+is what every snapshot through `rally-terminal-20260914-0610` was built with. One
+core and a gigabyte is a thin allowance for what the plugin prompt tells the
+model to do in there — install a toolchain, check a repository out, run its
+tests — and the snapshot is where that is decided, because its size is fixed when
+the image is built and every sandbox made from it inherits that. (`Sandbox.resize`
+can grow one live sandbox, but nothing in Rally's create path calls it, so it
+remedies a sandbox rather than setting what new ones get.) 2 / 4 / 8 is the team's number, chosen
+rather than measured; it matches Daytona's own `daytona-medium` shape instead of
+being a lopsided one.
+
+**Considered and rejected:** Sizing at sandbox creation instead, which would let
+the number change without a rebuild. The SDK accepts `resources` only when
+creating *from an image*, so taking it would mean giving up the prebuilt snapshot
+and paying the ~14s capability install on every cold start that the owned image
+exists to avoid.
+
+**Consequences:** Per-sandbox memory now costs 4x against the Daytona
+organization's quota, so the ceiling on concurrent Terminal work streams drops
+by roughly the same factor; that ceiling is the provider's to raise when it is
+reached. The new size reaches production only through a snapshot rebuild, so
+`wrangler.global.jsonc` keeps pointing at the 1 GiB image until an adoption pull
+request merges, and sandboxes already created stay at the size they were made
+with. A future change to these numbers has to stay in this manifest: the weekly
+job builds from the repository, and a size configured anywhere else is reverted
+by the next adoption pull request without anyone noticing.
 
 ### 2026-09-18 — Terminal's tools take the names the model already knows
 
