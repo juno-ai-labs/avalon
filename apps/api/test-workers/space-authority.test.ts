@@ -1110,7 +1110,7 @@ describe("WorkspaceDO space authority", () => {
   });
 
   it("given a guest's socket, when Spaces exist, then its payload carries none of them", async () => {
-    await reserve("Company", "workspace");
+    const companyId = await reserve("Company", "workspace");
     const { socket, sidebar } = await connectViewer(GUEST, "cf12");
 
     // Every Space RPC refuses a guest, and this is the other door into the same
@@ -1125,13 +1125,15 @@ describe("WorkspaceDO space authority", () => {
     // Organization-opening state for good.
     expect(sidebar.spacesReady).toBe(true);
 
-    // And on the republication every Space write sends, which is the path a
-    // guest holds open rather than asks for.
+    // And on the republication an Organization-wide Space write sends, which is
+    // the path a guest holds open rather than asks for. A reorder is not one of
+    // those any more: it reaches the person who made it and nobody else.
     const snapshot = nextSpaceSnapshot(socket);
-    await workspace().reorderContainer({
+    await workspace().noteSpacePresentation({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
-      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [] },
+      spaceId: companyId,
+      presentation: { name: "Company", iconKey: "briefcase", colorKey: "red" },
     });
     const event = await snapshot;
     expect(event.spaces.active.items).toEqual([]);
@@ -1294,6 +1296,40 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([CHANNEL_B, CHANNEL_A]);
     desk.socket.close();
     laptop.socket.close();
+  });
+
+  /**
+   * The other half of the same audience.
+   *
+   * A snapshot is per viewer and costs a `list()` transaction plus a full
+   * directory serialization for each one, so publishing one person's view
+   * preference to the Organization charges every member for a payload that did
+   * not change for them — once per step of a held Alt+Arrow.
+   *
+   * Proved without a timeout: an Organization-wide write follows the reorder,
+   * and what this member's socket is asked for is the *first* snapshot it
+   * receives. A reorder that reached them would be that first snapshot, and it
+   * would still carry the old name.
+   */
+  it("given another member's session, when somebody arranges a list, then nothing is republished to them", async () => {
+    const spaceId = await reserve("Company");
+    const other = await connectViewer(MEMBER, "cf22");
+    const onOther = nextSpaceSnapshot(other.socket);
+
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [spaceId] },
+    });
+    await workspace().noteSpacePresentation({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      presentation: { name: "Recruiting", iconKey: "briefcase", colorKey: "red" },
+    });
+
+    expect((await onOther).spaces.active.items).toMatchObject([{ name: "Recruiting" }]);
+    other.socket.close();
   });
 
   it("given a viewer's order, when they reorder Spaces, then only their own order moves", async () => {
