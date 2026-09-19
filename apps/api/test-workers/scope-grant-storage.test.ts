@@ -80,6 +80,21 @@ describe("workstream scope grants in real workerd", () => {
       expect(store.mutate(command({ active: true, expectedRevision: 2, spaceSourceId })).status).toBe("committed");
       expect(store.sourceKind(userId, target)).toBe("direct");
       expect(deliveries(state)).toHaveLength(2);
+
+      // Nor can the Space's *departure* take it away. The row is the Channel's
+      // now, and which of the two writes happened to arrive last is queue
+      // ordering nobody controls, so the authority decides rather than the
+      // arrival order. `committed`, not `conflict`: the reader this Space
+      // supplies can read, which is all the retraction was asking for.
+      const withdrawn = store.mutate(command({ active: false, expectedRevision: 3, spaceSourceId }));
+      expect(withdrawn).toMatchObject({ status: "committed", grant: { active: true, revision: 3 } });
+      expect(store.read(userId, target)).toMatchObject({ active: true, revision: 3 });
+      expect(deliveries(state)).toHaveLength(2);
+
+      // The Channel can still withdraw it itself, which is the difference the
+      // provenance is carrying: the same command without a Space behind it.
+      expect(store.mutate(command({ active: false, expectedRevision: 3 })).status).toBe("committed");
+      expect(store.read(userId, target)).toMatchObject({ active: false, revision: 4 });
     });
   });
 
