@@ -1716,6 +1716,13 @@ export function WorkspaceSettingsScreen({
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
+                      // Ashby's personal sign-in has a prerequisite the OAuth redirect cannot
+                      // report: an org that has not opted into Ashby MCP fails provider-side with
+                      // nothing naming the cause. The card is one sentence, so the prerequisite
+                      // rides the button's own tooltip rather than a second paragraph.
+                      const personalConnectPrerequisite = provider.provider === 'ashby'
+                        ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
+                        : undefined;
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -1773,7 +1780,7 @@ export function WorkspaceSettingsScreen({
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
-                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
+                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectPrerequisite ? ` ${personalConnectPrerequisite}` : ''}${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : PERSONAL_CONNECT_LABEL}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
