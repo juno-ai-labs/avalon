@@ -19,9 +19,10 @@
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId, type UserId } from "@rally/contracts";
 
 import { workstreamDOName } from "../src/durable-objects/names";
+import type { ObservedChannel as Observed } from "../src/durable-objects/workstream-access-protocol";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ac500");
@@ -36,20 +37,20 @@ const channel = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WO
 const address = { workspaceId: WORKSPACE_ID, parentId: CHANNEL_ID };
 
 /** A personal Channel whose only reader is its owner. */
-function personal(participantUserIds: string[] = [OWNER]) {
-  return { readers: { scope: "personal" as const, userIds: participantUserIds }, participantUserIds };
+function personal(participantUserIds: UserId[] = [OWNER]): Observed {
+  return { readers: { scope: "personal", userIds: participantUserIds }, participantUserIds };
 }
 
 /** An Organization-wide Channel: the reader audience names no roster at all. */
-function organizationWide(participantUserIds: string[] = [OWNER]) {
-  return { readers: { scope: "workspace" as const }, participantUserIds };
+function organizationWide(participantUserIds: UserId[] = [OWNER]): Observed {
+  return { readers: { scope: "workspace" }, participantUserIds };
 }
 
 function applySource(input: {
-  spaceId: string;
+  spaceId: SpaceId;
   scope: "personal" | "workspace";
-  participantUserIds: string[];
-  channel: ReturnType<typeof personal>;
+  participantUserIds: UserId[];
+  channel: Observed;
   spaceRevision?: number;
   membershipGeneration?: number;
   operationId?: string;
@@ -79,7 +80,7 @@ async function seatSource(input: Parameters<typeof applySource>[0]) {
   return { applied, confirmed };
 }
 
-function retract(spaceId: string, observed: ReturnType<typeof personal>, operationId = crypto.randomUUID()) {
+function retract(spaceId: SpaceId, observed: Observed, operationId = crypto.randomUUID()) {
   return channel().retractSpaceAccessSource({ ...address, spaceId, operationId, channel: observed });
 }
 

@@ -141,7 +141,7 @@ export class ProjectService {
           if (!currentParticipants.has(userId)) await workstreams.addParticipant(workstreamId, userId);
         }
         for (const userId of removedParticipantIds) {
-          await workstreams.removeParticipant(workstreamId, userId, { projectEffect: true });
+          await workstreams.removeParticipant(workstreamId, userId);
         }
       }
     }
