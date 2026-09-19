@@ -226,6 +226,13 @@ export function SpaceSidebarSection({
                       setDragOrder((current) => move(current ?? spaces.map((item) => item.id), active, index));
                     },
                     onDragStart: (event) => {
+                      // A Channel dragged out of this Space's placement list
+                      // starts its drag on a row *inside* this item, and the
+                      // event bubbles here. Without this the Space enters a
+                      // reorder at the same time, so dropping the Channel on
+                      // another Space both placed it and moved the Space it
+                      // came from.
+                      if (event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)) return;
                       dragging.current = space.id;
                       setDragOrder(spaces.map((item) => item.id));
                       event.dataTransfer.effectAllowed = 'move';
