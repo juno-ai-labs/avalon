@@ -1640,11 +1640,74 @@ describe('markdown list markers', () => {
       expect(prelude).toContain('.citation-card-preview');
     }
 
-    expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
-    expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
+    // Every paint is a substitution now, so the tokens are asserted where they
+    // are named — on the group — and the elements are asserted to read it.
+    expect(rule('.markdown-body')).toContain('--markdown-ink-strong: var(--av-ref-color-neutral-14);');
+    expect(rule('.markdown-body')).toContain('--markdown-link: var(--av-sys-color-accent-soft);');
+    expect(rule('.markdown-body strong')).toContain('var(--markdown-ink-strong)');
+    expect(rule('.markdown-body a')).toContain('var(--markdown-link)');
     expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
     expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
+  });
+});
+
+/**
+ * The paint group, and the one surface that re-points it.
+ *
+ * Every colour in the shared group is a `--markdown-*` substitution, so a
+ * surface with a fill of its own moves the whole of markdown onto its own ink
+ * in one block rather than restating element rules — which is what the person's
+ * bubble had been doing, one element at a time, as somebody noticed each one.
+ */
+describe('markdown paint', () => {
+  /**
+   * A person's bubble paints its own fill, so it re-points the whole group.
+   *
+   * Half of it is the failure worth guarding: `.markdown-inline-code` took its
+   * chip from the neutral ramp while the bubble had already forced the ink to
+   * near-white, and a `/goal` in a message was a light pill with nothing
+   * legible inside it. A role added to the group later inherits that bug on
+   * every filled bubble unless it is re-pointed too, and the day it lands is
+   * the cheap day to notice — so the two sets are compared rather than the
+   * individual values, which are the bubble's to tune.
+   */
+  it('re-points every markdown paint inside a filled bubble', () => {
+    const names = (selector: string): string[] => [
+      ...(rule(selector) ?? '').matchAll(/(--markdown-[a-z-]+)\s*:/gu),
+    ].map((match) => match[1]!).sort();
+
+    const group = names('.markdown-body');
+    expect(group.length).toBeGreaterThan(0);
+    expect(names('.human-message-bubble .markdown-body')).toEqual(group);
+  });
+
+  /**
+   * And the highlighter's palette with it, which is the half that cannot be
+   * seen from this file alone.
+   *
+   * `markdownCodeTheme` hands `prism-react-renderer` inline styles naming the
+   * `syntax` group, so a code fence in a message is painted for the
+   * appearance's own code surface rather than for the bubble it is on: in the
+   * light appearance `syntax-plain` is near-black, and a pasted fence on a
+   * near-black bubble was black on black. A role added to that theme has to be
+   * re-pointed here too, and the compiler cannot say so.
+   */
+  it('re-points every syntax role the highlighter names', () => {
+    const highlighter = readFileSync(
+      resolve(process.cwd(), 'src/renderer/components/workstream-blocks.tsx'),
+      'utf8',
+    );
+    const named = new Set(
+      [...highlighter.matchAll(/--av-sys-color-syntax-[a-z-]+/gu)].map((match) => match[0]),
+    );
+    const bubble = rule('.human-message-bubble .markdown-body') ?? '';
+    const repointed = new Set(
+      [...bubble.matchAll(/(--av-sys-color-syntax-[a-z-]+)\s*:/gu)].map((match) => match[1]!),
+    );
+
+    expect(named.size).toBeGreaterThan(0);
+    expect([...named].filter((name) => !repointed.has(name))).toEqual([]);
   });
 });
 

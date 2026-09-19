@@ -346,6 +346,17 @@ describe('token references', () => {
     // the colour and this states how it is applied, which is not a theme's to
     // choose.
     '--hover-layer',
+    // Markdown's paint, named as a group on `.markdown-body` and re-pointed by
+    // a surface that fills itself — the person's bubble, whose fill is
+    // near-black or a profile colour and whose ink is whichever absolute one
+    // the palette picked for it. The defaults below are the appearance's own
+    // tokens; what a theme has no opinion about is which of them a surface
+    // that paints itself should be using instead, which is why these are the
+    // stylesheet's rather than the registry's.
+    '--markdown-ink', '--markdown-ink-strong', '--markdown-ink-quiet',
+    '--markdown-ink-muted', '--markdown-ink-faint', '--markdown-wash',
+    '--markdown-surface', '--markdown-rule', '--markdown-quote-bar',
+    '--markdown-border', '--markdown-link', '--markdown-link-hover',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads
     // light on a dark or profile-coloured bubble and dark on a light card. A
