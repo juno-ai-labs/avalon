@@ -6238,23 +6238,18 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   display: grid;
   /* The leading column sizes to the controls in it rather than to the one
      28px circle it used to hold: with the model pill beside that circle a
-     fixed 42px clipped both against the overflow below. A row holding the
+     fixed 42px clipped both against `overflow: clip` below. A row holding the
      circle alone still measures 42px — 7px of padding either side of it — so
      this is the same geometry wherever no pill is shown. */
   grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 44px;
-  /* `clip`, not `hidden`: the two paint the same — Stop is cut at the same
-     pixel of the same rounded corner by either — and only `hidden` is a scroll
-     container. Two things in here are deliberately outside the box: Stop parks
-     past the right edge so it can slide in, and `ComposerInput` translates the
-     input shell by the leading column's width for 220ms whenever a draft flips
-     to the wrapped layout. Under `hidden` that is a scroll range with no
-     scrollbar, and nothing here reads or resets a scroll position, so a
-     capsule scrolled once stayed scrolled: the draft sat to the left of its
-     own field, first characters and model pill alike, until the composer
-     unmounted. A clipped box has no scroll position to strand. Do not restore
-     `hidden` to reach for a scrollbar — the field is the scroller, and it
-     states its own. */
+  /* `clip`, not `hidden`: the two paint the same, and only `hidden` is a scroll
+     container. Stop parks outside the right edge and the input shell is
+     translated across the flip to the wrapped layout, so under `hidden` this
+     box carried a scroll range nothing reads or resets, and a capsule scrolled
+     once stayed scrolled. The field is the scroller here, not the capsule.
+     `conversation-surfaces.md` has the incident and why the base
+     `.workstream-composer` rule keeps `hidden`. */
   overflow: clip;
 }
 
