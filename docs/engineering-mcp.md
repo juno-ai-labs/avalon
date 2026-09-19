@@ -264,33 +264,25 @@ ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
 
-### 2026-09-19 — The Space fence becomes the directory row, and a Space's Main is reachable
-
-**What changed:** `list_spaces` reads `workspace_space_directory` and
-`run_space_sql` fences on it, replacing the identity read the entry below
-describes. Nothing else about the tools moved.
-
-**Why:** That entry named this as the change that would close its window, and
-WorkspaceDO migration 61 is what made the row exist. Reading it from an object
-that is already open means an unknown Space id is refused without naming
-anything in `SPACE_DOS`, so a typo stops creating an object and a tracker row.
-
-**Consequences:** A Space's hidden main conversation is now reachable through
-the substream tools as well, under the Space id as the parent — not a change to
-this MCP but a consequence of `SpaceService.create` writing the
-`workstream_authority_routes` row those tools resolve through. It is the only
-way to inspect a Space's participants and resources.
-
-### 2026-09-19 — Route SpaceDO, fenced on the object's own identity row
+### 2026-09-19 — Route SpaceDO, fenced on the object's own identity row, and reach a Space's Main through the directory row
 
 **What changed:** `list_spaces` and `run_space_sql` reach a Space's own object.
 `run_space_sql` resolves the D1 workspace-authority anchor every other target
 starts from, then requires the object's `workstream_metadata` row to name this
 workspace and this Space id.
 
+`list_spaces` reads `workspace_space_directory` and
+`run_space_sql` fences on it, replacing the identity read the entry below
+describes. Nothing else about the tools moved.
+
 **Why:** A `SpaceDO` is unreachable from every existing tool — it is not a
 WorkspaceDO, not a WorkstreamDO in `WORKSTREAM_DOS`, and not a conversation — so
 an operator holding a Space id had nothing to open it with.
+
+That entry named this as the change that would close its window, and
+WorkspaceDO migration 61 is what made the row exist. Reading it from an object
+that is already open means an unknown Space id is refused without naming
+anything in `SPACE_DOS`, so a typo stops creating an object and a tracker row.
 
 **Considered and rejected:** The Sidekick fence, which is the right one and is
 not yet available: it reads the workspace-held directory row that proves the
@@ -306,6 +298,12 @@ the visible cost is a row in the migration tracker's `SpaceDO` count. A future
 change replaces the identity read with the directory row and closes the window.
 `list_spaces` answers an empty list, which is true rather than a placeholder
 while no product path creates a Space.
+
+A Space's hidden main conversation is now reachable through
+the substream tools as well, under the Space id as the parent — not a change to
+this MCP but a consequence of `SpaceService.create` writing the
+`workstream_authority_routes` row those tools resolve through. It is the only
+way to inspect a Space's participants and resources.
 
 ### 2026-09-18 — Route ArtifactHostDO, and stop at the facet
 
