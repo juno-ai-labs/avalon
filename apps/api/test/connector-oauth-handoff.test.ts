@@ -149,6 +149,25 @@ function insertConnection(object: DatabaseSync, id: string): void {
 }
 
 describe("connector OAuth handoff", () => {
+  it("rejects public completion of a desktop Canva authorization without consuming it", async () => {
+    const { env, regional } = fixture();
+    const sealed = await sealString(JSON.stringify({
+      provider: "canva", scope: "personal", verifier: "verifier",
+      authorizationState: { redirectUri: "http://127.0.0.1:4321/callback" },
+    }), env.OAUTH_STATE_ENCRYPTION_KEY);
+    regional.prepare(`INSERT INTO oauth_states
+      (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id, return_uri, expires_at)
+      VALUES (?, 'global', 'canva', 'connector', ?, ?, ?, 'avalon://auth/complete', ?)`)
+      .run("canva-state", sealed, USER_ID, WORKSPACE_ID, new Date(Date.now() + 60_000).toISOString());
+    const service = new ConnectionService(env);
+    await expect(service.completeProvider("canva", "code", "canva-state"))
+      .rejects.toMatchObject({ code: "authentication_required" });
+    await expect(service.completeProviderDenial("canva", "canva-state"))
+      .rejects.toMatchObject({ code: "authentication_required" });
+    expect(regional.prepare("SELECT consumed_at FROM oauth_states WHERE id = ?").get("canva-state"))
+      .toEqual({ consumed_at: null });
+  });
+
   it("persists a versioned addressed return for a capable desktop start", async () => {
     const { auth, env, regional } = fixture();
 

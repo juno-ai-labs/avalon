@@ -1,3 +1,4 @@
+import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
@@ -1164,6 +1165,11 @@ const MEMORY_SCOPE_DEPENDENTS = [
   "memory_table_rows",
   "memory_table_cells",
   "memory_table_mutations",
+] as const;
+
+// Frozen v62 inventory: migrations 56–61 add no connector foreign keys.
+const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62 = [
+  ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
 ] as const;
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
@@ -3278,7 +3284,111 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }, { version: 60, description: "index explicit scope grants for guest discovery", statements: [...SCOPE_GRANT_DIRECTORY_SCHEMA] }];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }, { version: 60, description: "index explicit scope grants for guest discovery", statements: [...SCOPE_GRANT_DIRECTORY_SCHEMA] }, { version: 61, description: "protect connector resource access URLs separately from navigation metadata", statements: ["ALTER TABLE resources ADD COLUMN protected_access_json TEXT"] }, {
+  version: 62,
+  description: "admit Canva without losing connector dependents",
+  statements: [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62.map((table) => (
+      `CREATE TABLE ${table}_v62_hold AS SELECT * FROM ${table}`
+    )),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62.map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE connector_connections_v62 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v62
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v62 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'fireflies' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX canva_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'canva' AND scope = 'personal' AND status <> 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v62_hold`,
+      `DROP TABLE ${table}_v62_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v62 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v62
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v62 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
+}];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -5125,7 +5235,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "external_event_registration_projection",
     );
     this.assertWorkspace(request.workspaceId);
-    return this.state.storage.transactionSync(() => {
+    const result = this.state.storage.transactionSync(() => {
       const destinationKind = request.destination.kind;
       const destinationKey = destinationKind === "automation"
         ? `automation:${request.destination.automationId}`
@@ -5152,6 +5262,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         destinationKind,
         destinationKey,
       );
+      this.state.storage.sql.exec(
+        `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
+          SELECT registration_id FROM workspace_external_event_registrations
+          WHERE destination_key = ? AND connector_type = 'canva')`,
+        new Date(now).toISOString(), destinationKey,
+      );
       for (const evaluator of request.evaluators) {
         this.state.storage.sql.exec(
           `INSERT INTO workspace_external_event_registrations
@@ -5160,8 +5276,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               destination_kind, automation_id, workstream_id, substream_id,
               destination_resource_id, state, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence, updated_at = excluded.updated_at`,
-          request.sourceGeneration === undefined ? uuidV7() : evaluator.evaluatorId,
+           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence,
+             connection_id = excluded.connection_id, connector_type = excluded.connector_type,
+             event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
+             updated_at = excluded.updated_at`,
+          request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
           destinationKey,
           request.workspaceId,
           cutoff,
@@ -5179,6 +5298,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           now,
         );
       }
+      for (const evaluator of request.evaluators) {
+        if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
+        if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
+        const resource = this.state.storage.sql.exec<{ id: string }>(
+          "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
+          evaluator.source.resourceId, evaluator.source.connectionId,
+        ).toArray()[0];
+        if (!resource) throw new Error("canva_trigger_design_unavailable");
+        const at = new Date(now).toISOString();
+        this.state.storage.sql.exec(
+          `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
+             interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
+           VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
+          evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
+          CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
+        );
+      }
       // Rows removed long ago are noise in every candidate scan; keep the
       // table to what still matches.
       this.state.storage.sql.exec(
@@ -5188,6 +5325,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
       return { effectiveAfterEventSequence: cutoff };
     });
+    await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
+    return result;
   }
 
   /** Cheap connector-ingress admission check; matching still happens after normalization. */
@@ -6929,7 +7068,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const manifest = connection ? manifests.get(connection.connector_type) : undefined;
       const descriptors = resource?.watch_enabled === 1
         && resource.resource_type
-        && connection?.status === "active"
+        && (connection?.status === "healthy" || connection?.status === "active")
         && manifest?.supportsWatches
         ? manifest.activityTriggers.filter(
             (descriptor) => automationTriggersAdmitResourceType([descriptor], resource.resource_type!),

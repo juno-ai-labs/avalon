@@ -703,6 +703,92 @@ export class WorkstreamToolReceiptStorage {
     ).toArray().map(receiptRecord);
   }
 
+  canvaTransactionOwned(input: { runId: string; connectionId: string; transactionId: string; effectIntentId?: string }): boolean {
+    return Boolean(first(this.sql.exec<{ effect_intent_id: string }>(
+      `SELECT effect.effect_intent_id FROM tool_effects effect JOIN runs ON runs.run_id = effect.run_id
+        WHERE effect.run_id = ? AND effect.connection_id = ? AND effect.provider_operation_id = ?
+          AND effect.status = 'completed' AND runs.terminalized_at IS NULL
+          AND json_extract(effect.execution_plan_json, '$.capability') = 'canva.personal.mcp'
+          AND json_extract(effect.execution_plan_json, '$.canonicalToolName') = 'start-editing-transaction'
+          AND NOT EXISTS (SELECT 1 FROM tool_effects closure
+            WHERE closure.connection_id = effect.connection_id AND closure.status <> 'admitted'
+              AND closure.effect_intent_id <> ?
+              AND json_extract(closure.execution_plan_json, '$.capability') = 'canva.personal.mcp'
+              AND json_extract(closure.execution_plan_json, '$.canonicalToolName') IN ('commit-editing-transaction', 'cancel-editing-transaction')
+              AND json_extract(closure.input_json, '$.transaction_id') = effect.provider_operation_id)`,
+      input.runId, input.connectionId, input.transactionId, input.effectIntentId ?? '',
+    )));
+  }
+
+  /** Terminal-run cleanup derives from receipts, never model memory. */
+  canvaCleanupForRun(input: { runId: string }): Array<{
+    effectIntentId: string; connectionId: string; transactionId: string;
+    state: "open" | "closed" | "uncertain";
+  }> {
+    const run = first(this.sql.exec<{ terminalized_at: number | null }>(
+      "SELECT terminalized_at FROM runs WHERE run_id = ?", input.runId,
+    ));
+    if (!run || run.terminalized_at === null) return [];
+    return this.receiptsForRun({ runId: input.runId, capabilities: ["canva.personal.mcp"] })
+      .filter((receipt) => receipt.status === "completed" && receipt.providerOperationId && receipt.connectionId
+        && parseObject(receipt.executionPlanJson, "canva_receipt_invalid").canonicalToolName === "start-editing-transaction")
+      .map((receipt) => {
+        const cleanup = first(this.sql.exec<{ phase: string }>(
+          `SELECT phase FROM tool_effect_checkpoints WHERE effect_intent_id = ?
+            AND phase IN ('canva_cleanup_started', 'canva_cleanup_cancelled', 'canva_cleanup_uncertain')
+            ORDER BY checkpoint_index DESC LIMIT 1`, receipt.effectIntentId,
+        ));
+        // A commit in any run can have consumed this transaction. Any dispatched
+        // commit without a completed receipt is uncertain, including failed calls.
+        const closures = this.sql.exec<{ status: string; operation: string }>(
+          `SELECT status, json_extract(execution_plan_json, '$.canonicalToolName') AS operation
+             FROM tool_effects WHERE connection_id = ? AND status <> 'admitted'
+               AND json_extract(execution_plan_json, '$.capability') = 'canva.personal.mcp'
+               AND json_extract(execution_plan_json, '$.canonicalToolName') IN ('commit-editing-transaction', 'cancel-editing-transaction')
+               AND json_extract(input_json, '$.transaction_id') = ?`,
+          receipt.connectionId!, receipt.providerOperationId!,
+        ).toArray();
+        const state = cleanup?.phase === "canva_cleanup_cancelled" || closures.some((closure) => closure.status === "completed")
+          ? "closed" as const
+          : cleanup || closures.length ? "uncertain" as const : "open" as const;
+        return { effectIntentId: receipt.effectIntentId, connectionId: receipt.connectionId!,
+          transactionId: receipt.providerOperationId!, state };
+      });
+  }
+
+  claimCanvaCleanup(input: { runId: string; effectIntentId: string }): { checkpointIndex: number } | null {
+    return this.storage.transactionSync(() => {
+      const candidate = this.canvaCleanupForRun(input).find((value) => value.effectIntentId === input.effectIntentId);
+      if (candidate?.state !== "open") return null;
+      const effect = this.#effect(input.effectIntentId);
+      const run = first(this.sql.exec<{ legacy_attempt_id: string }>(
+        "SELECT legacy_attempt_id FROM runs WHERE run_id = ?", input.runId,
+      ));
+      if (!effect || !run) return null;
+      const index = this.#appendCheckpoint({ ...input, attemptId: run.legacy_attempt_id,
+        index: effect.checkpoint_index + 1, phase: "canva_cleanup_started", payloadJson: "{}", now: Date.now() });
+      if (index === null) return null;
+      this.sql.exec("UPDATE tool_effects SET checkpoint_index = ? WHERE effect_intent_id = ?", index, input.effectIntentId);
+      return { checkpointIndex: index };
+    });
+  }
+
+  settleCanvaCleanup(input: { runId: string; effectIntentId: string; checkpointIndex: number; cancelled: boolean }): void {
+    this.storage.transactionSync(() => {
+      const claim = first(this.sql.exec<{ attempt_id: string }>(
+        `SELECT attempt_id FROM tool_effect_checkpoints WHERE effect_intent_id = ? AND run_id = ?
+          AND checkpoint_index = ? AND phase = 'canva_cleanup_started'`,
+        input.effectIntentId, input.runId, input.checkpointIndex,
+      ));
+      const effect = this.#effect(input.effectIntentId);
+      if (!claim || !effect || effect.checkpoint_index !== input.checkpointIndex) return;
+      const index = this.#appendCheckpoint({ ...input, attemptId: claim.attempt_id,
+        index: input.checkpointIndex + 1, phase: input.cancelled ? "canva_cleanup_cancelled" : "canva_cleanup_uncertain",
+        payloadJson: "{}", now: Date.now() });
+      if (index !== null) this.sql.exec("UPDATE tool_effects SET checkpoint_index = ? WHERE effect_intent_id = ?", index, input.effectIntentId);
+    });
+  }
+
   /**
    * Receipts for a set of ids, for the transcript projection.
    *

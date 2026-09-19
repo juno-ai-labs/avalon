@@ -176,6 +176,39 @@ describe("upload drafts", () => {
 });
 
 describe("connector resources", () => {
+  it("starts and stops a design-specific Canva poll with its Sidekick registration", async () => {
+    const resourceId = nextId();
+    await workspace().resolveConnectorResource({ workspaceId: WORKSPACE_ID, candidateResourceId: resourceId,
+      connectionId: CONNECTION, provider: "canva", providerResourceId: "design", resourceType: "canva_design",
+      title: "Design", canonicalUrl: null, at: AT });
+    const evaluatorId = nextId();
+    const destination = { kind: "automation", automationId: nextId() };
+    const project = (sourceGeneration: number, active: boolean) => workspace().applyExternalEventRegistrations({
+      schemaVersion: 1, workspaceId: WORKSPACE_ID, destination, sourceGeneration,
+      evaluators: active ? [{ evaluatorId, source: { connectorType: "canva", connectionId: CONNECTION,
+        eventType: "design.revised", resourceId }, when: { kind: "always" } }] : [],
+    });
+    await project(1, true);
+    const schedule = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT enabled, interval_seconds FROM schedules WHERE id = ?", evaluatorId,
+    ).one());
+    expect(await schedule()).toEqual({ enabled: 1, interval_seconds: 600 });
+    await project(2, false);
+    expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
+    await project(1, true);
+    expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
+  });
+  it("persists and replaces protected access separately from ordinary resource metadata", async () => {
+    const request = { workspaceId: WORKSPACE_ID, candidateResourceId: nextId(), connectionId: CONNECTION,
+      provider: "canva", providerResourceId: "design", resourceType: "canva_design", title: "Design",
+      canonicalUrl: "https://www.canva.com/design/design/view", protectedAccessJson: "encrypted-one", at: AT };
+    const created = await workspace().resolveConnectorResource(request);
+    await workspace().resolveConnectorResource({ ...request, candidateResourceId: nextId(), protectedAccessJson: "encrypted-two" });
+    const row = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT protected_access_json, canonical_url, metadata_json FROM resources WHERE id = ?", created.resourceId,
+    ).one());
+    expect(row).toEqual({ protected_access_json: "encrypted-two", canonical_url: request.canonicalUrl, metadata_json: "{}" });
+  });
   it("gives every concurrent resolve of one provider identity the same row", async () => {
     const resolve = () => workspace().resolveConnectorResource({
       workspaceId: WORKSPACE_ID,
