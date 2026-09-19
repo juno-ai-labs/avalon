@@ -273,6 +273,15 @@ figure is written into `usage.cost` before the attempt is recorded. **A cost
 column that reads zero across a whole provider is a missing accounting flag,
 not a cheap week.**
 
+Every provider response that arrived was billed, whether or not Rally could
+use it, so every one owes a terminal `complete` diagnostic carrying its cost —
+that is the only stage this module writes an attempt row for. A structured call
+that repairs makes two provider requests under two `inferenceRequestId`s and
+owes two pairs; one that fails validation after the response arrived still owes
+the response's tokens and cost, not just its `failure_kind`. **A `request` row
+with no matching `attempt` row is a billed call recorded nowhere**, and is the
+shape to look for when spend and token totals disagree.
+
 ## Security and trust model
 
 Inference JSON is trusted only after Zod validation at capture and again at
@@ -577,7 +586,9 @@ and the structured call get it, and mirrored into the recorded request payload
 in `bind-runtime.ts` for OpenRouter candidates only. `StructuredModelDiagnostic`
 gains `costCents`, read from the response usage the same way the token counts
 already were, and `captureStructuredInferenceDiagnostic` maps it to
-`cost_microusd`.
+`cost_microusd`. A response that triggers repair, and one whose validation
+fails after it arrived, now emit a terminal diagnostic carrying those metrics
+as well.
 
 **Why:** `cost_microusd` was `0` on every OpenRouter row, which is most of
 Rally's spend, so the lakehouse could report load in tokens and not in money.
@@ -600,9 +611,11 @@ Asking OpenRouter costs one request field.
 
 **Consequences:** `cost_microusd` becomes comparable across providers and
 across streamed and structured calls, and any series spanning this change has
-a floor of zero before it that is an artifact, not a cost. A future provider
-adapter owes the same field: a `0` here is now a defect to fix rather than a
-value to read.
+a floor of zero before it that is an artifact, not a cost. A repaired
+structured call now writes two request/attempt pairs where it wrote one pair
+and one orphaned request, so structured attempt counts rise without the
+underlying call volume changing. A future provider adapter owes the same
+field: a `0` here is now a defect to fix rather than a value to read.
 
 ### 2026-09-17 — Measure inference start without making observation part of it
 

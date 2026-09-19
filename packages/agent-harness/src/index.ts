@@ -802,6 +802,26 @@ export class OpenRouterClient {
           | "cachedInputTokens"
           | "costCents"
         >> | undefined;
+        /**
+         * A response that triggers repair is the terminal state of *this*
+         * `inferenceRequestId`: the retry runs under a new one. Without this
+         * the lakehouse keeps the `model_request` row and never receives a
+         * matching attempt, so a call that was billed is recorded nowhere and
+         * the request/attempt pair operators join on dangles.
+         */
+        const emitRepairedTerminal = (failureKind: string): Promise<void> => emitDiagnostic({
+          stage: "complete",
+          schemaName: input.schemaName,
+          model,
+          attempt,
+          fallbackAttempt,
+          repairAttempt,
+          inferenceRequestId,
+          success: false,
+          failureKind,
+          ...(responseMetrics ?? {}),
+          ...(responsePayload ? { responsePayload } : {}),
+        });
         try {
           const builtTracePayload = this.config.traceContext
             ? buildOpenRouterTracePayload(this.config.traceContext, {
@@ -933,6 +953,7 @@ export class OpenRouterClient {
                 inferenceRequestId,
                 validationIssues,
               });
+              await emitRepairedTerminal("invalid_json");
               attempt -= 1;
               continue;
             }
@@ -980,6 +1001,7 @@ export class OpenRouterClient {
                 inferenceRequestId,
                 validationIssues,
               });
+              await emitRepairedTerminal("validation_error");
               attempt -= 1;
               continue;
             }
@@ -1013,6 +1035,10 @@ export class OpenRouterClient {
             repairAttempt,
             inferenceRequestId,
             latencyMs: Date.now() - startedAt,
+            // A failure after the response arrived was still billed, and the
+            // response's own latency, tokens and cost are the accurate ones;
+            // the elapsed figure above stands only when nothing came back.
+            ...(responseMetrics ?? {}),
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
             ...(responsePayload ? { responsePayload } : {}),
