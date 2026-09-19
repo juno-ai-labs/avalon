@@ -292,6 +292,7 @@ export class TerminalSettingsService {
             await createTerminalPortFactory(this.env)(
               this.auth.workspaceId,
               sandbox.workstream_id,
+              sandbox.substream_id,
             ).settlePolicyTransition({
               lifecycleState: "failed",
               failureCode: "policy_rollback_deleted",
@@ -388,15 +389,19 @@ export class TerminalSettingsService {
       const loaded = await Promise.all(page.map(async (entry) => {
         // Every conversation of the work stream that owns a sandbox, from the
         // work stream's own object: a side thread's sandbox is under the same
-        // egress policy as the main conversation's. A work stream that lists
-        // none is asked about its main conversation, as before conversations
-        // reported their own.
+        // egress policy as the main conversation's. The main conversation is
+        // asked whatever the parent lists, as it was before conversations
+        // reported their own: the list is a projection that reaches the parent
+        // after the sandbox exists, and a policy applied in that gap must not
+        // skip the main conversation's sandbox. A side thread's sandbox that
+        // has not projected yet is skipped here and converges at its next
+        // claim, which re-runs readiness against the new revision.
         const { items } = await (await conversationParentStub(this.env, {
           workspaceId: this.auth.workspaceId,
           parentKind: "workstream",
           parentId: entry.workstream_id,
         })).childTerminalDeadlines({ workspaceId: this.auth.workspaceId, parentId: entry.workstream_id });
-        const substreamIds = items.length > 0 ? items.map((item) => item.substreamId) : ["0"];
+        const substreamIds = ["0", ...items.map((item) => item.substreamId).filter((id) => id !== "0")];
         return Promise.all(substreamIds.map(async (substreamId) => {
           const sandbox = await createTerminalPortFactory(this.env)(
             this.auth.workspaceId,
