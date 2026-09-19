@@ -421,8 +421,10 @@ SQL joins.
   a Space's own object publishes, so they carry the generation, source version
   and payload hash each effect is fenced on rather than being written by a
   mutation; a reservation is written at source version zero so the first real
-  projection supersedes it. `workspace_space_order` and `workspace_space_state`
-  are the per-person order and the one waterline both directories share.
+  projection supersedes it. `workspace_container_order` is every list a person
+  arranges by hand, keyed by the container it belongs to — the Organization's
+  Spaces, one Space's Channels, one Channel's Breakouts — and
+  `workspace_space_state` is the one waterline both directories share.
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation
