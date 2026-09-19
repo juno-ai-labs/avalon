@@ -2,8 +2,8 @@
 
 Canva is a personal hosted MCP connector. The API holds provider credentials and
 makes MCP calls; Electron owns only the temporary loopback listener used while
-Rally's server callback awaits provider approval. This implementation remains
-behind `CANVA_CONNECTOR_ENABLED`; production enablement is a separate launch gate.
+Rally's server callback awaits provider approval. Canva is available to every
+member without an availability flag.
 
 ## Where the code lives
 
@@ -19,13 +19,12 @@ behind `CANVA_CONNECTOR_ENABLED`; production enablement is a separate launch gat
 ## How it works
 
 The API registers a DCR client, retains its credentials and PKCE verifier in a
-sealed OAuth attempt, and returns an authorization URL. With
-`CANVA_LOOPBACK_ENABLED=true`, Electron supplies an ephemeral
+sealed OAuth attempt, and returns an authorization URL. Electron supplies an ephemeral
 `http://127.0.0.1:<port>/callback` URL. Main receives the code and forwards it with
 the current Rally session. Both member and workspace must still match the
 initiator. Public callback requests cannot consume a loopback attempt.
 
-Without that option, the same adapter uses the configured API callback. Successful
+Without a supplied loopback redirect, the same adapter uses the configured API callback. Successful
 redemption stores encrypted provider credentials through the existing connection
 service. Refresh uses Canva's exact resource identifier and persists rotated tokens
 through the shared credential lifecycle. Disconnect attempts RFC 7009 revocation
@@ -128,6 +127,6 @@ only a code to the API instead of storing desktop provider credentials. Shared
 links can carry access rights, which requires encrypted access storage separate
 from navigation metadata. Polling uses complete discussion scans because replies
 do not reliably advance parent timestamps; a sorted top-ID watermark would miss
-activity. Production stays gated until the remaining lifecycle and provider approval work is
-verified. The support page labels the feature early access so documentation does
-not imply that a Canva subscription enables an unapproved deployment.
+activity. Canva is available to everyone without a feature flag; the tested
+loopback flow is the fallback until Canva approves the server callback.
+Availability must not depend on that pending approval.

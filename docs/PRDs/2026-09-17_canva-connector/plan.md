@@ -1,7 +1,8 @@
 # Canva implementation plan
 
 Implementation branch: `codex/canva-connector`. Kept separate from PR #838 at the
-user's request. Nothing in this work enables the production feature flags.
+user's request. Canva ships to every member without a feature flag, using desktop loopback
+until server callback approval.
 
 - [x] Read the merged PRD and create an isolated implementation worktree.
 - [x] Implement backend-held DCR credentials and authenticated Electron loopback handoff; retain the server callback after allowlisting.

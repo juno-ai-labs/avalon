@@ -21,7 +21,7 @@ describe("Canva polling service", () => {
     const resourceId = "00000000-0000-7000-8000-00000000cab4";
     const pollScheduleId = "00000000-0000-7000-8000-00000000cab5";
     const workstreamId = "00000000-0000-7000-8000-00000000cab6";
-    const testEnv = { ...env, CANVA_CONNECTOR_ENABLED: "true", CONNECTOR_CREDENTIALS_KEY: "canva-poll-test-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" };
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: "canva-poll-test-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" };
     await seedWorkspaceControlPlane(env.DB, { workspaceId, userId, sessionId: "canva-poll-session" });
     const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
     await workspace.initializeWorkspace(workspaceId, "wnam");
