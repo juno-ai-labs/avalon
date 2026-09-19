@@ -160,8 +160,15 @@ export function ManageAccessDialog({
         ? <LoadingState label="Loading access…" />
         : <ul className="manage-access-list">
           <AccessSource
+            // Narrowing the direct source is refused with
+            // `channel_scope_locked_by_space` exactly while an Organization-wide
+            // Space holds this Channel, and those sources are on this screen: a
+            // control that can only fail is worse than one that is not there,
+            // and the sentence beside it names the Space to change first.
             action={directIsPublic
-              ? <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
+              ? publicThrough.length > 0
+                ? undefined
+                : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
               : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('workspace'))}>Make public to organization</Button>}
             failure={failures['direct']}
             icon={directIsPublic
@@ -169,10 +176,12 @@ export function ManageAccessDialog({
               : <Lock aria-hidden="true" size={15} />}
             key="direct"
             name="This channel"
+            // Never "private": an Organization-wide Space below may still be
+            // granting access, and saying private here would be false.
             sentence={directIsPublic
-              ? 'Everyone in the organization, from the channel itself.'
-              // Never "private": an Organization-wide Space below may still be
-              // granting access, and saying private here would be false.
+              ? publicThrough.length > 0
+                ? `Everyone in the organization, from the channel itself — and public through ${publicThrough.join(', ')}.`
+                : 'Everyone in the organization, from the channel itself.'
               : publicThrough.length > 0
                 ? `The ${people(sources.direct.participantUserIds.length)} in the channel — and public through ${publicThrough.join(', ')}.`
                 : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
