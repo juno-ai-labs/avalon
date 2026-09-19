@@ -1032,6 +1032,13 @@ the opposite reason to the row above it: not because the row cannot say what
 leaving would change, but because leaving is not theirs to do and the server
 refuses it by name.
 
+The sentence under that row still counts the readers the Space source seated
+**on this Channel**, because that is what `ChannelAccessSources` answers and it
+is the Channel's own record rather than the Space's. It is not the Space
+summary's withheld `participants` arriving by another door: everyone it counts
+is a reader of a Channel this person can already open, which is the same set
+the conversation header names.
+
 The dialog offers **Make private** only while no Space source is
 Organization-wide. The server refuses that narrowing with
 `channel_scope_locked_by_space` in exactly that state, and the sources saying so
