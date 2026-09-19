@@ -80,12 +80,8 @@ afterEach(() => {
 function splitProbe(command: string): { rest: string; fragment: string | null } {
   const start = command.indexOf("( set +e; python3 -c '");
   if (start === -1) return { rest: command, fragment: null };
-  const endings = [") || true", ") || exit $?"]
-    .map((ending) => ({ ending, index: command.indexOf(ending, start) }))
-    .filter((candidate) => candidate.index !== -1)
-    .sort((left, right) => left.index - right.index);
-  const end = endings[0]!;
-  const stop = end.index + end.ending.length;
+  const ending = ") || true";
+  const stop = command.indexOf(ending, start) + ending.length;
   return { rest: command.slice(0, start) + command.slice(stop), fragment: command.slice(start, stop) };
 }
 
@@ -223,12 +219,9 @@ function fixture(
   provider.runUtilityCommand = vi.fn(async (id, input) => {
     // A command carrying the instruction probe runs the probe for real, against
     // the temp root, and the rest of the command against the simulated shell.
-    // In abort mode a pending candidate stops the command exactly as the
-    // sandbox would: nothing after the probe runs.
     const { rest, fragment } = splitProbe(input.command);
     if (fragment) {
       const executed = spawnSync("bash", ["-c", fragment.split("'/workspace'").join(`'${probeRoot}'`)], { encoding: "utf8" });
-      if (executed.status === 52) return { exitCode: 52, stdout: executed.stdout, stderr: "" };
       const result = await provider.runUtilityCommand(id, { ...input, command: rest });
       return { ...result, stdout: `${result.stdout}${executed.stdout}` };
     }
@@ -1328,64 +1321,58 @@ describe("Daytona Terminal runtime", () => {
       expect(probeFailures).toEqual([]);
     });
 
-    it("refuses the first mutation beneath an unread instruction file, records it, and lets the retry through", async () => {
+    it("lets a mutation beneath an unread instruction file proceed, and delivers the file with the read an edit starts with", async () => {
       const { runtime, ledger, files, probeRoot } = checkout();
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "never write generated files\n");
       const bytes = new TextEncoder().encode("new\n");
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_pending",
-        message: "Repository instructions for `./`, `./src/` were loaded with this call and nothing was changed. Read the `Instructions added from` message that follows, then retry the same call.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
-      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
-      // Recorded is not yet seen: a second mutation in the same batch is refused
-      // the same way, and nothing is recorded twice.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({ code: "instructions_pending" });
-      expect(ledger.allBlocks()).toHaveLength(2);
-      // The settled step delivers; the retry after it proceeds.
-      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // A whole-file write carries no probe: it is not refused, and it discovers nothing.
       await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
       expect(files.has("/workspace/src/new.txt")).toBe(true);
-      // An edit's read and a patch check the same way; both are resident now.
+      expect(ledger.pendingDeliveries()).toEqual([]);
+      // The read an edit starts with records the chain for delivery with that batch.
       await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
-      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
-        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
-      // Editing the instruction file itself delivers the new content once more.
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
+      // Recorded is not yet seen: a second read in the same batch reports the
+      // same files again, and nothing is recorded twice.
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      expect(ledger.allBlocks()).toHaveLength(2);
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // Editing the instruction file itself delivers the new content once more, through the next read.
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "revised\n");
-      await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "instructions_pending" });
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
       expect(ledger.allBlocks().filter((block) => block.blockId === "src/AGENTS.md").map((block) => [block.content, block.residency]).sort())
         .toEqual([["never write generated files\n", "none"], ["revised\n", "transcript"]]);
+      // A patch carries no probe either, and proceeds before that message has landed.
+      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
+        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
     });
 
-    it("refuses once with instructions_unavailable when the ledger fails, then stops gating for the run", async () => {
-      const { runtime, ledger, files, probeFailures } = checkout();
-      const bytes = new TextEncoder().encode("new\n");
+    it("reports a ledger failure once, leaves the read's outcome alone, and keeps discovering on the next read", async () => {
+      const { runtime, ledger, probeFailures } = checkout();
       vi.spyOn(ledger, "recordLoaded").mockImplementationOnce(() => { throw new Error("ledger unavailable"); });
-      // The probe stopped the write; the ledger could not record what it found,
-      // so no instructions message will follow and the refusal says so.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_unavailable",
-        message: "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      // The probe found the root file and the ledger could not record it: the
+      // read still succeeds, and the failure is reported rather than surfaced.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
+      expect(ledger.pendingDeliveries()).toEqual([]);
       expect(probeFailures).toEqual(["record"]);
-      // The retry is not refused again: the probe reports without gating, and
-      // recording is attempted as before.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
-      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      // The next read records it as before.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md"]);
       expect(probeFailures).toEqual(["record"]);
     });
 
-    it("probes before admitting a command's durable task and retires every block when the checkout is replaced", async () => {
+    it("admits a command without a probe of its own and retires every block when the checkout is replaced", async () => {
       const { runtime, ledger, objectStore, provider, resources, publisher, coordinator, instructions } = checkout();
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))
-        .rejects.toMatchObject({ code: "instructions_pending" });
-      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+      // A command runs the model's own text, which the probe cannot ride, and
+      // pays no probe command first: it is admitted at once and discovers nothing.
+      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
+      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 1 });
+      expect(ledger.pendingDeliveries()).toHaveLength(0);
+      // A read is what discovers the root file.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries()).toHaveLength(1);
       ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
       expect(ledger.residentBlocks({ kind: "repository_instructions" })).toHaveLength(1);
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
 
       const checkedOut: TerminalCheckoutRepositoryOutput = {
         repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
