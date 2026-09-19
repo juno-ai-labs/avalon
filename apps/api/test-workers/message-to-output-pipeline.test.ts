@@ -87,6 +87,7 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
+import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import {
   seedCanonicalMessageRecord,
   seedParticipantMessage,
@@ -193,6 +194,7 @@ beforeEach(async () => {
       metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`).run();
   await env.DB.batch([
+    env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,

@@ -98,6 +98,20 @@ workspace association; existing workspace deletion does not erase them. Both
 regions share schema, while this slice writes only Global. [Private access](private-access.md)
 owns their lookup, erasure, admission and delivery semantics.
 
+### Emailed link payloads
+
+`link_payloads` holds what a link's URL deliberately does not say: one row per
+issued link, keyed by the SHA-256 digest of its token, carrying the token's type
+(its prefix), the JSON that type's schema validates, and the expiry of whatever
+the link addresses. Scoped invitations are its first kind, `inv`; the table is
+shared because a URL that should not describe its subject is a recurring shape.
+Rows are pointers and confer nothing: the authority the payload names still
+decides every question the link leads to. A row with an expiry is dropped by a
+later issue; one without is retained, because a digest-keyed row is reachable
+only by the token that was never stored, so only its minter can delete it.
+[`scope-invitations.md`](scope-invitations.md) owns the invitation kind, and the
+store is `packages/db/src/link-payloads.ts`.
+
 ### Search projection state
 
 WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource insert/delete and search-relevant update triggers advance it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).

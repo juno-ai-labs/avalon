@@ -66,6 +66,7 @@ update it in the same change.
 | [`browser-sessions.md`](browser-sessions.md) | Opaque browser cookies over ordinary sessions, per-workspace tab isolation, Origin checks, renewal and HTTP adaptation. |
 | [`scope-grant-directory.md`](scope-grant-directory.md) | Durable discovery of independent shares, versioned candidate projection and canonical admission boundary. |
 | [`scope-invitations.md`](scope-invitations.md) | Scoped invitation batches, verified-recipient acceptance, atomic grant activation and durable email delivery. |
+| [`link-payloads.md`](link-payloads.md) | Opaque tokens for emailed links, the typed JSON each one stands for, and a row's lifecycle: mint, open, expire, sweep, discard. |
 | [`security.md`](security.md) | Trust boundaries — renderer isolation, contextIsolation and sandboxing, CSP, validated IPC, what is treated as untrusted. Read before changing any of those. |
 | [`private-access.md`](private-access.md) | Request-only landing, stored acknowledgements, Ace review, shared single-use and timed download grants and the remaining private-distribution rollout. |
 | [`private-access-security-audit-2026-09-09.md`](private-access-security-audit-2026-09-09.md) | Dated acquisition audit: verified Cloudflare configuration, email/download abuse, DDoS exposure, regression fixes, and outstanding launch controls. |

@@ -2,15 +2,14 @@ import { ScopeGrantManagementRequestSchema, ManagedScopeGrantsSchema, RevokeScop
 import { listSharedDirectory } from "../services/shared-directory-service";
 import { Hono } from "hono";
 import { z } from "zod";
-import { IdSchema, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
+import { IdSchema } from "@rally/contracts";
+import { UNAVAILABLE_INVITATION, openScopeInvitationCredential, workstreamStub } from "../services/scope-invitation-link";
+import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema, ScopeInvitationCredentialSchema,
   SharedDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
-import type { Env, HonoAppEnv } from "../env";
+import type { HonoAppEnv } from "../env";
 import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workstreamDOName } from "../durable-objects/names";
 
 const CreateRequestSchema = z.strictObject({
   operationId: CreateScopeInvitationsSchema.shape.operationId,
@@ -20,7 +19,7 @@ const CreateRequestSchema = z.strictObject({
   expiresAt: CreateScopeInvitationsSchema.shape.expiresAt,
   completeWorkstream: CreateScopeInvitationsSchema.shape.completeWorkstream,
 });
-const AcceptRequestSchema = AcceptScopeInvitationSchema.omit({ userId: true });
+const AcceptRequestSchema = ScopeInvitationCredentialSchema;
 const RevokeRequestSchema = RevokeScopeInvitationSchema.pick({ expectedRevision: true });
 const InvitationParamSchema = z.strictObject({ parentId: IdSchema, invitationId: IdSchema });
 
@@ -35,13 +34,8 @@ function acceptedResult(input: ScopeInvitationResult) {
     : result.reason === "configuration_required" ? "Email sharing is not configured. Contact your workspace administrator."
     : result.reason === "scope_changed" || result.reason === "revision_conflict" || result.reason === "operation_conflict" ? "Sharing changed. Refresh the available scopes and try again."
     : result.reason === "verified_email_required" ? "Sign out and sign in with the email address that received this invitation."
-    : "This invitation is unavailable. Ask the sender for a new invitation.";
+    : UNAVAILABLE_INVITATION;
   throw new ApiError(status, `scope_${result.reason}`, message);
-}
-
-function parent(env: Env, workspaceId: string, parentId: string) {
-  return durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
-    workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
 }
 
 /** Mounted below identity auth; only creating/revoking needs an existing relationship. */
@@ -54,7 +48,7 @@ sharingRoutes.get("/directory", requireWorkspaceAuth, async (c) => {
 sharingRoutes.get("/:parentId/options", requireWorkspaceAuth, zValidator("param", z.object({ parentId: IdSchema })), async (c) => {
   const auth = getWorkspaceAuth(c);
   const parentId = c.req.valid("param").parentId;
-  const result = await (await parent(c.env, auth.workspaceId, parentId)).scopeSharingOptions({
+  const result = await (await workstreamStub(c.env, auth.workspaceId, parentId)).scopeSharingOptions({
     workspaceId: auth.workspaceId, parentId, actorUserId: auth.userId,
   });
   c.header("Cache-Control", "no-store");
@@ -64,14 +58,14 @@ sharingRoutes.post("/grants/list", requireWorkspaceAuth,
   zValidator("json", ScopeGrantManagementRequestSchema.omit({ actorUserId: true })), async (c) => {
     const auth = getWorkspaceAuth(c), target = c.req.valid("json").target;
     if (target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-    const result = await (await parent(c.env, auth.workspaceId, target.parentId)).listManagedScopeGrants({ target, actorUserId: auth.userId });
+    const result = await (await workstreamStub(c.env, auth.workspaceId, target.parentId)).listManagedScopeGrants({ target, actorUserId: auth.userId });
     c.header("Cache-Control", "no-store");
     return c.json(ManagedScopeGrantsSchema.parse(result));
   });
 sharingRoutes.post("/grants/revoke", requireWorkspaceAuth, zValidator("json", RevokeScopeGrantSchema), async (c) => {
   const auth = getWorkspaceAuth(c), request = c.req.valid("json");
   if (request.target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-  const result = await (await parent(c.env, auth.workspaceId, request.target.parentId))
+  const result = await (await workstreamStub(c.env, auth.workspaceId, request.target.parentId))
     .mutateScopeGrant({ ...request, actorUserId: auth.userId, active: false });
   c.header("Cache-Control", "no-store");
   return c.json(ScopeGrantMutationResultSchema.parse(result));
@@ -81,7 +75,7 @@ sharingRoutes.post("/list", requireWorkspaceAuth,
     const auth = getWorkspaceAuth(c);
     const target = c.req.valid("json").target;
     if (target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-    const result = await (await parent(c.env, auth.workspaceId, target.parentId)).listScopeInvitations({ target, actorUserId: auth.userId });
+    const result = await (await workstreamStub(c.env, auth.workspaceId, target.parentId)).listScopeInvitations({ target, actorUserId: auth.userId });
     c.header("Cache-Control", "no-store");
     return c.json(ScopeInvitationsListSchema.parse(result));
   });
@@ -92,13 +86,18 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
     throw new ApiError(400, "scope_address_mismatch", "Choose targets in this workstream");
   }
   const request = CreateScopeInvitationsSchema.parse({ ...body, workspaceId: auth.workspaceId, actorUserId: auth.userId });
-  const result = await (await parent(c.env, request.workspaceId, request.parentId)).createScopeInvitations(request);
+  const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).createScopeInvitations(request);
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)), 201);
 });
 sharingRoutes.post("/accept", zValidator("json", AcceptRequestSchema), async (c) => {
-  const request = AcceptScopeInvitationSchema.parse({ ...c.req.valid("json"), userId: getIdentityAuth(c).userId });
-  const result = await (await parent(c.env, request.workspaceId, request.parentId)).acceptScopeInvitation(request);
+  // The credential names its own scope; an authenticated caller cannot address
+  // an invitation this deployment did not issue a token for, and never sees
+  // where it points until the acceptance it authorizes succeeds.
+  const address = await openScopeInvitationCredential(c.env, c.req.valid("json"));
+  if (!address) throw new ApiError(403, "scope_invitation_unavailable", UNAVAILABLE_INVITATION);
+  const request = AcceptScopeInvitationSchema.parse({ ...address, userId: getIdentityAuth(c).userId });
+  const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).acceptScopeInvitation(request);
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
 });
@@ -107,7 +106,7 @@ sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
     const auth = getWorkspaceAuth(c);
     const request = RevokeScopeInvitationSchema.parse({ ...c.req.valid("param"), ...c.req.valid("json"),
       workspaceId: auth.workspaceId, actorUserId: auth.userId });
-    const result = await (await parent(c.env, request.workspaceId, request.parentId)).revokeScopeInvitation(request);
+    const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).revokeScopeInvitation(request);
     c.header("Cache-Control", "no-store");
     return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
   });
