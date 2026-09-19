@@ -137,13 +137,14 @@ describe('the Space dashboard', () => {
   });
 
   it('shows the channels, resources and Sidekicks sections', async () => {
-    api.listSpaceChannels.mockResolvedValue({ items: ['00000000-0000-7000-8000-0000000000e1'], nextCursor: null });
-    channels.current = [{
+    // The Space's own page carries the Channels; the device's directory is a
+    // separate list and is deliberately not what this section reads.
+    api.listSpaceChannels.mockResolvedValue({ items: [{
       id: '00000000-0000-7000-8000-0000000000e1',
       title: 'Ship the launch',
       lastActivityAt: '2026-08-27T01:00:00.000Z',
       spaceIds: [hiring.id as string],
-    } as WorkstreamSummary];
+    } as WorkstreamSummary], nextCursor: null });
     renderSpace(makeSpace({
       channelCount: 1,
       defaultResourceIds: ['00000000-0000-7000-8000-0000000000c1'],
@@ -228,6 +229,29 @@ describe('the Space dashboard', () => {
     expect(screen.getByRole('dialog', { name: 'Archive space?' })).toBeVisible();
   });
 
+  it('given a blocked archive that named channels, then it lists the ones to move', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [{
+      id: '00000000-0000-7000-8000-0000000000e1',
+      title: 'Ship the launch',
+      lastActivityAt: '2026-08-27T01:00:00.000Z',
+      spaceIds: [hiring.id as string],
+    } as WorkstreamSummary], nextCursor: null });
+    api.archiveSpace.mockRejectedValue(new ApiError(
+      'A Channel in “Hiring” belongs to no other Space, so it would have no home',
+      409,
+      'space_membership_final',
+      { channelIds: ['00000000-0000-7000-8000-0000000000e1'] },
+    ));
+    renderSpace(makeSpace({ channelCount: 1 }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    const blocked = await screen.findByRole('list', { name: 'Channels to move first' });
+    expect(within(blocked).getByText('Ship the launch')).toBeVisible();
+  });
+
   // One failure appears once. A single `error` string was rendered in the body
   // and in all five modals at once, so a refused rename turned up inside the
   // channel picker the moment it was opened.
@@ -250,14 +274,13 @@ describe('the Space dashboard', () => {
   });
 
   it('removes a channel from this space without touching its other spaces', async () => {
-    api.listSpaceChannels.mockResolvedValue({ items: ['00000000-0000-7000-8000-0000000000e1'], nextCursor: null });
-    api.removeChannelFromSpace.mockResolvedValue(makeSpace({ channelCount: 0 }));
-    channels.current = [{
+    api.listSpaceChannels.mockResolvedValue({ items: [{
       id: '00000000-0000-7000-8000-0000000000e1',
       title: 'Ship the launch',
       lastActivityAt: '2026-08-27T01:00:00.000Z',
       spaceIds: [hiring.id as string],
-    } as WorkstreamSummary];
+    } as WorkstreamSummary], nextCursor: null });
+    api.removeChannelFromSpace.mockResolvedValue(makeSpace({ channelCount: 0 }));
     renderSpace(makeSpace({ channelCount: 1 }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
