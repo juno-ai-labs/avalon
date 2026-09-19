@@ -1,67 +1,60 @@
 import { z } from "zod";
 import { IdSchema, WorkspaceIdSchema, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import { codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { ScopeInvitationDescriptionSchema, type ScopeInvitationCredential } from "@rally/contracts/scope-grants";
+import { defineLinkPayload, issueLinkPayload, openLinkPayload } from "@rally/db/link-payloads";
 import type { Env } from "../env";
-import { openPayload, sealPayload } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workstreamDOName } from "../durable-objects/names";
 
 /**
- * Bound into the sealed link so a credential minted here cannot be presented to
- * another opener of the same key, and so a future kind of link reusing this
- * primitive cannot be confused with an invitation.
- */
-const SCOPE_INVITATION_LINK_PURPOSE = "scope-invitation-link";
-
-/**
- * Everything the emailed link used to spell out in its fragment, now sealed.
+ * Everything the emailed link used to spell out in its fragment, now behind one
+ * token.
  *
  * The recipient was never the audience for any of it: which workspace, which
  * work stream and which invitation are the *server's* routing, and publishing
  * them told a forwarded-to stranger the shape of a team they have no access to.
- * Only the token was ever a credential, and it is no less of one inside.
+ * Only the secret was ever a credential, and it is no less of one in a row.
  */
-const ScopeInvitationLinkPayloadSchema = z.strictObject({
+const SCOPE_INVITATION_LINK = defineLinkPayload("inv", z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema, token: z.string().min(1),
-});
-export type ScopeInvitationAddress = z.infer<typeof ScopeInvitationLinkPayloadSchema>;
+}));
+export type ScopeInvitationAddress = z.infer<typeof SCOPE_INVITATION_LINK.schema>;
 
-/** One sentence for every unusable invitation: an unopenable link tells its holder no less and no more than a revoked one. */
+/** One sentence for every unusable invitation: an unreadable token tells its holder no less and no more than a revoked one. */
 export const UNAVAILABLE_INVITATION = "This invitation is unavailable. Ask the sender for a new invitation.";
 
-/** Only the key: sealing and opening a link is not a reason to hold a Worker's whole environment. */
-type LinkSealing = Pick<Env, "OAUTH_STATE_ENCRYPTION_KEY">;
+/** Only the database: minting and reading a link is not a reason to hold a Worker's whole environment. */
+type LinkStore = Pick<Env, "DB">;
 
-export function sealScopeInvitationLink(env: LinkSealing, address: ScopeInvitationAddress): Promise<string> {
-  return sealPayload(address, env.OAUTH_STATE_ENCRYPTION_KEY, SCOPE_INVITATION_LINK_PURPOSE);
+/**
+ * The token the email carries. It dies with the invitation it addresses, so an
+ * expiring invitation does not leave a row behind that outlives it.
+ */
+export function issueScopeInvitationLink(
+  env: LinkStore, address: ScopeInvitationAddress, expiresAt: number | null,
+): Promise<string> {
+  return issueLinkPayload(env.DB, SCOPE_INVITATION_LINK, address,
+    { expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString() });
 }
 
-/** The whole fragment, so nothing beside the credential names a parameter the recipient could read as a setting. */
-export function scopeInvitationLinkUrl(origin: URL, sealed: string): URL {
+/** The whole fragment, so nothing beside the token names a parameter the recipient could read as a setting. */
+export function scopeInvitationLinkUrl(origin: URL, token: string): URL {
   const link = new URL("/invite", origin);
-  link.hash = sealed;
+  link.hash = token;
   return link;
 }
 
 /**
  * Where an invitation credential points, or null when this deployment cannot
- * say — an edited or foreign link, which is indistinguishable from one that was
- * never minted and owes its holder the same answer.
+ * say — a token of another kind, one edited in transit, one another deployment
+ * issued, or one whose row has expired. All four owe their holder the same
+ * answer as an invitation that was never minted.
  */
 export async function openScopeInvitationCredential(
-  env: LinkSealing, credential: ScopeInvitationCredential,
+  env: LinkStore, credential: ScopeInvitationCredential,
 ): Promise<ScopeInvitationAddress | null> {
   if (!("link" in credential)) return credential;
-  const payload = await openPayload(credential.link, env.OAUTH_STATE_ENCRYPTION_KEY, SCOPE_INVITATION_LINK_PURPOSE);
-  if (payload === null) return null;
-  const parsed = ScopeInvitationLinkPayloadSchema.safeParse(payload);
-  if (parsed.success) return parsed.data;
-  // Decryption already proved this deployment sealed it, so a rejection here is
-  // our own payload shape drifting rather than a forged credential. Reporting
-  // it as one more unavailable link would hide a deploy that stopped honouring
-  // every invitation already in an inbox.
-  throw new Error(codeShaped(`scope_invitation_link_invalid:${describeZodIssues(parsed.error)}`));
+  return openLinkPayload(env.DB, SCOPE_INVITATION_LINK, credential.link);
 }
 
 export function workstreamStub(env: Env, workspaceId: string, parentId: string) {

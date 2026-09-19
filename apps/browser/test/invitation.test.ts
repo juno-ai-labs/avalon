@@ -6,9 +6,9 @@ const workspace = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const parent = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const child = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-it("carries a sealed link whole and names no deployment of its own", () => {
-  const sealed = "Y2xhaW1lZC1pdg.c2VhbGVkLWludml0YXRpb24tcGF5bG9hZA";
-  expect(invitationFromFragment(sealed)).toEqual({ region: null, credential: { link: sealed } });
+it("carries an opaque token whole and names no deployment of its own", () => {
+  const token = "inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2";
+  expect(invitationFromFragment(token)).toEqual({ region: null, credential: { link: token } });
   expect(invitationFromFragment("")).toBeNull();
 });
 

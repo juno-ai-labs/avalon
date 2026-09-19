@@ -213,8 +213,8 @@ it('does not publish an old account workspace list after focus restores another 
   expect(screen.getByRole('link', { name: /Other account workspace/ })).toBeInTheDocument();
 });
 
-it('fills the invited mailbox into the sign-in form and accepts by the sealed credential alone', async () => {
-  const sealed = 'c2VhbGVkLWl2.c2VhbGVkLWludml0YXRpb24tY3JlZGVudGlhbA';
+it('fills the invited mailbox into the sign-in form and accepts by the opaque token alone', async () => {
+  const sealed = 'inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2';
   history.replaceState(null, '', `/invite#${sealed}`);
   const bodies = new Map<string, unknown>();
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
@@ -227,7 +227,7 @@ it('fills the invited mailbox into the sign-in form and accepts by the sealed cr
   }));
   render(<BrowserEntry />);
   // The recipient never typed this: the page asked the deployment what the
-  // opaque link was addressed to, before any session exists.
+  // token was addressed to, before any session exists.
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('invited@example.test'));
   expect(bodies.get('/invitation')).toEqual({ link: sealed });
   expect(location.hash).toBe('');

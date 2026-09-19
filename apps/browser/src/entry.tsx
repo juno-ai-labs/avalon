@@ -24,7 +24,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
   const [proof, setProof] = useState<Proof | null>(null);
-  // Region resolved at parse time: the page opens a sealed link against the
+  // Region resolved at parse time: the page opens an opaque link against the
   // deployment serving it, and an addressed link against the one it names.
   const [invitation, setInvitation] = useState<{ region: string; credential: BrowserInvitation["credential"] } | null>(null);
   const [accepted, setAccepted] = useState<ScopeInvitationSummary | null>(null);
@@ -59,7 +59,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       if (incoming) {
         const addressed = { region: incoming.region ?? selected, credential: incoming.credential };
         setInvitation(addressed);
-        // A sealed link names nobody, and the form under it has to. Asking for
+        // An opaque link names nobody, and the form under it has to. Asking for
         // the invited mailbox needs no session: the link is the same authority
         // acceptance will check, and this releases only the address it was sent to.
         void browserRequest(addressed.region, "/invitation", ScopeInvitationPreviewSchema, addressed.credential)
