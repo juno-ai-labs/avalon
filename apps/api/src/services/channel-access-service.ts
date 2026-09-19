@@ -320,7 +320,20 @@ export class ChannelAccessService {
     if (!confirmed.ok) throw spaceAccessError(confirmed.code, detail.title);
   }
 
-  async retractSpaceSource(workstreamId: string, spaceId: SpaceId, operationId: string): Promise<void> {
+  /**
+   * Withdraw a Space's source from one Channel.
+   *
+   * `expectedSpaceRevision` is what an audience change carries and a removal or
+   * an archive does not: a convergence that retracts in order to re-apply has
+   * to lose to a newer one, and the row the application's fence reads is the
+   * row this call deletes.
+   */
+  async retractSpaceSource(
+    workstreamId: string,
+    spaceId: SpaceId,
+    operationId: string,
+    expectedSpaceRevision?: number,
+  ): Promise<void> {
     const client = this.client(workstreamId);
     const detail = await client.get();
     const observed = this.observed(detail);
@@ -329,6 +342,7 @@ export class ChannelAccessService {
       ...this.address(workstreamId),
       spaceId,
       operationId,
+      ...(expectedSpaceRevision === undefined ? {} : { expectedSpaceRevision }),
       channel: observed,
     });
     if (!retracted.ok) throw spaceAccessError(retracted.code, detail.title);
