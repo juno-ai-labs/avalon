@@ -31,16 +31,25 @@ a drop from failing on a reference.
 | `project_default_resource_targets` | Staged delivery, one row per Channel. |
 | `project_default_resource_publications` | The outbox half of that delivery. |
 
-**The migration is gated rather than unconditional.** A default still queued for
-delivery is work aimed at a Channel whose audience the Space cutover has just
-changed, so the statements invalidate every pending target and publication and
-then assert the remainder is zero through a scratch table whose CHECK constraint
-is named `project_effects_pending`. The barrier does not trust the invalidation
-in front of it, and it sits in front of every drop: a migration runs inside one
-`transactionSync`, so an abort takes the whole attempt and nothing is lost.
-`finalizeSpaceBootstrap` refuses to close an Organization with pending Project
-rows and answers the same word, which is the operator's signal to drain the
-activity Queue before re-forcing the class.
+**What settles the undelivered effects.** A default still queued for delivery
+is work aimed at a Channel whose audience the Space cutover has just changed,
+so the statements invalidate every pending target and publication — targets to
+`terminal` with `last_error_code = 'project_retired'`, publications to
+`accepted` — in the same transaction that drops the tables. The activity
+consumer keeps a tombstone leg for the platform's retry window: a message
+published before the cutover finds nothing current, is acknowledged with
+`reason: "projects_retired"`, and attaches nothing.
+
+**Those two are the whole shutdown, and there is no barrier beside them.** This
+shipped with one — a scratch table whose CHECK asserted no `pending` row was
+left — and it could not fire: it counted rows the statements directly above it
+had just settled, so the count was zero by construction. `finalizeSpaceBootstrap`
+carried a matching `project_effects_pending` gate that could not fire either,
+because migration 62 runs in the constructor and the tables are gone before any
+caller reaches it. Both are deleted. **An undelivered Project default is
+dropped**, which is what the PRD asks for: non-goal 5 deletes Projects rather
+than converting them, so a default that never reached a Channel is not owed to
+anybody.
 
 **What a Project did to a Channel survives it.** A resource that was delivered
 stays attached, a Sidekick that was recommended stays recommended, and a
@@ -78,19 +87,28 @@ this Channel" is the state every Space invariant is written to exclude, and
 leaving the dormant one in place meant every future change to membership,
 audience or defaults had to be reasoned about twice.
 
+Review found that the shutdown barrier in front of the drops could not fire:
+it counted `pending` rows immediately after the statements that settled every
+one of them, and `finalizeSpaceBootstrap`'s matching gate ran after the
+constructor had already dropped the tables. A barrier that reads its own writes
+is not a gate, and keeping it would have left two mechanisms claiming to
+enforce something neither one could. Both are deleted; the invalidation and the
+tombstone consumer, which do the work, stay.
+
 **Considered and rejected:** Dropping the tables unconditionally and letting a
 queued default fail on a missing table. The durable half of an at-least-once
 delivery is exactly what stops a message still in flight from attaching a
 resource to a Channel whose audience the cutover has just changed, so the
-migration settles what it can and asserts the rest is zero. Also rejected: an
-unnamed CHECK. SQLite reports a named constraint by name, and this repository
-has paid repeatedly for a boundary that had the reason in hand and logged a
-generic one.
+migration settles what it can before it drops anything. Also rejected: making
+the barrier *work*, by counting before the invalidation or by holding the
+cutover open until an operator drained the Queue. Nothing is owed — non-goal 5
+deletes Projects rather than converting them — so the gate would have held
+every Organization's hierarchy closed to protect work the PRD says to discard.
 
-**Consequences:** Migration 62 is released once it ships and is not edited. An
-Organization that cannot pass the barrier does not get a partial retirement —
-the whole migration aborts — so the remedy is to drain the activity Queue and
-re-force the class, which [`runbook.md`](runbook.md) holds.
+**Consequences:** Migration 62 is released once it ships and is not edited.
+There is no operator step in front of it: the retirement is unconditional, and
+what an operator watches is the dead-letter queue, which [`runbook.md`](runbook.md)
+holds.
 
 ### 2026-09-18 — Project sidebar failures carry operations, not response text
 
