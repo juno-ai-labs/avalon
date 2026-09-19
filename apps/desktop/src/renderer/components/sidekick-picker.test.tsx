@@ -20,6 +20,7 @@ function renderPicker(client = new QueryClient()) {
 
 describe('Sidekick recommendation picker', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     capabilities.setup = true;
     api.getSidekicks.mockResolvedValue([]);
     api.getSidekickRecommendationOptions.mockImplementation(async () => ({ canManage: true,
@@ -68,6 +69,30 @@ describe('Sidekick recommendation picker', () => {
     await act(async () => { resolveAttach(recommended); });
     await waitFor(() => expect(client.getQueryData(['recommended-sidekicks', 'room', '0'])).toEqual(recommended));
     expect(client.getQueryData(['recommended-sidekicks', 'other', '0'])).toBeUndefined();
+  });
+
+  it('keeps an in-flight attachment pending when the picker is reopened', async () => {
+    api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: true, items: [
+      { id: 'helper', name: 'Guide', description: '', available: true, attached: false },
+    ] });
+    const recommended = [{ id: 'helper', name: 'Guide', description: '', available: true }];
+    let resolveAttach!: (value: typeof recommended) => void;
+    api.setRecommendedSidekick.mockReturnValue(new Promise((resolve) => { resolveAttach = resolve; }));
+    renderPicker(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Attach existing Sidekick' })).not.toHaveAttribute('aria-disabled', 'true'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach existing Sidekick' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Guide' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guide' })).toBeDisabled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach existing Sidekick' }));
+    expect(await screen.findByRole('button', { name: 'Guide' })).toBeDisabled();
+    expect(api.setRecommendedSidekick).toHaveBeenCalledTimes(1);
+
+    await act(async () => { resolveAttach(recommended); });
   });
 
   it('does not let an older read overwrite a successful attachment', async () => {
