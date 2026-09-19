@@ -20,6 +20,11 @@ interface TerminalRpcTestBinding {
     call(value: string): Promise<string>;
     [Symbol.dispose](): void;
   }>;
+  createSession(): Promise<{
+    startSandbox(idOrName: string, options?: unknown, callbacks?: unknown): Promise<unknown>;
+    recoverSandbox(idOrName: string, options?: unknown, callbacks?: unknown): Promise<unknown>;
+    [Symbol.dispose](): void;
+  }>;
 }
 
 declare global {
