@@ -97,11 +97,6 @@ const LOCAL_AUTHORITIES = Symbol("workstream-local-authorities");
 interface InstalledAuthorities {
   /** What this object durably is. */
   substreamId: string;
-  /**
-   * Whether a port built with no substream id resolves here. True inside every
-   * conversation object: a loop-side port means the conversation it runs in.
-   */
-  answersDefault: boolean;
   authorities: LocalWorkstreamAuthorities;
 }
 
@@ -148,9 +143,9 @@ export function localWorkstreamAuthority<K extends WorkstreamAuthority>(
 ): LocalWorkstreamAuthorities[K] | undefined {
   const installed = carriedAuthorities(env).get(scopeKey(workspaceId, workstreamId));
   if (!installed) return undefined;
-  if (substreamId === undefined) {
-    return installed.answersDefault ? installed.authorities[authority] : undefined;
-  }
+  // No substream names the conversation this run executes in, which is the
+  // object that installed these: a loop-side port means where it runs.
+  if (substreamId === undefined) return installed.authorities[authority];
   // A port that names a substream other than the one this object is must go
   // over the wire: the installed executors answer for this object alone.
   if (installed.substreamId !== substreamId) return undefined;
@@ -218,7 +213,6 @@ export function withLocalWorkstreamAuthorities(
   const carried: AuthorityRegistry = new Map(carriedAuthorities(env))
     .set(key, {
       substreamId,
-      answersDefault: true,
       authorities: { ...carriedAuthorities(env).get(key)?.authorities, ...authorities },
     });
   return new Proxy(env, {

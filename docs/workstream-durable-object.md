@@ -1680,11 +1680,11 @@ change is the other half of the same problem: the workspace directory holds one
 Terminal deadline per work stream, aggregated from the main conversation alone,
 so a sandbox owned by any other conversation was never swept.
 
-**Considered and rejected:** Aggregating every child projection into the
-work stream's row, which would make a side thread's title or state the work
-stream's; only the deadline crosses. A separate directory column per
-conversation, which would put a fan-out write on WorkspaceDO for a value the
-parent already holds.
+**Considered and rejected:** A separate directory column per conversation,
+which would put a fan-out write on WorkspaceDO for a value the parent already
+holds. The alternatives to the Terminal side of this change, aggregating every
+child projection among them, are recorded with the entry that owns the
+mechanism, in [`terminal-workspaces.md`](terminal-workspaces.md#changelog).
 
 **Consequences:** Every existing caller passes the run's own substream or
 nothing, so nothing resolved differently on this change; a caller inside a
@@ -1692,6 +1692,8 @@ child that names `"0"` now reaches the main conversation, which is what it
 says. A non-main child's `directory_common` can now cause a common projection
 envelope from the parent; it dedupes on payload, so only a moved deadline
 sends one.
+
+Pull request: [#849](https://github.com/juno-ai-labs/avalon/pull/849).
 
 ### 2026-09-18 — Overlap independent inference preparation reads
 

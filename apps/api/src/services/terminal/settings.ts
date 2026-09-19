@@ -5,6 +5,7 @@ import type {
   TerminalWorkspaceSettings,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
+import { isLegacyTerminalAliasRow } from "./coordinator";
 import { createTerminalPortFactory } from "./object-port";
 import type { z } from "zod";
 
@@ -408,6 +409,14 @@ export class TerminalSettingsService {
             entry.workstream_id,
             substreamId,
           ).policyTarget();
+          // A row a side thread or agent reserved under the work stream's one
+          // name, before a sandbox belonged to a conversation, names the main
+          // conversation's sandbox, which the main row already covers. Acting
+          // on the alias as well would stop that sandbox twice and, on a
+          // failure, delete one this conversation does not own.
+          if (sandbox && await isLegacyTerminalAliasRow(sandbox, this.auth.workspaceId, entry.workstream_id, substreamId)) {
+            return null;
+          }
           return sandbox
             ? {
                 workstream_id: entry.workstream_id,

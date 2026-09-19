@@ -34,6 +34,7 @@ import {
   testResourcePortFactory,
   testHarnessRunPort,
   testTerminalPortFactory,
+  testResourcePort,
 } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -1060,6 +1061,156 @@ describe("Terminal sandbox coordinator", () => {
       tool_call_id: "second-call",
       reason: "object_reset",
     }));
+  });
+
+  it("drops a row a side thread reserved under the main conversation's name and reserves its own", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000066";
+    // Before a sandbox belonged to a conversation, this thread's row was
+    // reserved under the work stream's one name and holds the main
+    // conversation's Daytona sandbox.
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_workspace
+        (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+         authority_fingerprint, applied_network_revision, version, last_command_at,
+         idle_expires_at, archive_due_at, expire_due_at, created_at, updated_at)
+       VALUES (1, 'daytona', 'running', ?, 'sandbox-main', 1, 'authority', 1, 1, ?, ?, ?, ?, ?, ?)`,
+      await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, "0"),
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T12:04:00.000Z"),
+      Date.parse("2026-08-13T13:00:00.000Z"),
+      Date.parse("2026-09-12T12:00:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+      Date.parse("2026-08-13T11:59:00.000Z"),
+    );
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const coordinator = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+    );
+
+    // Not a sandbox a read may use, and not one readiness reuses.
+    await expect(coordinator.peekRunning(context())).resolves.toBeNull();
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(vi.mocked(provider.createSandbox).mock.calls[0]![0].stableName)
+      .toBe(await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, thread));
+    // The main conversation's sandbox was neither stopped nor deleted by a
+    // conversation that does not own it; only the row was dropped, and said so.
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "terminal_legacy_alias_row_retired", terminal_substream_id: thread, sandbox_generation: 1,
+    }));
+    info.mockRestore();
+  });
+
+  it("refuses a background agent whose authority differs from its owner's sandbox rather than replacing it", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const otherUser = asUserId("00000000-0000-4000-8000-0000000000ee");
+    seedWorkstreamRun(objectStore, {
+      id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: otherUser }),
+      createdAt: Date.parse("2026-08-13"),
+    });
+    const runsPort = () => testHarnessRunPort(objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    await owner.acquire(context());
+    await owner.release(context());
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+
+    // An agent under another principal would, as an ordinary run, destroy
+    // and reprovision the sandbox; it is the owner's checkout, so it refuses.
+    await expect(agent.acquire({ ...context(otherUser), harnessRunId: workerRun, toolCallId: "worker-call" }))
+      .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it("judges each import by the conversation whose attachment authorized it", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const ownerResource = "00000000-0000-4000-8000-0000000000a1";
+    const workerResource = "00000000-0000-4000-8000-0000000000a2";
+    seedWorkstreamRun(objectStore, {
+      id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+      createdAt: Date.parse("2026-08-13"),
+    });
+    // The agent's conversation is its own object, with its own attachments.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    for (const [store, resourceId] of [[objectStore, ownerResource], [workerStore, workerResource]] as const) {
+      await env.DB.prepare(
+        `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, title, created_at, updated_at, uploaded_by_user_id, attachment_status)
+         VALUES (?, ?, 'file', 'avalon_upload', 'file.txt', '2026-08-13', '2026-08-13', ?, 'attached')`,
+      ).bind(resourceId, WORKSPACE_ID, USER_ID).run();
+      workstreamObjectRun(
+        store,
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+         VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+        resourceId, USER_ID, JSON.stringify({ id: resourceId }), Date.parse("2026-08-13"), Date.parse("2026-08-13"),
+      );
+    }
+    const ownerLinks = testResourcePort(objectStore);
+    const workerLinks = testResourcePort(workerStore);
+    const resources = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      substreamId === worker ? workerLinks : ownerLinks;
+    const runsPort = () => testHarnessRunPort(objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), resources, provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), resources, provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+    await owner.acquire(context());
+    await owner.release(context());
+    // The owner imported what its conversation had attached; the agent, what its own had.
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID, "0");
+    await terminal.recordImportedResource({
+      sandboxGeneration: 1, resourceId: ownerResource, destinationPath: "/workspace/imports/owner.txt",
+      sourceSha256: "a".repeat(64), sizeBytes: 1, state: "completed", importedAt: 1, now: 1,
+    });
+    await terminal.recordImportedResource({
+      sandboxGeneration: 1, resourceId: workerResource, destinationPath: "/workspace/imports/worker.txt",
+      sourceSha256: "b".repeat(64), sizeBytes: 1, state: "completed", importedAt: 1, attachedSubstreamId: worker, now: 1,
+    });
+    const agentContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
+
+    // Neither conversation's import is revoked by the other's attachments.
+    await expect(agent.acquire(agentContext)).resolves.toMatchObject({ generation: 1 });
+    await agent.release(agentContext);
+    await expect(owner.acquire({ ...context(), toolCallId: "owner-second" })).resolves.toMatchObject({ generation: 1 });
+    await owner.release({ ...context(), toolCallId: "owner-second" });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+
+    // Detached where it was attached, the agent's import is revoked for the
+    // sandbox: no read uses it, and the owner's next call replaces it.
+    workstreamObjectRun(workerStore, "DELETE FROM workstream_resource_links WHERE resource_id = ?", workerResource);
+    await expect(owner.peekRunning({ ...context(), toolCallId: "owner-peek" })).resolves.toBeNull();
+    await expect(owner.acquire({ ...context(), toolCallId: "owner-third" })).resolves.toMatchObject({ generation: 2 });
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
   });
 
   it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {

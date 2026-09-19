@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { reconcileDueTerminalSandbox } from "../src/services/terminal/lifecycle";
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import {
@@ -84,6 +85,23 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.stopSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, idle_expires_at FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
+  });
+
+  it("drops a row a side thread reserved under the main conversation's name without touching its sandbox", async () => {
+    const thread = "00000000-0000-4000-8000-000000000077";
+    const { objectStore, provider } = fixture("running", { warm: "2026-08-13T10:05:00.000Z", archive: "2026-08-13T11:00:00.000Z", expire: "2026-09-12T10:00:00.000Z" });
+    // Reserved before a sandbox belonged to a conversation, under the work
+    // stream's one name, and holding the main conversation's sandbox.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET stable_name = ? WHERE id = 1", await terminalSandboxStableName(W, S, "0"));
+
+    await expect(reconcileDueTerminalSandbox(
+      testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW,
+      undefined, undefined, thread,
+    )).resolves.toEqual({ transition: "none" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.archiveSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
   });
 
   it("reconciles an active holder after its operation lease expires", async () => {

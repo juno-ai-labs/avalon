@@ -180,6 +180,8 @@ function toSandbox(row: SandboxRow): TerminalSandboxRecord {
 export interface TerminalTaskRecord {
   taskId: string;
   runId: string;
+  /** The run's conversation when it is not this object's own; `null` otherwise. */
+  runSubstreamId: string | null;
   effectIntentId: string;
   sandboxGeneration: number;
   providerTaskName: string;
@@ -203,6 +205,7 @@ export interface TerminalTaskRecord {
 interface TaskRow extends Record<string, SqlStorageValue> {
   task_id: string;
   run_id: string;
+  run_substream_id: string | null;
   effect_intent_id: string;
   sandbox_generation: number;
   provider_task_name: string;
@@ -227,6 +230,7 @@ function toTask(row: TaskRow): TerminalTaskRecord {
   return {
     taskId: row.task_id,
     runId: row.run_id,
+    runSubstreamId: row.run_substream_id,
     effectIntentId: row.effect_intent_id,
     sandboxGeneration: row.sandbox_generation,
     providerTaskName: row.provider_task_name,
@@ -318,6 +322,12 @@ export interface TerminalImportedResourceRecord {
   resourceId: string;
   destinationPath: string;
   state: "planned" | "completed";
+  /**
+   * The conversation whose attachment authorized this import when it is not
+   * this object's own; `null` otherwise. The revocation check reads the
+   * import's standing from that conversation's links.
+   */
+  attachedSubstreamId: string | null;
 }
 
 function first<T>(cursor: SqlStorageCursor<Record<string, SqlStorageValue>>): T | null {
@@ -1197,16 +1207,27 @@ export class WorkstreamTerminalStorage {
   }
 
   /** The live sandbox a workspace-wide policy change has to act on, if any. */
-  policyTarget(): { sandboxId: string; lifecycleState: string; generation: number } | null {
-    const row = first<{ sandbox_id: string; lifecycle_state: string; generation: number }>(
+  policyTarget(): {
+    sandboxId: string;
+    lifecycleState: string;
+    generation: number;
+    /** The Daytona name the row was reserved under; a caller checks it is this conversation's. */
+    stableName: string | null;
+  } | null {
+    const row = first<{ sandbox_id: string; lifecycle_state: string; generation: number; stable_name: string | null }>(
       this.sql.exec(
-        `SELECT sandbox_id, lifecycle_state, generation FROM terminal_workspace
+        `SELECT sandbox_id, lifecycle_state, generation, stable_name FROM terminal_workspace
           WHERE id = 1 AND sandbox_id IS NOT NULL
             AND lifecycle_state NOT IN ('absent', 'expired', 'failed')`,
       ),
     );
     return row
-      ? { sandboxId: row.sandbox_id, lifecycleState: row.lifecycle_state, generation: row.generation }
+      ? {
+          sandboxId: row.sandbox_id,
+          lifecycleState: row.lifecycle_state,
+          generation: row.generation,
+          stableName: row.stable_name,
+        }
       : null;
   }
 
@@ -1214,10 +1235,11 @@ export class WorkstreamTerminalStorage {
 
   taskByEffect(effectIntentId: string): TerminalTaskRecord | null {
     const row = first<TaskRow>(this.sql.exec<TaskRow>(
-      `SELECT task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
-              provider_task_id, state, command_sha256, command_deadline_at, exit_code,
-              termination_reason, stdout_head, stdout_tail, stderr_head, stderr_tail,
-              stdout_bytes, stderr_bytes, output_resource_id, started_at, completed_at
+      `SELECT task_id, run_id, run_substream_id, effect_intent_id, sandbox_generation,
+              provider_task_name, provider_task_id, state, command_sha256,
+              command_deadline_at, exit_code, termination_reason, stdout_head,
+              stdout_tail, stderr_head, stderr_tail, stdout_bytes, stderr_bytes,
+              output_resource_id, started_at, completed_at
          FROM terminal_tasks WHERE effect_intent_id = ?`,
       effectIntentId,
     ));
@@ -1231,7 +1253,7 @@ export class WorkstreamTerminalStorage {
    */
   unsettledTask(generation: number): TerminalTaskRecord | null {
     const row = first<TaskRow>(this.sql.exec<TaskRow>(
-      `SELECT task_id, run_id, effect_intent_id, sandbox_generation,
+      `SELECT task_id, run_id, run_substream_id, effect_intent_id, sandbox_generation,
               provider_task_name, provider_task_id, state, command_sha256,
               command_deadline_at, exit_code, termination_reason, stdout_head,
               stdout_tail, stderr_head, stderr_tail, stdout_bytes, stderr_bytes,
@@ -1275,6 +1297,8 @@ export class WorkstreamTerminalStorage {
   insertTask(input: {
     taskId: string;
     runId: string;
+    /** The run's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     effectIntentId: string;
     sandboxGeneration: number;
     sandboxId: string;
@@ -1291,14 +1315,30 @@ export class WorkstreamTerminalStorage {
           WHERE workspace.id = 1
             AND workspace.generation = ? AND workspace.sandbox_id = ?
             AND workspace.operation_run_id = ?
+            AND workspace.operation_run_substream_id IS ?
             AND workspace.lifecycle_claim_id IS NULL
             AND ${HOLDER_IS_LIVE}`,
         input.sandboxGeneration,
         input.sandboxId,
         input.runId,
+        input.runSubstreamId ?? null,
         input.now,
       ));
       if (!authorized) return false;
+      // A run of this object records a command only against the receipt the
+      // harness planned for it, which is here. A run from another conversation
+      // carries its receipt in its own object, where this statement cannot
+      // look: the lease it holds, matched above by run and conversation, is
+      // its authority to submit. (Until schema 65 the receipt was a foreign
+      // key, which is what refused every command a background agent ran.)
+      if (!input.runSubstreamId) {
+        const planned = first<{ effect_intent_id: string }>(this.sql.exec(
+          `SELECT effect_intent_id FROM tool_effects WHERE effect_intent_id = ? AND run_id = ?`,
+          input.effectIntentId,
+          input.runId,
+        ));
+        if (!planned) return false;
+      }
 
       const existing = this.taskByEffect(input.effectIntentId);
       if (existing) {
@@ -1311,14 +1351,15 @@ export class WorkstreamTerminalStorage {
 
       return first<{ task_id: string }>(this.sql.exec(
         `INSERT INTO terminal_tasks
-           (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
-            state, command_sha256, command_deadline_at, stdout_head, stdout_tail,
-            stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
+           (task_id, run_id, run_substream_id, effect_intent_id, sandbox_generation,
+            provider_task_name, state, command_sha256, command_deadline_at, stdout_head,
+            stdout_tail, stderr_head, stderr_tail, stdout_bytes, stderr_bytes, started_at,
             created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'submitting', ?, ?, '', '', '', '', 0, 0, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, 'submitting', ?, ?, '', '', '', '', 0, 0, ?, ?, ?)
          RETURNING task_id`,
         input.taskId,
         input.runId,
+        input.runSubstreamId ?? null,
         input.effectIntentId,
         input.sandboxGeneration,
         input.providerTaskName,
@@ -1527,14 +1568,21 @@ export class WorkstreamTerminalStorage {
   // ----------------------------------------------------- imported resources
 
   importedResources(generation: number): TerminalImportedResourceRecord[] {
-    return this.sql.exec<{ resource_id: string; destination_path: string; state: string }>(
-      `SELECT resource_id, destination_path, state FROM terminal_imported_resources
+    return this.sql.exec<{
+      resource_id: string;
+      destination_path: string;
+      state: string;
+      attached_substream_id: string | null;
+    }>(
+      `SELECT resource_id, destination_path, state, attached_substream_id
+         FROM terminal_imported_resources
         WHERE sandbox_generation = ?`,
       generation,
     ).toArray().map((row) => ({
       resourceId: row.resource_id,
       destinationPath: row.destination_path,
       state: row.state as "planned" | "completed",
+      attachedSubstreamId: row.attached_substream_id,
     }));
   }
 
@@ -1546,17 +1594,21 @@ export class WorkstreamTerminalStorage {
     sizeBytes: number;
     state: "planned" | "completed";
     importedAt: number | null;
+    /** The authorizing conversation when it is not this object's own; see the record. */
+    attachedSubstreamId?: string | null;
     now: number;
   }): void {
     this.sql.exec(
       `INSERT INTO terminal_imported_resources
          (sandbox_generation, resource_id, destination_path, source_sha256,
-          size_bytes, state, imported_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          size_bytes, state, imported_at, attached_substream_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sandbox_generation, resource_id, destination_path)
        DO UPDATE SET source_sha256 = excluded.source_sha256,
          size_bytes = excluded.size_bytes, state = excluded.state,
-         imported_at = excluded.imported_at, updated_at = excluded.updated_at`,
+         imported_at = excluded.imported_at,
+         attached_substream_id = excluded.attached_substream_id,
+         updated_at = excluded.updated_at`,
       input.sandboxGeneration,
       input.resourceId,
       input.destinationPath,
@@ -1564,6 +1616,7 @@ export class WorkstreamTerminalStorage {
       input.sizeBytes,
       input.state,
       input.importedAt,
+      input.attachedSubstreamId ?? null,
       input.now,
     );
   }

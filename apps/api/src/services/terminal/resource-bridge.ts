@@ -348,6 +348,14 @@ export function createTerminalResourceBridge(
    * and the import path stay addressed to the run's own conversation.
    */
   publicationWorkstreamId?: string | null,
+  /**
+   * The conversation this run executes in, when it is not the one whose
+   * object holds the sandbox: a background agent importing into its owner's
+   * sandbox. Recorded on each import so the revocation check reads the
+   * import's authorization from the conversation whose attachment gave it,
+   * which is this run's own, rather than from the sandbox's.
+   */
+  importingSubstreamId?: string | null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -538,6 +546,7 @@ export function createTerminalResourceBridge(
         sizeBytes: totalBytes,
         state: "planned",
         importedAt: null,
+        attachedSubstreamId: importingSubstreamId ?? null,
         now: plannedAt,
       });
     try {
@@ -715,6 +724,7 @@ export function createTerminalResourceBridge(
               sizeBytes: bytes.byteLength,
               state: "completed",
               importedAt: timestamp,
+              attachedSubstreamId: importingSubstreamId ?? null,
               now: timestamp,
             });
           return {
@@ -751,6 +761,7 @@ export function createTerminalResourceBridge(
           sizeBytes: bytes.byteLength,
           state: "planned",
           importedAt: null,
+          attachedSubstreamId: importingSubstreamId ?? null,
           now: plannedAt,
         });
       const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));

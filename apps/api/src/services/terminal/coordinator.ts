@@ -14,6 +14,7 @@ import type {
 import {
   TERMINAL_OPERATION_LEASE_MS,
   TERMINAL_YIELDED_RUN_STATUS_LIST,
+  type TerminalRepositoryRecord,
   type TerminalSandboxRecord,
 } from "../../durable-objects/workstream-terminal-storage";
 import type { Env } from "../../env";
@@ -101,8 +102,6 @@ export interface AcquiredTerminalSandbox {
   state: "running";
   authorityFingerprint: string;
   networkRevision: number;
-  /** Exclusive operation lease boundary; reacquire only after this instant. */
-  operationLeaseExpiresAt: number;
 }
 
 export interface TerminalSandboxMutationLease {
@@ -153,6 +152,29 @@ export async function terminalSandboxStableName(
     : `${workspaceId}:${workstreamId}:${substreamId}`;
   const stableHash = await sha256(identity);
   return `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+}
+
+/**
+ * Whether a row was reserved under a name that is not this conversation's.
+ *
+ * Before a sandbox belonged to a conversation, every conversation of a work
+ * stream derived the one name the main conversation still uses, so a side
+ * thread or background agent that used Terminal reserved its row under that
+ * name and was handed the main conversation's Daytona sandbox by the
+ * create-then-lookup fallback. Such a row names a sandbox this conversation
+ * does not own: readiness drops the row and reserves this conversation's own
+ * name, and the lifecycle sweep and the policy application, which now reach
+ * every conversation's row, refuse to stop, archive or delete through it.
+ * The main conversation's derivation is unchanged, so its rows never match.
+ */
+export async function isLegacyTerminalAliasRow(
+  row: { stableName: string | null },
+  workspaceId: string,
+  workstreamId: string,
+  substreamId: string,
+): Promise<boolean> {
+  if (substreamId === "0" || !row.stableName) return false;
+  return row.stableName !== await terminalSandboxStableName(workspaceId, workstreamId, substreamId);
 }
 
 function plusMinutes(now: Date, minutes: number): number {
@@ -242,7 +264,12 @@ export class TerminalSandboxCoordinator {
    * holder's run row is in the sandbox's own object and the storage can read
    * its liveness itself.
    */
-  private holderSubstreamId(): string | null {
+  /**
+   * The conversation this run executes in, when it is not the sandbox's own;
+   * what a lease claim and a task record carry so the owner's object can
+   * tell a holder it cannot see from one it can.
+   */
+  holderSubstreamId(): string | null {
     return this.scope.runSubstreamId === this.scope.authoritySubstreamId
       ? null
       : this.scope.runSubstreamId;
@@ -346,13 +373,24 @@ export class TerminalSandboxCoordinator {
   async peekRunning(context: HarnessToolContext): Promise<AcquiredTerminalSandbox | null> {
     if (this.emergencyDisabled || context.signal.aborted) return null;
     const terminal = this.terminal(context);
-    const [row, observation, repositoryAuthority] = await Promise.all([
+    const [row, observation, repository] = await Promise.all([
       terminal.sandbox(),
       terminal.providerObservation(),
-      this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
+      terminal.selectedRepository(),
     ]);
     if (!row?.sandboxId || row.lifecycleState !== "running") return null;
+    if (await isLegacyTerminalAliasRow(row, context.workspaceId, context.workstreamId, this.scope.authoritySubstreamId)) {
+      return null;
+    }
+    // Everything readiness checks before it hands a sandbox out is checked
+    // here too; a read is otherwise the one path that would run without it.
+    const repositoryAuthority = await this.loadRepositoryAuthority(context.workspaceId, context.workstreamId, repository);
     if (row.authorityFingerprint !== await this.authorityFingerprint(context, repositoryAuthority)) return null;
+    // A repository selected but not yet bootstrapped into this generation is
+    // some run's preparation still in flight, and a read of a half-made
+    // checkout is a read of the wrong files.
+    if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
+    if (await this.hasRevokedImportedResource(context, row)) return null;
     if (
       observation
       && observation.generation === row.generation
@@ -367,7 +405,6 @@ export class TerminalSandboxCoordinator {
       state: "running",
       authorityFingerprint: row.authorityFingerprint,
       networkRevision: row.appliedNetworkRevision,
-      operationLeaseExpiresAt: row.operationLeaseExpiresAt ?? this.clock.now().getTime(),
     };
   }
 
@@ -451,6 +488,9 @@ export class TerminalSandboxCoordinator {
     const authorityFingerprint = await this.authorityFingerprint(context, repositoryAuthority);
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.terminal(context).sandbox();
+    if (row && await isLegacyTerminalAliasRow(row, context.workspaceId, context.workstreamId, this.scope.authoritySubstreamId)) {
+      row = await this.retireLegacyAliasRow(context, row, now);
+    }
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, now);
     }
@@ -484,6 +524,22 @@ export class TerminalSandboxCoordinator {
       localFilesRetained = false;
     } else {
       const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
+      if (
+        (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked)
+        && this.scope.runSubstreamId !== this.scope.authoritySubstreamId
+      ) {
+        // The sandbox is another conversation's, and replacing it destroys
+        // that conversation's checkout. A background agent inherits its
+        // starter's principal, so its fingerprint matches its owner's unless
+        // the owner's own sandbox has gone stale; the owner's next call is
+        // what reprovisions it, and this run waits for that rather than
+        // doing it from underneath.
+        throw new TerminalToolError(
+          "sandbox_authority_mismatch",
+          "The sandbox this agent shares with the conversation that started it no longer matches that conversation's authority, or a resource imported into it was revoked. That conversation's next Terminal call reprovisions it.",
+          { reason: "Ask the conversation that started this agent to run a Terminal tool, then retry." },
+        );
+      }
       if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
         telemetryAction = "repository_replace";
         localFilesRetained = false;
@@ -543,7 +599,6 @@ export class TerminalSandboxCoordinator {
       state: "running",
       authorityFingerprint,
       networkRevision: policy.revision,
-      operationLeaseExpiresAt: row.operationLeaseExpiresAt ?? now,
     };
   }
 
@@ -792,8 +847,11 @@ export class TerminalSandboxCoordinator {
   private async loadRepositoryAuthority(
     workspaceId: string,
     workstreamId: string,
+    selected?: TerminalRepositoryRecord | null,
   ): Promise<RepositoryAuthorityRow | null> {
-    const repository = await this.terminalPort(workspaceId, workstreamId).selectedRepository();
+    const repository = selected === undefined
+      ? await this.terminalPort(workspaceId, workstreamId).selectedRepository()
+      : selected;
     if (!repository) return null;
     const connection = await this.env.DB.prepare(
       `SELECT id FROM connector_connections
@@ -816,20 +874,61 @@ export class TerminalSandboxCoordinator {
     if (links.some((candidate) => candidate.state !== "completed")) return true;
     // The attachment join used to ride along with the import rows. It cannot:
     // the imports are object-local and the relationship rows are not, so the
-    // link check is its own statement against its own authority.
-    const attached = await this.resourcePort(context.workspaceId, context.workstreamId)
-      .attachedLinks({ resourceIds: links.map((candidate) => candidate.resourceId) });
-    if (new Set(attached.map((link) => link.resource_id)).size !== links.length) {
-      return true;
+    // link check is its own statement against its own authority. Which
+    // authority is the import's own: an import was authorized by an
+    // attachment of the conversation whose run made it, the sandbox's own
+    // unless the row names another, and stays authorized while that
+    // attachment stands. Asking the acquiring run's conversation instead
+    // would read a background agent's imports against its owner's
+    // attachments, and the owner's against the agent's, and revoke both.
+    const byConversation = new Map<string, Set<string>>();
+    for (const link of links) {
+      const substreamId = link.attachedSubstreamId ?? this.scope.authoritySubstreamId;
+      const resourceIds = byConversation.get(substreamId) ?? new Set<string>();
+      resourceIds.add(link.resourceId);
+      byConversation.set(substreamId, resourceIds);
     }
-    const placeholders = links.map(() => "?").join(", ");
+    for (const [substreamId, resourceIds] of byConversation) {
+      const attached = new Set((await this.resourcePort(context.workspaceId, context.workstreamId, substreamId)
+        .attachedLinks({ resourceIds: [...resourceIds] })).map((link) => link.resource_id));
+      for (const resourceId of resourceIds) {
+        if (!attached.has(resourceId)) return true;
+      }
+    }
+    const resourceIds = [...new Set(links.map((candidate) => candidate.resourceId))];
+    const placeholders = resourceIds.map(() => "?").join(", ");
     const resources = await this.env.DB.prepare(
       `SELECT id, provider FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
-    ).bind(context.workspaceId, ...links.map((candidate) => candidate.resourceId))
+    ).bind(context.workspaceId, ...resourceIds)
       .all<{ id: string; provider: string }>();
-    if (resources.results.length !== links.length) return true;
+    if (resources.results.length !== resourceIds.length) return true;
     return resources.results.some((candidate) => candidate.provider === "avalon_note");
+  }
+
+  /**
+   * Forget a row reserved under another conversation's name; see
+   * `isLegacyTerminalAliasRow`. Nothing here stops, archives or deletes the
+   * sandbox the row names, because it is the main conversation's: the row
+   * alone is dropped, with the imports and bootstrap mark that belonged to
+   * it, and the caller reserves this conversation's own name as if the row
+   * had never existed.
+   */
+  private async retireLegacyAliasRow(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<null> {
+    await this.terminal(context).resetSandbox({ generation: row.generation, now });
+    logStructuredEvent(this.env, "info", "terminal_legacy_alias_row_retired", {
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      substream_id: this.scope.runSubstreamId,
+      terminal_substream_id: this.scope.authoritySubstreamId,
+      harness_run_id: context.harnessRunId,
+      sandbox_generation: row.generation,
+    });
+    return null;
   }
 
   private async reserveFirstGeneration(

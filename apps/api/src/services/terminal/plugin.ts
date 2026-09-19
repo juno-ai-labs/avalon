@@ -7,7 +7,7 @@ import { asWorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
-import { logStructuredEvent } from "../../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../../observability/logger";
 import { recordTerminalPlatformObservation } from "../../observability/terminal-platform-observability";
 import {
   createTerminalPlugin,
@@ -17,7 +17,7 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
-import { resolveTerminalRunScope, workspaceAgentOwnerLookup } from "./authority";
+import { resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { createResourcePortFactory } from "../../runtime/resource-port";
@@ -83,7 +83,24 @@ export async function createAvalonTerminalPlugin(
   // spawns work in its files under its lease. Decided once, here, and bound
   // into the factory so nothing below needs to know a run's Terminal address
   // can differ from its own.
-  const scope = await resolveTerminalRunScope(input, workspaceAgentOwnerLookup(env, input.workspaceId));
+  let scope: TerminalRunScope;
+  try {
+    scope = await resolveTerminalRunScope(input, workspaceAgentOwnerLookup(env, input.workspaceId));
+  } catch (error) {
+    // Terminal is what an unresolved authority takes away, not the run: the
+    // run keeps every other tool, and the refusal is logged with its reason.
+    // A throw here would have failed the whole tool inventory as an unnamed
+    // error. The two refusals in `authority.ts` and a WorkspaceDO hop that
+    // fails on the way all land here.
+    logStructuredEvent(env, "warn", "terminal_authority_unresolved", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.parentId,
+      substream_id: input.substreamId ?? "0",
+      harness_run_id: input.harnessRunId,
+      reason: diagnosticErrorCode(error, "terminal_authority_unresolved"),
+    });
+    return null;
+  }
   // No in-object variant to choose between: the owning object installs its
   // Terminal executor on the environment a run is handed, so this factory is
   // local inside that object when the object is the authority conversation,
@@ -238,7 +255,16 @@ export async function createAvalonTerminalPlugin(
     terminalPort,
     coordinator,
     provider,
-    createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher, options.publicationWorkstreamId ?? null),
+    createTerminalResourceBridge(
+      env,
+      terminalPort,
+      inObjectResourceAttacher,
+      options.publicationWorkstreamId ?? null,
+      // A background agent imports what its own conversation has attached into
+      // its owner's sandbox; the import records that conversation so the
+      // revocation check asks it, not the owner's.
+      scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
+    ),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
     createTerminalRepositorySelector(
       env,
