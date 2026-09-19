@@ -2046,7 +2046,7 @@ export class WorkspaceSpaceStorage {
    * no receipt, so counting receipts against the directory would leave an
    * Organization permanently one short of complete.
    */
-  unplacedChannelExists(): boolean {
+  private unplacedChannelExists(): boolean {
     if (!this.ready()) return false;
     return this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS one FROM workspace_workstream_directory directory
@@ -2227,7 +2227,7 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  waterline(): number {
+  private waterline(): number {
     if (!this.ready()) return 0;
     return this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
       "SELECT waterline FROM workspace_space_state WHERE id = 1",
