@@ -42,7 +42,7 @@ import { ApiError } from "../lib/api-error";
 import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { ChannelAccessService } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
 import {
@@ -107,6 +107,11 @@ export function spaceRefusal(
     case "space_conversation_unreachable":
       return new ApiError(409, code,
         `A Channel in ${subject} could not be asked whether this audience may read it`);
+    case "space_authority_unreachable":
+      // 503 rather than 500: nothing about the request is wrong, the Space's
+      // own authority did not answer, and retrying is the whole of what the
+      // caller can do about it.
+      return new ApiError(503, code, `${subject} could not be reached; try again`);
   }
 }
 
@@ -241,8 +246,10 @@ export class SpaceService {
   async updatePresentation(spaceId: SpaceId, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
     const current = await this.summary(spaceId);
     const client = this.spaceConversation(spaceId);
-    await client.update({ title: input.name });
-    await client.setAppearance({ icon: input.iconKey, color: input.colorKey });
+    await this.throughSpaceAuthority(spaceId, current.name, "presentation", async () => {
+      await client.update({ title: input.name });
+      await client.setAppearance({ icon: input.iconKey, color: input.colorKey });
+    });
     return this.settled(await (await this.workspace()).noteSpacePresentation({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
@@ -292,11 +299,13 @@ export class SpaceService {
     }), current.name);
 
     const spaceClient = this.spaceConversation(spaceId);
-    if (input.scope !== current.scope) await spaceClient.update({ scope: input.scope });
-    for (const userId of requested) {
-      if (!currentParticipants.has(userId)) await spaceClient.addParticipant(userId);
-    }
-    for (const userId of removed) await spaceClient.removeParticipant(userId);
+    await this.throughSpaceAuthority(spaceId, current.name, "audience", async () => {
+      if (input.scope !== current.scope) await spaceClient.update({ scope: input.scope });
+      for (const userId of requested) {
+        if (!currentParticipants.has(userId)) await spaceClient.addParticipant(userId);
+      }
+      for (const userId of removed) await spaceClient.removeParticipant(userId);
+    });
 
     const access = new ChannelAccessService(this.env, this.auth);
     const walk = await this.walkMembers({
@@ -513,16 +522,18 @@ export class SpaceService {
     if (kind === "resource") {
       await new ResourceService(this.env, this.auth).get(targetId);
       await this.assertResourceAudience(space, targetId);
-      await this.spaceConversation(spaceId).attachResource(targetId);
+      await this.throughSpaceAuthority(spaceId, space.name, "attach_default_resource", () =>
+        this.spaceConversation(spaceId).attachResource(targetId));
     } else {
       await this.assertSidekickScope(targetId);
-      await (await this.spaceParent(spaceId)).setSidekickRecommendation({
-        workspaceId: this.auth.workspaceId,
-        parentId: spaceId,
-        userId: this.auth.userId,
-        sidekickId: targetId,
-        attached: true,
-      });
+      await this.throughSpaceAuthority(spaceId, space.name, "attach_default_sidekick", async () =>
+        (await this.spaceParent(spaceId)).setSidekickRecommendation({
+          workspaceId: this.auth.workspaceId,
+          parentId: spaceId,
+          userId: this.auth.userId,
+          sidekickId: targetId,
+          attached: true,
+        }));
     }
     const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -548,13 +559,14 @@ export class SpaceService {
   async removeDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     const space = await this.summary(spaceId);
     if (kind === "sidekick") {
-      await (await this.spaceParent(spaceId)).setSidekickRecommendation({
-        workspaceId: this.auth.workspaceId,
-        parentId: spaceId,
-        userId: this.auth.userId,
-        sidekickId: targetId,
-        attached: false,
-      });
+      await this.throughSpaceAuthority(spaceId, space.name, "detach_default_sidekick", async () =>
+        (await this.spaceParent(spaceId)).setSidekickRecommendation({
+          workspaceId: this.auth.workspaceId,
+          parentId: spaceId,
+          userId: this.auth.userId,
+          sidekickId: targetId,
+          attached: false,
+        }));
     } else {
       await this.spaceConversation(spaceId).detachResource(targetId).catch(() => undefined);
     }
@@ -873,11 +885,11 @@ export class SpaceService {
         // `SpaceBootstrapService.admit` has always taken; treating `null` as
         // consent let a Channel nobody could ask be widened on the strength of
         // a non-answer.
-        const contains = await (await this.conversationStub(workstreamId)).previewAudienceContainment({
-          workspaceId: asWorkspaceId(this.auth.workspaceId),
-          workstreamId,
-          audience: proposed,
-        });
+        // A throw is the same answer as a `null` and gets the same name: the
+        // question was never asked. Reported rather than propagated raw,
+        // because a rejection that crosses the RPC hop has no code on it and
+        // reached the route as `internal_error`.
+        const contains = await this.askContainment(workstreamId, proposed);
         if (contains !== true) {
           throw spaceRefusal(
             contains === false ? "space_membership_content_fence" : "space_conversation_unreachable",
@@ -887,6 +899,26 @@ export class SpaceService {
       }
       cursor = page.nextCursor;
     } while (cursor !== null);
+  }
+
+  private async askContainment(
+    workstreamId: WorkstreamId,
+    audience: { scope: "workspace" } | { scope: "personal"; userIds: string[] },
+  ): Promise<boolean | null> {
+    try {
+      return await (await this.conversationStub(workstreamId)).previewAudienceContainment({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        workstreamId,
+        audience,
+      });
+    } catch (error) {
+      logWarn(this.env, "space_conversation_unreachable", {
+        workspace_id: this.auth.workspaceId,
+        workstream_id: workstreamId,
+        reason: diagnosticErrorCode(error, "space_conversation_unreachable"),
+      });
+      return null;
+    }
   }
 
   private async assertResourceAudience(space: SpaceSummary, resourceId: string): Promise<void> {
@@ -935,7 +967,15 @@ export class SpaceService {
     }
   }
 
-  private async provisionSpaceObject(spaceId: SpaceId, input: CreateSpaceRequest): Promise<void> {
+  private provisionSpaceObject(spaceId: SpaceId, input: CreateSpaceRequest): Promise<void> {
+    // Named like every other reach into this object: a provision that fails is
+    // the Space's authority not opening, and the caller cancels the
+    // reservation and answers a person either way.
+    return this.throughSpaceAuthority(spaceId, input.name, "provision", () =>
+      this.openSpaceObject(spaceId, input));
+  }
+
+  private async openSpaceObject(spaceId: SpaceId, input: CreateSpaceRequest): Promise<void> {
     const now = Date.now();
     await bootstrapWorkstreamRuntimeEnvironment(this.env, this.auth.workspaceId, spaceId, "space");
     const authority = await readWorkstreamAuthorityControl(this.env);
@@ -1011,6 +1051,51 @@ export class SpaceService {
    */
   private spaceConversation(spaceId: SpaceId): WorkstreamObjectClient {
     return WorkstreamObjectClient.forSpace(this.env, this.auth, spaceId);
+  }
+
+  /**
+   * One piece of work against the Space's *own* authority, with its failure
+   * named.
+   *
+   * The Space's hidden conversation and the `SpaceDO` above it are reached over
+   * Durable Object RPC, and a rejection that is not the object's own refusal
+   * crosses that hop as a bare `Error` with no code on it. Every one of those
+   * arrived at the route as `internal_error` — the same word the Worker uses
+   * for every unhandled failure it has — so a Space whose authority could not
+   * answer was indistinguishable in a log from a bug in the route beside it.
+   * A Space's conversation that could not be rebuilt from storage cost a
+   * separate diagnosis for each of the five operations that address it.
+   *
+   * An `ApiError` passes through untouched: it already carries the code the
+   * object chose, and re-naming it here would replace a particular refusal —
+   * `space_protected`, a content fence, a revoked session — with a generic one.
+   * The reason itself is not widened to the caller; it goes to the log as a
+   * diagnostic code, which is where an operator reads it.
+   */
+  private async throughSpaceAuthority<T>(
+    spaceId: SpaceId,
+    spaceName: string,
+    operation: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      // A refusal the object chose keeps its own code: `space_protected`, a
+      // content fence, a revoked session, a parent-kind mismatch. A 500 is the
+      // object saying it does not know what went wrong, and a rejection that
+      // crossed the RPC hop is not an `ApiError` at all — both are this Space's
+      // authority failing to answer, and both used to reach a person as
+      // `internal_error`.
+      if (error instanceof ApiError && error.status !== 500) throw error;
+      logWarn(this.env, "space_authority_unreachable", {
+        workspace_id: this.auth.workspaceId,
+        space_id: spaceId,
+        operation,
+        reason: diagnosticErrorCode(error, "space_authority_unreachable"),
+      });
+      throw spaceRefusal("space_authority_unreachable", spaceName);
+    }
   }
 
   private conversationStub(workstreamId: string) {
