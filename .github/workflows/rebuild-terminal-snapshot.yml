@@ -121,18 +121,21 @@ jobs:
       # A verified snapshot nobody adopts is the failure mode this workflow is
       # most likely to have: the job goes green every Monday, the rebuild sits
       # unused, and production keeps running an image that ages anyway. A step
-      # summary would not be read. A pull request lands in the review queue the
-      # team already works, so adoption is one merge and a rollback is one
-      # revert — while still keeping a human between a rebuilt image and every
-      # new work-stream sandbox.
+      # summary would not be read. A labelled pull request is still the
+      # adoption record — revertible as a unit, findable as a series, and the
+      # change `deploy-api.yml` ships on merge — but leaving it in the review
+      # queue for a human recreated that unused-rebuild failure. Auto-merge
+      # lands it the way every other merge does.
       # A pull request opened with `GITHUB_TOKEN` starts no workflows, so it
-      # would get no CI — and it is the one automated change to both regions'
-      # production config, which `deploy-api.yml` ships on merge. A fine-grained
-      # token with contents and pull-requests write on this repository, stored
-      # as `TERMINAL_SNAPSHOT_PR_TOKEN` in the `api-production` environment,
-      # makes the opened pull request run CI like any other. Without it the job
-      # still opens the pull request and says so in the step summary.
-      - name: Open the adoption pull request
+      # would get no CI, and a merge performed with `GITHUB_TOKEN` would not
+      # trigger the push-to-main deploy either. A fine-grained token with
+      # contents and pull-requests write on this repository, stored as
+      # `TERMINAL_SNAPSHOT_PR_TOKEN` in the `api-production` environment, makes
+      # the opened pull request run CI and lets the merge start deploy-api.yml.
+      # Without it the job still opens the pull request and says so in the step
+      # summary, leaving a human as the fallback rather than silently skipping
+      # the deploy.
+      - name: Open and land the adoption pull request
         env:
           GH_TOKEN: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
           PR_TOKEN_CONFIGURED: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN != '' }}
@@ -152,7 +155,7 @@ jobs:
             fi
           done
           if git diff --quiet -- apps/api/wrangler.global.jsonc; then
-            echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
+            echo "Production already runs \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -173,29 +176,38 @@ jobs:
             --description "Weekly Terminal sandbox image rebuild, verified against the provider" \
             || true
 
-          gh pr create \
+          # --body-file - keeps the body off the argument list and leaves stdout
+          # as the pull-request URL, so auto-merge below can target it. Nested
+          # `"$(cat <<BODY)"` inside a quoted `pr_url="$(gh pr create …)"` would
+          # close the quotes at `--title`.
+          pr_url=$(gh pr create \
             --title "Daytona Snapshot Upgrade — $SNAPSHOT" \
             --label daytona-snapshot-upgrade \
-            --body "$(cat <<BODY
+            --body-file - <<BODY
           This week's Terminal sandbox image, rebuilt against Daytona's current
           managed base and verified with \`terminal:verify-provider\` before this
-          pull request was opened.
+          pull request was opened. Auto-merge lands it on main; no human is
+          waiting on the queue.
 
           **Why this exists.** Rally owns its Terminal snapshot, so Daytona's OS
           and system-package fixes no longer reach us on their own, and nothing
           detects that drift — the snapshot manifest fails closed on a capability
-          that is missing or broken, not on one that is merely stale. Merging
+          that is missing or broken, not on one that is merely stale. Landing
           weekly is what bounds how far behind the image can get.
 
-          **What merging does.** Points both regions at \`$SNAPSHOT\`. It applies
+          **What landing does.** Points production at \`$SNAPSHOT\`. It applies
           only when a sandbox is created, so existing sandboxes are unaffected
           and a rollback is reverting this commit.
-
-          **If you do not merge it**, production keeps running the previous
-          image. Nothing breaks today; the gap to Daytona's base just widens.
           BODY
-          )"
-          echo "Opened the adoption pull request for \`$SNAPSHOT\`." >> "$GITHUB_STEP_SUMMARY"
+          )
+          echo "Opened the adoption pull request for \`$SNAPSHOT\`: $pr_url" >> "$GITHUB_STEP_SUMMARY"
           if [ "$PR_TOKEN_CONFIGURED" != "true" ]; then
-            echo "It was opened with GITHUB_TOKEN, so CI did not start on it: push an empty commit or close and reopen it to run the checks. Set TERMINAL_SNAPSHOT_PR_TOKEN in the api-production environment to avoid this." >> "$GITHUB_STEP_SUMMARY"
+            echo "It was opened with GITHUB_TOKEN, so CI did not start on it and auto-merge would not trigger deploy: merge it from the GitHub UI, or set TERMINAL_SNAPSHOT_PR_TOKEN in the api-production environment." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          # --auto waits for required checks if the repository later adds them;
+          # with none configured it lands as soon as the pull request is
+          # mergeable. --merge matches the repository's merge-commit rule.
+          # Only with the PAT: a GITHUB_TOKEN merge would not start deploy-api.yml.
+          gh pr merge --auto --merge "$pr_url"
+          echo "Enabled auto-merge so \`$SNAPSHOT\` lands on main without a human." >> "$GITHUB_STEP_SUMMARY"

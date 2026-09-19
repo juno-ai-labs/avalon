@@ -184,8 +184,9 @@ only through a rebuild and its adoption pull request. The image has an escape
 hatch for a one-off build, the `TERMINAL_SNAPSHOT_BASE_IMAGE` variable; the size
 has none, so changing it is a commit. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
 and pull-requests write on this repository, so the adoption pull request it
-opens runs CI; without it GitHub starts no workflows for that pull request and
-the step summary says so. The two probe endpoints are Rally's own on
+opens runs CI and auto-merges onto main; without it GitHub starts no workflows
+for that pull request (a `GITHUB_TOKEN` merge would also not start
+`deploy-api.yml`), auto-merge is skipped, and the step summary says so. The two probe endpoints are Rally's own on
 `rallywith.ai` (`probe-redirect`, a proxied record with a redirect rule to
 `https://example.org/`; `probe-private`, an unproxied A record to `10.0.0.1`).
 
