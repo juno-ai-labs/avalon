@@ -93,9 +93,11 @@ export interface TerminalSandboxWaitOptions {
    * outrun the deadline by however long those took. Whoever spends it
    * subtracts `Date.now()` at the point of use.
    *
-   * Omitted leaves the Daytona SDK's own default in place, which is what the
-   * lifecycle alarm and repository checkout want: they are bounded by their
-   * own budgets, not by a tool deadline.
+   * Omitted leaves the Daytona SDK's own default in place. Only the lifecycle
+   * alarm does that now, and not because it lacks a deadline — it is simply
+   * not a restore path: it never starts an archived sandbox, so it cannot
+   * reach the restore measurement this deadline exists to keep readable. Every
+   * caller that *can* start an archived sandbox passes one.
    */
   deadlineAtMs?: number;
 }

@@ -35,6 +35,7 @@ import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
   deleteTerminalSandbox,
+  observeTerminalSandbox,
   stopTerminalSandbox,
   isTerminalSandboxLost,
   assertTerminalSandboxReady,
@@ -624,7 +625,26 @@ export class TerminalSandboxCoordinator {
     }
     if (created.state !== "running") {
       if (created.state === "stopped" || created.state === "archived") {
-        await this.provider.startSandbox(created.id, waitBudget);
+        try {
+          await this.provider.startSandbox(created.id, waitBudget);
+        } catch {
+          // The same reasoning `resumeProviderSandbox` documents, and this
+          // call site now needs it for the same reason: the wait is bounded by
+          // the caller's deadline rather than a fixed minute, so running out
+          // of it is an ordinary outcome rather than a provider fault. A raw
+          // Daytona error escaping here would reach the model as an
+          // unclassified tool failure instead of a retryable
+          // `sandbox_unavailable` with guidance.
+          //
+          // The generation is deliberately not failed. The sandbox exists and
+          // is most likely still starting, and it is reachable by its stable
+          // name — the ambiguous-create reconcile above adopts it on the next
+          // attempt. Failing the generation here would discard a live sandbox
+          // over a wait that merely ran out.
+          const settled = await observeTerminalSandbox(this.provider, created.id)
+            .catch(() => undefined);
+          if (settled?.state !== "running") throw providerStateError(settled?.state ?? "unknown");
+        }
       } else {
         throw providerStateError(created.state);
       }

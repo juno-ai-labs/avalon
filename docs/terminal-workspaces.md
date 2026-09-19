@@ -936,6 +936,13 @@ computed in the coordinator, which the RPC session handshake and the adapter's
 sandbox lookup then spent without deducting, so a 120s budget could authorize a
 wait ending at 140s. Rounding is down for the same reason.
 
+Review also caught the created-sandbox start having no re-observation
+fallback. `resumeProviderSandbox` had one from the start; the create path did
+not, and a bounded wait is what made that reachable — a wait running out there
+would have escaped as an unclassified provider error rather than a retryable
+`sandbox_unavailable`. **A bounded wait obliges the caller to re-observe**, so
+any future call site that passes a deadline owes that catch too.
+
 Review also caught the draft budgeting `acquire` alone while claiming the
 measurement was fixed. It was not: repository checkout restores outside
 `acquire`, kept the SDK default implicitly, and fed censored samples into the
