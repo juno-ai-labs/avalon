@@ -168,6 +168,60 @@ describe('applyVersionedWorkstreamState', () => {
     });
   });
 
+  it('takes a placement pushed at the waterline the row already had', () => {
+    const queryClient = new QueryClient();
+    const seed = summary({ title: 'Investigate ENG-142', spaceIds: ['general'] });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: seed,
+      viewer: seed,
+      seed,
+      visible: true,
+    });
+
+    // Adding an Organization-wide Channel to a second Organization-wide Space
+    // changes nothing the Channel's own authority projects, so WorkspaceDO
+    // republishes this row at the waterline it already had. Dropping it as a
+    // duplicate left the Channel under one Space for the session, and the
+    // local cache then carried that row through a reload.
+    const result = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Investigate ENG-142', spaceIds: ['general', 'customer-launch'] },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(result.commonApplied).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['general', 'customer-launch']);
+  });
+
+  it('refuses a placement from a superseded authority generation', () => {
+    const queryClient = new QueryClient();
+    const seed = summary({ spaceIds: ['general'] });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5, 2),
+      common: seed,
+      viewer: seed,
+      seed,
+      visible: true,
+    });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(9, 9, 1),
+      common: { spaceIds: ['general', 'older-epoch'] },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['general']);
+  });
+
   it('does not invent a pile from an empty directory preview at a pinned waterline', () => {
     const queryClient = new QueryClient();
     const empty = summary({ title: 'Public room', scope: 'workspace' });
