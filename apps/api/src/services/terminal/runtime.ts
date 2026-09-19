@@ -19,6 +19,7 @@ import type {
   TerminalWriteFileOptions,
 } from "./tools";
 import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import { TERMINAL_PYDANTIC_REQUIREMENT, TERMINAL_SNAPSHOT_PYLIB } from "./snapshot-manifest";
 import { APPLY_PATCH_SCRIPT, parsePatch } from "./patch-format";
 import {
   assertKindTransitionAllowed,
@@ -207,9 +208,12 @@ function containmentCommands(): string[] {
  * exist yet, because the applier opens it for writing without looking and
  * would report success over a truncated file; `git apply` refuses the same
  * collision in a unified diff. The applier's one dependency, `pydantic`, is
- * imported from a Rally-owned directory and installed there from PyPI only
- * when that import fails, so the system site is untouched and a sandbox pays
- * the install once.
+ * baked into the Rally-owned snapshot; a sandbox whose snapshot predates that
+ * installs the same pin from PyPI into its own `.rally/pylib`, staged and
+ * moved into place so a killed install never leaves a half-populated
+ * directory that imports and then fails. The applier's stderr joins stdout,
+ * because the provider has no stderr channel and a crash's last line is the
+ * reason the model needs.
  */
 function openAiApplyCommand(
   script: string,
@@ -225,8 +229,13 @@ function openAiApplyCommand(
       `if [ -e "$target" ] || [ -L "$target" ]; then printf '%s\\n' ${shellQuote(path)}; exit ${PATCH_DESTINATION_EXISTS_EXIT_CODE}; fi`,
     ]),
     `lib=${shellQuote(lib)}`,
-    `PYTHONPATH="$lib" python3 -c 'import pydantic' 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$lib" pydantic >/dev/null 2>&1 || exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}`,
-    `PYTHONUTF8=1 PYTHONPATH="$lib" python3 ${shellQuote(script)} < ${shellQuote(patch)}`,
+    `pythonpath=${shellQuote(TERMINAL_SNAPSHOT_PYLIB)}:"$lib"`,
+    `if ! PYTHONPATH="$pythonpath" python3 -c 'import pydantic' >/dev/null 2>&1; then`,
+    `  staging="$lib.staging"; log="$lib.log"; rm -rf -- "$staging" "$log"`,
+    `  if ! python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$staging" ${shellQuote(TERMINAL_PYDANTIC_REQUIREMENT)} >"$log" 2>&1; then tail -n 1 -- "$log"; rm -rf -- "$staging" "$log"; exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}; fi`,
+    `  rm -rf -- "$lib" "$log" && mv -T -- "$staging" "$lib" || exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}`,
+    `fi`,
+    `PYTHONUTF8=1 PYTHONWARNINGS=ignore PYTHONPATH="$pythonpath" python3 ${shellQuote(script)} < ${shellQuote(patch)} 2>&1`,
   ].join("\n");
 }
 
@@ -851,10 +860,19 @@ export function createDaytonaTerminalRuntime(
       }
       if (script) {
         if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
-        if (result.exitCode === PATCH_TOOLING_UNAVAILABLE_EXIT_CODE) {
+        if (result.timedOut) {
           throw new TerminalToolError(
             "patch_tooling_unavailable",
-            "The *** Begin Patch applier needs the pydantic package and the sandbox could not import or install it. Send the same change as a unified diff, or retry later.",
+            "The *** Begin Patch applier did not finish in time. The first such call in a sandbox may install pydantic, which can take that long; retry the same patch once.",
+            { reason: "Retry the same patch; a pydantic install is paid once per sandbox." },
+          );
+        }
+        if (result.exitCode === PATCH_TOOLING_UNAVAILABLE_EXIT_CODE) {
+          // The install step prints pip's last line before it exits.
+          const detail = sanitizeTerminalOutput(result.stdout.trim().split("\n").at(-1) ?? "").slice(0, 160);
+          throw new TerminalToolError(
+            "patch_tooling_unavailable",
+            `The *** Begin Patch applier needs the pydantic package and the sandbox could not import or install it${detail ? ` (${detail})` : ""}. Send the same change as a unified diff, or retry later.`,
             { reason: "Install pydantic in the sandbox, or send a unified diff." },
           );
         }
@@ -869,15 +887,16 @@ export function createDaytonaTerminalRuntime(
             { reason: "The patch would create a file that already exists; nothing was applied." },
           );
         }
-        // The reference applier prints `Done!` on success, prints a rejected
-        // patch's reason on stdout, and exits 0 either way; the last line of
-        // stdout is the only signal, and the first line of a reason is its
-        // classification (the rest is patch content).
+        // On success the reference applier's whole output is `Done!`, its
+        // last statement, and nothing else in the command prints. A rejected
+        // patch's classification comes first, at exit 0, followed by the
+        // patch's own context lines, which is why the last line alone would
+        // be forgeable by a file that ends in `Done!`. A crash is a traceback
+        // at exit 1 whose last line names the exception.
         const printed = result.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-        if (result.exitCode !== 0 || printed.at(-1) !== "Done!") {
-          const reason = sanitizeTerminalOutput(
-            printed.find((line) => line !== "Done!") ?? result.stderr.trim().split("\n")[0] ?? "the applier gave no reason",
-          ).slice(0, 120).replace(/[\s:]+$/u, "");
+        if (result.exitCode !== 0 || printed.length !== 1 || printed[0] !== "Done!") {
+          const line = result.exitCode === 0 ? printed[0] : printed.at(-1);
+          const reason = sanitizeTerminalOutput(line || "the applier printed nothing").slice(0, 120).replace(/[\s:]+$/u, "");
           throw new TerminalToolError(
             "patch_does_not_apply",
             `The patch could not be applied: ${reason}. Re-read the affected files, regenerate the patch from their current contents, and retry.`,

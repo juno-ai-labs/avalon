@@ -20,6 +20,13 @@ import { createAutomation } from "./automation-service";
  * waiting, and the host says so (see `notifySilentCompletion`).
  */
 export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as const;
+/**
+ * The tools whose completed use means a run handed work or findings to
+ * another agent, so its owner is not told it finished without replying: a
+ * message, or a delegation the run then ends its turn to wait on, which is
+ * what the guidance tells it to do.
+ */
+export const AGENT_HANDOFF_TOOL_NAMES = [...AGENT_MESSAGE_TOOL_NAMES, "start_agent"] as const;
 
 /**
  * What a delegating or messaging result tells the model about what happens
