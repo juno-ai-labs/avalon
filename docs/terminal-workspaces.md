@@ -15,6 +15,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-work-stream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
+| `apps/api/src/services/terminal/patch-format.ts`, `vendor/apply_patch.py` | The two patch texts `apply_patch` reads: the unified-diff and `*** Begin Patch` parsers that validate paths and shape the result, and OpenAI's reference applier for the second, vendored unmodified (MIT; provenance in `vendor/README.md`) and written into the sandbox beside a patch that needs it. |
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
 | `apps/api/src/services/terminal/instruction-files.ts`, `instructions.ts` | Discovery of a checkout's own `AGENTS.md` files: the candidate chain, the probe a sandbox command carries, and the glue that records what it found in the context-residency ledger ([`resident-context.md`](resident-context.md)). |
 | `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared work-stream branch, optional typed publisher, and work-stream state API. |
@@ -79,6 +80,30 @@ Model-facing revisions are also absent. Exact-match edits and context-bearing
 patches provide useful drift detection without forcing a medium model to manage
 content versions, while the coordinator keeps exclusive mutation locking and
 internal hashes.
+
+`apply_patch` reads two formats, and the first non-blank line decides. A
+unified diff is applied by `git apply` after a dry run. A patch that opens
+with `*** Begin Patch` is the format OpenAI's models emit for a tool of this
+name: `*** Add File:`, `*** Update File:` (optionally followed by
+`*** Move to:`) and `*** Delete File:` sections whose hunks carry no line
+numbers and are placed by their context lines, with whitespace tolerance. That
+one is applied by OpenAI's reference implementation, vendored unmodified under
+`services/terminal/vendor/` and written into the sandbox beside the patch for
+that call. Every path the patch names passes the rules every `filePath` gets
+before any provider I/O, and is contained in its own right before the applier
+runs, because the applier follows symlinks. A path an `*** Add File:` or
+`*** Move to:` section would create is refused if it already exists, because
+the applier would truncate it and report success; `git apply` refuses the same
+collision in a unified diff. The applier needs `pydantic`, pinned as
+`TERMINAL_PYDANTIC_REQUIREMENT` in `snapshot-manifest.ts` and baked into the
+Rally-owned snapshot under `/opt/rally/pylib` by the same bootstrap that
+installs `pnpm` and `tsx`. A sandbox whose snapshot predates that installs the
+same pin from PyPI, which the trusted-only baseline permits, into
+`/workspace/.rally/pylib`, staged and moved into place so a killed install never
+leaves a directory that imports and then fails; a sandbox that cannot refuses
+with `patch_tooling_unavailable` carrying pip's last line. On success the
+applier's whole output is `Done!`; anything else, a non-zero exit, or a timeout
+is reported with the applier's own line rather than a blank.
 
 Participant-authored `run_command` calls are non-interactive foreground Bash.
 The provider runs each such command in a named process session under GNU
@@ -384,17 +409,26 @@ personless; it is not duplicated into these product events.
   instruction-file probe is not a tool: it rides the command a tool already
   runs, looks only at the ancestors of the path that tool addressed, and the
   model neither calls it nor sees its raw output.
-- **The probe never decides a tool's outcome, and a mutation waits for the
-  instructions that govern it.** The fragment runs in an isolated subshell and
-  only exit 52 escapes, in abort mode before a mutation, as the recoverable
-  `instructions_pending` refusal (or `instructions_unavailable` when the ledger
-  could not record what the probe found, after which the probe stops gating
-  for the rest of the run); every other probe failure leaves the tool's
-  or the bootstrap's own exit code alone. Each candidate is checked in its own
+- **The probe never decides a tool's outcome, and no mutation waits for it.**
+  The fragment rides the two reads only, the `read_file` page read and the
+  read an `edit_file` starts with, runs in an isolated subshell whose status
+  never escapes, and reports what it found; the instructions arrive with that
+  batch, and a write, a patch, a command or an import is never refused for an
+  instruction file it has not seen (the gate that did so was removed on
+  2026-09-19; the changelog records why). Every probe failure leaves the
+  tool's or the bootstrap's own exit code alone. Each candidate is checked in its own
   right for symlink and root containment before it is read, because a
   repository controls what `AGENTS.md` points at. The trailer the probe prints
   starts with a marker minted for that invocation, so output the repository
   controls cannot end a tool's result early or pass itself off as the probe's.
+- **Every path a `*** Begin Patch` names is contained by `realpath -m`, and
+  every path it would create is absent, in the same sandbox command and before
+  the vendored applier runs.** The applier follows symlinks and opens a new
+  file for writing without looking, and `git apply` is not there to refuse
+  either; the runtime test executes that preflight in a real shell.
+- **`vendor/apply_patch.py` is never edited.** A test pins its SHA-256, so a
+  behavior Rally needs goes in the wrapper around it, and a re-vendoring
+  updates the hash and the README's provenance together.
 
 ## Boundary
 
@@ -451,12 +485,12 @@ network proxy, or a general GitHub administration surface.
   lifecycle, and policy failures remain durable and retryable; policy read-back
   mismatch leaves verification failed rather than claiming the new policy.
 - Files are UTF-8 regular files and at most 10 MiB. Reads return at most 1,000
-  lines and 256 KiB. A patch is at most 2 MiB and 100 files.
+  lines and 256 KiB. A patch is at most 2 MiB and 100 files, in either format.
 - An instruction file's delivered content and a kind's prompt section are
   bounded by two limits that are open placeholders until the team sets them;
   [`resident-context.md`](resident-context.md#failure-modes-and-limits) owns
-  them. `run_command` and `import_resource` pay one probe command before the
-  mutation; every other tool's probe rides its own command.
+  them. The probe rides the two read commands only; no mutation carries one
+  or pays a probe command of its own.
 - A command is at most 32 KiB, defaults to 120 seconds, and is capped at 900
   seconds. Inline stdout and stderr are each head/tail bounded to 128 KiB; the
   complete generated log is capped at 5 MB and then the command reports
@@ -764,8 +798,7 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`,
-`instructions.probe`, one
+`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`, one
 of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
@@ -815,6 +848,84 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — A mutation no longer waits for its instructions, and `apply_patch` takes the model's own format
+
+**What changed:** Two things, from one analysis of a production run.
+
+`apply_patch` accepts the `*** Begin Patch` format beside a unified diff. The
+first non-blank line decides; `patch-format.ts` holds both parsers, and the
+envelope is applied by OpenAI's reference `apply_patch.py`, vendored byte for
+byte under `vendor/` (MIT, provenance and hash in its README, the hash pinned
+by a test) and written into the sandbox beside the patch. Both parsers hold
+every path to the shared Terminal path rules, and the envelope command refuses
+to create a file that already exists before the applier runs, because the
+applier opens a new file for writing without looking. The applier's one
+dependency, `pydantic`, is pinned in `snapshot-manifest.ts`, baked into the
+snapshot by its bootstrap, and installed from PyPI into `/workspace/.rally/pylib`
+only by a sandbox whose snapshot lacks it, staged and moved into place. Success
+is the applier's whole output being `Done!`, which a patch's own context cannot
+forge; a timeout, a crash and a failed install each report their own reason.
+The Worker bundles gained a Text-module rule for `.py` imports and the Node
+test run a matching Vite plugin.
+
+The instruction-file probe rides only the two reads: the
+`read_file` page read and the read an `edit_file` starts with. It reports what
+it finds and the instructions arrive with that batch. `write_file`,
+`apply_patch`, `run_command` and `import_resource` carry no probe and pay no
+probe command; the `abort` mode, exit 52, the `instructions_pending` and
+`instructions_unavailable` refusals, the `instructions.probe` utility
+operation, and the system message's sentence about a refused mutation are
+gone. This reverses the gate half of the 2026-09-09 entry below; discovery,
+recording, delivery and the bootstrap's root probe are unchanged.
+
+**Why:** In the same run, GPT-5.6 answered a tool named `apply_patch` with
+the format it was trained on, was refused, then wrote two unified diffs from
+memory whose context no longer matched, and fell back to `edit_file`. The
+model's format has no line numbers and matches on context, which is the more
+forgiving of exactly that mistake, so accepting it fixes both failure modes,
+and the reference applier is the one implementation the training distribution
+was built against; a re-implementation in this repository would drift from it.
+
+The gate fired on the first action of nearly every fresh agent,
+because that action is a mutation more often than not: a `run_command` used
+for discovery, a `write_file`, an import. In the "Avalon scroll gradients"
+substream of 2026-09-18 both the parent and its background agent paid it, and
+the parent's refused call was the one that had also carried the 57-second
+sandbox boot. The decision on 2026-09-19 was that a repository's instructions
+load as a side effect of reading, and that a mutation is never refused for
+them.
+
+**Considered and rejected:** Renaming the tool to escape the model's prior:
+the prior is also for the format, and the name is the one the 2026-09-18 entry
+chose deliberately. Re-implementing the applier in TypeScript: smaller to ship
+than a vendored script plus a Python dependency, but every divergence from the
+reference would be a patch the model wrote correctly and Rally rejected.
+Embedding the script as a TypeScript string like the two probe scripts: it
+would no longer be the file as shipped, which is the whole point of vendoring.
+
+Keeping a report-mode probe on mutations, so a
+write beneath an unread file still delivers the file one batch later. The two
+tools that cannot carry the fragment would still pay a probe command each, and
+the read that precedes an edit already delivers the same files. Injecting the
+root file at sandbox acquisition instead of on the first read: cheaper still
+for the root, but it does not reach a nested `AGENTS.md`, and the read path
+covers both.
+
+**Consequences:** A `.py` file under `apps/api/src` is now text to the
+bundler and to Vitest; a script that should run in the Worker must not take
+that extension. The first envelope patch in a fresh sandbox pays a PyPI
+install inside the command's 60-second budget, so a slow network can turn it
+into a timeout the retry survives. Updating the vendored script means updating
+the hash and re-checking the stdin, `Done!` and exit-0 contract the runtime
+reads.
+
+A whole-file write, a patch, a command or an import beneath
+a file no read has touched proceeds without its instructions; the next read
+delivers them. The Terminal prompt's rule to read a file before editing it is
+now what puts a file's instructions in context before the edit, so weakening
+that sentence weakens this. `apps/api/test/terminal-runtime.test.ts` pins that
+a write is not refused and that the read records the chain.
 
 ### 2026-09-19 — Terminal sandboxes are built at 2 vCPU / 4 GiB / 8 GiB
 

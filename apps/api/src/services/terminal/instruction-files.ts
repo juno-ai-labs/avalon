@@ -78,11 +78,6 @@ export function instructionProbeMarker(): string {
   return `${INSTRUCTION_PROBE_MARKER_PREFIX}${crypto.randomUUID().replace(/-/gu, "")}__`;
 }
 
-/** The exit status the probe uses to stop a mutation whose instructions are not resident. */
-export const INSTRUCTIONS_PENDING_EXIT_CODE = 52;
-
-export type InstructionProbeMode = "report" | "abort";
-
 export interface InstructionProbeEntry {
   /** Relative to the work-space root. */
   path: string;
@@ -100,12 +95,10 @@ export interface InstructionProbeEntry {
 
 export interface InstructionProbeResult {
   entries: InstructionProbeEntry[];
-  /** Whether any entry is not resident; in abort mode this is why the command stopped. */
-  pending: boolean;
 }
 
 /**
- * The probe. Arguments: `root mode max_bytes known_json marker candidate...`.
+ * The probe. Arguments: `root max_bytes known_json marker candidate...`.
  *
  * For each candidate beneath the root it refuses a symlink or a non-regular
  * file, refuses a real path that escapes the root, hashes the bytes, refuses a
@@ -113,15 +106,13 @@ export interface InstructionProbeResult {
  * not in the caller's known-resident list, reports the content (cut on a
  * code-point boundary at or below `max_bytes`, where 0 means no cut).
  * It prints the marker it was given followed by one JSON object on the same
- * line, and in `abort` mode
- * exits 52 when any candidate is not resident so the enclosing command stops
- * before it mutates anything. Every other failure exits 0 with what it has: the
- * probe is best-effort and never decides a tool's own outcome.
+ * line and always exits 0 with what it has: the probe is best-effort and never
+ * decides a tool's own outcome.
  */
 export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "import hashlib, json, os, sys",
-  "root, mode, max_bytes, known, marker, candidates = os.path.realpath(sys.argv[1]), sys.argv[2], int(sys.argv[3]), set(json.loads(sys.argv[4])), sys.argv[5], sys.argv[6:]",
-  "entries, pending = [], False",
+  "root, max_bytes, known, marker, candidates = os.path.realpath(sys.argv[1]), int(sys.argv[2]), set(json.loads(sys.argv[3])), sys.argv[4], sys.argv[5:]",
+  "entries = []",
   "def cut(data, limit):",
   "    text = data.decode('utf-8')",
   "    if limit <= 0 or len(data) <= limit: return text, False",
@@ -145,10 +136,8 @@ export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "    key = rel + '@' + entry['sha256']",
   "    if key in known: entry['resident'] = True",
   "    elif 'status' not in entry: entry['content'] = text; entry['truncated'] = truncated",
-  "    if not entry['resident']: pending = True",
   "    entries.append(entry)",
-  "print(marker + json.dumps({'entries': entries, 'pending': pending}, ensure_ascii=False, separators=(',', ':')))",
-  `sys.exit(${INSTRUCTIONS_PENDING_EXIT_CODE} if mode == 'abort' and pending else 0)`,
+  "print(marker + json.dumps({'entries': entries}, ensure_ascii=False, separators=(',', ':')))",
 ].join("\n");
 
 function shellQuote(value: string): string {
@@ -159,14 +148,13 @@ function shellQuote(value: string): string {
  * The shell fragment a Terminal command carries to run the probe.
  *
  * Isolated from the enclosing command's exit status: it runs in a subshell that
- * resets `set +e`, and only the pending exit code (52) is allowed to escape, in
- * `abort` mode, so a probe that fails for any other reason leaves the tool's own
- * outcome alone. The bootstrap command runs under `set -euo pipefail`, which is
- * why the isolation is here rather than assumed.
+ * resets `set +e`, and no status of its own escapes, so a probe that fails for
+ * any reason leaves the tool's own outcome alone. The bootstrap command runs
+ * under `set -euo pipefail`, which is why the isolation is here rather than
+ * assumed.
  */
 export function instructionProbeFragment(input: {
   root: string;
-  mode: InstructionProbeMode;
   candidates: readonly string[];
   knownResident: readonly string[];
   /** From `instructionProbeMarker()`; the same value goes to `splitInstructionProbeTrailer`. */
@@ -176,16 +164,13 @@ export function instructionProbeFragment(input: {
   const maxBytes = input.maxBytes ?? MAX_RESIDENT_CONTEXT_BLOCK_BYTES;
   const args = [
     input.root,
-    input.mode,
     String(Number.isFinite(maxBytes) ? maxBytes : 0),
     JSON.stringify(input.knownResident),
     input.marker,
     ...input.candidates,
   ].map(shellQuote).join(" ");
   const invoke = `python3 -c ${shellQuote(TERMINAL_INSTRUCTION_PROBE_PYTHON)} ${args}`;
-  return input.mode === "abort"
-    ? `( set +e; ${invoke}; s=$?; [ "$s" -eq ${INSTRUCTIONS_PENDING_EXIT_CODE} ] && exit ${INSTRUCTIONS_PENDING_EXIT_CODE}; exit 0 ) || exit $?`
-    : `( set +e; ${invoke} ) || true`;
+  return `( set +e; ${invoke} ) || true`;
 }
 
 /**
@@ -238,6 +223,6 @@ export function splitInstructionProbeTrailer(stdout: string, marker: string): { 
   }
   return {
     stdout: rest,
-    probe: { entries, pending: entries.some((entry) => !entry.resident) },
+    probe: { entries },
   };
 }

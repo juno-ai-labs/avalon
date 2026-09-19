@@ -40,6 +40,17 @@ export interface TerminalSnapshotResources {
  */
 export const TERMINAL_SNAPSHOT_RESOURCES: TerminalSnapshotResources = { cpu: 2, memory: 4, disk: 8 };
 
+/**
+ * The one Python package the Terminal runtime itself needs: OpenAI's reference
+ * `apply_patch.py`, which applies a `*** Begin Patch`, imports `pydantic`. It
+ * is pinned like every other package this file names and baked into the
+ * snapshot under `TERMINAL_SNAPSHOT_PYLIB`, so an envelope patch never pays a
+ * PyPI install; `runtime.ts` installs the same pin into a sandbox's own
+ * `.rally/pylib` only when its snapshot predates this and lacks it.
+ */
+export const TERMINAL_PYDANTIC_REQUIREMENT = "pydantic==2.13.5";
+export const TERMINAL_SNAPSHOT_PYLIB = "/opt/rally/pylib";
+
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },
   { id: "python", command: "python3 -c 'import json; assert json.loads(\"{\\\"ok\\\": true}\")[\"ok\"]'" },
@@ -94,6 +105,10 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
     "if ! command -v pnpm >/dev/null 2>&1; then node_packages=\"$node_packages pnpm@11.13.0\"; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
     "if ! command -v tsx >/dev/null 2>&1; then node_packages=\"$node_packages tsx@4.20.6\"; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
     "if [ -n \"$node_packages\" ]; then npm install --global $node_packages >/dev/null; fi",
+    // A directory, not an interpreter, is the idempotency check: a probe is
+    // the manifest's job, and the bootstrap must stay free of them.
+    `sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 755 ${TERMINAL_SNAPSHOT_PYLIB}`,
+    `if [ ! -d ${TERMINAL_SNAPSHOT_PYLIB}/pydantic ]; then python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target ${TERMINAL_SNAPSHOT_PYLIB} '${TERMINAL_PYDANTIC_REQUIREMENT}' >/dev/null; installed_capabilities="$installed_capabilities,pydantic"; fi`,
     "printf 'AVALON_BOOTSTRAP_INSTALLED=%s\\n' \"${installed_capabilities#,}\"",
   ].join("\n");
 }
