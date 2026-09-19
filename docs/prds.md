@@ -315,22 +315,22 @@ provenance rather than guidance.
 - **Provider configuration** — Any Slack, GitHub, Linear, Notion, Google,
   Resend, or Cloudflare setting that must change outside the repository, in
   which region, and what breaks if it is not applied before the change ships.
-- **Rollout** — Flags, phases, migration or backfill order, and how the change
-  is turned off if it goes wrong. **Required in spirit for any feature a user
-  can see.** Before writing it, *ask whoever owns the product whether the
-  feature ships behind a flag*, and record the answer here either way — a "no"
-  with its reason is a decision, and it is the question going unasked that gets
-  it answered by accident on merge day. If the answer is yes, three things
-  follow and all three belong in this section:
+- **Rollout** — Phases, migration or backfill order, and how the change is
+  turned off if it goes wrong. **Required in spirit for any feature a user can
+  see.** The default is that a feature ships to everybody on merge: no flag, no
+  staged audience, no staff-only period. Write this section to that default and
+  say so.
+
+  A feature only ships behind a flag when an engineer explicitly asks for one.
+  When that happens, three things follow and all three belong in this section:
 
   1. **Name the flag**, with a key ending `-enabled`, per
      [`feature-flags.md`](feature-flags.md). The suffix is what marks it as a
      flag an operator manages rather than one driven by hand.
-  2. **It defaults off for everyone.** Not off for customers and on for staff,
-     not on in one region — off, with every audience that gets it reached by a
-     targeting rule instead. A default that is on for anybody makes a flag that
-     was never created indistinguishable from one deliberately granted, which
-     is the state that hides a botched rollout.
+  2. **State its default**, and why that is the right one for this feature —
+     a kill switch that defaults enabled and a staged rollout that defaults
+     disabled are both legitimate, and which one this is has to be written down
+     rather than inferred from the key.
   3. **It is registered in Ace**, which is the thing that creates it in
      Flagship and the only surface an operator can turn it on from. Serving the
      key from a Worker does neither;
@@ -492,9 +492,8 @@ document per [`module-documents.md`](module-documents.md) and register it in
    seven required ones in order, then whichever optional ones apply. Start with
    **Non-goals** if the scope is contested; the rest gets easier once the edges
    are fixed. **Decision log** starts as `None yet.` If the PRD proposes a
-   feature a user can see, **Rollout** applies: ask whether it ships behind a
-   flag before writing that section, and record the answer whichever way it
-   goes.
+   feature a user can see, **Rollout** applies: it ships to everybody on merge
+   unless an engineer has explicitly asked for a flag.
 5. If the PRD adds or changes an agent tool or plugin, complete the
    [tool-and-plugin documentation](#required-documentation-for-agent-tools-and-plugins)
    and verify each tool against [`agent-tools.md`](agent-tools.md).
