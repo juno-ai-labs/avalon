@@ -18,6 +18,11 @@ import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-val
 import {
   noDirectWorkstreamsCacheWriteRule,
 } from "./scripts/eslint-rules/renderer-cache-boundaries.mjs";
+import {
+  noDiagnosticMessageInPresentationRule,
+  presentationBoundaryFiles,
+  presentationBoundaryIgnores,
+} from "./scripts/eslint-rules/presentation-boundaries.mjs";
 import { toolInputNumberBoundaryRule } from "./scripts/eslint-rules/tool-input-boundaries.mjs";
 import {
   noApplicationContractTestCastRule,
@@ -67,6 +72,7 @@ export default tseslint.config(
           "no-application-contract-test-cast": noApplicationContractTestCastRule,
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
+          "no-diagnostic-message-in-presentation": noDiagnosticMessageInPresentationRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
           "durable-object-sql-storage": durableObjectSqlStorageRule,
           "durable-object-region-routing": durableObjectRegionRoutingRule,
@@ -82,6 +88,15 @@ export default tseslint.config(
       "rally/no-raw-entry-point-check": "error",
       "rally/thesvg-subpath-imports": "error",
       "rally/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    // Sidebar and rail components own their failure language. Exceptions and
+    // API diagnostics stay available to telemetry, but never become UI copy.
+    files: presentationBoundaryFiles,
+    ignores: presentationBoundaryIgnores,
+    rules: {
+      "rally/no-diagnostic-message-in-presentation": "error",
     },
   },
   {

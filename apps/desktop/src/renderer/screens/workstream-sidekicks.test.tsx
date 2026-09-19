@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   getAttachedSidekicks: vi.fn(),
   getRecommendedSidekicks: vi.fn(),
   getSidekickRecommendationOptions: vi.fn(),
+  setRecommendedSidekick: vi.fn(),
   getWorkstreamSidekicks: vi.fn(),
   removeAttachedSidekick: vi.fn(),
 }));
@@ -181,11 +182,49 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     renderScreen(true);
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
-    expect(await screen.findByText('Removal failed in main.')).toBeVisible();
+    expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
     fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
     expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
-    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
+    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
+  });
+
+  it('keeps an in-flight removal observable when Sidekick management is reopened', async () => {
+    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    const diagnostic = 'provider removal failed after management reopened';
+    let rejectRemoval!: (reason: Error) => void;
+    api.removeAttachedSidekick.mockReturnValue(new Promise((_resolve, reject) => { rejectRemoval = reject; }));
+    renderScreen(true);
+
+    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
+    await act(async () => { rejectRemoval(new Error(diagnostic)); });
+
+    expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+    expect(api.removeAttachedSidekick).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { attached: false, action: 'Recommend for this work stream', expected: 'That Sidekick couldn’t be recommended.' },
+    { attached: true, action: 'Remove work stream recommendation', expected: 'That Sidekick recommendation couldn’t be removed.' },
+  ])('reports a rejected $action as that action', async ({ attached, action, expected }) => {
+    const diagnostic = `provider rejected recommendation attached=${attached}`;
+    const recommendation = { id: 'attached-1', name: 'Editorial guidance', description: 'Write clearly.', available: true };
+    api.getRecommendedSidekicks.mockResolvedValue(attached ? [recommendation] : []);
+    api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: true, items: [{ ...recommendation, attached }] });
+    api.setRecommendedSidekick.mockRejectedValue(new Error(diagnostic));
+    renderScreen();
+
+    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: action }));
+
+    expect(await screen.findByText(expected)).toBeVisible();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+    expect(api.setRecommendedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', !attached, '0');
   });
 
   it('keeps recommendations shared and loaded rows local when switching substreams', async () => {
@@ -245,8 +284,26 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     api.getWorkstreamSidekicks.mockRejectedValue(new ApiError('The service is unavailable.', 500));
     renderScreen();
 
-    expect(await screen.findByText('The service is unavailable.')).toBeVisible();
+    expect(await screen.findByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(screen.queryByText('The service is unavailable.')).not.toBeInTheDocument();
     // And the half that did answer stays on screen under it.
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+  });
+
+  it('keeps a management-options failure in the picker rather than misreporting the list', async () => {
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: requested API route does not exist';
+    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
+    api.getAttachedSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockResolvedValue([]);
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getSidekickRecommendationOptions.mockRejectedValue(new Error(diagnostic));
+    renderScreen(true);
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByText('Sidekick options couldn’t be loaded.')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Sidekicks couldn’t be loaded.')).not.toBeInTheDocument();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
   });
 });

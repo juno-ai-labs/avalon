@@ -168,6 +168,16 @@ from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
 still on its way, as the artifact section beside it is; a failure is the one
 thing it shows beside whichever rows did arrive rather than instead of them.
+Read and action failures remain distinct: a partial read says the list may be
+out of date, while refused local removal, recommendation, and recommendation
+removal each name the action that failed and stay visible until the next
+Sidekick-management interaction. That interaction clears only a
+settled failure: a removal or attachment still in flight remains observed and
+keeps its controls pending, so reopening management cannot permit a duplicate
+request or discard the eventual result. The lazy management-options query
+belongs only to the picker and never changes the list's state. Those states and
+the picker’s load/attach failures are stable Rally-owned copy; raw API,
+transport and provider messages never become sidebar text.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.

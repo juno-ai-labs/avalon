@@ -1,5 +1,5 @@
 import { desktopBridge } from '../lib/platform';
-import { SidekickSection, type SidekickRow } from './sidekick-section';
+import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
@@ -44,7 +44,7 @@ interface InspectorRailProps {
     returnFocus: HTMLElement;
     onClose: () => void;
   };
-  error?: string;
+  failure?: 'watch' | 'detach' | 'refresh' | 'attach';
   /**
    * Reads a resource's readable preview, so the detail can show what the thing
    * actually says. This is the authorized preview route — the same one the
@@ -74,7 +74,7 @@ interface InspectorRailProps {
    * such section, as it has no artifact section until it has produced one.
    */
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksError?: string | undefined;
+  sidekickFailure?: SidekickSectionFailure | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -86,7 +86,7 @@ interface InspectorRailProps {
    */
   resourceVersions?: ResourceVersion[];
   /** Set when the history could not be loaded, so absence is not read as none. */
-  resourceVersionsError?: string | undefined;
+  resourceVersionsFailed?: boolean | undefined;
   /**
    * Opens a prior version read-only. Carries the control that opened it so the
    * preview can hand focus back, the way every other opener on this surface
@@ -109,6 +109,15 @@ interface InspectorRailProps {
     onDrop: React.DragEventHandler<HTMLElement>;
   };
 }
+
+type InspectorRailFailure = NonNullable<InspectorRailProps['failure']>;
+
+const inspectorRailFailureCopy: Record<InspectorRailFailure, string> = {
+  watch: 'The resource watch couldn’t be updated.',
+  detach: 'The resource couldn’t be archived.',
+  refresh: 'The resource couldn’t be refreshed.',
+  attach: 'The resource couldn’t be added.',
+};
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -177,14 +186,14 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 function ContextContent({
   workstream,
   sidekicks,
-  sidekicksError,
+  sidekickFailure,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
   | 'sidekicks'
-  | 'sidekicksError'
+  | 'sidekickFailure'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -232,7 +241,7 @@ function ContextContent({
         )}
       </Section>
 
-      <SidekickSection items={sidekicks} error={sidekicksError} />
+      <SidekickSection items={sidekicks} failure={sidekickFailure} />
 
       <Section title="Details">
         <dl className="detail-list">
@@ -481,14 +490,14 @@ function groupVersionsBySparseDate(
 function ResourceVersionsMenu({
   resource,
   versions,
-  error,
+  failed,
   onOpenResourceVersion,
   participants,
   returnFocus,
 }: {
   resource: WorkstreamResource;
   versions: ResourceVersion[] | undefined;
-  error?: string | undefined;
+  failed?: boolean | undefined;
   onOpenResourceVersion?: InspectorRailProps['onOpenResourceVersion'];
   participants: WorkstreamDetail['participants'];
   returnFocus: RefObject<HTMLButtonElement | null>;
@@ -496,8 +505,8 @@ function ResourceVersionsMenu({
   const currentVersion = versions?.[0]?.version;
 
   let body: React.ReactNode;
-  if (error) {
-    body = <DropdownMenu.Item className="menu-item" disabled>{error}</DropdownMenu.Item>;
+  if (failed) {
+    body = <DropdownMenu.Item className="menu-item" disabled>Resource history couldn’t be loaded.</DropdownMenu.Item>;
   } else if (versions === undefined) {
     body = (
       <DropdownMenu.Item className="menu-item" disabled>
@@ -651,33 +660,33 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const resource = inspectedResource(inspector, props.workstream);
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveFailed, setArchiveFailed] = useState(false);
   const versionsTriggerRef = useRef<HTMLButtonElement>(null);
   const closeInspectorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setArchiveTarget(null);
-    setArchiveError(null);
+    setArchiveFailed(false);
     setArchiving(false);
   }, [inspector?.id]);
 
   const closeArchive = (): void => {
     if (archiving) return;
     setArchiveTarget(null);
-    setArchiveError(null);
+    setArchiveFailed(false);
   };
 
   const submitArchive = async (): Promise<void> => {
     if (!archiveTarget || !props.onDetachResource) return;
     setArchiving(true);
-    setArchiveError(null);
+    setArchiveFailed(false);
     try {
       await props.onDetachResource(archiveTarget);
       setArchiveTarget(null);
       inspect(null);
       closeInspectorRef.current?.focus();
-    } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : 'The resource could not be archived.');
+    } catch {
+      setArchiveFailed(true);
     } finally {
       setArchiving(false);
     }
@@ -734,7 +743,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <ResourceVersionsMenu
-                    error={props.resourceVersionsError}
+                    failed={props.resourceVersionsFailed}
                     onOpenResourceVersion={props.onOpenResourceVersion}
                     participants={props.workstream?.participants ?? []}
                     resource={resource}
@@ -749,7 +758,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                   label="Archive"
                   tooltipSide="top"
                   onClick={() => {
-                    setArchiveError(null);
+                    setArchiveFailed(false);
                     setArchiveTarget(resource);
                   }}
                 >
@@ -763,7 +772,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </header>
       <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
-        {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
+        {props.failure && <div className="rail-inline-error"><InlineError>
+          {inspectorRailFailureCopy[props.failure]}
+        </InlineError></div>}
         {inspector ? (
           <InspectorDetail
             inspector={inspector}
@@ -798,7 +809,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         open={Boolean(archiveTarget)}
         title="Archive this resource?"
       >
-        {archiveError ? <InlineError>{archiveError}</InlineError> : null}
+        {archiveFailed ? <InlineError>The resource couldn’t be archived.</InlineError> : null}
       </Modal>
     </>
   );
