@@ -326,7 +326,7 @@ The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 `index-DfPT5G9o.css`. Its 80px tiles are centered with an 8px gap, 60px
 artwork, 6px artwork-to-caption gap, 6px/4px top/bottom tile padding,
 4px horizontal tile padding, and 10px corners. Captions use 11px type,
-16px line height, and .005em tracking. Hover and selected fills use `--av-cmp-row-background-hover` and
+16px line height, and .005em tracking. Hover and selected fills use `--av-sys-color-state-hover` and
 `--av-cmp-row-background-selected`; icons use `--av-sys-color-text-on-inverse`.
 These preserve the reference proportions while following light and dark appearance. The outer 8px/12px plus inner 6px block
 padding becomes 14px/18px on our strip. One tile can grow to fit a caption
