@@ -32,6 +32,8 @@ import {
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-0000000ca100");
 const CHANNEL = asWorkstreamId("00000000-0000-7000-8000-0000000ca101");
 const SPACE = asSpaceId("00000000-0000-7000-8000-0000000ca102");
+const OTHER_SPACE = asSpaceId("00000000-0000-7000-8000-0000000ca108");
+const THIRD_SPACE = asSpaceId("00000000-0000-7000-8000-0000000ca10c");
 const OWNER = asUserId("00000000-0000-7000-8000-0000000ca103");
 const READER = asUserId("00000000-0000-7000-8000-0000000ca104");
 const OTHER = asUserId("00000000-0000-7000-8000-0000000ca105");
@@ -68,8 +70,8 @@ function environment(input: {
       input.calls.push("object:apply");
       return input.apply ?? { ok: true, plan: { widenScope: false, seatUserIds: [] } };
     },
-    confirmSpaceAccessSource: async (request: { seatedUserIds: string[] }) => {
-      input.calls.push(`object:confirm(${request.seatedUserIds.join(",") || "none"})`);
+    confirmSpaceAccessSource: async (request: { spaceId: string; seatedUserIds: string[] }) => {
+      input.calls.push(`object:confirm(${request.spaceId}:${request.seatedUserIds.join(",") || "none"})`);
       return { ok: true, suppliedUserIds: request.seatedUserIds };
     },
     retractSpaceAccessSource: async () => {
@@ -124,12 +126,12 @@ function stubCanonicalOperations(
     return {} as never;
   });
   vi.spyOn(WorkstreamObjectClient.prototype, "addParticipant").mockImplementation(async (userId, opts) => {
-    calls.push(`canonical:add(${userId}${opts?.spaceSourceId ? ":space" : ""})`);
+    calls.push(`canonical:add(${userId}${opts?.spaceSourceId ? `:${opts.spaceSourceId}` : ""})`);
     if (options.addParticipantThrows) throw options.addParticipantThrows;
     return {} as never;
   });
   vi.spyOn(WorkstreamObjectClient.prototype, "removeParticipant").mockImplementation(async (userId, opts) => {
-    calls.push(`canonical:remove(${userId}${opts?.spaceSourceId ? ":space" : ""})`);
+    calls.push(`canonical:remove(${userId}${opts?.spaceSourceId ? `:${opts.spaceSourceId}` : ""})`);
   });
 }
 
@@ -160,8 +162,8 @@ describe("applying a Space access source", () => {
     // the canonical operation seated rather than what the plan asked for.
     expect(calls).toEqual([
       "object:apply",
-      `canonical:add(${READER}:space)`,
-      `object:confirm(${READER})`,
+      `canonical:add(${READER}:${SPACE})`,
+      `object:confirm(${SPACE}:${READER})`,
     ]);
   });
 
@@ -178,7 +180,7 @@ describe("applying a Space access source", () => {
     // Through `update`, because that is where `assertRetainedContentContains`
     // runs. A service that wrote the scope itself would be a second place an
     // audience could widen without the fence.
-    expect(calls).toEqual(["object:apply", "canonical:update(workspace)", "object:confirm(none)"]);
+    expect(calls).toEqual(["object:apply", "canonical:update(workspace)", `object:confirm(${SPACE}:none)`]);
   });
 
   it("given retained content the wider audience cannot read, when a Space is applied, then it rolls back and names the Channel", async () => {
@@ -207,7 +209,7 @@ describe("applying a Space access source", () => {
     // unwind at all.
     expect(calls).toEqual([
       "object:apply",
-      `canonical:add(${READER}:space)`,
+      `canonical:add(${READER}:${SPACE})`,
     ]);
   });
 
@@ -216,7 +218,7 @@ describe("applying a Space access source", () => {
     let added = 0;
     stubCanonicalOperations(calls);
     vi.spyOn(WorkstreamObjectClient.prototype, "addParticipant").mockImplementation(async (userId, opts) => {
-      calls.push(`canonical:add(${userId}${opts?.spaceSourceId ? ":space" : ""})`);
+      calls.push(`canonical:add(${userId}${opts?.spaceSourceId ? `:${opts.spaceSourceId}` : ""})`);
       if (++added > 1) throw new ApiError(409, "workstream_audience_restricted_content", "Retained content");
       return {} as never;
     });
@@ -238,11 +240,11 @@ describe("applying a Space access source", () => {
     // the product path uses, so a reader another Space supplies survives.
     expect(calls).toEqual([
       "object:apply",
-      `canonical:add(${READER}:space)`,
-      `canonical:add(${OTHER}:space)`,
-      `object:confirm(${READER})`,
+      `canonical:add(${READER}:${SPACE})`,
+      `canonical:add(${OTHER}:${SPACE})`,
+      `object:confirm(${SPACE}:${READER})`,
       "object:retract",
-      `canonical:remove(${READER}:space)`,
+      `canonical:remove(${READER}:${SPACE})`,
       `queue:revoke(${READER})`,
     ]);
   });
@@ -287,9 +289,9 @@ describe("narrowing the Channel's own scope", () => {
     // reads them as the Channel's own and leaves them behind.
     expect(calls).toEqual([
       "object:sources",
-      `canonical:add(${READER}:space)`,
-      `canonical:add(${OTHER}:space)`,
-      `object:confirm(${READER},${OTHER})`,
+      `canonical:add(${READER}:${SPACE})`,
+      `canonical:add(${OTHER}:${SPACE})`,
+      `object:confirm(${SPACE}:${READER},${OTHER})`,
     ]);
   });
 
@@ -341,6 +343,12 @@ describe("retracting a Space access source", () => {
       environment({
         calls,
         retract: { ok: true, plan: { narrowScope: true, seatUserIds: [OTHER], removeUserIds: [READER] } },
+        // What the Channel's authority answers once the departing source is
+        // gone: the Space that actually supplies the survivor.
+        sources: {
+          direct: { scope: "personal", participantUserIds: [OWNER] },
+          spaces: [{ spaceId: OTHER_SPACE, scope: "personal", participantUserIds: [OTHER] }],
+        },
       }),
       auth,
     );
@@ -353,15 +361,106 @@ describe("retracting a Space access source", () => {
     // wrote the removal, in the same request.
     expect(calls).toEqual([
       "object:retract",
-      `canonical:add(${OTHER}:space)`,
+      "object:sources",
+      `canonical:add(${OTHER}:${OTHER_SPACE})`,
+      `object:confirm(${OTHER_SPACE}:${OTHER})`,
       "canonical:update(personal)",
       // The narrowing announces itself: the room closes sockets for somebody it
       // was told about, and the readers a narrowing drops are every member who
       // is not a participant — a set nothing here can name. The hop asks the
       // room which of them is still reading.
       "queue:workstream_audience_narrowed",
-      `canonical:remove(${READER}:space)`,
+      `canonical:remove(${READER}:${SPACE})`,
       `queue:revoke(${READER})`,
+    ]);
+  });
+
+  it("given a survivor another Space supplies, when the first is retracted, then they are seated and attributed under that Space", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        retract: { ok: true, plan: { narrowScope: false, seatUserIds: [OTHER], removeUserIds: [] } },
+        sources: {
+          direct: { scope: "personal", participantUserIds: [OWNER] },
+          spaces: [{ spaceId: OTHER_SPACE, scope: "personal", participantUserIds: [OTHER] }],
+        },
+      }),
+      auth,
+    );
+
+    await service.retractSpaceSource(CHANNEL, SPACE, "00000000-0000-7000-8000-0000000ca109");
+
+    // Both halves name the *surviving* Space. Naming the departing one would
+    // not merely mislabel: its source row is gone by now, so the attribution
+    // could not commit at all, and the Space that really supplies `OTHER`
+    // would later retract with no provenance for them and leave behind a
+    // reader nobody can account for.
+    expect(calls).toEqual([
+      "object:retract",
+      "object:sources",
+      `canonical:add(${OTHER}:${OTHER_SPACE})`,
+      `object:confirm(${OTHER_SPACE}:${OTHER})`,
+    ]);
+  });
+
+  it("given a survivor no remaining Space supplies, when a Space is retracted, then they are seated as the Channel's own", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        retract: { ok: true, plan: { narrowScope: true, seatUserIds: [OWNER], removeUserIds: [] } },
+        sources: { direct: { scope: "personal", participantUserIds: [OWNER] }, spaces: [] },
+      }),
+      auth,
+    );
+
+    await service.retractSpaceSource(CHANNEL, SPACE, "00000000-0000-7000-8000-0000000ca10a");
+
+    // No `spaceSourceId` and no attribution: this reader is the direct
+    // source's, and recording a Space as their supplier would hand the next
+    // retraction of that Space a licence to take them out.
+    expect(calls).toEqual([
+      "object:retract",
+      "object:sources",
+      `canonical:add(${OWNER})`,
+      "canonical:update(personal)",
+      "queue:workstream_audience_narrowed",
+    ]);
+  });
+
+  it("given two remaining Spaces that both supply a survivor, when one is retracted, then each of them is told", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        retract: { ok: true, plan: { narrowScope: false, seatUserIds: [OTHER], removeUserIds: [] } },
+        sources: {
+          direct: { scope: "personal", participantUserIds: [OWNER] },
+          spaces: [
+            { spaceId: OTHER_SPACE, scope: "personal", participantUserIds: [OTHER] },
+            { spaceId: THIRD_SPACE, scope: "personal", participantUserIds: [OTHER] },
+          ],
+        },
+      }),
+      auth,
+    );
+
+    await service.retractSpaceSource(CHANNEL, SPACE, "00000000-0000-7000-8000-0000000ca10b");
+
+    // Seated once, attributed to both. Access is the live union, so either
+    // Space departing has to leave the other's claim standing; attributing to
+    // only the first would make the second's departure withdraw a reader it
+    // still supplies.
+    expect(calls).toEqual([
+      "object:retract",
+      "object:sources",
+      `canonical:add(${OTHER}:${OTHER_SPACE})`,
+      `object:confirm(${OTHER_SPACE}:${OTHER})`,
+      `object:confirm(${THIRD_SPACE}:${OTHER})`,
     ]);
   });
 });

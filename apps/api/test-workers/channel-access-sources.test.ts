@@ -255,6 +255,44 @@ describe("a Channel's Space access sources", () => {
     });
   });
 
+  it("given a survivor a remaining Space supplies, when the wide Space is retracted, then attributing them there is what withdraws them with it", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
+      channel: personal([OWNER]),
+    });
+    await seatSource({
+      spaceId: SPACE_B, scope: "personal", participantUserIds: [OTHER],
+      channel: organizationWide([OWNER]),
+    });
+
+    expect(await retract(SPACE_A, organizationWide([OWNER]))).toEqual({
+      ok: true,
+      plan: { narrowScope: true, seatUserIds: [OWNER, OTHER], removeUserIds: [] },
+    });
+
+    // The departing Space is not an option for the attribution, and not merely
+    // as a matter of labelling: the retraction above deleted its row, so
+    // naming it here is refused outright and `OTHER` ends up supplied by
+    // nobody.
+    expect(await channel().confirmSpaceAccessSource({
+      ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
+    })).toEqual({ ok: false, code: "space_not_found" });
+
+    // The Space that does supply them, which is what the service seats them
+    // under.
+    expect(await channel().confirmSpaceAccessSource({
+      ...address, spaceId: SPACE_B, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
+    })).toEqual({ ok: true, suppliedUserIds: [OTHER] });
+
+    // And that is what the *next* retraction reads. Without it `SPACE_B`
+    // departs with no provenance for `OTHER` and leaves behind a reader the
+    // Channel itself never admitted.
+    expect(await retract(SPACE_B, personal([OWNER, OTHER]))).toEqual({
+      ok: true,
+      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [OTHER] },
+    });
+  });
+
   it("given a remaining Space that is Organization-wide, when another is retracted, then nothing narrows", async () => {
     await seatSource({
       spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
