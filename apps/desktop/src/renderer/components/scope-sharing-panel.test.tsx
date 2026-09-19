@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RallyApi } from '../lib/api';
-import { ScopeSharingPanel } from './scope-sharing-panel';
+import { ScopeSharingPanel, ShareConversationDialog } from './scope-sharing-panel';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const parentId = '00000000-0000-4000-8000-000000000002';
@@ -53,5 +54,32 @@ it('keeps invalid addresses as authored validation without calling the API', asy
 
   expect(await screen.findByText('Enter valid email addresses, separated by spaces, commas, or semicolons.')).toBeVisible();
   expect(create).not.toHaveBeenCalled();
+  client.clear();
+});
+
+it('dismisses the share dialog once the invitation is created, and not before', async () => {
+  const api = new RallyApi('https://api.test', null);
+  const create = vi.spyOn(api, 'createScopeInvitations')
+    .mockRejectedValueOnce(new Error('router invitation failure'))
+    .mockResolvedValue({ status: 'created', invitations: [{ email: 'ada@example.test' }] } as never);
+  const client = new QueryClient();
+  function Host(): React.JSX.Element {
+    const [open, setOpen] = useState(true);
+    return <ShareConversationDialog api={api} workspaceId={workspaceId} parentId={parentId}
+      substreamId="0" open={open} onOpenChange={setOpen} />;
+  }
+  render(<QueryClientProvider client={client}><Host /></QueryClientProvider>);
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'ada@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+
+  // A failed share leaves the dialog open so the retry keeps the typed batch.
+  await screen.findByText('The conversation couldn’t be shared. Try again.');
+  expect(screen.getByRole('dialog', { name: 'Share conversation' })).toBeVisible();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share conversation' })).toBeNull());
+  expect(create).toHaveBeenCalledTimes(2);
   client.clear();
 });
