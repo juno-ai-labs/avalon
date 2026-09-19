@@ -314,7 +314,7 @@ describe('token references', () => {
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
-    '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
+    '--av-cmp-sidebar-width',
     // Deliberately outside the `--av-` namespace, unlike its neighbour above:
     // `--av-cmp-sidebar-width` is a registry token a theme may set and is here
     // only because the resize handle also writes it inline, while this one is
@@ -357,6 +357,7 @@ describe('token references', () => {
     '--markdown-ink-muted', '--markdown-ink-faint', '--markdown-wash',
     '--markdown-surface', '--markdown-rule', '--markdown-quote-bar',
     '--markdown-border', '--markdown-link', '--markdown-link-hover',
+    '--markdown-mark', '--markdown-scrollbar-thumb',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads
     // light on a dark or profile-coloured bubble and dark on a light card. A
