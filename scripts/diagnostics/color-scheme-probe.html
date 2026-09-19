@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Mirrors apps/browser/index.html. -->
+<meta name="color-scheme" content="light dark">
+<title>Colour scheme probe</title>
+
+<!--
+  Temporary diagnostic. Rally's browser app boots light on a Mac set to dark,
+  and corrects itself only when DevTools is attached. DevTools is therefore the
+  one thing this probe must not need: everything it measures is printed on the
+  page.
+
+  It asks the same question at several moments, because the app asks it once —
+  `installTheme()` reads `prefers-color-scheme` at module evaluation and the
+  answer is stamped on <html> for the life of the page. The CSS row is the
+  control: it is how google.com decides, and google.com is dark on the machine
+  where the app is light.
+-->
+<script>
+  // The earliest a script can run. Records the reading, and every change that
+  // follows, before anything else on the page has had a chance to run.
+  window.__probe = { readings: [], changes: [], started: performance.now() };
+  window.__probeRead = function (label) {
+    window.__probe.readings.push({
+      label: label,
+      prefersDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      at: Math.round(performance.now() - window.__probe.started),
+    });
+  };
+  window.__probeRead('inline head script (earliest possible)');
+  var probeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  probeQuery.addEventListener('change', function (event) {
+    window.__probe.changes.push({
+      prefersDark: event.matches,
+      at: Math.round(performance.now() - window.__probe.started),
+    });
+    if (window.__probeRender) window.__probeRender();
+  });
+</script>
+
+<style>
+  /*
+    The CSS control. No script decides this: the style engine evaluates the
+    media query itself, which is the mechanism a site that "just works" in dark
+    mode relies on.
+  */
+  :root { --answer: 'light'; --bg: #fcfcfc; --fg: #111; --rule: #ddd; --flag: #b00020; }
+  @media (prefers-color-scheme: dark) {
+    :root { --answer: 'dark'; --bg: #070707; --fg: #f2f2f2; --rule: #333; --flag: #ff8a80; }
+  }
+  body {
+    background: var(--bg); color: var(--fg); margin: 0; padding: 32px;
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 24px; opacity: .7; }
+  table { border-collapse: collapse; width: 100%; max-width: 760px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 600; }
+  td.value { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .css-answer::after { content: var(--answer); }
+  #verdict { margin-top: 24px; max-width: 760px; font-weight: 600; }
+  #verdict.mismatch { color: var(--flag); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<h1>Colour scheme probe</h1>
+<p class="sub">Open this with DevTools <strong>closed</strong>. Everything is printed below; nothing here needs the inspector.</p>
+
+<table>
+  <thead><tr><th>Moment</th><th>JS says prefers dark</th><th>ms</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<table style="margin-top:24px">
+  <tbody>
+    <tr><th>CSS media query says</th><td class="value css-answer"></td></tr>
+    <tr><th><code>change</code> events seen</th><td class="value" id="changes">none</td></tr>
+  </tbody>
+</table>
+
+<div id="verdict"></div>
+
+<script type="module">
+  // Module scripts are deferred, which is where the app's `installTheme()` runs.
+  window.__probeRead('module script (where installTheme runs)');
+</script>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () { window.__probeRead('DOMContentLoaded'); render(); });
+  window.addEventListener('load', function () {
+    window.__probeRead('load');
+    requestAnimationFrame(function () {
+      window.__probeRead('first animation frame');
+      setTimeout(function () { window.__probeRead('load + 500ms'); render(); }, 500);
+      render();
+    });
+    render();
+  });
+
+  function cssAnswer() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--answer').trim().replace(/'/g, '');
+  }
+
+  function render() {
+    var rows = document.getElementById('rows');
+    rows.innerHTML = '';
+    window.__probe.readings.forEach(function (reading) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + reading.label + '</td>'
+        + '<td class="value">' + reading.prefersDark + '</td>'
+        + '<td class="value">' + reading.at + '</td>';
+      rows.appendChild(tr);
+    });
+
+    document.getElementById('changes').textContent = window.__probe.changes.length
+      ? window.__probe.changes.map(function (c) { return c.prefersDark + ' at ' + c.at + 'ms'; }).join(', ')
+      : 'none';
+
+    var css = cssAnswer();
+    var first = window.__probe.readings[0];
+    var last = window.__probe.readings[window.__probe.readings.length - 1];
+    var verdict = document.getElementById('verdict');
+    var cssDark = css === 'dark';
+
+    if (cssDark !== first.prefersDark) {
+      verdict.className = 'mismatch';
+      verdict.textContent = 'MISMATCH. CSS says ' + css + ', but the earliest JS reading said prefersDark='
+        + first.prefersDark + '. The boot reading is wrong, which is the bug: the app stamps that answer onto <html> and keeps it.'
+        + (cssDark === last.prefersDark ? ' It had corrected itself by the last reading' + (window.__probe.changes.length ? ' and a change event fired.' : ' WITHOUT firing a change event, so nothing tells the app to re-resolve.') : '');
+    } else {
+      verdict.className = '';
+      verdict.textContent = 'Agreed: CSS says ' + css + ' and JS agreed from the first reading. '
+        + 'The browser is answering consistently here, so the fault is not this page and we should probe inside the app itself.';
+    }
+  }
+
+  window.__probeRender = render;
+  render();
+</script>
+</body>
+</html>
