@@ -511,8 +511,22 @@ The two records are isolated by Rally capability checks, not by separate Google 
 The agent can list and search repositories, list directories or bounded recursive
 trees, list commits, read files, inspect and create/update issues and comments,
 inspect and create/review pull requests, and read Actions and check runs.
-Repository listing stays inside the App installation instead of using GitHub's
-global search surface. It scans at most 1,000 authorized repositories, merges
+Repository *listing* stays inside the App installation; repository *search*
+reaches past it, and returns the two results separately. `repositories` is the
+installation-authorized set, which every other GitHub tool and Terminal's
+`checkout_repository` accept. `publicRepositories` comes from GitHub's global
+search surface with `in:name`, carries `stargazers_count` so a model can tell
+half a dozen projects of the same name apart, and is for establishing a
+project's exact `owner/name` — it is not authorized here. That call returns
+private repositories the installation can reach as well as public ones, so only
+`private === false` rows survive and a connector policy narrower than the
+installation stays narrower; a repository already in the authorized set is not
+repeated. GitHub rate limits search well below the rest of its REST API, so a
+failed public search degrades to `publicSearchUnavailable` — `rate_limited`
+with `publicSearchRetryAfterMs` where GitHub said so — beside the authorized
+results, rather than failing the call.
+
+The listing scans at most 1,000 authorized repositories, merges
 the installation owner's six profile pins when GraphQL makes them available,
 sorts pins first and then by the newer of `pushed_at` and `updated_at`, and
 returns `totalCount`, `page`, `perPage`, `hasMore`, and an honest `truncated` /
@@ -1336,6 +1350,57 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-19 — A repository search reaches past the installation
+
+**What changed:** `repositories.search` now runs two searches for one term. The
+authorized half is unchanged. The new half calls `GET /search/repositories`
+with `<query> in:name` on the same installation token and returns
+`publicRepositories`, projected as the list row plus `stargazers_count`, with
+`publicCount`, `publicTotalCount` and `publicTotalCountIsExact`. Rows with
+`private !== false` are dropped and so are repositories already in the
+authorized list. A provider failure degrades rather than throwing: the
+authorized results still return, with `publicSearchUnavailable` naming the
+reason and `publicSearchRetryAfterMs` where GitHub supplied a retry delay.
+`repositories.list` is untouched — it has no term to search all of GitHub with.
+The plugin's system message tells the model that a public row identifies a
+repository rather than opening one.
+
+**Why:** A production work stream asked four agent loops to research open-source
+coding harnesses. Every one of them loaded this plugin, called
+`repositories_search` for `goose`, `cline`, `opencode` and `aider`, and got
+"Found 0 GitHub repositories matching goose" — because the workspace's
+installation holds none of them. Nothing in that answer said why, so it reads as
+"no such repository". All four loops abandoned the plugin, fell back to
+`web_search` and `web_fetch`, and one of them spent its first three searches on
+`block/goose`, a name it had guessed and which was wrong. The tool that exists
+to answer "which repository is this" could not answer it for any repository the
+workspace does not already own, which is most of them, while carrying twenty
+tools of prompt weight in four loops.
+
+The sentence this replaces — that repository listing stays inside the App
+installation rather than using GitHub's global search surface — was a statement
+of the design without a recorded reason for it, and the reason was not recovered
+here; what is recorded is why it no longer holds for search.
+
+**Considered and rejected:** A `scope` or `includePublic` parameter — a flag
+that would be set one way in practice, and another thing for a model to get
+wrong on the call that already went wrong once. One merged list with an
+`authorized` flag: the two are not interchangeable, and a model that misreads
+the flag passes an unauthorized name to `checkout_repository`, which is the
+failure this is supposed to prevent rather than cause. Searching public
+repositories only when the authorized search came back empty: cheaper, but it
+makes the tool's behaviour conditional on data the caller cannot see, and a
+result set that changes shape depending on what it found is harder to reason
+about than one extra call. Retrying a rate-limited search: the delay would be a
+defensive number nobody has chosen, and GitHub already supplies its own.
+
+**What a future change has to respect:** the `private === false` filter is a
+policy boundary, not a tidiness rule — the same call returns private
+repositories the installation can reach, and a connector policy authorizing a
+subset of them exists to keep the rest out of this workspace's sight. And
+public rows must stay in their own field: the moment they share one with the
+authorized set, every consumer of that field has to re-derive which is which.
 
 ### 2026-09-19 — The GitHub single reads are declared too
 

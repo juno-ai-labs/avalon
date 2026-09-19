@@ -462,6 +462,25 @@ describe("GitHub connector", () => {
           },
         });
       }
+      if (url.pathname === "/search/repositories") {
+        // The term is searched over all of GitHub as well as over the
+        // installation, and `in:name` keeps that half answering the same
+        // question the schema promises: names, not descriptions.
+        expect(url.searchParams.get("q")).toBe("API in:name");
+        return jsonResponse({
+          total_count: 3,
+          incomplete_results: false,
+          items: [
+            { id: 90, name: "public-api", full_name: "openorg/public-api", private: false, stargazers_count: 4_210 },
+            // Already authorized above: it belongs in `repositories`, not in
+            // both lists under two headings that say different things.
+            { id: 2, name: "web-api", full_name: "acme/web-api", private: false, stargazers_count: 7 },
+            // Reachable by the installation but never authorized by policy;
+            // listing it would show a name the policy exists to withhold.
+            { id: 91, name: "secret-api", full_name: "acme/secret-api", private: true, stargazers_count: 0 },
+          ],
+        });
+      }
       expect(url.pathname).toBe("/user/installations/42/repositories");
       expect(url.searchParams.get("per_page")).toBe("100");
       expect(url.searchParams.get("page")).toBe("1");
@@ -504,7 +523,54 @@ describe("GitHub connector", () => {
         { full_name: "acme/web-api" },
         { full_name: "acme/admin-api" },
       ],
+      publicCount: 1,
+      publicTotalCount: 3,
+      publicTotalCountIsExact: true,
+      publicRepositories: [
+        { full_name: "openorg/public-api", stargazers_count: 4_210 },
+      ],
     });
+    expect(searched.summary).toBe("Found 2 authorized and 1 public GitHub repositories matching API");
+  });
+
+  it("keeps the authorized half of a search when GitHub will not answer the public half", async () => {
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/graphql") return jsonResponse({ data: { repositoryOwner: null } });
+      // The search API is rate limited well below the rest of the REST API, and
+      // a work stream that fans out to several agents can reach that.
+      if (url.pathname === "/search/repositories") {
+        return new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
+          status: 403,
+          headers: { "content-type": "application/json", "x-ratelimit-remaining": "0", "retry-after": "45" },
+        });
+      }
+      return jsonResponse({
+        total_count: 1,
+        repositories: [{ id: 1, name: "web-api", full_name: "acme/web-api", pushed_at: "2026-08-12T12:00:00.000Z" }],
+      });
+    };
+    const adapter = githubAdapter(fetcher);
+    const connection = personalConnection([GitHubCapabilities.metadataRead]);
+    connection.config.account = { login: "acme", type: "Organization" };
+
+    const searched = await adapter.executeTool("repositories.search", { query: "api", page: 1, perPage: 10 }, {
+      connection,
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    // Degraded, and said so: "no public results" and "GitHub would not answer"
+    // are different answers, and a caller that cannot tell them apart concludes
+    // the repository does not exist.
+    expect(searched.output).toMatchObject({
+      repositories: [{ full_name: "acme/web-api" }],
+      publicRepositories: [],
+      // `provider_error` is not what to tell a caller that could simply wait.
+      publicSearchUnavailable: "rate_limited",
+      publicSearchRetryAfterMs: 45_000,
+    });
+    expect(searched.output).not.toHaveProperty("publicTotalCount");
   });
 
   it("does not advertise an unreachable repository page after the scan limit", async () => {
