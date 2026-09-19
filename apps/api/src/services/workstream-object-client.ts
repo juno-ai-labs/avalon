@@ -248,12 +248,27 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  async addParticipant(userId: string, operationId = uuidV7()): Promise<WorkstreamDetail["participants"][number]> {
-    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId, operationId }));
+  /**
+   * Seat a reader through the conversation that owns the roster.
+   *
+   * `spaceSourceId` says the Channel is not the one deciding: a Space reaches
+   * it and supplies this reader. The containment preflight, the membership
+   * check and the grant authority are identical either way — what the name
+   * changes is that the resulting grant is not published to the shared
+   * scope-grant directory, because a Space-derived reader discovers the
+   * Channel through the Space.
+   */
+  async addParticipant(userId: string, options: { operationId?: string; spaceSourceId?: string } = {}):
+  Promise<WorkstreamDetail["participants"][number]> {
+    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId,
+      operationId: options.operationId ?? uuidV7(),
+      ...(options.spaceSourceId ? { spaceSourceId: options.spaceSourceId } : {}) }));
   }
 
-  async removeParticipant(userId: string, operationId = uuidV7()): Promise<void> {
-    await this.request({ operation: "remove_participant", userId, operationId });
+  async removeParticipant(userId: string, options: { operationId?: string; spaceSourceId?: string } = {}): Promise<void> {
+    await this.request({ operation: "remove_participant", userId,
+      operationId: options.operationId ?? uuidV7(),
+      ...(options.spaceSourceId ? { spaceSourceId: options.spaceSourceId } : {}) });
   }
 
   async attachResource(resourceId: string): Promise<WorkstreamResource> {
