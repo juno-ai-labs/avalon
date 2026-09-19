@@ -1137,6 +1137,8 @@ Do not "simplify" this to a `GITHUB_TOKEN` merge or a direct push: both skip
 the deploy. The acceptance gate remains the proof the image is usable; auto-
 merge does not replace it.
 
+Shipped in #858.
+
 ### 2026-09-19 — A sandbox restore is bounded by the acquisition budget, not the SDK's default
 
 **What changed:** `startSandbox` and `recoverSandbox` take a
