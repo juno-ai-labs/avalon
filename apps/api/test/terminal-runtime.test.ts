@@ -261,6 +261,9 @@ function fixture(
     });
   });
   const resources: TerminalResourceBridge = {
+    // This suite drives the runtime's ordinary tool surface; crash-repair
+    // reconciliation is proved against real rows in `terminal-publication.test.ts`.
+    reconcilePublishedResource: vi.fn(async () => ({ outcome: "not_landed" as const })),
     importResource: vi.fn(async (_context, input, destination): Promise<TerminalImportResourceOutput> => ({
       resourceId: input.resourceId, filePath: destination, outcome: "created",
       mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64),

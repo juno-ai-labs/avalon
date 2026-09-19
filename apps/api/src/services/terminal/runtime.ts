@@ -1,4 +1,8 @@
-import type { HarnessToolContext } from "@rally/agent-harness";
+import type {
+  HarnessToolContext,
+  HarnessToolEffectReconciliation,
+  HarnessToolReconcileContext,
+} from "@rally/agent-harness";
 import { newId } from "@rally/db";
 
 import { sha256Hex } from "../../lib/crypto";
@@ -104,6 +108,19 @@ export interface TerminalResourceBridge {
     providerSandboxId: string,
     provider: TerminalSandboxProvider,
   ): Promise<TerminalImportResourceOutput>;
+  /**
+   * Whether an interrupted publish of this path is the revision standing there.
+   *
+   * Separate from {@link publishResource} because it must not publish: it is
+   * the question crash repair asks before deciding whether re-entering the tool
+   * is a first execution or a second write. The implementation reads the
+   * document's own authorship rather than the sandbox, and
+   * `resource-bridge.ts` states why.
+   */
+  reconcilePublishedResource(
+    context: HarnessToolReconcileContext,
+    input: PublishInput,
+  ): Promise<HarnessToolEffectReconciliation>;
   publishResource(
     context: HarnessToolContext,
     /**
