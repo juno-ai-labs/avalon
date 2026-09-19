@@ -1064,6 +1064,37 @@ describe('raised popover interaction states', () => {
   });
 });
 
+describe('work-stream header control hover', () => {
+  /**
+   * The three controls in the stream's top bar hover as one family, and the
+   * family's fill is the hover wash rather than the raised surface. `raised`
+   * is a step above the canvas only in dark; light sets `surface.canvas` and
+   * `surface.raised` to the same #fcfcfc, so hovering any of these painted the
+   * canvas back onto the canvas and nothing moved. The title button beside
+   * them was already on the wash, which is what made the gap visible: the name
+   * lit up and every icon next to it stayed blank.
+   */
+  it('fills the header controls with the hover wash rather than the raised surface', () => {
+    const icon = rule(
+      '.icon-button:hover:not(:disabled),\n'
+      + ".icon-button[data-state='open']:not(:disabled),\n"
+      + '.icon-button:focus-visible',
+    );
+    const participants = rule('.participant-header-button:hover');
+    const socket = rule('.header-socket-state:hover,\n.header-socket-state:focus-visible');
+
+    for (const declarations of [icon, participants, socket]) {
+      expect(declarations).not.toBeNull();
+      expect(declarations).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    }
+  });
+
+  it('keeps the title button on the same wash the icons beside it now use', () => {
+    expect(rule('.workstream-title-button:hover'))
+      .toContain('background: var(--av-sys-color-surface-raised-hover);');
+  });
+});
+
 describe('sidebar project rows', () => {
   // Project rows wear `.sidebar-row` so they pick up the shared hover fill,
   // radius, and padding. A private hover colour on `.project-sidebar-row`

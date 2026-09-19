@@ -368,11 +368,19 @@ pre {
    stack and socket dot look like a different family. Keep the 1px transparent
    border so the box does not shift; do not paint it. Open and keyboard-focus
    match hover so a menu trigger does not snap back to empty, and so focus
-   gets the same raised fill as `.header-socket-state:focus-visible`. */
+   gets the same wash as `.header-socket-state:focus-visible`.
+
+   The wash is `surface-raised-hover`, not `surface-raised`: a hover state is a
+   step away from the surface the control sits on, and `raised` is only that in
+   dark, where it is #2f2f2f over a #070707 canvas. Light sets both to #fcfcfc,
+   so the fill was the canvas and there was nothing to see — the work-stream
+   header's own title button, on `raised-hover` already, lit up while every icon
+   beside it stayed blank. `raised-hover` is also the translucent one in light,
+   so it steps off a dialog or a menu as readably as off the canvas. */
 .icon-button:hover:not(:disabled),
 .icon-button[data-state='open']:not(:disabled),
 .icon-button:focus-visible {
-  background: var(--av-sys-color-surface-raised);
+  background: var(--av-sys-color-surface-raised-hover);
   color: var(--av-sys-color-text-default);
 }
 
@@ -3170,7 +3178,7 @@ pre {
 .panel-toggle.is-active { background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, var(--av-sys-color-surface-raised)); color: var(--av-sys-color-brand-ink); }
 .panel-toggle.is-active:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 17%, var(--av-sys-color-surface-raised)); }
 .participant-header-button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: flex; gap: 4px; min-height: 30px; padding: 2px 5px; }
-.participant-header-button:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
+.participant-header-button:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
@@ -4357,7 +4365,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .socket-unavailable > span { background: var(--av-sys-color-warning-base); }
 .header-socket-state { border-radius: var(--av-sys-size-radius-md); justify-content: center; margin: 0 2px; min-height: 30px; min-width: 24px; }
 .header-socket-state:hover,
-.header-socket-state:focus-visible { background: var(--av-sys-color-surface-raised); }
+.header-socket-state:focus-visible { background: var(--av-sys-color-surface-raised-hover); }
 .header-socket-state > span { height: 7px; width: 7px; }
 .microphone-control { align-items: center; display: flex; gap: 0; }
 .microphone-control .dictation-button { border-radius: var(--av-sys-size-radius-md) 0 0 var(--av-sys-size-radius-md); width: 27px; }
