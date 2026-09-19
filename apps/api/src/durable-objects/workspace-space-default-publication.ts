@@ -106,6 +106,7 @@ export async function publishSpaceIntentResumes(input: {
       workstreamId: intent.workstreamId,
       spaceRevision: intent.spaceRevision,
       membershipGeneration: intent.membershipGeneration,
+      cursor: intent.cursor,
       requestedByUserId: intent.requestedByUserId,
     }),
     queue: input.queue,

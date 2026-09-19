@@ -55,25 +55,36 @@ import type {
 export const SPACE_CHANNEL_PAGE_SIZE = 250;
 
 /**
- * Channels the cutover claims in one page of work.
+ * Channels one page of a cross-object walk covers.
+ *
+ * Two walks share it, because they are the same shape. The cutover places
+ * every Channel of an Organization in General; the Space fan-outs carry an
+ * audience change, an archive or a restore to every member Channel. Each costs
+ * several cross-object awaits per Channel and each continues from a cursor, so
+ * this is one bound rather than two numbers somebody has to keep in step.
  *
  * Bounds: rows in one `space_bootstrap` Queue message's worth of work, and
- *   therefore the Channels one consumer invocation places.
- * Without it: the cutover would claim the whole Organization in one message,
- *   and an Organization larger than one invocation's budget could never
- *   finish — each redelivery would restart the same unbounded pass.
- * Direction: upper bound on Channels per message; the pass continues from the
- *   cursor on the next alarm.
+ *   therefore the Channels one consumer invocation places; and Channels in one
+ *   page of {@link WorkspaceSpaceStorage.members}, which is the unit an
+ *   audience change, an archive or a restore records on its intent before
+ *   continuing.
+ * Without it: a walk would claim the whole Organization in one invocation, and
+ *   an Organization larger than one invocation's budget could never finish —
+ *   each redelivery would restart the same unbounded pass.
+ * Direction: upper bound on Channels per page; the pass continues from the
+ *   cursor, on the next alarm or on the next iteration.
  * Trips: nothing visible. The page ends and the cursor continues it.
  * Derive from: the two ceilings this sits between, and the number is the
  *   team's to set. A Cloudflare Queue consumer invocation and a WorkspaceDO
  *   alarm both have to finish the page, and each Channel costs one
  *   containment preflight, one membership staging, one canonical audience
- *   operation and one settlement — four cross-object awaits. 50 is a quarter
- *   of `SPACE_CHANNEL_PAGE_SIZE`, which bounds a read rather than a walk of
- *   cross-object writes; what a different number buys is fewer alarm wakes
- *   against a longer invocation, and nobody here has the Organization sizes or
- *   the per-Channel timings to weigh them.
+ *   operation and one settlement — four cross-object awaits. A member walk's
+ *   per-Channel cost is the same several-hops shape: a retraction and an
+ *   application, each a plan-apply-confirm conversation with the Channel's own
+ *   authority. 50 is a quarter of `SPACE_CHANNEL_PAGE_SIZE`, which bounds a
+ *   read rather than a walk of cross-object writes; what a different number
+ *   buys is fewer alarm wakes against a longer invocation, and nobody here has
+ *   the Organization sizes or the per-Channel timings to weigh them.
  */
 export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 
@@ -182,6 +193,13 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   // what it was staged against. A second table per kind would have meant a
   // second alarm sweep per kind for the one thing they all need — being
   // republished when the request that created them died mid-flight.
+  //
+  // `cursor` is how far the operation's fan-out got, in the same shape
+  // `space_bootstrap.cursor` carries the cutover's walk: the Channel id the
+  // last finished page stopped at. An audience change, an archive and a
+  // restore each walk every member Channel, so without it a resume restarted
+  // the whole walk from the top and a Space larger than one invocation's
+  // budget had an operation that could never finish.
   `CREATE TABLE space_intents (
     operation_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN (
@@ -193,6 +211,7 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
     membership_generation INTEGER CHECK (membership_generation IS NULL OR membership_generation > 0),
     delivery_generation INTEGER CHECK (delivery_generation IS NULL OR delivery_generation > 0),
     state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'settled', 'cancelled')),
+    cursor TEXT,
     receipts_json TEXT NOT NULL CHECK (json_valid(receipts_json)),
     requested_by_user_id TEXT NOT NULL,
     not_before INTEGER NOT NULL,
@@ -329,6 +348,8 @@ export interface WorkspaceSpaceIntentClaim {
   workstreamId: string | null;
   spaceRevision: number;
   membershipGeneration: number | null;
+  /** Where the operation's member walk got to, or `null` if it has not started. */
+  cursor: string | null;
   requestedByUserId: string;
 }
 
@@ -405,6 +426,12 @@ export interface SpaceBootstrapBlocked {
 /** One page of the memberships a Space read is about, before the projection. */
 export interface SpaceChannelIdPage {
   workstreamIds: string[];
+  nextCursor: string | null;
+}
+
+/** One page of the memberships a Space fan-out still has work for. */
+export interface SpaceMemberPage {
+  members: SpaceMember[];
   nextCursor: string | null;
 }
 
@@ -866,7 +893,7 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Every Channel this Space holds, archived ones included.
+   * One page of the Channels this Space holds, archived ones included.
    *
    * `reach` is the difference between what a surface means by a member and what
    * a retraction fan-out is about. `prepareArchive` and `prepareMembershipRemoval`
@@ -874,27 +901,52 @@ export class WorkspaceSpaceStorage {
    * the source, so the set a staged operation still has work for is
    * `active` plus `removing` — and an archive that read the active set would
    * walk nothing and leave its source on every Channel it reached.
+   *
+   * Paged for the reason {@link SPACE_CHANNEL_PAGE_SIZE} pages the read beside
+   * it, and then some: every caller of this is a *walk* that spends several
+   * cross-object awaits per row, so an unbounded answer is not one slow
+   * invocation but an operation that can never finish — each redelivery
+   * restarting the same pass from the top. Ordered by Channel id, so the
+   * cursor is the id the page stopped at and a resumed walk continues from a
+   * row rather than from an offset.
    */
   members(
     userId: string,
     spaceId: string,
     reach: SpaceMembershipReach = "active",
-  ): SpaceMember[] | false {
+    cursor: string | null = null,
+  ): SpaceMemberPage | false {
     if (!this.canRead(userId, spaceId)) return false;
-    return this.storage.sql.exec<{
+    const after = cursor === null ? null : decodeChannelCursor(cursor);
+    if (cursor !== null && after === null) return false;
+    const rows = this.storage.sql.exec<{
       workstream_id: string;
       generation: number;
     } & Record<string, SqlStorageValue>>(
       reach === "reaching"
         ? `SELECT workstream_id, generation FROM space_channel_memberships
-            WHERE space_id = ? AND state IN ('active', 'removing') ORDER BY workstream_id`
+            WHERE space_id = ? AND state IN ('active', 'removing')
+              AND (? IS NULL OR workstream_id > ?)
+            ORDER BY workstream_id LIMIT ?`
         : `SELECT workstream_id, generation FROM space_channel_memberships
-            WHERE space_id = ? AND state = 'active' ORDER BY workstream_id`,
+            WHERE space_id = ? AND state = 'active'
+              AND (? IS NULL OR workstream_id > ?)
+            ORDER BY workstream_id LIMIT ?`,
       spaceId,
-    ).toArray().map((row) => ({
-      workstreamId: asWorkstreamId(row.workstream_id),
-      membershipGeneration: row.generation,
-    }));
+      after,
+      after ?? "",
+      SPACE_BOOTSTRAP_PAGE_SIZE + 1,
+    ).toArray();
+    const hasMore = rows.length > SPACE_BOOTSTRAP_PAGE_SIZE;
+    if (hasMore) rows.pop();
+    const last = rows.at(-1);
+    return {
+      members: rows.map((row) => ({
+        workstreamId: asWorkstreamId(row.workstream_id),
+        membershipGeneration: row.generation,
+      })),
+      nextCursor: hasMore && last ? encodeChannelCursor(last.workstream_id) : null,
+    };
   }
 
   /**
@@ -1650,17 +1702,39 @@ export class WorkspaceSpaceStorage {
     );
   }
 
-  /** Append one receipt and, when the operation is done, settle it. */
-  settleIntent(operationId: string, receipt: string, settled: boolean, now = Date.now()): void {
+  /**
+   * Append one receipt and, when the operation is done, settle it.
+   *
+   * `cursor` is how a paged fan-out records where it got to: the id its last
+   * finished page stopped at, or `null` once the walk is exhausted. Passing
+   * `undefined` leaves the column where it is, which is what every
+   * single-Channel operation does — it has no walk to continue.
+   *
+   * One receipt per *page* rather than per Channel, which is the other half of
+   * the cursor's job. `receipts_json` is rewritten whole by `json_insert`, so a
+   * receipt per member Channel cost O(N²) bytes in one row and one extra hop
+   * into this single-threaded object per Channel — and none of it was what a
+   * resume read, because a resume reads the cursor.
+   */
+  settleIntent(
+    operationId: string,
+    receipt: string,
+    settled: boolean,
+    now = Date.now(),
+    cursor?: string | null,
+  ): void {
     if (!this.ready()) return;
     this.storage.sql.exec(
       `UPDATE space_intents
           SET receipts_json = json_insert(receipts_json, '$[#]', ?),
               state = CASE WHEN ? = 1 THEN 'settled' ELSE 'applied' END,
+              cursor = CASE WHEN ? = 1 THEN ? ELSE cursor END,
               updated_at = ?
         WHERE operation_id = ? AND state IN ('pending', 'applied')`,
       receipt,
       settled ? 1 : 0,
+      cursor === undefined ? 0 : 1,
+      cursor ?? null,
       now,
       operationId,
     );
@@ -1695,11 +1769,12 @@ export class WorkspaceSpaceStorage {
         workstream_id: string | null;
         space_revision: number;
         membership_generation: number | null;
+        cursor: string | null;
         requested_by_user_id: string;
         attempts: number;
       } & Record<string, SqlStorageValue>>(
         `SELECT operation_id, kind, space_id, workstream_id, space_revision,
-                membership_generation, requested_by_user_id, attempts
+                membership_generation, cursor, requested_by_user_id, attempts
            FROM space_intents
           WHERE state IN ('pending', 'applied') AND not_before <= ?
           ORDER BY not_before, operation_id LIMIT 100`,
@@ -1722,6 +1797,7 @@ export class WorkspaceSpaceStorage {
         workstreamId: row.workstream_id,
         spaceRevision: row.space_revision,
         membershipGeneration: row.membership_generation,
+        cursor: row.cursor,
         requestedByUserId: row.requested_by_user_id,
       }));
     });
