@@ -951,8 +951,23 @@ reading as one distribution. **Any new call site that can start an archived
 sandbox owes a deadline**, or it silently re-censors the row that tells the
 team whether a budget needs to move.
 
+**What this bounds, and what it does not.** Only the *restore wait* is
+budgeted. The adapter still passes the SDK's `60` to `stop`, `delete` and
+`create`, and two of those — the `stop` in `reconcileNetworkPolicy` and the
+`delete` in `replaceForAuthority` — run inside acquisition, so a slow one can
+still spend the budget that the restore after it then finds gone. The restore
+handles that correctly, because the deadline is absolute and it simply gets
+what is left, but the acquisition as a whole can still overrun. Bounding those
+is a separate change and a separate set of numbers.
+
+What is fully bounded is the *measurement*: `operation: "sandbox_start"` is
+emitted only from the provider's `startSandbox`, so no unbudgeted call can
+reach the **Restore archived sandbox** row. The direct `sandbox.start` calls
+inside `configureGitHubReadAccess` and command cancellation emit a request
+measurement only.
+
 If a restore ceiling ever does need to be its own number, it is one of the two
-budgets that moves; do not reintroduce a bound inside the adapter. And the wait
+budgets that moves; do not reintroduce a bound on a restore inside the adapter. And the wait
 is not a durability decision: a timeout must keep re-observing rather than
 treating the sandbox as lost — which is also the only thing that makes a
 floored one-second start safe, since that request can be aborted before Daytona
