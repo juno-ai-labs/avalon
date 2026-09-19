@@ -617,6 +617,7 @@ import {
 } from "./workspace-space-default-publication";
 import {
   SpaceDefaultQueueMessageSchema,
+  SpaceDefaultTargetFailureRequestSchema,
   WorkspaceChannelSpacesRequestSchema,
   WorkspaceChannelSpacesResultSchema,
   WorkspaceSpaceArchiveRequestSchema,
@@ -641,6 +642,7 @@ import {
   WorkspaceSpaceIntentReceiptRequestSchema,
   WorkspaceSpaceReserveRequestSchema,
   type SpaceDefaultQueueMessage,
+  type SpaceDefaultTargetFailureRequest,
   type WorkspaceChannelSpacesRequest,
   type WorkspaceChannelSpacesResult,
   type WorkspaceSpaceArchiveRequest,
@@ -6492,11 +6494,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return completed;
   }
 
-  async recordSpaceDefaultTargetFailure(input: SpaceDefaultQueueMessage): Promise<boolean> {
+  async recordSpaceDefaultTargetFailure(input: SpaceDefaultTargetFailureRequest): Promise<boolean> {
     await this.initialized;
-    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "record_space_default_target_failure");
+    const request = parseRpcInput(
+      SpaceDefaultTargetFailureRequestSchema, input, "record_space_default_target_failure",
+    );
     this.assertWorkspace(request.workspaceId);
-    return this.spaceStorage().recordDefaultTargetFailure(request, "space_default_apply_failed");
+    return this.spaceStorage().recordDefaultTargetFailure(request, request.errorCode);
   }
 
   async failSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {
