@@ -430,6 +430,10 @@ describe("work-stream transcript on workerd SQLite", () => {
             id: "provider-call",
             type: "function",
             function: { name: "publish_resource", arguments: "{}" },
+          }, {
+            id: "provider-question",
+            type: "function",
+            function: { name: "request_elicitation", arguments: "{}" },
           }],
         },
       }, now + 1, {
@@ -438,6 +442,17 @@ describe("work-stream transcript on workerd SQLite", () => {
         leaseOwner: "workerd-test-owner",
         expectedBindStateRevision: 2,
       });
+      // A question already put to a person, whose protocol result is withheld
+      // until they answer. The repair filters it out of the calls it settles.
+      state.storage.sql.exec(
+        `INSERT INTO elicitation_requests
+           (elicitation_id, run_id, prompt, response_type, options_json,
+            minimum_selections, status, created_at, tool_call_id)
+         VALUES ('elicitation-1', ?, 'Which one?', 'single_select', '[]', 1, 'pending', ?, ?)`,
+        receiptRunId,
+        now,
+        `${LOOP_ID}:turn:1:tool:1`,
+      );
       // The shape the incident left behind: a provider-keyed write admitted
       // and still `executing` when the isolate went away. Written directly
       // because reaching it through Bind would mean running a real sandbox.
@@ -492,11 +507,16 @@ describe("work-stream transcript on workerd SQLite", () => {
       // and the write cannot be asked what it did. That is the one path that
       // still ends in ambiguity — and it repairs the batch rather than
       // throwing, because the protocol array has to be whole either way.
+      // `waiting_for_input`, not `ambiguous`, and the order is the whole
+      // point: this batch holds both. While an ambiguity failed the cycle the
+      // two could never collide, so reporting it first was harmless; now that
+      // it continues, it would discard the withheld elicitation and start the
+      // harness on an assistant turn whose second tool call has no result.
       await expect(resident.recoverInterruptedToolBatch(
         createTestEnv({ PAYLOADS: env.PAYLOADS }),
         replacementClaim.input,
         { attemptId, owner: attemptOwner, attemptNumber: 1, leaseExpiresAt: Date.now() + 60_000 },
-      )).resolves.toBe("ambiguous");
+      )).resolves.toBe("waiting_for_input");
 
       // The tool is named. A member reading `ambiguous_external_write` alone
       // cannot tell which of a batch's calls is in doubt, and neither can an
