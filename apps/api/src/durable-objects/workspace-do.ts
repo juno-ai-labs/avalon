@@ -75,7 +75,6 @@ import {
   workstreamParticipantPreview,
   WorkspaceIdSchema,
   WorkspaceAttentionSchema,
-  WorkspaceProjectSnapshotEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
@@ -93,7 +92,6 @@ import {
   type AutomationSummary,
   type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
-  type ProjectSnapshot,
   type SpaceErrorCode,
   type SpaceSnapshot,
   type Workstream,
@@ -570,46 +568,6 @@ import {
 } from "./workspace-opportunity-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
 import { WorkspaceProductStorage } from "./workspace-product-storage";
-import { publishProjectDefaultResourceTargets } from "./workspace-project-default-publication";
-import {
-  WorkspaceProjectCreateRequestSchema,
-  WorkspaceProjectAudienceRequestSchema,
-  ProjectDefaultResourceQueueMessageSchema,
-  WorkspaceProjectDefaultResourceRequestSchema,
-  WorkspaceProjectDefaultResultSchema,
-  WorkspaceProjectDirectoryResultSchema,
-  WorkspaceProjectListRequestSchema,
-  WorkspaceProjectLifecycleRequestSchema,
-  WorkspaceProjectMembersRequestSchema,
-  WorkspaceProjectMembersResultSchema,
-  WorkspaceProjectMembershipPlanResultSchema,
-  WorkspaceProjectMembershipPrepareRequestSchema,
-  WorkspaceProjectMembershipSettleRequestSchema,
-  WorkspaceProjectMutationResultSchema,
-  WorkspaceProjectReorderRequestSchema,
-  WorkspaceProjectUpdateRequestSchema,
-  WorkspaceProjectWorkstreamConstraintRequestSchema,
-  WorkspaceProjectWorkstreamConstraintResultSchema,
-  type WorkspaceProjectCreateRequest,
-  type WorkspaceProjectAudienceRequest,
-  type ProjectDefaultResourceQueueMessage,
-  type WorkspaceProjectDefaultResourceRequest,
-  type WorkspaceProjectDefaultResult,
-  type WorkspaceProjectDirectoryResult,
-  type WorkspaceProjectListRequest,
-  type WorkspaceProjectLifecycleRequest,
-  type WorkspaceProjectMembersRequest,
-  type WorkspaceProjectMembersResult,
-  type WorkspaceProjectMembershipPlanResult,
-  type WorkspaceProjectMembershipPrepareRequest,
-  type WorkspaceProjectMembershipSettleRequest,
-  type WorkspaceProjectMutationResult,
-  type WorkspaceProjectReorderRequest,
-  type WorkspaceProjectUpdateRequest,
-  type WorkspaceProjectWorkstreamConstraintRequest,
-  type WorkspaceProjectWorkstreamConstraintResult,
-} from "./workspace-project-protocol";
-import { WorkspaceProjectStorage } from "./workspace-project-storage";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
@@ -1154,6 +1112,57 @@ const PROJECT_CASCADE_DEPENDENTS = [
   "project_default_resource_targets",
   "project_default_resource_publications",
 ] as const;
+
+/**
+ * Retire Projects, behind a barrier that has to read zero before anything is
+ * dropped.
+ *
+ * Three steps in one transaction, and the order is the whole point.
+ *
+ * **Invalidate.** Every unsettled default target becomes `terminal` with
+ * `project_retired` on it, and every unaccepted publication is accepted. Those
+ * rows are the durable half of an at-least-once delivery; a Queue message
+ * naming one may still be in flight, and what stops it writing into a Channel
+ * whose audience the cutover has just changed is that the consumer finds
+ * nothing current. The consumer leg stays for the platform's retry window and
+ * acknowledges every redelivery as a tombstone.
+ *
+ * **Assert.** A table whose one column may only be zero, inserted from the
+ * counts above. If anything is still unsettled the insert aborts with
+ * `CHECK constraint failed: project_effects_pending`, the transaction rolls
+ * back, and the object refuses to open rather than dropping work somebody is
+ * owed. `docs/runbook.md` says what an operator does with that: drain the
+ * regional activity Queue and force the migration again.
+ *
+ * **Drop.** Children before parents, because `PRAGMA foreign_keys = OFF` is
+ * silently a no-op once anything in the same Durable Object event has touched
+ * SQLite (`docs/durable-object-sqlite.md`), so a parent dropped first would
+ * cascade its children away and hide whichever of them still held rows.
+ *
+ * Applied Channel state is untouched. A resource a Project delivered is
+ * attached to the Channel's own authority, and this deletes the Organization's
+ * record of *why* it was delivered, never the attachment.
+ */
+const PROJECT_RETIREMENT_STATEMENTS: readonly string[] = [
+  `UPDATE project_default_resource_targets
+      SET state = 'terminal', last_error_code = 'project_retired',
+          updated_at = unixepoch() * 1000
+    WHERE state = 'pending'`,
+  `UPDATE project_default_resource_publications
+      SET state = 'accepted', accepted_at = unixepoch() * 1000,
+          updated_at = unixepoch() * 1000
+    WHERE state = 'pending'`,
+  `CREATE TABLE _project_retirement_barrier (
+    unsettled INTEGER NOT NULL CONSTRAINT project_effects_pending CHECK (unsettled = 0)
+  ) STRICT`,
+  `INSERT INTO _project_retirement_barrier (unsettled)
+     SELECT (SELECT COUNT(*) FROM project_default_resource_targets WHERE state = 'pending')
+          + (SELECT COUNT(*) FROM project_default_resource_publications WHERE state = 'pending')`,
+  `DROP TABLE _project_retirement_barrier`,
+  ...[...PROJECT_CASCADE_DEPENDENTS].reverse().map((table) => `DROP TABLE ${table}`),
+  `DROP TABLE workspace_project_state`,
+  `DROP TABLE projects`,
+];
 
 /**
  * Palette snapshots, frozen per migration.
@@ -3412,6 +3421,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 61,
   description: "spaces: directory, membership, general, defaults, bootstrap",
   statements: [...WORKSPACE_SPACE_SCHEMA_STATEMENTS],
+}, {
+  version: 62,
+  description: "retire projects behind the space cutover",
+  statements: [...PROJECT_RETIREMENT_STATEMENTS],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4385,7 +4398,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
-    const publication = this.projectStorage().nextDefaultPublicationDueAt();
     const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
     const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
     const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
@@ -4394,7 +4406,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
-      ...(publication === null ? [] : [publication]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
       ...(spaceBootstrap === null ? [] : [spaceBootstrap]),
@@ -4420,23 +4431,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
-      await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
-        try {
-          await publishProjectDefaultResourceTargets({
-            storage: this.projectStorage(),
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "project_default_publication_failed", {
-            workspace_id: workspaceId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      });
       await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
         try {
           await publishSpaceDefaultTargets({
@@ -5589,306 +5583,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().sequence;
   }
 
-  async createProject(input: WorkspaceProjectCreateRequest): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectCreateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().create(request, uuidV7());
-    this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse({ ok: true, project });
-  }
-
-  async listProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
-    await this.initialized;
-    const request = WorkspaceProjectListRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    return WorkspaceProjectDirectoryResultSchema.parse({
-      ok: true,
-      directory: this.projectStorage().list(request.userId),
-    });
-  }
-
-  async listInactiveProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
-    await this.initialized;
-    const request = WorkspaceProjectListRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    return WorkspaceProjectDirectoryResultSchema.parse({
-      ok: true,
-      directory: this.projectStorage().listInactive(request.userId),
-    });
-  }
-
-  /**
-   * Every work stream a project holds, archived ones included — what the
-   * client-facing summary deliberately leaves out.
-   */
-  async listProjectMembers(input: WorkspaceProjectMembersRequest): Promise<WorkspaceProjectMembersResult> {
-    await this.initialized;
-    const request = WorkspaceProjectMembersRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const workstreamIds = this.projectStorage()
-      .memberWorkstreamIds(request.userId, request.projectId);
-    return workstreamIds === false
-      ? { ok: false, code: "project_not_found" }
-      : WorkspaceProjectMembersResultSchema.parse({ ok: true, workstreamIds });
-  }
-
-  async archiveProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().archive(request);
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async restoreProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectDefaultResult> {
-    await this.initialized;
-    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().restore(request);
-    const result = WorkspaceProjectDefaultResultSchema.parse(project === "conflict"
-      ? { ok: false, code: "project_restore_conflict" }
-      : project
-        ? { ok: true, project: project.project, targets: project.targets }
-        : { ok: false, code: "project_not_found" });
-    if (result.ok) this.publishProjectSnapshot();
-    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
-    return result;
-  }
-
-  async reorderProjects(
-    input: WorkspaceProjectReorderRequest,
-  ): Promise<WorkspaceProjectDirectoryResult> {
-    await this.initialized;
-    const request = WorkspaceProjectReorderRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const result = WorkspaceProjectDirectoryResultSchema.parse({
-      ok: true,
-      directory: this.projectStorage().reorder(request.userId, request.order.projectIds),
-    });
-    this.publishProjectSnapshot();
-    return result;
-  }
-
-  async updateProjectPresentation(
-    input: WorkspaceProjectUpdateRequest,
-  ): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectUpdateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().updatePresentation(request);
-    if (project !== false) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project === false
-      ? { ok: false, code: "project_not_found" }
-      : { ok: true, project });
-  }
-
-  async updateProjectAudience(input: WorkspaceProjectAudienceRequest): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectAudienceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const activeMemberIds = await Promise.all(request.audience.participantUserIds.map(async (userId) => (
-      await this.activeWorkspaceMember(request.workspaceId, userId) ? userId : null
-    )));
-    if (activeMemberIds.some((userId) => userId === null)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().updateAudience(request);
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async prepareProjectMembership(
-    input: WorkspaceProjectMembershipPrepareRequest,
-  ): Promise<WorkspaceProjectMembershipPlanResult> {
-    await this.initialized;
-    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const result = WorkspaceProjectMembershipPlanResultSchema.parse(
-      this.projectStorage().prepareMembership(request),
-    );
-    if (result.ok) this.publishProjectSnapshot();
-    return result;
-  }
-
-  async projectWorkstreamConstraints(
-    input: WorkspaceProjectWorkstreamConstraintRequest,
-  ): Promise<WorkspaceProjectWorkstreamConstraintResult> {
-    await this.initialized;
-    const request = WorkspaceProjectWorkstreamConstraintRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return WorkspaceProjectWorkstreamConstraintResultSchema.parse({
-        activeProject: false,
-        requiresWorkspaceScope: false,
-      });
-    }
-    return WorkspaceProjectWorkstreamConstraintResultSchema.parse(
-      this.projectStorage().workstreamConstraints(request.workstreamId),
-    );
-  }
-
-  async finalizeProjectMembership(
-    input: WorkspaceProjectMembershipSettleRequest,
-  ): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().finalizeMembership(request);
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async cancelProjectMembership(
-    input: WorkspaceProjectMembershipSettleRequest,
-  ): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().cancelMembership(request);
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async removeProjectMembership(
-    input: WorkspaceProjectMembershipPrepareRequest,
-  ): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().removeMembership(
-      request.userId,
-      request.projectId,
-      request.workstreamId,
-    );
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async addProjectDefaultResource(
-    input: WorkspaceProjectDefaultResourceRequest,
-  ): Promise<WorkspaceProjectDefaultResult> {
-    await this.initialized;
-    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const result = WorkspaceProjectDefaultResultSchema.parse(
-      this.projectStorage().addDefaultResource(request),
-    );
-    if (result.ok) this.publishProjectSnapshot();
-    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
-    return result;
-  }
-
-  async removeProjectDefaultResource(
-    input: WorkspaceProjectDefaultResourceRequest,
-  ): Promise<WorkspaceProjectMutationResult> {
-    await this.initialized;
-    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "project_access_denied" };
-    }
-    const project = this.projectStorage().removeDefaultResource(request);
-    if (project) this.publishProjectSnapshot();
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_not_found" });
-  }
-
-  async projectDefaultTargetCurrent(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
-    await this.initialized;
-    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.projectStorage().defaultTargetCurrent(request);
-  }
-
-  async projectDefaultTargetActors(input: ProjectDefaultResourceQueueMessage): Promise<string[]> {
-    await this.initialized;
-    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.projectStorage().defaultTargetActors(request);
-  }
-
-  async completeProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
-    await this.initialized;
-    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.projectStorage().completeDefaultTarget(request);
-  }
-
-  async recordProjectDefaultTargetFailure(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
-    await this.initialized;
-    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.projectStorage().recordDefaultTargetFailure(request, "resource_attach_failed");
-  }
-
-  async failProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
-    await this.initialized;
-    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.projectStorage().failDefaultTarget(request, "project_no_active_participant");
-  }
-
   /**
    * Every Space RPC starts here: an active Organization membership that is not
    * a guest relationship.
    *
-   * Stricter than `activeWorkspaceMember`, which the Project surface uses,
-   * because guest access to Spaces is deferred by the PRD's non-goal 3. A guest
+   * Stricter than `activeWorkspaceMember`, because guest access to Spaces is
+   * deferred by the PRD's non-goal 3. A guest
    * holds explicit Channel and Breakout grants and no Organization-wide
    * discovery, so admitting one here would put every Organization-wide Space in
    * their sidebar.
@@ -7704,20 +7404,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // show until the next project write or reconnect. Publishing here means a
     // rejection further down redelivers the envelope rather than losing the
     // correction, and the gate below is the one that matters: the call
-    // advances the project waterline only when one of these work streams is
-    // actually in a project, which is both what makes the snapshot newer than
-    // the one its readers hold and what keeps this off the path every
-    // projection takes. Sending to a socket cannot throw — it is caught per
-    // socket — so nothing here can fail the batch.
-    if (archivalChanges.size > 0
-      && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
-      this.publishProjectSnapshot();
-    }
-    // The same test for the Space directory, for the same reason: a Space
-    // counts the members it can show, so a Channel arriving in or leaving the
-    // archive changes what its Spaces say about themselves — and a Space
+    // advances the Space waterline only when one of these Channels is actually
+    // in a Space, which is both what makes the snapshot newer than the one its
+    // readers hold and what keeps this off the path every projection takes. A
+    // Space counts the members it can show, so a Channel arriving in or leaving
+    // the archive changes what its Spaces say about themselves — and a Space
     // directory at a waterline a client already holds is dropped as a replay,
     // so the count would stay wrong until the next Space write or reconnect.
+    // Sending to a socket cannot throw — it is caught per socket — so nothing
+    // here can fail the batch.
     if (spaceDirectoryChanged
       || (archivalChanges.size > 0
         && this.spaceStorage().noteMemberArchivalChange([...archivalChanges]))) {
@@ -11126,7 +10821,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notes: {
         waterline: 0, items: [], nextCursor: null,
       },
-      projects: this.projectSnapshot(attachment.userId),
       ...this.spacesFor(attachment),
     });
   }
@@ -11180,48 +10874,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Re-send both project lists to every subscribed socket, shaped for its user.
-   *
-   * Project presentation, audience, membership, resource, lifecycle, and order
-   * all share the WorkspaceDO project waterline. Sending the complete pair
-   * means an audience removal is represented by absence for the removed person,
-   * and a reconnect can install exactly the same authoritative state.
-   */
-  private publishProjectSnapshot(): void {
-    const occurredAt = new Date().toISOString();
-    // An open workspace socket is the authorization. Access revocation closes
-    // it through the one shared revocation path; do not add a D1 read here.
-    for (const socket of this.state.getWebSockets()) {
-      const attachment = readAttachment(socket);
-      if (!attachment?.subscribed) continue;
-      try {
-        socket.send(JSON.stringify(WorkspaceProjectSnapshotEventSchema.parse({
-          type: "workspace_project_snapshot",
-          occurredAt,
-          projects: this.projectSnapshot(attachment.userId),
-        })));
-      } catch {
-        // Reconnect receives this same snapshot in the subscribe payload.
-      }
-    }
-  }
-
-  private projectSnapshot(userId: string): ProjectSnapshot {
-    return {
-      active: this.projectStorage().list(userId),
-      inactive: this.projectStorage().listInactive(userId),
-    };
-  }
-
-  /**
    * Re-send both Space directories to every subscribed socket, shaped for its
    * user.
    *
-   * The Project snapshot's mechanism, kept because the reasons are unchanged:
-   * every Space write shares one waterline, personal-Space visibility and order
-   * are per viewer, and sending the complete pair means a participant removal
-   * is represented by *absence* for the person removed rather than by an event
-   * they have to interpret.
+   * The mechanism the Project snapshot used, kept because the reasons are
+   * unchanged: every Space write shares one waterline, personal-Space
+   * visibility and order are per viewer, and sending the complete pair means a
+   * participant removal is represented by *absence* for the person removed
+   * rather than by an event they have to interpret.
    *
    * `spacesReady` rides along because a Space write can be the write that
    * finishes the cutover — a client holding `false` would otherwise keep
@@ -11288,10 +10948,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private productStorage(): WorkspaceProductStorage {
     return new WorkspaceProductStorage(this.state.storage);
-  }
-
-  private projectStorage(): WorkspaceProjectStorage {
-    return new WorkspaceProjectStorage(this.state.storage);
   }
 
   private spaceStorage(): WorkspaceSpaceStorage {
