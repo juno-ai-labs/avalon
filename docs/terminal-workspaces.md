@@ -26,7 +26,7 @@ sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/scripts/build-terminal-snapshot.ts`, `terminal-snapshot-acceptance.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox, and refuses one Daytona built smaller than requested. Does not adopt it; the acceptance probe above is still the gate. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts` (`TERMINAL_SNAPSHOT_RESOURCES`) | The one source of how large every Terminal sandbox is. Checked in rather than configured, because the weekly rebuild builds from the repository — read the Operations section before moving it to a GitHub variable. |
-| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and auto-merges the labelled adoption pull request onto main. Owning a snapshot is only safe with this running. |
+| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and pushes the config bump to main. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. The network policy is the whole of the **Internet access** page, a child of Workspace in the settings navigation. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
@@ -927,15 +927,12 @@ overrides it for a one-off build) on the Juno AI Labs Daytona organization. Owni
 on their own, and the manifest cannot see a stale-but-working base, so
 `.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
 06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
-runs `terminal:verify-provider` against it, opens a pull request labelled
-`daytona-snapshot-upgrade` that points `wrangler.global.jsonc` — the one config
-that carries the variable — at the result, and enables auto-merge so it lands
-on main without a human.
-Adoption is that merge, rollback is its revert, and existing sandboxes are
+runs `terminal:verify-provider` against it, and pushes a commit that points
+`wrangler.global.jsonc` — the one config that carries the variable — at the
+result.
+Adoption is that push, rollback is its revert, and existing sandboxes are
 untouched either way. A red Monday job means the current snapshot keeps serving
-and the gap to Daytona's base widens by a week; a pull request that could not
-auto-merge (missing `TERMINAL_SNAPSHOT_PR_TOKEN`) means the same until someone
-merges it from the GitHub UI. Each build stamps its Dockerfile with a build time so
+and the gap to Daytona's base widens by a week. Each build stamps its Dockerfile with a build time so
 Daytona cannot hand back a cached image, and the stamp is readable inside every
 sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
 is a reused image, not a rebuild.
@@ -960,21 +957,21 @@ unusable snapshot per attempt under the organization's quota. That decision live
 in `scripts/terminal-snapshot-acceptance.ts` rather than in the build script, so
 it is exercised against a stubbed delete the way the provider lifecycle helper
 beside it is. Changing the size is therefore
-a rebuild and an adoption merge like any other, existing sandboxes keep the size
+a rebuild and an adoption push like any other, existing sandboxes keep the size
 they were created at, and the number belongs in the checked-in manifest: the
 weekly job builds from the repository, so a size set as a GitHub variable is one
-the next adoption pull request silently reverts.
+the next weekly push silently reverts.
 
 The workflow reads its configuration from the `api-production` GitHub
 environment: the `DAYTONA_API_KEY` secret and the `DAYTONA_API_URL`,
 `DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
-`TERMINAL_PROBE_PRIVATE_DNS_URL` variables, plus the optional
-`TERMINAL_SNAPSHOT_PR_TOKEN` (a fine-grained token with contents and
-pull-requests write) without which the adoption pull request opens but runs no
-CI and is not auto-merged, because GitHub starts no workflows for events raised
-with `GITHUB_TOKEN` — including the push-to-main deploy a `GITHUB_TOKEN` merge
-would otherwise start. With the token, auto-merge lands the pull request the
-way every other merge does.
+`TERMINAL_PROBE_PRIVATE_DNS_URL` variables, plus `TERMINAL_SNAPSHOT_PR_TOKEN`
+(a fine-grained token with contents write). The job fails before the build if
+that token is missing, because a push authenticated with `GITHUB_TOKEN` starts
+no workflows — including the `deploy-api.yml` run that is the only reason to
+adopt. The checkout uses the PAT so the later `git push origin HEAD:main`
+triggers deploy.
+
 The gate's two probe endpoints are Rally's own, on `rallywith.ai`:
 `probe-redirect` is a proxied record with a Cloudflare redirect rule answering
 302 to `https://example.org/`, and `probe-private` is an unproxied A record to
@@ -1104,38 +1101,33 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-09-19 — Weekly snapshot adoption lands on main without a human
+### 2026-09-19 — Weekly snapshot adoption pushes to main
 
 **What changed:** After `terminal:verify-provider` passes, the weekly rebuild
-still opens a labelled `daytona-snapshot-upgrade` pull request, then enables
-auto-merge on it (`gh pr merge --auto --merge`) so it lands on main without
-waiting in the review queue. The merge still uses `TERMINAL_SNAPSHOT_PR_TOKEN`;
-if that token is missing the pull request opens and stays, and the step summary
-says so, rather than merging with `GITHUB_TOKEN`.
+rewrites `DAYTONA_TERMINAL_SNAPSHOT` in `wrangler.global.jsonc` and pushes that
+commit to main. The checkout and push authenticate with
+`TERMINAL_SNAPSHOT_PR_TOKEN`. A missing token fails the job before the build.
 
 **Why:** Owning the snapshot was judged safe only because a weekly rebuild
-bounds how stale the image can get. The rebuild already proved the image; the
-remaining human merge was the failure the workflow header itself named — a
-green Monday job whose pull request sits unmerged while production ages.
+bounds how stale the image can get. The rebuild already proves the image; the
+remaining hop was a pull request in the review queue while production aged.
 [#844](https://github.com/juno-ai-labs/avalon/pull/844) was that sitting: a
-one-line, pre-verified config bump that waited on a person. Auto-merge is the
-same landing path every other merge uses, so `deploy-api.yml` still ships it
-and a revert is still the rollback.
+one-line, pre-verified config bump that waited on a person. Opening a PR, even
+one that auto-merges, is still that hop.
 
-**Considered and rejected:** Pushing the commit directly to main. That drops
-the labelled pull request that makes these findable as a series and
-revertible as a unit, and a push performed with `GITHUB_TOKEN` would start no
-deploy. Auto-merge keeps the record and, with the PAT, starts `deploy-api.yml`
-the way a human merge from the UI would. Polling CI inside the rebuild job
-was also rejected: `--auto` waits for required checks if the repository later
-adds them, and with none configured GitHub lands it as soon as it is
-mergeable; `deploy-api.yml` still re-runs the verify lanes before deploying.
+**Considered and rejected:** Auto-merging a labelled adoption pull request.
+That kept the series and a revert-as-PR-unit, and it is how GitHub starts
+`deploy-api.yml` after a merge, but it is still a PR when the point was to
+stop waiting. A `GITHUB_TOKEN` push was also rejected: GitHub starts no
+workflows for those events, so production would keep the previous image with
+a green job.
 
-**Consequences:** A missing `TERMINAL_SNAPSHOT_PR_TOKEN` is now the one way
-adoption waits on a human, and it is the failure the step summary names.
-Do not "simplify" this to a `GITHUB_TOKEN` merge or a direct push: both skip
-the deploy. The acceptance gate remains the proof the image is usable; auto-
-merge does not replace it.
+**Consequences:** Adoption is a push; rollback is reverting that commit. The
+job rebases onto `origin/main` after the build so a 45-minute rebuild is not
+a non-fast-forward, and a conflict is a red job rather than a force-push.
+Do not fall back to `GITHUB_TOKEN` for the push. The PAT needs contents
+write; pull-requests write is unused. The acceptance gate remains the proof
+the image is usable.
 
 Shipped in #858.
 
