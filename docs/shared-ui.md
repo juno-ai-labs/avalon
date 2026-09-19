@@ -8,7 +8,11 @@ actions to the same components rather than drawing a second design.
 
 - `packages/ui/src/components`: conversation header, navigation frame and rows,
   workstream sidebar, resource rows, Sidekick section/picker, account trigger,
-  glyphs, avatars and visual primitives.
+  glyphs, avatars and visual primitives — and the Space surfaces: `space-row.tsx`
+  (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
+  `space-appearance-picker.tsx` (`SpaceAppearancePicker`, `SpaceIcon`),
+  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`,
+  `SpaceDefaultList`, `SpaceChannelRow`) and `space-icons.ts` (`SPACE_ICONS`).
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
@@ -32,6 +36,23 @@ The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
+
+The Space components follow the same split, one step further. A `SpaceRow` draws
+the geometry, the accordion, the hover-revealed plus and the motion keys, and
+takes the host's own navigation element as a slot — routing is a host decision
+under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
+treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
+(double-click, F2, Enter to commit, Escape to abandon, blur to commit) because
+that is presentation; the host only ever learns the committed name. Nothing here
+fetches, and no component infers a capability from an omitted prop: a Space with
+no audience control is a host that decided not to draw one.
+
+A Space's resources and its Sidekick recommendations are one list. They are one
+registry keyed by `kind` on the server, and nothing about the drawing depends on
+which kind it is, so `SpaceDefaultList` is not told — the kind branches in the
+host's copy table and in its two `/spaces/:id/defaults` calls, where it means
+something. The guest browser passes no Space props at all and draws no Space
+navigation.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser installs system
@@ -79,6 +100,34 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-19 — Space presentation is shared; hosts keep routing and authority
+
+**What changed:** `@rally/ui` gains the Space row, the Space appearance picker,
+the Space dashboard sections and `SPACE_ICONS`, and the `.project-*` styles move
+to `.space-*` with nothing left behind. `project-icons.ts` becomes
+`space-icons.ts`.
+
+**Why:** The Spaces PRD's design decision 9 puts reusable Space rows and
+management sections here so the desktop and the guest browser cannot drift into
+two designs, while authority, data, routing and capability decisions stay with
+the host. The guest browser omits Spaces outright rather than inferring
+authorization from a missing control.
+
+**Considered and rejected:** Giving `SpaceRow` its own `NavLink` and a `to`
+prop. It would have put a router in this package for one component, and the
+existing `NavigationRowContent` split — contents here, link at the host — was
+already the answer to the same question for a Channel row. Also rejected: two
+components for the two kinds of Space default. They are one registry keyed by
+`kind` on the server, and the drawing does not depend on the kind, so telling
+the list which one it is drawing would have been a prop nothing reads.
+
+**Consequences:** The `--av-sys-color-project-*` tokens and the `project` colour
+helpers in `lib/project-palette.ts` stay, per the PRD's 2026-09-19 decision that
+renaming them touches every glyph and avatar for no visible change; new Space
+code imports them under those names. A host that wants a Space row supplies its
+own navigation element, and the rename interaction is not the host's to
+reimplement.
 
 ### 2026-09-18 — Sidebar failures carry state, not response copy
 
