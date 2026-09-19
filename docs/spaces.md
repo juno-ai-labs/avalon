@@ -654,10 +654,18 @@ There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
 hand down. Those are product decisions and are not invented here.
 
-Two limits are known gaps rather than decisions, and are named in the changelog
-below: the archive preflight tests the departing Space's own audience rather
-than each member Channel's remaining readers, and narrowing a Channel that has
-migrated to grant authority requires the acting person to hold a grant on it.
+Three limits are known gaps rather than decisions, and are named in the
+changelog below: the archive preflight tests the departing Space's own audience
+rather than each member Channel's remaining readers; narrowing a Channel that
+has migrated to grant authority requires the acting person to hold a grant on
+it; and a Channel narrowed through `PATCH /workstreams/:id` — its own scope
+rather than a Space's retraction — announces that narrowing with nothing durable
+behind the send. A Space path that narrows fails its step, so the intent stays
+unsettled and the alarm republishes the whole operation; the direct path has no
+intent and no other record, so a refused send is logged
+`channel_narrowing_publish_unannounced` and the Organization's non-participant
+readers keep their open sockets until they reconnect.
+[`access-revocation.md`](access-revocation.md) owns that gap.
 
 ## Testing
 
