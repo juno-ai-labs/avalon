@@ -160,8 +160,9 @@ export const SpaceSummarySchema = z.strictObject({
    * whole membership and is nested inside the workspace socket's opening
    * payload; one Channel may now belong to several Spaces and General holds
    * every Channel in the Organization, so the same field would make that
-   * payload grow with the Organization. The ids are paginated separately —
-   * see {@link SpaceChannelPageSchema}.
+   * payload grow with the Organization. The Channels themselves are paginated
+   * separately, by `SpaceChannelPageSchema` — which lives in `index.ts`,
+   * beside the `Workstream` shape one page of them is made of.
    *
    * Archived Channels are excluded for the reason the Project count excluded
    * them: their membership rows survive archival so an unarchive returns them
@@ -233,18 +234,6 @@ export const ReorderSpacesRequestSchema = z.strictObject({
 export type ReorderSpacesRequest = z.infer<typeof ReorderSpacesRequestSchema>;
 
 /**
- * One page of a Space's member Channels.
- *
- * Opaque cursor: the ordering is the authority's, and a client that could
- * construct a cursor could ask for a page the ordering no longer has.
- */
-export const SpaceChannelPageSchema = z.strictObject({
-  items: z.array(WorkstreamIdSchema),
-  nextCursor: z.string().min(1).nullable(),
-});
-export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
-
-/**
  * What a Space hands down to its member Channels, as one kind-keyed value.
  *
  * A resource and a Sidekick recommendation are the same mechanism with a
@@ -298,6 +287,26 @@ export const ChannelAccessSchema = ChannelAccessSourcesSchema.extend({
   spaceIds: z.array(SpaceIdSchema),
 });
 export type ChannelAccess = z.infer<typeof ChannelAccessSchema>;
+
+/**
+ * What a refusal knows that its code does not: which Channels are in the way.
+ *
+ * `space_membership_final` and `space_audience_incompatible` are both refusals
+ * about *a Channel* — the one that would be left with no home, or whose readers
+ * would lose every way of finding it — and the caller was acting on the Space.
+ * Without this the confirmation could only say that some Channel has to move
+ * first, which leaves the person to find it by archiving repeatedly.
+ *
+ * Only the Channels the caller may already read. The refusal is about the
+ * Space's whole membership, which can include a Channel this person has no
+ * access to; naming that one would disclose its existence, and they could not
+ * move it either. So the list is what they can act on, and may be shorter than
+ * the reason — which is why the copy beside it still has to stand on its own.
+ */
+export const SpaceRefusalDetailsSchema = z.strictObject({
+  channelIds: z.array(WorkstreamIdSchema),
+});
+export type SpaceRefusalDetails = z.infer<typeof SpaceRefusalDetailsSchema>;
 
 /**
  * Every way a Space operation is refused, as a code the far side can branch on.

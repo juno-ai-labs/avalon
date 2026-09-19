@@ -141,16 +141,22 @@ export const WorkspaceSpaceMembershipRemovalRequestSchema = WorkspaceSpaceMember
 export type WorkspaceSpaceMembershipRemovalRequest = z.infer<typeof WorkspaceSpaceMembershipRemovalRequestSchema>;
 
 /**
- * A refusal that names the readers it is about.
+ * A refusal that names the readers and the Channels it is about.
  *
  * `unreachableUserIds` are ids the caller itself supplied in
  * `remainingAudience`, so returning them widens nothing: they are the subset of
  * what came in, not a record key or a value read out of storage.
+ *
+ * `blockedWorkstreamIds` are read out of storage, and are therefore narrowed to
+ * the Channels this caller may already list. An archive is refused because of a
+ * Channel, and the caller was acting on the Space; without the ids the only
+ * thing a confirmation can say is that *some* Channel has to move first.
  */
 export const WorkspaceSpaceAudienceFailureSchema = z.strictObject({
   ok: z.literal(false),
   code: SpaceErrorCodeSchema,
   unreachableUserIds: z.array(UserIdSchema).default([]),
+  blockedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
 });
 
 export const WorkspaceSpaceMembershipPlanSchema = z.strictObject({

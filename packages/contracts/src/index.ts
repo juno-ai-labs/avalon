@@ -1048,6 +1048,31 @@ export const ElicitationSchema = z.object({
   answeredAt: TimestampSchema.nullable()
 });
 
+/**
+ * One page of the Channels a Space holds.
+ *
+ * The same `Workstream` rows the Channel directory serves, shaped for the
+ * viewer: General holds every Channel in the Organization, so this is the one
+ * Space read that cannot ride the workspace socket. It answered bare ids
+ * first, which made the Space dashboard able to name only the Channels that
+ * happened to be in the device's loaded directory page and say nothing about
+ * the rest — and a second read per id would have been a round trip per row.
+ *
+ * It lives here rather than in `spaces.ts` because a page of Channels is made
+ * of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
+ * imported by it and cannot import back.
+ *
+ * Opaque cursor: the ordering is the authority's, and a client that could
+ * construct a cursor could ask for a page the ordering no longer has. A page
+ * may be shorter than the cursor suggests, because a membership the viewer may
+ * not read is dropped after the page is taken.
+ */
+export const SpaceChannelPageSchema = z.strictObject({
+  items: z.array(WorkstreamSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
+
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
   stopRequested: z.boolean().optional(),

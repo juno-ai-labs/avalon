@@ -34,7 +34,7 @@ import {
 import { useAppSession } from '../lib/app-session';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
-import { spaceFailureSentence } from '../lib/space-failure-copy';
+import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
@@ -97,6 +97,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
   const [saving, setSaving] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  // The Channels the last blocked archive named. Held apart from the refusal
+  // sentence because it is a list rather than a sentence, and cleared by the
+  // next attempt rather than by closing the modal: a person who reopens it
+  // should still see what they were told to move.
+  const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [editIconKey, setEditIconKey] = useState<SpaceIconKey>('briefcase');
   const [editColorKey, setEditColorKey] = useState<SpaceColorKey>(PROJECT_COLOR_DEFAULT);
@@ -184,9 +189,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       setSaving(false);
     }
   };
-  const channelIds = (channelPages.data?.pages ?? []).flatMap((page) => page.items as string[]);
-  const placed = channelIds
-    .flatMap((id) => (workstreams.data ?? []).find((workstream) => workstream.id === id) ?? []);
+  // The Space's own answer, not the device's directory page filtered by it: a
+  // Space holds Channels this device has never listed, and naming only the ones
+  // it happens to hold made the section under-report every Space bigger than
+  // one page of the sidebar.
+  const placed = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
   const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
   const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
   const resourcesById = new Map((resources.data?.items ?? []).map((resource) => [resource.id, resource]));
@@ -304,7 +311,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         >
           {channelPages.isPending
             ? <LoadingState label="Loading channels…" />
-            : channelIds.length === 0
+            : placed.length === 0
               ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived space has no channels.'} />
               : <div className="waiting-workstream-list">
                 {placed.map((workstream) => (
@@ -374,21 +381,28 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                   : [archived, ...current.items],
               } : current);
               openFirstWorkstream();
-            }).catch((cause: unknown) => report(
-              'archive',
-              spaceFailureSentence(cause, 'The space could not be archived.'),
-            )).finally(() => setSaving(false));
+            }).catch((cause: unknown) => {
+              setBlockedChannelIds(spaceRefusalChannelIds(cause));
+              report('archive', spaceFailureSentence(cause, 'The space could not be archived.'));
+            }).finally(() => setSaving(false));
           }}>Archive space</Button></>}
           onOpenChange={setArchiveConfirmOpen}
           open={archiveConfirmOpen}
           title="Archive space?"
         >
-          {/* Which Channel has to move is not on the refusal yet: the archive
-              answers `space_membership_final` with no list, and the server is
-              gaining a `channelIds` details field to carry one. Until it does,
-              this says what has to be true rather than naming the Channel. */}
           <p>Its channels keep the resources and Sidekicks they already have, and stay in every other space they belong to. A channel whose only space is this one has to be moved first.</p>
           {failures.archive && <InlineError>{failures.archive}</InlineError>}
+          {/* The Channels the refusal named, which is what turns "some channel
+              has to move" into something a person can act on. It can be empty
+              even on a refusal: the server names only the Channels this viewer
+              may already read, and the sentence above stands without it. */}
+          {blockedChannelIds.length > 0 && (
+            <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
+              {blockedChannelIds.map((id) => (
+                <li key={id}>{placed.find((channel) => channel.id === id)?.title ?? 'A channel you can’t see'}</li>
+              ))}
+            </ul>
+          )}
         </Modal>
 
         <Modal

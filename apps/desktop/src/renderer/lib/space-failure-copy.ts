@@ -1,4 +1,4 @@
-import type { SpaceErrorCode } from '@rally/contracts';
+import { SpaceRefusalDetailsSchema, type SpaceErrorCode } from '@rally/contracts';
 
 import { ApiError } from './api';
 
@@ -67,4 +67,20 @@ export function spaceFailureOf(cause: unknown): SpaceFailure {
 export function spaceFailureSentence(cause: unknown, fallback: string): string {
   const failure = spaceFailureOf(cause);
   return failure === 'unavailable' ? fallback : spaceFailureCopy[failure];
+}
+
+/**
+ * The Channels a refusal named as the ones to move first.
+ *
+ * Two Space refusals are about a Channel while the caller was acting on a
+ * Space — the one that would be left with no home, and the one whose readers
+ * would lose every way of finding it. The server carries their ids in the
+ * error's `details`, narrowed to the Channels this viewer may already read, so
+ * this can be empty on a genuine refusal and the sentence beside it still has
+ * to stand on its own.
+ */
+export function spaceRefusalChannelIds(cause: unknown): string[] {
+  if (!(cause instanceof ApiError)) return [];
+  const parsed = SpaceRefusalDetailsSchema.safeParse(cause.details);
+  return parsed.success ? [...parsed.data.channelIds] : [];
 }

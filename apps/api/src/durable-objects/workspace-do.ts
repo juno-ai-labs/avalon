@@ -5910,7 +5910,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceReserveRequestSchema, input, "reserve_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().reserve(request, uuidV7(), null);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
@@ -6013,24 +6013,53 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "space_summary");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().readable(request.userId, request.spaceId);
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, space });
   }
 
-  /** One page of the Channels this viewer can list in a Space. */
+  /**
+   * One page of the Channels this viewer can list in a Space.
+   *
+   * The Space authority decides which memberships the page is about; the
+   * Channel directory decides what each of them looks like, through the same
+   * projection `listDirectory` answers a sidebar page with. A membership whose
+   * Channel this viewer may not read is dropped here rather than in the
+   * membership query, because visibility is the *directory's* fact — so a page
+   * can come back shorter than its cursor suggests, and the cursor still
+   * continues from the membership it was taken at.
+   */
   async listSpaceChannels(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceSpaceChannelPageResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_space_channels");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
     if (refusal) return { ok: false, code: refusal };
-    const page = this.spaceStorage().channelPage(request.userId, request.spaceId, request.cursor);
-    return WorkspaceSpaceChannelPageResultSchema.parse(page === false
-      ? { ok: false, code: "space_not_found" }
-      : { ok: true, page });
+    const page = this.spaceStorage().channelIdPage(request.userId, request.spaceId, request.cursor);
+    if (page === false) return { ok: false, code: "space_not_found" };
+    // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
+    // statement binds at most a hundred parameters.
+    const rows = boundParameterChunks(page.workstreamIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY}
+         WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
+           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         ORDER BY directory.workstream_id`,
+        request.userId,
+        request.userId,
+        ...chunk,
+      ).toArray());
+    return WorkspaceSpaceChannelPageResultSchema.parse({
+      ok: true,
+      page: {
+        items: mapDirectoryWorkstreams(
+          this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
+        ),
+        nextCursor: page.nextCursor,
+      },
+    });
   }
 
   /** Every Channel a Space holds, archived ones included; server-to-server. */
@@ -6065,7 +6094,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpacePresentationRequestSchema, input, "note_space_presentation");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().applyPresentation(request);
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
@@ -6086,19 +6115,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceAudienceNoteRequestSchema, input, "note_space_audience");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     if (request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId) {
-      return { ok: false, code: "space_protected", unreachableUserIds: [] };
+      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
       this.activeSpaceMember(request.workspaceId, userId)
     )));
     if (activeMembers.some((active) => !active)) {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const space = storage.applyAudience(request);
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     // Staged before the member Channels are touched. The service walks them
     // next, and a request that dies half way through leaves this pending for
     // the alarm to republish rather than leaving some Channels on the old
@@ -6148,7 +6177,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceMembershipRequestSchema, input, "prepare_space_membership");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
       this.spaceStorage().prepareMembership(request),
     );
@@ -6174,13 +6203,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeMembership(request);
     if (space === "conflict") {
-      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [] };
+      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     // A Channel that has just joined inherits every current default. Staging
     // here rather than in the service is what makes a Channel added while a
     // default was being registered receive it exactly once.
@@ -6206,7 +6235,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "cancel_space_membership");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.cancelMembership(request);
     storage.cancelIntent(`${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`);
@@ -6223,7 +6252,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "prepare_space_membership_removal");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
       this.spaceStorage().prepareMembershipRemoval(request),
     );
@@ -6252,10 +6281,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership_removal");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeMembershipRemoval(request);
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     storage.settleIntent(
       `${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`,
       "membership_removed",
@@ -6272,7 +6301,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "prepare_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMutationResultSchema.parse(
       this.spaceStorage().prepareArchive(request.userId, request.spaceId),
     );
@@ -6299,13 +6328,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
     const space = storage.finalizeArchive(request.userId, request.spaceId);
     if (space === "protected") {
-      return { ok: false, code: "space_protected", unreachableUserIds: [] };
+      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     storage.settleIntent(request.operationId, "archived", true);
     this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
@@ -6316,7 +6345,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "restore_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().restore(request.userId, request.spaceId);
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
@@ -6329,7 +6358,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "add_space_default");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceDefaultResultSchema.parse(this.spaceStorage().addDefault(request));
     if (result.ok) this.publishSpaceSnapshot();
     if (result.ok && result.targets.length > 0) await this.armNextAlarm();
@@ -6341,7 +6370,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSpaceDefaultRequestSchema, input, "remove_space_default");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().removeDefault(request);
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
