@@ -383,13 +383,16 @@ export function createDaytonaTerminalProvider(
           public: false,
           autoStopInterval: 15,
           autoArchiveInterval: 60,
-          autoDeleteInterval: -1,
+          // Daytona counts this from the stop; a negative value disables it,
+          // which is what a sandbox Rally's own sweep retires asks for.
+          autoDeleteInterval: input.autoDeleteAfterStoppedMinutes ?? -1,
           ttlMinutes: 0,
           domainAllowList: domains,
           envVars: input.environment,
           labels: {
             "rally.workspace": input.workspaceId,
             "rally.workstream": input.workstreamId,
+            "rally.substream": input.substreamId,
             "rally.generation": String(input.generation),
           },
         }, { timeout: 60 }));

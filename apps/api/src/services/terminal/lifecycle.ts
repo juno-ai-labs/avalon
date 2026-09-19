@@ -13,6 +13,7 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import { observeTerminalSandbox, deleteTerminalSandbox, stopTerminalSandbox, type TerminalSandboxProvider } from "./provider-contract";
+import { isLegacyTerminalAliasRow, TERMINAL_WARM_STOP_MS } from "./coordinator";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
@@ -105,23 +106,47 @@ export async function reconcileDueTerminalSandbox(
   now = new Date(),
   preserveBeforeExpiry?: (providerSandboxId: string, generation: number) => Promise<void>,
   providerClaimClock?: () => number,
+  /** The conversation whose object owns this sandbox; the main one by default. */
+  substreamId = "0",
 ): Promise<{ transition: TerminalLifecycleTransition }> {
   const claimClockStartedAt = Date.now();
   const claimNow = providerClaimClock
     ?? (() => now.getTime() + (Date.now() - claimClockStartedAt));
-  const terminal = terminalPort(workspaceId, workstreamId);
+  const terminal = terminalPort(workspaceId, workstreamId, substreamId);
   const row = await terminal.sandbox();
   if (!row?.sandboxId || row.lifecycleState === "expired") return { transition: "none" };
+  // A row a side thread or background agent reserved under the work stream's
+  // one name, before a sandbox belonged to a conversation, names the main
+  // conversation's sandbox. It is dropped without a provider call: that
+  // sandbox is the main conversation's to stop, archive or delete, and this
+  // conversation reserves its own on its next use.
+  if (await isLegacyTerminalAliasRow(row, workspaceId, workstreamId, substreamId)) {
+    await terminal.resetSandbox({ generation: row.generation, now: now.getTime() });
+    return { transition: "none" };
+  }
 
   if (
     row.operationRunId
     && row.operationLeaseExpiresAt
     && row.operationLeaseExpiresAt > now.getTime()
   ) {
-    if (await runsPort(workspaceId, workstreamId).runIsActive({ runId: row.operationRunId })) {
+    // The holder's run row is in the conversation it executed in, which is
+    // the sandbox's own unless a background agent holds its owner's lease.
+    const holderSubstreamId = row.operationRunSubstreamId ?? substreamId;
+    if (await runsPort(workspaceId, workstreamId, holderSubstreamId).runIsActive({ runId: row.operationRunId })) {
       return { transition: "deferred" };
     }
   }
+
+  // A running sandbox whose last tool call is inside the warm window is in
+  // use, whatever `idle_expires_at` says: the lease is held per call, so a
+  // busy run holds nothing between two of its calls, and the claim's
+  // `last_command_at` stamp is what stands in for the holder it used to be.
+  if (
+    row.lifecycleState === "running"
+    && row.lastCommandAt !== null
+    && row.lastCommandAt + TERMINAL_WARM_STOP_MS > now.getTime()
+  ) return { transition: "deferred" };
 
   if (await terminal.hasLiveTask(row.generation, now.getTime())) return { transition: "deferred" };
 
@@ -308,10 +333,12 @@ export function createTerminalFinalDiffPreserver(
   provider: Pick<TerminalSandboxProvider, "runUtilityCommand">,
   workspaceId: string,
   workstreamId: string,
+  /** The conversation whose object owns the sandbox; the main one by default. */
+  substreamId = "0",
 ): (providerSandboxId: string, generation: number) => Promise<void> {
   return async (providerSandboxId, generation) => {
     const workspace = env.DB;
-    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
+    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId, substreamId);
     if (await terminal.finalDiffResourceId()) return;
     const result = await provider.runUtilityCommand(providerSandboxId, {
       operation: "lifecycle.final_diff",

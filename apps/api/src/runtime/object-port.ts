@@ -70,9 +70,12 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
  *
  * `workstreamId` is the conversation parent's id (a work stream or an
  * automation; the name predates typed parents) and `substreamId` picks which
- * of its conversations, the main one by default. A run executing inside an
- * object reaches that object's own authorities without a stub whichever
- * substream it is; see `local-authorities.ts`.
+ * of its conversations. Left out, it means the conversation the caller is
+ * executing in — the main one from a Worker, this object's own inside a
+ * conversation object — so a run reaches its own authorities without a stub
+ * whichever substream it is. Given, it names exactly one conversation, and an
+ * object that is not that conversation dispatches to the one that is; see
+ * `localWorkstreamAuthority`.
  *
  * This was four near-identical files. Their normalized diff was comments.
  */
@@ -92,7 +95,7 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
    * mid-operation — belongs in `test-workers/`, where this override is unused.
    */
   localStorage?: TStorage,
-  substreamId: string = "0",
+  substreamId?: string,
 ): ObjectPortOf<TStorage, TOperation> {
   // The owning object installs its endpoint here, once, for every port built
   // below it — the endpoint and not the storage, because the endpoint is what
@@ -128,13 +131,13 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
         env.AVALON_REGION,
         asWorkspaceId(workspaceId),
         workstreamId,
-        substreamId === "0" ? "0" : asSubstreamId(substreamId),
+        substreamId === undefined || substreamId === "0" ? "0" : asSubstreamId(substreamId),
       ),
     );
     const result = await contract.dispatch(stub, {
       workspaceId,
       workstreamId,
-      substreamId,
+      substreamId: substreamId ?? "0",
       operation,
       args,
     });

@@ -54,7 +54,13 @@ and delivery replay. Start reserves an ordinary child under the same conversatio
 parent, bootstraps the existing harness, and provisions its name, description and
 inherited model override. It grants no private-child viewer memberships. The
 child retains its inherited execution principal; admission resolves it locally,
-and messages do not replace it with a teammate's credentials.
+and messages do not replace it with a teammate's credentials. A worker's
+Terminal is its owner's: it uses the sandbox and checkout of the conversation
+that started it, through any further delegation, under a mutation lease held
+per tool call, so a worker's write waits with `sandbox_busy` only while a
+sibling or its owner is mid-call, and its reads take no lease, waiting only
+for a sandbox that is not yet running or whose checkout is still being
+prepared ([`terminal-workspaces.md`](terminal-workspaces.md)).
 
 Creation reserves the child and obtains the current generation in one parent RPC.
 Child reservation refuses archived parents. Bootstrap, identity provisioning and

@@ -15,6 +15,9 @@ const EventSchema = z.object({
 const LabelsSchema = z.object({
   "rally.workspace": z.string().uuid(),
   "rally.workstream": z.string().uuid(),
+  // The conversation whose object owns the sandbox. Sandboxes created before
+  // the label existed all belong to the main conversation, hence the default.
+  "rally.substream": z.union([z.literal("0"), z.string().uuid()]).default("0"),
   "rally.generation": z.string().regex(/^[1-9]\d*$/u).transform(Number).pipe(z.number().safe()),
 });
 
@@ -58,7 +61,7 @@ export async function ingestDaytonaWebhook(env: Env, rawBody: string, headers: H
     // Each region subscribes to the organization; only the owning region acts.
     return { accepted: true, ignored: true };
   }
-  const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
+  const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId, labels.data["rally.substream"]);
   const current = await terminal.sandbox();
   if (current?.sandboxId !== event.id || current.generation !== labels.data["rally.generation"]) {
     return { accepted: true, ignored: true };

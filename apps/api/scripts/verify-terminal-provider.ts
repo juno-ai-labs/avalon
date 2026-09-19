@@ -90,6 +90,7 @@ try {
     stableName,
     workspaceId: "provider-acceptance",
     workstreamId: randomUUID(),
+    substreamId: "0",
     generation: 1,
     // Establish that the public negative targets are healthy from this exact
     // Daytona location before using them to prove Trusted-only denial.

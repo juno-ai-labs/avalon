@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 62;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 65;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3118,6 +3118,98 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 62,
     description: "freeze legacy participant authority during a forward-only grant handoff",
     statements: PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA,
+  },
+  {
+    version: 63,
+    description: "record which conversation a Terminal lease holder ran in",
+    // NULL for a holder whose run row is in this object's own `runs` table,
+    // which is every holder there was before conversations could share a
+    // sandbox. Set only for a holder that ran in another conversation of the
+    // same work stream — a background agent using its owner's sandbox — whose
+    // liveness this object cannot read in its own transaction. The CHECK keeps
+    // the column meaningless without a holder; the lease columns' own pairing
+    // CHECK is in the promoted table and is not repeated here.
+    statements: [
+      `ALTER TABLE terminal_workspace ADD COLUMN operation_run_substream_id TEXT
+         CHECK (operation_run_substream_id IS NULL OR operation_run_id IS NOT NULL)`,
+    ],
+  },
+  {
+    version: 64,
+    description: "record which conversation's attachment authorized a Terminal import",
+    // NULL for an import authorized by this object's own attachments, which is
+    // every import there was before conversations could share a sandbox. Set
+    // only for an import made by a run in another conversation of the same
+    // work stream — a background agent importing what its own conversation has
+    // attached into its owner's sandbox — so that the revocation check reads
+    // each import's authorization from the conversation that gave it rather
+    // than from whichever conversation happens to be acquiring.
+    statements: [
+      `ALTER TABLE terminal_imported_resources ADD COLUMN attached_substream_id TEXT`,
+    ],
+  },
+  {
+    version: 65,
+    description: "let a run from another conversation record its Terminal command",
+    // `terminal_tasks` referenced this object's `runs` and `tool_effects`, which
+    // was right while every command came from a run of this conversation. A
+    // background agent's run and its planning receipt live in the agent's own
+    // object, so a command it ran through its owner's sandbox could record no
+    // task at all. The rebuild drops those two keys and adds the holder's
+    // conversation: `insertTask` checks the receipt itself for a run of this
+    // object and takes the lease as the authority for a run from elsewhere.
+    // Nothing references `terminal_tasks`, so the replacement is filled, the
+    // old table dropped and the replacement renamed with enforcement on.
+    statements: [
+      `CREATE TABLE terminal_tasks_v65 (
+        task_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        run_substream_id TEXT,
+        effect_intent_id TEXT NOT NULL UNIQUE,
+        sandbox_generation INTEGER NOT NULL CHECK (sandbox_generation >= 1),
+        provider_task_name TEXT NOT NULL UNIQUE,
+        provider_task_id TEXT,
+        state TEXT NOT NULL CHECK (
+          state IN ('planned', 'submitting', 'running', 'completed', 'failed', 'timed_out', 'cancelled')
+        ),
+        command_sha256 TEXT NOT NULL,
+        command_deadline_at INTEGER NOT NULL,
+        exit_code INTEGER,
+        termination_reason TEXT CHECK (
+          termination_reason IS NULL OR termination_reason IN (
+            'exited', 'timed_out', 'cancelled', 'output_limit_exceeded'
+          )
+        ),
+        stdout_head TEXT NOT NULL,
+        stdout_tail TEXT NOT NULL,
+        stderr_head TEXT NOT NULL,
+        stderr_tail TEXT NOT NULL,
+        stdout_bytes INTEGER NOT NULL CHECK (stdout_bytes >= 0),
+        stderr_bytes INTEGER NOT NULL CHECK (stderr_bytes >= 0),
+        output_resource_id TEXT,
+        continuation_emitted_at INTEGER,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO terminal_tasks_v65
+         (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+          provider_task_id, state, command_sha256, command_deadline_at, exit_code,
+          termination_reason, stdout_head, stdout_tail, stderr_head, stderr_tail,
+          stdout_bytes, stderr_bytes, output_resource_id, continuation_emitted_at,
+          started_at, completed_at, created_at, updated_at)
+       SELECT task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name,
+              provider_task_id, state, command_sha256, command_deadline_at, exit_code,
+              termination_reason, stdout_head, stdout_tail, stderr_head, stderr_tail,
+              stdout_bytes, stderr_bytes, output_resource_id, continuation_emitted_at,
+              started_at, completed_at, created_at, updated_at
+         FROM terminal_tasks`,
+      `DROP TABLE terminal_tasks`,
+      `ALTER TABLE terminal_tasks_v65 RENAME TO terminal_tasks`,
+      `CREATE INDEX terminal_tasks_state_idx
+         ON terminal_tasks(state, command_deadline_at, task_id)`,
+    ],
   },
 ];
 

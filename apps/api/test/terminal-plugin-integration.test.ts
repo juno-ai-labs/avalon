@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { agentIdForAddress, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { asHarnessRunId, asUserId } from "@rally/contracts";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -48,7 +48,14 @@ afterEach(() => {
   for (const database of objectDatabases.splice(0)) database.close();
 });
 
-function fixture(capability: "supported" | "unsupported", emergencyDisabled = false) {
+function fixture(
+  capability: "supported" | "unsupported",
+  emergencyDisabled = false,
+  options: {
+    /** What WorkspaceDO answers when composition asks who owns an agent. */
+    agentOwner?: (input: { workspaceId: string; agentId: string }) => Promise<{ agentId: string | null }>;
+  } = {},
+) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   // Tool loading routes work-stream state through the object port once the
@@ -81,11 +88,14 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
     // come from the object that decides the policy, not from a fixture's idea
     // of it.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: workspaceObjectRpcs(createTestWorkspaceDO({
-        workspaceId: W,
-        regionalDatabase: database,
-        register: (created) => { objectDatabases.push(created); },
-      }).instance, ["terminalNetworkMode", "terminalNetworkSettings"]),
+      extra: {
+        ...workspaceObjectRpcs(createTestWorkspaceDO({
+          workspaceId: W,
+          regionalDatabase: database,
+          register: (created) => { objectDatabases.push(created); },
+        }).instance, ["terminalNetworkMode", "terminalNetworkSettings"]),
+        ...(options.agentOwner ? { agentOwner: options.agentOwner } : {}),
+      },
     }),
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     TERMINAL_REGION_CAPABILITY: capability,
@@ -99,7 +109,7 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
     triggerMessageId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
   };
-  return { database, objectStore, env, input };
+  return { database, objectStore, objectStores, env, input };
 }
 
 function provider(): TerminalSandboxProvider {
@@ -185,6 +195,73 @@ describe("Terminal Bind integration", () => {
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
   });
 
+  it("keeps the run's other tools when its Terminal authority cannot be resolved", async () => {
+    const worker = "30000000-0000-4000-8000-000000000077";
+    const otherWorkstream = "30000000-0000-4000-8000-000000000099";
+    // The agent's owner is under another work stream: a routing defect the
+    // resolver refuses. The refusal takes Terminal away, named, and nothing else.
+    const { env, input } = fixture("supported", false, {
+      agentOwner: async ({ agentId }) => ({
+        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "workstream", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
+          : null,
+      }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(createAvalonTerminalPlugin(
+      env,
+      { ...input, substreamId: asSubstreamId(worker), backgroundAgent: true, loopId: `workstream:${S}:substream:${worker}:loop` },
+      undefined,
+      { provider: provider() },
+    )).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "terminal_authority_unresolved",
+      harness_run_id: R,
+      substream_id: worker,
+      reason: "terminal_authority_parent_mismatch",
+    }));
+    warn.mockRestore();
+  });
+
+  it("gives a background agent its owner's sandbox, in the owner's object", async () => {
+    const worker = "30000000-0000-4000-8000-000000000077";
+    const { objectStore, objectStores, env, input } = fixture("supported", false, {
+      agentOwner: async ({ agentId }) => ({
+        // The worker is owned by the main conversation; the main conversation by nobody.
+        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId("0") })
+          : null,
+      }),
+    });
+    // The agent's conversation is its own object, where its run lives.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: S, workspaceId: W });
+    seedWorkstreamRun(workerStore, { id: R, executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    objectStores.set(`${S}:${worker}`, workerStore);
+    const sandboxProvider = provider();
+    const plugin = await createAvalonTerminalPlugin(
+      env,
+      { ...input, substreamId: asSubstreamId(worker), backgroundAgent: true, loopId: `workstream:${S}:substream:${worker}:loop` },
+      undefined,
+      { provider: sandboxProvider },
+    );
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    await vi.waitFor(() => expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    // The owner's row, under the owner's name, held by the worker's run from its own conversation.
+    expect(vi.mocked(sandboxProvider.createSandbox).mock.calls[0]![0].substreamId).toBe("0");
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 1 });
+    expect(workstreamObjectGet(workerStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
+  });
+
   it("starts the sandbox when Terminal activates, before any Terminal tool executes", async () => {
     const { objectStore, env, input } = fixture("supported");
     const sandboxProvider = provider();
@@ -221,9 +298,13 @@ describe("Terminal Bind integration", () => {
         objectStore,
         "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
       )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
+      // By attempt, not by arrival: the second activation joins the first's
+      // readiness and can settle first, since the first is the one that gives
+      // the lease back afterwards.
       const activationEvents = info.mock.calls
         .map(([entry]) => entry as Record<string, unknown>)
-        .filter((entry) => entry.event === "terminal_plugin_activation_finished");
+        .filter((entry) => entry.event === "terminal_plugin_activation_finished")
+        .sort((left, right) => Number(left.activation_attempt) - Number(right.activation_attempt));
       expect(activationEvents).toMatchObject([
         {
           activation_attempt: 1,
