@@ -53,6 +53,28 @@ function planMode(executionPlanJson: string | null): unknown {
   }
 }
 
+/**
+ * A plan blob's declared idempotency class, or null for anything unreadable.
+ *
+ * The class was already persisted in the plan — `persistToolExecutionPlan`
+ * writes `{ mode, idempotency, capability, … }` — and nothing read it back,
+ * which is how an interrupted `provider_key` write came to be classified on
+ * `mode` alone and reported as `ambiguous_external_write`. Null rather than a
+ * throw, and every caller treats null as the strictest class, because a receipt
+ * written before this was read has no claim to the safer one.
+ */
+function planIdempotency(executionPlanJson: string | null): ToolReceiptIdempotency | null {
+  let declared: unknown;
+  try {
+    declared = (JSON.parse(executionPlanJson ?? "null") as { idempotency?: unknown } | null)?.idempotency;
+  } catch {
+    return null;
+  }
+  return declared === "safe" || declared === "provider_key" || declared === "record_before_execute"
+    ? declared
+    : null;
+}
+
 function parseObject(value: string | null, errorCode: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value ?? "null") as unknown;
@@ -84,10 +106,22 @@ export interface ToolReceiptFence {
   owner: string;
 }
 
+/** The idempotency contract a tool declared, as its receipt recorded it. */
+export type ToolReceiptIdempotency = "safe" | "provider_key" | "record_before_execute";
+
 /** What `persistToolExecutionPlan` decided, unchanged from the routed shape. */
 export type ToolReceiptAdmission =
   | { state: "created"; effectIntentId: string }
   | { state: "resume_read"; effectIntentId: string }
+  /**
+   * An unsettled `provider_key` write whose plan, request, and provider key all
+   * match the call asking to run. The provider dedupes on that key, so running
+   * it again reaches the same external operation rather than a second one —
+   * which is the whole of what `provider_key` promises, and the reason this is
+   * not `ambiguous_external_write`. `record_before_execute` has no such key and
+   * keeps the ambiguous outcome.
+   */
+  | { state: "resume_write"; effectIntentId: string }
   | { state: "replay_completed"; effectIntentId: string }
   | { state: "ambiguous_external_write"; effectIntentId: string }
   /**
@@ -137,6 +171,13 @@ export interface ToolReceiptRecord {
   errorJson: string | null;
   executionPlanHash: string | null;
   executionPlanJson: string | null;
+  /**
+   * The class the tool declared, read back from the persisted plan. Null for a
+   * receipt whose plan will not parse or predates the field; callers treat that
+   * as `record_before_execute`, the class that assumes the least.
+   */
+  idempotency: ToolReceiptIdempotency | null;
+  providerIdempotencyKey: string | null;
   startedAt: number | null;
   settledAt: number | null;
   checkpointIndex: number;
@@ -164,6 +205,7 @@ interface ReceiptRow extends Record<string, SqlStorageValue> {
   error_json: string | null;
   execution_plan_hash: string | null;
   execution_plan_json: string | null;
+  provider_idempotency_key: string | null;
   started_at: number | null;
   settled_at: number | null;
   checkpoint_index: number;
@@ -172,7 +214,7 @@ interface ReceiptRow extends Record<string, SqlStorageValue> {
 const RECEIPT_COLUMNS = `effect_intent_id, run_id, tool_call_id, tool_name, mode,
          connection_id, request_hash, input_json, status, output_ref, output_summary,
          provider_operation_id, error_json, execution_plan_hash, execution_plan_json,
-         started_at, settled_at, checkpoint_index`;
+         provider_idempotency_key, started_at, settled_at, checkpoint_index`;
 
 function receiptRecord(row: ReceiptRow): ToolReceiptRecord {
   return {
@@ -191,6 +233,8 @@ function receiptRecord(row: ReceiptRow): ToolReceiptRecord {
     errorJson: row.error_json,
     executionPlanHash: row.execution_plan_hash,
     executionPlanJson: row.execution_plan_json,
+    idempotency: planIdempotency(row.execution_plan_json),
+    providerIdempotencyKey: row.provider_idempotency_key,
     startedAt: row.started_at,
     settledAt: row.settled_at,
     checkpointIndex: row.checkpoint_index,
@@ -202,6 +246,7 @@ interface EffectRow extends Record<string, SqlStorageValue> {
   request_hash: string;
   execution_plan_hash: string | null;
   execution_plan_json: string | null;
+  provider_idempotency_key: string | null;
   status: string;
   checkpoint_index: number;
 }
@@ -376,7 +421,7 @@ export class WorkstreamToolReceiptStorage {
     return this.storage.transactionSync(() => {
       const existing = first(this.sql.exec<EffectRow>(
         `SELECT effect_intent_id, request_hash, execution_plan_hash, execution_plan_json,
-                status, checkpoint_index
+                provider_idempotency_key, status, checkpoint_index
            FROM tool_effects WHERE run_id = ? AND tool_call_id = ?`,
         input.fence.runId,
         input.toolCallId,
@@ -500,6 +545,21 @@ export class WorkstreamToolReceiptStorage {
         return { state: "replay_completed", effectIntentId: existing.effect_intent_id };
       }
       if (input.mode === "write") {
+        // An unsettled write the provider itself dedupes is not ambiguous: the
+        // key it was admitted under is still the key it will be re-submitted
+        // under, so the second call reaches the first call's operation. Only
+        // `admitted` and `executing` qualify — the two states an interrupted
+        // attempt leaves behind. A settled `failed` keeps the ambiguous
+        // promotion below, because moving a terminal receipt back into
+        // execution would rewrite a result a caller may already have read.
+        if (
+          planIdempotency(existing.execution_plan_json) === "provider_key"
+          && input.providerIdempotencyKey !== null
+          && existing.provider_idempotency_key === input.providerIdempotencyKey
+          && (existing.status === "admitted" || existing.status === "executing")
+        ) {
+          return { state: "resume_write", effectIntentId: existing.effect_intent_id };
+        }
         if (existing.status !== "ambiguous") {
           this.#settle({
             effectIntentId: existing.effect_intent_id,
