@@ -18,6 +18,28 @@ export interface TerminalSnapshotProbe {
  */
 export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
 
+export interface TerminalSnapshotResources {
+  /** Cores. */
+  readonly cpu: number;
+  /** GiB. */
+  readonly memory: number;
+  /** GiB. */
+  readonly disk: number;
+}
+
+/**
+ * What every sandbox built from the Rally-owned snapshot is given: cores, then
+ * GiB, then GiB.
+ *
+ * The team's numbers, matching the `daytona-medium` preset in Daytona's
+ * published snapshot sizes, read 2026-09-19 (`daytona-small`, the default a
+ * build that passes no resources gets, is 1 / 1 / 3). Checked in rather than
+ * configured because the weekly rebuild builds from this file; why a snapshot is
+ * the only place this can be set is in
+ * `docs/terminal-workspaces.md`, under the owned snapshot and its weekly rebuild.
+ */
+export const TERMINAL_SNAPSHOT_RESOURCES: TerminalSnapshotResources = { cpu: 2, memory: 4, disk: 8 };
+
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },
   { id: "python", command: "python3 -c 'import json; assert json.loads(\"{\\\"ok\\\": true}\")[\"ok\"]'" },
