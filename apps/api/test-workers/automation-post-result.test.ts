@@ -619,6 +619,22 @@ describe("post_result", () => {
       expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
         `Agent failed due to ambiguous_external_write. Id: ${started.agentId}`,
       ))).toBe(true);
+      // The notice is tagged and carries its diagnostic. The feed's failure row
+      // is the reader's whole record of this — it does not show the body — and
+      // the recipient model needs the host attribution to tell a real notice
+      // from a worker that was talked into sending the same words.
+      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{
+        structured_content_json: string | null;
+      }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details
+          WHERE substream_id = '0' AND client_message_id LIKE 'agent-message:%'`,
+      ).toArray().map((turn) => {
+        const content = JSON.parse(turn.structured_content_json ?? "{}");
+        return [content.notice, content.noticeReason];
+      }))).toContainEqual(["failed", "ambiguous_external_write"]);
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        "Notice from Rally, not from an agent",
+      ))).toBe(true);
     }
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM (

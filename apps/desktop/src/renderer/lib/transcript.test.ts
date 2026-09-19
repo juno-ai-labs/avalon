@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import type { PendingTranscriptInput } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
   collapseSettledWorkIntoAccordion,
@@ -3839,5 +3840,130 @@ describe('counted rows across the rename and before reconciliation', () => {
       'Sending a message to a background agent',
     ]);
     expect(grouped[0]!.pluginActivity?.active).toBe(true);
+  });
+});
+
+describe('an agent message before promotion, and the unread it carries', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const exchange = (extra: Record<string, unknown> = {}) => ({
+    kind: 'agent_message',
+    teamId: 'workstream/workstream-one/0',
+    messageId: '0199aaaa-0000-7000-8000-000000000001',
+    senderAgentId: 'workstream/workstream-one/2',
+    attachmentIds: [],
+    ...extra,
+  });
+  const noticeTurn = (seq: number, id: string, structured: Record<string, unknown>, ordinal: number) => ({
+    transcriptSequence: seq, turnId: id, entryKind: 'conversation' as const,
+    actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: ordinal,
+    createdAtUtc: createdAt, revision: 1, activityId: null,
+    blocks: [{
+      type: 'text' as const, blockId: `${id}:text:0`, blockIndex: 0,
+      text: 'Agent failed due to harness_execution_failed.', streaming: false,
+      messageType: 'system' as const, structuredContent: structured,
+    }],
+  });
+
+  it('keeps the turn\'s attention ordinal, so the unread waterline can move past it', () => {
+    // The server allocates an ordinal to every non-tool turn, an admitted agent
+    // message included, and `highestVisibleAttentionSequence` skips a row whose
+    // ordinal is null. With no row carrying it, the unread dot survives reading
+    // the stream and only a sent message clears it.
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'unread', snapshotThrough: 2, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 3 },
+        covered: { startInclusive: 1, endExclusive: 3 },
+        turns: [noticeTurn(1, 't1', exchange(), 7), noticeTurn(2, 't2', exchange(), 9)],
+        activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const [message] = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    expect(message?.pluginActivity?.completedVerb).toBe('2 messages from a background agent');
+    // The highest of the two: one row stands for both, so acknowledging it has
+    // to acknowledge both or the waterline stalls inside the group.
+    expect(message?.attentionSequenceNumber).toBe(9);
+  });
+
+  it('names the diagnostic on a failure row, and keeps two reasons apart', () => {
+    const failed = (reason: string) => noticeTurn(1, `t-${reason}`, exchange({ notice: 'failed', noticeReason: reason }), 1);
+    const snapshotOf = (reasons: readonly string[]): WorkstreamTranscriptSnapshot => ({
+      snapshotId: 'failures', snapshotThrough: reasons.length, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: reasons.length + 1 },
+        covered: { startInclusive: 1, endExclusive: reasons.length + 1 },
+        turns: reasons.map((reason, index) => ({
+          ...failed(reason), transcriptSequence: index + 1, turnId: `t${index}`,
+          blocks: [{ ...failed(reason).blocks[0]!, blockId: `t${index}:text:0` }],
+        })),
+        activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    });
+    const verbs = (reasons: readonly string[]) =>
+      groupPluginToolMessages(orderedTranscriptMessages(snapshotOf(reasons), 'workstream-one'))
+        .map((message) => message.pluginActivity?.completedVerb);
+
+    // The row is the reader's whole record of the failure — the body is not
+    // shown — so a bare "1 background agent failed" names nothing to act on.
+    expect(verbs(['harness_execution_failed'])).toEqual(['1 background agent failed: harness_execution_failed']);
+    // Two failures for one reason still collapse; two reasons stay two rows,
+    // because aggregating them would have to drop one of the reasons.
+    expect(verbs(['connector_unavailable', 'connector_unavailable'])).toEqual([
+      '2 background agents failed: connector_unavailable',
+    ]);
+    expect(verbs(['connector_unavailable', 'harness_execution_failed'])).toEqual([
+      '1 background agent failed: connector_unavailable',
+      '1 background agent failed: harness_execution_failed',
+    ]);
+  });
+
+  it('draws the counted row while the message is still a pending input', () => {
+    // A message sits in the mailbox until the recipient's next safe boundary,
+    // which for a busy recipient is a whole step. Projecting only the canonical
+    // turn left the raw agent-to-agent prose on screen for that window, on the
+    // composer queue, and swapped it for a counted row on promotion.
+    // `futureTurnId` equals `inputId`, which the schema's own refinement
+    // requires; the value is a real pending input rather than a shape cast at
+    // the production signature.
+    const input: PendingTranscriptInput = {
+      inputId: 'turn-future',
+      futureTurnId: 'turn-future',
+      afterTranscriptSequence: 4,
+      inputSequence: 1,
+      actor: 'system',
+      authorUserId: null,
+      authorSnapshot: null,
+      externalActor: null,
+      clientMessageId: null,
+      deliveryMode: 'steer',
+      admittedAtUtc: createdAt,
+      block: {
+        type: 'text',
+        blockId: 'turn-future:text:0',
+        blockIndex: 0,
+        streaming: false,
+        messageType: 'system',
+        text: 'Working on Goose + Cline. Primary docs confirm neither presents a literal /goal.',
+        structuredContent: exchange(),
+      },
+    };
+    const overlay = pendingTranscriptInputOverlay(
+      input,
+      'workstream-one',
+      { source: 'socket_snapshot', snapshotId: 'snap' },
+    );
+
+    expect(overlay.message.messageType).toBe('plugin_activity');
+    expect(overlay.message.pluginActivity?.completedVerb).toBe('1 message from a background agent');
+    // Not the reader's prose, and not a row they can reorder.
+    expect(overlay.message.text).toBeUndefined();
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
   });
 });
