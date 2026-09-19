@@ -3323,7 +3323,7 @@ describe('the sidebar without a recency list', () => {
     const second = space('00000000-0000-7000-8000-0000000000f4', 'Bravo');
     renderSidebar({
       spaces: [first, second],
-      ordering: [{ container: { kind: 'organization', id: workspace.id }, itemIds: [second.id, first.id] }],
+      ordering: [{ container: { kind: 'organization' }, itemIds: [second.id, first.id] }],
     });
 
     const section = screen.getByRole('region', { name: 'Spaces' });

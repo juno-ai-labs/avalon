@@ -32,19 +32,35 @@ export function orderByStoredIds<T>(
 }
 
 /**
+ * Whether two references name the same container.
+ *
+ * One implementation, used by every reader of the ordering, because the answer
+ * is not uniform across the kinds: a Space's Channels and a Channel's Breakouts
+ * are addressed by a kind *and* an id, and the Organization's Spaces by the
+ * kind alone — a session is signed into one Organization, so there is nothing
+ * there to tell apart. A caller writing the comparison itself would either read
+ * an id that is not there or invent one, which is how one arrangement comes to
+ * be filed under two keys.
+ */
+export function sameContainer(left: OrderedContainer, right: OrderedContainer): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === 'organization' || right.kind === 'organization' || left.id === right.id;
+}
+
+/**
  * What this person last committed for one container, or nothing.
  *
  * The ordering is a list of `{ container, itemIds }` rather than a map, because
- * the key is a *pair* — a kind and an id — and a map would have to encode it
- * into a string that every reader parses back. Finding an entry is a scan of a
- * list that holds one row per container this person has ever arranged.
+ * the key of the two kinds that have one is a *pair*, and a map would have to
+ * encode it into a string that every reader parses back. Finding an entry is a
+ * scan of a list that holds one row per container this person has ever
+ * arranged.
  */
 export function storedOrderFor(
   ordering: PersonalOrder | undefined,
   container: OrderedContainer,
 ): string[] {
-  return (ordering ?? []).find((entry) =>
-    entry.container.kind === container.kind && entry.container.id === container.id)?.itemIds ?? [];
+  return (ordering ?? []).find((entry) => sameContainer(entry.container, container))?.itemIds ?? [];
 }
 
 /** `ids` with `id` lifted out and put back at `index`, which is what one drag or one key press does. */

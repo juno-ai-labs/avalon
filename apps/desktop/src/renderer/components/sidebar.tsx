@@ -1901,7 +1901,6 @@ export function Sidebar({
               ready={spacesReady}
               renderWorkstream={renderWorkstream}
               spaces={spaces}
-              workspaceId={workspace.id}
               workstreams={visibleWorkstreams}
             />
           )}
