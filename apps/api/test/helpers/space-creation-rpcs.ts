@@ -62,7 +62,6 @@ function summary(spaceId: string) {
     revision: 1,
     participants: [],
     channelCount: 0,
-    conversationWaterline: 0,
     defaultResourceIds: [],
     defaultSidekickIds: [],
     createdAt: "2026-09-19T00:00:00.000Z",
