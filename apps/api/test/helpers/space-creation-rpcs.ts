@@ -60,6 +60,7 @@ function summary(spaceId: string) {
     status: "active" as const,
     systemRole: general ? ("general" as const) : null,
     revision: 1,
+    reach: "participant" as const,
     participants: [],
     channelCount: 0,
     defaultResourceIds: [],

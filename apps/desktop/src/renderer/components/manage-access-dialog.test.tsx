@@ -13,7 +13,12 @@ const workstreamId = '00000000-0000-7000-8000-000000000011';
 const person = '00000000-0000-7000-8000-0000000000a1';
 const other = '00000000-0000-7000-8000-0000000000a2';
 
-function space(id: string, name: string, scope: 'personal' | 'workspace'): SpaceSummary {
+function space(
+  id: string,
+  name: string,
+  scope: 'personal' | 'workspace',
+  reach: SpaceSummary['reach'] = 'participant',
+): SpaceSummary {
   return SpaceSummarySchema.parse({
     id,
     name,
@@ -23,7 +28,8 @@ function space(id: string, name: string, scope: 'personal' | 'workspace'): Space
     status: 'active',
     systemRole: null,
     revision: 1,
-    participants: [{ userId: person }],
+    reach,
+    participants: reach === 'through_channel' ? [] : [{ userId: person }],
     channelCount: 1,
     defaultResourceIds: [],
     defaultSidekickIds: [],
@@ -126,6 +132,28 @@ describe('Manage access', () => {
     });
 
     expect(await screen.findByText('A space you can’t see')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The row that used to read "A space you can't see".
+   *
+   * A reader who can open this Channel is now told the mark and name of every
+   * Space holding it, so the row names the Space — and still carries no
+   * control, for the opposite reason to the one above: not because it cannot
+   * say what leaving would change, but because leaving is not theirs to do and
+   * the server refuses it by name.
+   */
+  it('given a space reached through this channel, then it is named but not removable', async () => {
+    const reached = space('00000000-0000-7000-8000-0000000000f5', 'Side work', 'personal', 'through_channel');
+    renderDialog({
+      direct: { scope: 'workspace', participantUserIds: [person] },
+      spaces: [{ spaceId: reached.id, scope: 'personal', participantUserIds: [other] }],
+      spaceIds: [reached.id],
+    }, { spaces: [general, hiring, reached] });
+
+    expect(await screen.findByText('Side work')).toBeVisible();
+    expect(screen.queryByText('A space you can’t see')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 

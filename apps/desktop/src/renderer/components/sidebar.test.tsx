@@ -143,6 +143,7 @@ function space(
     status: 'active',
     systemRole: null,
     revision: 1,
+    reach: 'participant',
     participants: [{ userId: '00000000-0000-7000-8000-0000000000f1' }],
     channelCount: 0,
     defaultResourceIds: [],
@@ -1627,6 +1628,40 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
     // Already a placement there: adding it again is not on offer.
     expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
+  });
+
+  // A Space this reader reaches only through a Channel in it is a row they can
+  // see and nothing they can write on. Placing a Channel there is refused by
+  // name, so it is not offered — the same rule the plus on its row is under.
+  it('given a space reached through a channel, when the row menu opens, then it is not offered', async () => {
+    const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', {
+      reach: 'through_channel',
+      participants: [],
+      channelCount: 1,
+    });
+    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), general().id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[general(), reached]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand General' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
+
+    // The submenu is drawn at all, which is what makes the absence below a
+    // decision about this Space rather than an empty menu.
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
   });
 
   // A system Channel is not a product Channel: the subsystem that writes it

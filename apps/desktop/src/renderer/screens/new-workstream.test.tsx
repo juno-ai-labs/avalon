@@ -124,6 +124,7 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
       status: 'active',
       systemRole: null,
       revision: 1,
+      reach: 'participant',
       participants: [currentUser, teammate].map((member) => ({ userId: asUserId(member.id) })),
       channelCount: 0,
       defaultResourceIds: [],
