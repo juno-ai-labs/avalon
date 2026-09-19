@@ -33,6 +33,7 @@ import {
 import { useAppSession } from '../lib/app-session';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
+import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { AutomationSummary, SpaceDefaultKind, Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
@@ -147,7 +148,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     try {
       applySpace(await change());
     } catch (cause) {
-      report(cause instanceof Error ? cause.message : fallback);
+      // Never the server's own sentence: it is a diagnostic a Worker wrote for
+      // a log, in the Organization's internal words, and it changes whenever
+      // the server's wording does. `fallback` is this action's own sentence,
+      // used when the refusal carried no Space code to name.
+      report(spaceFailureSentence(cause, fallback));
     } finally {
       setSaving(false);
     }
@@ -329,13 +334,17 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               } : current);
               openFirstWorkstream();
             }).catch((cause: unknown) => setArchiveError(
-              cause instanceof Error ? cause.message : 'The space could not be archived.',
+              spaceFailureSentence(cause, 'The space could not be archived.'),
             )).finally(() => setSaving(false));
           }}>Archive space</Button></>}
           onOpenChange={setArchiveConfirmOpen}
           open={archiveConfirmOpen}
           title="Archive space?"
         >
+          {/* Which Channel has to move is not on the refusal yet: the archive
+              answers `space_membership_final` with no list, and the server is
+              gaining a `channelIds` details field to carry one. Until it does,
+              this says what has to be true rather than naming the Channel. */}
           <p>Its channels keep the resources and Sidekicks they already have, and stay in every other space they belong to. A channel whose only space is this one has to be moved first.</p>
           {archiveError && <InlineError>{archiveError}</InlineError>}
         </Modal>
