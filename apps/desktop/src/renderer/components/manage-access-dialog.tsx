@@ -155,63 +155,70 @@ export function ManageAccessDialog({
       open={open}
       title="Manage access"
     >
-      {access.isError && <InlineError>Who can see this channel couldn’t be loaded.</InlineError>}
-      {sources === undefined
-        ? <LoadingState label="Loading access…" />
-        : <ul className="manage-access-list">
-          <AccessSource
-            // Narrowing the direct source is refused with
-            // `channel_scope_locked_by_space` exactly while an Organization-wide
-            // Space holds this Channel, and those sources are on this screen: a
-            // control that can only fail is worse than one that is not there,
-            // and the sentence beside it names the Space to change first.
-            action={directIsPublic
-              ? publicThrough.length > 0
-                ? undefined
-                : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
-              : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('workspace'))}>Make public to organization</Button>}
-            failure={failures['direct']}
-            icon={directIsPublic
-              ? <Globe2 aria-hidden="true" size={15} />
-              : <Lock aria-hidden="true" size={15} />}
-            key="direct"
-            name="This channel"
-            // Never "private": an Organization-wide Space below may still be
-            // granting access, and saying private here would be false.
-            sentence={directIsPublic
-              ? publicThrough.length > 0
-                ? `Everyone in the organization, from the channel itself — and public through ${publicThrough.join(', ')}.`
-                : 'Everyone in the organization, from the channel itself.'
-              : publicThrough.length > 0
-                ? `The ${people(sources.direct.participantUserIds.length)} in the channel — and public through ${publicThrough.join(', ')}.`
-                : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
-          />
-          {spaceIds.map((spaceId) => {
-            const source = bySpace.get(spaceId);
-            const space = spaces.find((candidate) => candidate.id === spaceId);
-            const member = (sources.spaceIds as string[]).includes(spaceId);
-            return (
-              <AccessSource
-                action={member
-                  ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
-                  : undefined}
-                failure={failures[spaceId]}
-                icon={space ? <SpaceIcon space={space} /> : <Globe2 aria-hidden="true" size={15} />}
-                key={spaceId}
-                name={space?.name ?? 'A space you can’t see'}
-                sentence={!member
-                  // The Organization no longer holds this membership while the
-                  // Channel still records its source: a retraction in flight.
-                  ? 'This channel has left this space; its access is still being withdrawn.'
-                  : source === undefined
-                    ? 'Access from this space is still being applied.'
-                    : source.scope === 'workspace'
-                      ? 'Everyone in the organization, through this space.'
-                      : `The ${people(source.participantUserIds.length)} in this space.`}
-              />
-            );
-          })}
-        </ul>}
+      {/* One of the three, never two: a failed read used to leave the spinner
+          up under its own error message, so the dialog said the sources were
+          still loading for as long as it stayed open. */}
+      {sources === undefined && access.isError
+        ? <div className="manage-access-failed">
+          <InlineError>Who can see this channel couldn’t be loaded.</InlineError>
+          <Button disabled={access.isFetching} onClick={() => void access.refetch()}>Try again</Button>
+        </div>
+        : sources === undefined
+          ? <LoadingState label="Loading access…" />
+          : <ul className="manage-access-list">
+            <AccessSource
+              // Narrowing the direct source is refused with
+              // `channel_scope_locked_by_space` exactly while an Organization-wide
+              // Space holds this Channel, and those sources are on this screen: a
+              // control that can only fail is worse than one that is not there,
+              // and the sentence beside it names the Space to change first.
+              action={directIsPublic
+                ? publicThrough.length > 0
+                  ? undefined
+                  : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
+                : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('workspace'))}>Make public to organization</Button>}
+              failure={failures['direct']}
+              icon={directIsPublic
+                ? <Globe2 aria-hidden="true" size={15} />
+                : <Lock aria-hidden="true" size={15} />}
+              key="direct"
+              name="This channel"
+              // Never "private": an Organization-wide Space below may still be
+              // granting access, and saying private here would be false.
+              sentence={directIsPublic
+                ? publicThrough.length > 0
+                  ? `Everyone in the organization, from the channel itself — and public through ${publicThrough.join(', ')}.`
+                  : 'Everyone in the organization, from the channel itself.'
+                : publicThrough.length > 0
+                  ? `The ${people(sources.direct.participantUserIds.length)} in the channel — and public through ${publicThrough.join(', ')}.`
+                  : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
+            />
+            {spaceIds.map((spaceId) => {
+              const source = bySpace.get(spaceId);
+              const space = spaces.find((candidate) => candidate.id === spaceId);
+              const member = (sources.spaceIds as string[]).includes(spaceId);
+              return (
+                <AccessSource
+                  action={member
+                    ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
+                    : undefined}
+                  failure={failures[spaceId]}
+                  icon={space ? <SpaceIcon space={space} /> : <Globe2 aria-hidden="true" size={15} />}
+                  key={spaceId}
+                  name={space?.name ?? 'A space you can’t see'}
+                  sentence={!member
+                    // The Organization no longer holds this membership while the
+                    // Channel still records its source: a retraction in flight.
+                    ? 'This channel has left this space; its access is still being withdrawn.'
+                    : source === undefined
+                      ? 'Access from this space is still being applied.'
+                      : source.scope === 'workspace'
+                        ? 'Everyone in the organization, through this space.'
+                        : `The ${people(source.participantUserIds.length)} in this space.`}
+                />
+              );
+            })}
+          </ul>}
     </Modal>
   );
 }
