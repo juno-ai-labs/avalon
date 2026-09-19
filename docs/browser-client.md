@@ -279,10 +279,18 @@ secrets must be present. Initial enablement is complete only after both deployme
 succeed; the browser shell can be available before API sign-in is enabled.
 
 Manual browser deployment from the repository root is
-`pnpm --filter @rally/browser run deploy`. After the first deployment, verify in
+`pnpm exec dotenv -e .env.local -- pnpm --filter @rally/browser run deploy`. After the first deployment, verify in
 Chrome that a real invitation arrives, email sign-in and acceptance work, and the
 shared conversation can send messages and receive realtime updates. The workflow's
-public route checks do not prove mailbox delivery or authenticated collaboration.
+public route checks compare the served shell with the built HTML, including its
+hashed assets; they do not prove mailbox delivery or authenticated collaboration.
+The workflow reuses the site deployment budget and Ace's domain propagation retries.
+If API deployment finishes first, invitation links can temporarily point to a
+host that is not ready. Disable new sharing/sign-in by removing the API browser
+origin; removing the browser route from config alone does not detach an existing
+Custom Domain, which must be removed in Cloudflare when retiring the host.
+The email policy and explicit decision to launch without issuance limits are
+owned by [email-login.md](email-login.md).
 
 For local work, start the API according to [dev-environment.md](dev-environment.md)
 and run `pnpm dev:browser` on port 8794. Client assets rebuild on source edits. The Global service binding discovers the local
@@ -371,7 +379,6 @@ in browser deployment triggers. The public entry check is not an authenticated
 end-to-end guest test.
 
 PR: [#843](https://github.com/juno-ai-labs/avalon/pull/843).
-
 
 ### 2026-09-17 — Add a browser entry over ordinary regional sessions
 
