@@ -1762,7 +1762,9 @@ at that handoff and still dropped by the role before they reach the outbox.
 `workstream_access_operations`, and gives `scope_grants` a `source_kind` and
 `source_id` that existing rows backfill into as `direct`. Six RPCs read, record
 and withdraw those sources and return the audience delta each implies;
-`lib/channel-audience.ts` is the one function that derives the union.
+`lib/channel-audience.ts` is the one function that derives the union. The
+application is a plan and a receipt; **the source row is committed by
+`confirmSpaceAccessSource`**, together with the readers it actually seated.
 `ChannelAccessService` applies every delta through the Channel's canonical
 `update`, `addParticipant` and `removeParticipant`, and `PATCH /workstreams/:id`
 and `POST /:id/participants` moved onto `WorkstreamService` so a direct scope
@@ -1787,14 +1789,38 @@ containment preflight and its SQL triggers live on the canonical operations, and
 a second writer would have been the second place an audience could widen without
 them — so the RPCs plan and the service applies.
 
+**Provenance is committed at the confirmation, not at the application.** The
+application returns the delta the caller still has to apply through the
+canonical operations, so a source recorded there would, after any crash between
+the two, claim a Space reaches this Channel having seated nobody — provenance
+accounting for access that does not exist, which the next retraction acts on.
+The confirmation is the first moment the Channel's readers and its record of why
+can be made true together: it carries the source, re-runs the revision fence
+where the write lands, and seeds the Channel's own scope from what the caller
+observed *before* it applied the audience, because by then the Channel may
+already be Organization-wide through this very source. A confirmation with no
+source attributes readers to a Space that is already here, which is what a
+narrowing does; that is the one case that still answers `space_not_found`. The
+consequence worth stating: a failed application leaves nothing to unwind.
+
 The grant a Space seats carries `spaceSourceId` on the mutation, threaded from
 the object client through the conversation, rather than being inferred here.
 Nothing downstream can tell the two apart, and the difference decides one thing:
 a Space-derived grant is not published to the shared scope-grant directory. A
 reader finds the Channel through the Space, and a directory row per reader per
 Channel would make General's fan-out the size of the Organization times its
-Channels. Direct provenance is sticky and wins, so a Space cannot turn a grant
-the Channel holds directly into one its departure deactivates.
+Channels.
+
+**Direct provenance is sticky and wins in both directions, and the authority is
+where that is decided.** A Space writing over a grant the Channel already holds
+directly cannot turn it into a row that Space's departure deactivates, and a
+Space *withdrawing* from such a row leaves it active and answers `committed`
+with the grant as it stands. Deciding it at the authority rather than by RPC
+ordering is the point: otherwise whether a direct share survives a concurrent
+retraction comes down to which message arrived last, which is queue ordering
+nobody controls. The rebuild inside `authorizedGrantMutation` is the one place
+`spaceSourceId` can be lost on the way in, and losing it publishes every
+Space-seated grant on a migrated Channel.
 
 **What a future change has to respect:** The union is derived in one place and
 applied through the canonical operations; a path that writes an audience
@@ -1803,7 +1829,12 @@ never a recomputed audience, or it withdraws readers no Space ever supplied. And
 a retraction that narrows the scope has to *seat* the readers a surviving source
 supplies before it narrows: a source applied while the Channel was
 Organization-wide seated nobody, so its readers exist only as its roster until
-the audience stops being Organization-wide.
+the audience stops being Organization-wide. The Channel's *own* scope going
+private is the same event by another route, and goes through the same seam —
+`ChannelAccessService.narrowDirectScope` — rather than a second copy of the
+rule. Either narrowing then publishes `workstream_audience_narrowed`, because
+the room closes sockets only for somebody it was told about and a narrowing
+names nobody ([access revocation](access-revocation.md)).
 
 ### 2026-09-19 — A Space is this class under an immutable role, not a subclass with overrides
 
