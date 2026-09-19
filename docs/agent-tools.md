@@ -534,6 +534,17 @@ Four rules decide what a row holds:
   rest.** A model cannot see an absent field, and will read one as empty. This
   is the sentence that keeps a summary from being mistaken for the whole record.
 
+**A `get` is a declared record too, and a write echo is a `get`.** The
+temptation is to leave single reads as pass-through on the grounds that one
+deliberate object per call is affordable. It holds for exactly one call. A run
+that lists thirty pull requests and then opens six of them pays most of the
+saving back, because the `get` carries the same embedded records the list row
+was just taught to drop. Declare the record as the list row *plus* what the read
+was for — the body, and the state a caller opened it to see — so the two stay in
+step and a field that earned its place on the list keeps it. A create or update
+that returns the object it wrote is the same boundary and takes the same
+declaration.
+
 Do not add a `fields` parameter so the model can ask for more. It is one more
 optional parameter beside the others, and [rule 13](#13-every-parameter-says-what-it-is-for-and-what-leaving-it-out-does)
 records what a parameter a model does not understand costs. If a row is missing
@@ -1122,6 +1133,33 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-19 — A `get` is a declared record too
+
+**What changed:** The GitHub single reads and write echoes — `repository.get`,
+`issues.get`, `pull_requests.get`, `actions.get_workflow_run`, and the create
+and update tools that return what they wrote — now project onto declared
+records, as the matching list row plus what the read was for. Rule 8 carries the
+general form.
+
+**Why:** The declared rows landed on the lists and deliberately left the reads
+alone, reasoning that one object per call was affordable. That reasoning holds
+for one call and not for a session: a run lists thirty pull requests and opens
+six of them, and each `pull_requests.get` carried the same `head.repo` and
+`base.repo` the list row had just dropped, so most of the saving came straight
+back. The same held for `actions.get_workflow_run`, which embeds `repository`
+and `head_repository`.
+
+**Considered and rejected:** A separate declaration per read, which would let a
+field earn its place on the list row and silently lose it on the read; the
+records compose from the list rows instead. Leaving the write echoes as
+pass-through, which would have made the shape of a created issue differ from the
+shape of the same issue read back one call later.
+
+**What a future change has to respect:** A read's record is the list row plus
+the content and state the read was for, so adding a field to a list row adds it
+to the read. What a read adds over its list row is what a caller opened the
+record to see, not everything the provider happens to send.
 
 ### 2026-09-19 — A list returns a declared row, not the provider's object
 
