@@ -6344,7 +6344,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the membership row itself rather than by a receipt: it is the state a
    * placement actually produces, and it cannot disagree with one.
    *
-   * `placedWorkstreamIds` is what the page settled *for*, and clearing those
+   * `clearedWorkstreamIds` is what the page settled *for*, and clearing those
    * Channels' blockers is what lets a remediated Channel close the
    * Organization: a pass that places it, or a preflight that now finds it safe,
    * takes it off the row.
@@ -6358,11 +6358,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     const storage = this.spaceStorage();
-    storage.clearBootstrapBlocked(request.placedWorkstreamIds);
+    storage.clearBootstrapBlocked(request.clearedWorkstreamIds);
     storage.recordBootstrapBlocked(request.blocked);
+    // Where the pass goes next. A walk with another page stays where it is; a
+    // walk that finished moves on — except that `memberships` is only entered
+    // from a `preflight` that found nothing, which is what keeps the first
+    // Channel from being widened in an Organization the cutover is going to
+    // refuse. A preflight that found something goes to `finalize`, which is the
+    // pass that reports.
     storage.advanceBootstrap(
-      request.phase === "memberships" && request.cursor !== null ? "memberships"
-        : request.phase === "general" ? "memberships" : "finalize",
+      request.phase === "general" ? "preflight"
+        : request.cursor !== null ? request.phase
+        : request.phase === "preflight" && storage.blockedEntries().length === 0 ? "memberships"
+        : "finalize",
       request.cursor,
     );
     await this.armNextAlarm();

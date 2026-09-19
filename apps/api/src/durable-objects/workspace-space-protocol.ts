@@ -349,9 +349,14 @@ export type WorkspaceSpaceGeneralResult = z.infer<typeof WorkspaceSpaceGeneralRe
  * pass: applying General's Organization-wide source is what widens a formerly
  * personal Channel, and it happens inside the placement, through the Channel's
  * canonical scope operation and the retained-content trigger that guards it.
+ *
+ * `preflight` is the read-only pass in front of it. It asks the same questions
+ * a placement asks and writes nothing, so an Organization whose cutover is
+ * going to be refused is refused before the first Channel is widened — the
+ * PRD's "without partial mutation".
  */
 export const WorkspaceSpaceBootstrapStatusSchema = z.strictObject({
-  phase: z.enum(["pending", "general", "memberships", "finalize", "complete"]),
+  phase: z.enum(["pending", "general", "preflight", "memberships", "finalize", "complete"]),
   generalSpaceId: SpaceIdSchema.nullable(),
   blockedWorkstreamIds: z.array(WorkstreamIdSchema),
   ready: z.boolean(),
@@ -371,7 +376,7 @@ export const SpaceBootstrapQueueMessageSchema = z.strictObject({
   type: z.literal("space_bootstrap"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  kind: z.enum(["general", "memberships", "finalize"]),
+  kind: z.enum(["general", "preflight", "memberships", "finalize"]),
   cursor: WorkstreamIdSchema.nullable(),
 }).strict();
 export type SpaceBootstrapQueueMessage = z.infer<typeof SpaceBootstrapQueueMessageSchema>;
@@ -401,12 +406,20 @@ export const WorkspaceSpaceBootstrapPageSchema = z.strictObject({
 });
 export type WorkspaceSpaceBootstrapPage = z.infer<typeof WorkspaceSpaceBootstrapPageSchema>;
 
-/** What one page of placements finished, and what it could not. */
+/**
+ * What one pass of the cutover finished, and what it could not.
+ *
+ * `clearedWorkstreamIds` is what the page settled *for*, in the sense the
+ * blocked list is the other half of: a `memberships` page reports the Channels
+ * it placed, a `preflight` page the Channels it found safe to place. Either way
+ * they are the Channels that are no longer stuck, so either way they come off
+ * `blocked_json`.
+ */
 export const WorkspaceSpaceBootstrapSettleRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  phase: z.enum(["general", "memberships", "finalize"]),
+  phase: z.enum(["general", "preflight", "memberships"]),
   cursor: WorkstreamIdSchema.nullable(),
-  placedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
+  clearedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
   blocked: z.array(z.strictObject({
     workstreamId: WorkstreamIdSchema,
     // The consumer's `diagnosticErrorCode`, not a literal this object writes:
