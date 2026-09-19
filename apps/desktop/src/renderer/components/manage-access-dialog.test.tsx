@@ -39,7 +39,8 @@ function renderDialog(
   access: unknown,
   props: Partial<React.ComponentProps<typeof ManageAccessDialog>> = {},
 ) {
-  api.channelAccess.mockResolvedValue(access as ChannelAccess);
+  if (access instanceof Error) api.channelAccess.mockRejectedValue(access);
+  else api.channelAccess.mockResolvedValue(access as ChannelAccess);
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ManageAccessDialog
@@ -58,6 +59,25 @@ function renderDialog(
 
 describe('Manage access', () => {
   beforeEach(() => api.channelAccess.mockReset());
+
+  // Both at once is what it used to draw: the message over a spinner that
+  // never stopped, because nothing was left in flight to end it.
+  it('given the access read failed, then it says so once, with a retry and no spinner', async () => {
+    renderDialog(new Error('The access read did not answer'));
+
+    expect(await screen.findByText('Who can see this channel couldn\u2019t be loaded.')).toBeVisible();
+    expect(screen.queryByText('Loading access\u2026')).not.toBeInTheDocument();
+
+    api.channelAccess.mockResolvedValue({
+      direct: { scope: 'personal', participantUserIds: [person] },
+      spaces: [],
+      spaceIds: [],
+    } as unknown as ChannelAccess);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Only the 1 person in the channel.')).toBeVisible();
+    expect(screen.queryByText('Who can see this channel couldn\u2019t be loaded.')).not.toBeInTheDocument();
+  });
 
   it('lists the channel\'s own source and one entry per space that reaches it', async () => {
     renderDialog({
