@@ -578,7 +578,7 @@ import {
   SpaceDefaultTargetFailureRequestSchema,
   WorkspaceChannelSpacesRequestSchema,
   WorkspaceChannelSpacesResultSchema,
-  WorkspaceSpaceArchiveRequestSchema,
+  WorkspaceSpaceStagedRequestSchema,
   WorkspaceSpaceAudienceNoteRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
@@ -607,7 +607,7 @@ import {
   type SpaceDefaultTargetFailureRequest,
   type WorkspaceChannelSpacesRequest,
   type WorkspaceChannelSpacesResult,
-  type WorkspaceSpaceArchiveRequest,
+  type WorkspaceSpaceStagedRequest,
   type WorkspaceSpaceAudienceNoteRequest,
   type WorkspaceSpaceBootstrapStatus,
   type WorkspaceSpaceChannelPageRequest,
@@ -6026,9 +6026,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Stage an archive, refusing one that would strand any member Channel. */
-  async prepareSpaceArchive(input: WorkspaceSpaceArchiveRequest): Promise<WorkspaceSpaceMutationResult> {
+  async prepareSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "prepare_space_archive");
+    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "prepare_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
@@ -6053,9 +6053,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  async finalizeSpaceArchive(input: WorkspaceSpaceArchiveRequest): Promise<WorkspaceSpaceMutationResult> {
+  async finalizeSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "finalize_space_archive");
+    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
@@ -6070,17 +6070,45 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
-  async restoreSpace(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
+  /**
+   * Bring an archived Space back, and stage the fan-out that follows it.
+   *
+   * Staged like the other four, and for the reason the other four are: the
+   * restore commits here and then the service re-applies this Space's source to
+   * every member Channel, so a request that dies in between leaves the Space
+   * active in the directory, on every socket and in every sidebar, with half
+   * its members holding no source from it — and, without an intent, with
+   * nothing that would ever notice. It was the one Space operation whose
+   * half-finished state nothing could resume.
+   */
+  async restoreSpace(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "restore_space");
+    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "restore_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const space = this.spaceStorage().restore(request.userId, request.spaceId);
-    if (space !== false) this.publishSpaceSnapshot();
-    return WorkspaceSpaceMutationResultSchema.parse(space === false
-      ? { ok: false, code: "space_not_found" }
-      : { ok: true, space });
+    const storage = this.spaceStorage();
+    const space = storage.restore(request.userId, request.spaceId);
+    if (space === false) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    // Fenced on the revision the restore itself produced, which is what the
+    // resumed applications carry: a Space that moved again afterwards is a
+    // newer operation with a walk of its own.
+    storage.recordIntent({
+      operationId: request.operationId,
+      kind: "restore",
+      spaceId: request.spaceId,
+      workstreamId: null,
+      spaceRevision: space.revision,
+      membershipGeneration: null,
+      deliveryGeneration: null,
+      requestedByUserId: request.userId,
+      notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+    });
+    this.publishSpaceSnapshot();
+    await this.armNextAlarm();
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
   async addSpaceDefault(input: WorkspaceSpaceDefaultRequest): Promise<WorkspaceSpaceDefaultResult> {
