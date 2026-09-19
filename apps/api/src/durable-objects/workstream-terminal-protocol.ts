@@ -89,6 +89,7 @@ const DISPATCHED_OPERATIONS = [
   "settleProviderObservation",
   "reserveFirstGeneration",
   "claimOperation",
+  "releaseOperation",
   "claimYieldedOperationRecovery",
   "settleYieldedOperationRecovery",
   "retireYieldedOperationRecovery",
@@ -191,6 +192,12 @@ const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
   "latestPublicationGrant",
   "completedPublication",
   "publicationExists",
+  // The operation lease. It moves `operation_run_id`, its conversation, its
+  // deadline and `last_command_at`, none of which the directory projects,
+  // and it moves once per tool call: projecting on every claim would build
+  // the participant and link walk per call for a row that never changes.
+  "claimOperation",
+  "releaseOperation",
   // Writes that leave `terminal_workspace` alone.
   "insertTask",
   "renewTaskSubmissionAuthority",

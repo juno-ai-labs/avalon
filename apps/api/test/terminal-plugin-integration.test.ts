@@ -221,9 +221,13 @@ describe("Terminal Bind integration", () => {
         objectStore,
         "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
       )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
+      // By attempt, not by arrival: the second activation joins the first's
+      // readiness and can settle first, since the first is the one that gives
+      // the lease back afterwards.
       const activationEvents = info.mock.calls
         .map(([entry]) => entry as Record<string, unknown>)
-        .filter((entry) => entry.event === "terminal_plugin_activation_finished");
+        .filter((entry) => entry.event === "terminal_plugin_activation_finished")
+        .sort((left, right) => Number(left.activation_attempt) - Number(right.activation_attempt));
       expect(activationEvents).toMatchObject([
         {
           activation_attempt: 1,

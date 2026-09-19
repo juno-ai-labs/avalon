@@ -762,4 +762,21 @@ describe("Terminal scheduled lifecycle", () => {
       .resolves.toEqual({ transition: "stopped" });
     expect(provider.stopSandbox).toHaveBeenCalledOnce();
   });
+
+  it("holds a running sandbox whose last tool call is inside the warm window", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    // No holder: the lease is held per call and this run is between calls.
+    // The claim's activity stamp is what says the sandbox is still in use.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET last_command_at = ? WHERE id = 1", NOW.getTime() - 60_000);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET last_command_at = ? WHERE id = 1", NOW.getTime() - 6 * 60_000);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+  });
 });

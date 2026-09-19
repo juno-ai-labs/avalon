@@ -55,9 +55,10 @@ parent, bootstraps the existing harness, and provisions its name, description an
 inherited model override. It grants no private-child viewer memberships. The
 child retains its inherited execution principal; admission resolves it locally,
 and messages do not replace it with a teammate's credentials. A worker's
-Terminal is its owner's: it uses the sandbox, checkout, and exclusive mutation
-lease of the conversation that started it, through any further delegation, so
-a worker's tool waits with `sandbox_busy` while its owner's run holds the lease
+Terminal is its owner's: it uses the sandbox and checkout of the conversation
+that started it, through any further delegation, under a mutation lease held
+per tool call, so a worker's write waits with `sandbox_busy` only while a
+sibling or its owner is mid-call, and its reads never wait
 ([`terminal-workspaces.md`](terminal-workspaces.md)).
 
 Creation reserves the child and obtains the current generation in one parent RPC.

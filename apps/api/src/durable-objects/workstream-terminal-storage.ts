@@ -466,6 +466,15 @@ export class WorkstreamTerminalStorage {
    * `yieldedForeignHolder`, which this statement then takes over from by exact
    * identity. A yielded run never resumes its lease, so that answer cannot go
    * stale between the read and this write.
+   *
+   * A lease is held for one tool call and released after it, so the claimant
+   * is usually taking an unheld lease rather than its own back. The unsettled
+   * task fence therefore ignores the claimant's own tasks: a run whose command
+   * lost observation released the lease when the call failed, and reattaching
+   * to that command on its retry is the one thing that can settle it. Another
+   * run's unsettled task still holds the fence closed. The claim also stamps
+   * `last_command_at`: with no run-long holder, it is what the lifecycle sweep
+   * reads as "someone is using this sandbox".
    */
   claimOperation(input: {
     runId: string;
@@ -480,7 +489,7 @@ export class WorkstreamTerminalStorage {
       const claimed = first<{ operation_run_id: string }>(this.sql.exec(
         `UPDATE terminal_workspace
             SET operation_run_id = ?, operation_run_substream_id = ?,
-                operation_lease_expires_at = ?,
+                operation_lease_expires_at = ?, last_command_at = ?,
                 version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ?
             AND lifecycle_claim_id IS NULL
@@ -491,6 +500,7 @@ export class WorkstreamTerminalStorage {
                   SELECT 1 FROM terminal_tasks task
                    WHERE task.sandbox_generation = terminal_workspace.generation
                      AND task.state IN ('planned', 'submitting', 'running')
+                     AND task.run_id <> ?
                 )
                 AND (
                   operation_run_id IS NULL
@@ -513,7 +523,9 @@ export class WorkstreamTerminalStorage {
         input.runSubstreamId ?? null,
         input.leaseExpiresAt,
         input.now,
+        input.now,
         input.generation,
+        input.runId,
         input.runId,
         input.now,
         input.yieldedForeignHolder?.runId ?? null,
@@ -521,6 +533,39 @@ export class WorkstreamTerminalStorage {
       ));
       return claimed ? this.sandbox() : null;
     });
+  }
+
+  /**
+   * Give the operation lease back at the end of a tool call.
+   *
+   * Fenced on the exact holder: a release after a checkout that replaced the
+   * generation still has to clear the holder, and a release that arrives
+   * after another run took the lease over must not clear that run's. A run
+   * whose own command is still unsettled on this generation keeps the lease
+   * instead: the retained task is resolved either by this run reattaching on
+   * its retry or by a successor's recovery, and both are keyed to the holder
+   * — a successor recovers *from* a yielded holder, and a lease nobody holds
+   * over an unsettled task would be one no linked run could ever recover.
+   * Returns whether the lease was cleared.
+   */
+  releaseOperation(input: { runId: string; now: number }): boolean {
+    return first<{ id: number }>(this.sql.exec(
+      `UPDATE terminal_workspace
+          SET operation_run_id = NULL, operation_run_substream_id = NULL,
+              operation_lease_expires_at = NULL,
+              version = version + 1, updated_at = ?
+        WHERE id = 1 AND operation_run_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM terminal_tasks task
+             WHERE task.sandbox_generation = terminal_workspace.generation
+               AND task.run_id = ?
+               AND task.state IN ('planned', 'submitting', 'running')
+          )
+        RETURNING id`,
+      input.now,
+      input.runId,
+      input.runId,
+    )) !== null;
   }
 
   /**
