@@ -84,7 +84,7 @@ describe('SidekickSection', () => {
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
     rerender(<Tooltip.Provider><SidekickSection /></Tooltip.Provider>);
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
-    rerender(<Tooltip.Provider><SidekickSection items={[]} failed /></Tooltip.Provider>);
+    rerender(<Tooltip.Provider><SidekickSection items={[]} failure="load" /></Tooltip.Provider>);
     expect(screen.getByText('Sidekicks couldn’t be loaded.')).toBeVisible();
   });
 
@@ -94,9 +94,19 @@ describe('SidekickSection', () => {
     // loses a list that worked to report a failure about something else.
     renderSection({
       items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
-      failed: true,
+      failure: 'load',
     });
     expect(screen.getByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
+  });
+
+  it('reports a failed removal as the action that failed', () => {
+    renderSection({
+      items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
+      failure: 'remove',
+    });
+    expect(screen.getByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
   });
 });

@@ -181,12 +181,12 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     renderScreen(true);
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
-    expect(await screen.findByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
     expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
     fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
     expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
-    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
+    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
   });
 
   it('keeps recommendations shared and loaded rows local when switching substreams', async () => {
@@ -250,5 +250,22 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     expect(screen.queryByText('The service is unavailable.')).not.toBeInTheDocument();
     // And the half that did answer stays on screen under it.
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+  });
+
+  it('keeps a management-options failure in the picker rather than misreporting the list', async () => {
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: requested API route does not exist';
+    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
+    api.getAttachedSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockResolvedValue([]);
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getSidekickRecommendationOptions.mockRejectedValue(new Error(diagnostic));
+    renderScreen(true);
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByText('Sidekick options couldn’t be loaded.')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Sidekicks couldn’t be loaded.')).not.toBeInTheDocument();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
   });
 });

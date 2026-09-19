@@ -680,6 +680,28 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
+### 2026-09-18 — Conversation controls own failure language
+
+**What changed:** Transcript paging, message sending, participant changes,
+resource attachment, and Sidekick-draft acceptance now map rejected operations
+to stable Rally copy before rendering. The participant and resource dialogs
+accept closed failure states rather than exception strings. Persisted run
+failure records remain the explicit exception: their notice intentionally shows
+the stored support message beside its code and request id.
+
+**Why:** The conversation adapter supplies several dialogs and persistent
+controls next to the rails. Guarding only components whose filenames contained
+`sidebar` or `rail` left those adjacent paths able to render a router or provider
+sentence for the same failed action.
+
+**Considered and rejected:** Treating the adapter as transport code. It chooses
+which product state each control renders, so moving the strings elsewhere would
+hide rather than close the boundary.
+
+**Consequences:** New operation failures on this surface need a semantic state
+and authored recovery copy. A diagnostic needed for support stays in telemetry,
+except for the archived run-result contract described above.
+
 ### 2026-09-16 — Message text has a Radix right-click menu, including Speak
 
 **What changed:** Right-clicking assistant or human message prose in the feed

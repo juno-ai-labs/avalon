@@ -1,5 +1,5 @@
 import { desktopBridge } from '../lib/platform';
-import { SidekickSection, type SidekickRow } from './sidekick-section';
+import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
@@ -74,7 +74,7 @@ interface InspectorRailProps {
    * such section, as it has no artifact section until it has produced one.
    */
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksFailed?: boolean | undefined;
+  sidekickFailure?: SidekickSectionFailure | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -109,6 +109,15 @@ interface InspectorRailProps {
     onDrop: React.DragEventHandler<HTMLElement>;
   };
 }
+
+type InspectorRailFailure = NonNullable<InspectorRailProps['failure']>;
+
+const inspectorRailFailureCopy: Record<InspectorRailFailure, string> = {
+  watch: 'The resource watch couldn’t be updated.',
+  detach: 'The resource couldn’t be archived.',
+  refresh: 'The resource couldn’t be refreshed.',
+  attach: 'The resource couldn’t be added.',
+};
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -177,14 +186,14 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 function ContextContent({
   workstream,
   sidekicks,
-  sidekicksFailed,
+  sidekickFailure,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
   | 'sidekicks'
-  | 'sidekicksFailed'
+  | 'sidekickFailure'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -232,7 +241,7 @@ function ContextContent({
         )}
       </Section>
 
-      <SidekickSection items={sidekicks} failed={sidekicksFailed} />
+      <SidekickSection items={sidekicks} failure={sidekickFailure} />
 
       <Section title="Details">
         <dl className="detail-list">
@@ -763,13 +772,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </header>
       <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
-        {props.failure && <div className="rail-inline-error"><InlineError>{props.failure === 'watch'
-          ? 'The resource watch couldn’t be updated.'
-          : props.failure === 'detach'
-            ? 'The resource couldn’t be archived.'
-            : props.failure === 'refresh'
-              ? 'The resource couldn’t be refreshed.'
-              : 'The resource couldn’t be added.'}</InlineError></div>}
+        {props.failure && <div className="rail-inline-error"><InlineError>
+          {inspectorRailFailureCopy[props.failure]}
+        </InlineError></div>}
         {inspector ? (
           <InspectorDetail
             inspector={inspector}

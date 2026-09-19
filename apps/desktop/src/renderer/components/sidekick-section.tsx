@@ -3,6 +3,8 @@ import type { WorkstreamAutomationSummary } from '../lib/types';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 export type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { SidekickSection as SharedSidekickSection } from '@rally/ui/components/sidekick-section';
+
+export type { SidekickSectionFailure } from '@rally/ui/components/sidekick-section';
 import { desktopBridge } from '../lib/platform';
 export function SidekickSection(props: React.ComponentProps<typeof SharedSidekickSection>): React.JSX.Element | null {
   return <SharedSidekickSection {...props} onOpen={(id) => { void desktopBridge().openSidekicks(id); }} />;

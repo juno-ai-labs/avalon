@@ -465,7 +465,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           onSidekickMenuOpen={context.loadSidekickOptions}
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
-          sidekicksFailed={context.sidekicksFailed}
+          sidekickFailure={context.sidekickFailure}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
           creatingSubstream={creation?.parentId === id && launching !== null
             ? { reservedSubstreamId: reservedChildId }

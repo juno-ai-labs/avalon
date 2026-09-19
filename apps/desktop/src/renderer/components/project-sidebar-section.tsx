@@ -19,6 +19,13 @@ import { PROJECT_COLOR_DEFAULT, projectColorCells } from '../lib/project-palette
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
+type ProjectSectionFailure = 'reorder' | 'add_workstream';
+
+const projectSectionFailureCopy: Record<ProjectSectionFailure, string> = {
+  reorder: 'Projects couldn’t be reordered.',
+  add_workstream: 'That work stream couldn’t be added to the project.',
+};
+
 function label(value: string): string {
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
@@ -119,7 +126,7 @@ export function ProjectSidebarSection({
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
   const [modalFailure, setModalFailure] = useState<'create' | 'restore' | null>(null);
-  const [sectionFailure, setSectionFailure] = useState<'reorder' | 'add_workstream' | null>(null);
+  const [sectionFailure, setSectionFailure] = useState<ProjectSectionFailure | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
   const ordered = dragOrder
@@ -306,9 +313,7 @@ export function ProjectSidebarSection({
             })}
           </div>
         )}
-        {sectionFailure && <InlineError>{sectionFailure === 'reorder'
-          ? 'Projects couldn’t be reordered.'
-          : 'That work stream couldn’t be added to the project.'}</InlineError>}
+        {sectionFailure && <InlineError>{projectSectionFailureCopy[sectionFailure]}</InlineError>}
       </section>
       <Modal
         footer={<>
