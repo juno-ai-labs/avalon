@@ -76,23 +76,33 @@ describe('capsule composer stacking', () => {
   });
 
   /**
-   * `clip` and `hidden` paint the same — a control parked outside the rounded
-   * corner is cut at the same pixel by either — and only `hidden` is a scroll
-   * container. Two things inside this capsule are deliberately outside its
-   * box: Stop parks past the right edge so it can slide in, and
-   * `ComposerInput` translates the input shell by the leading column's width
-   * for 220ms whenever a draft flips to the wrapped layout. Under `hidden`
-   * that is a scroll range with no scrollbar, and nothing reads or resets the
-   * capsule's scroll position, so a draft that was scrolled once sat
-   * permanently to the left of its own capsule — first characters and model
-   * pill alike — until the composer unmounted. jsdom lays nothing out and a
-   * clipped box still reports `scrollWidth`, so the declaration is what a test
-   * can hold onto; a real window is where it was looked at.
+   * The capsule holds two things outside its own box — Stop parks past the
+   * right edge, and the input shell is translated across the flip — so any
+   * scrolling overflow on it is a scroll offset nothing resets.
+   * `docs/conversation-surfaces.md` carries the incident. The invariant is
+   * every rule's, not one declaration's: a later `@container` or theme rule
+   * restating `overflow: hidden`, or a longhand `overflow-x: auto` after this
+   * one, would strand a draft exactly as the original did.
    */
-  it('clips the capsule instead of making it a scroll container', () => {
-    const capsule = rule(':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule');
-    expect(capsule).toContain('overflow: clip;');
-    expect(capsule).not.toContain('overflow: hidden;');
+  it('leaves no rule that makes the capsule scrollable', () => {
+    const capsule = ':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule';
+    // Rules whose *subject* is the capsule. A descendant may scroll on its own
+    // account — the field does, and reserves a gutter for it — so a rule that
+    // merely reaches through the capsule is not this invariant's to hold.
+    const own = rulesNaming('is-message-capsule').filter(({ prelude }) => prelude
+      .split(',')
+      .some((selector) => selector.trim().split(/\s+/u).at(-1)?.includes('.is-message-capsule')));
+
+    expect(own.flatMap(({ prelude, declarations }) =>
+      [...declarations.matchAll(/(overflow[a-z-]*)\s*:\s*([^;]+)/gu)]
+        .filter(([, , value]) => /\b(?:auto|scroll|hidden)\b/u.test(value!))
+        .map(([, property, value]) => `${prelude} { ${property}: ${value!.trim()} }`)))
+      .toEqual([]);
+
+    // And it does still clip: under `visible` the parked Stop would be drawn
+    // outside the capsule. Read from the scan, whose comments are stripped, so
+    // that prose naming a value cannot satisfy or break this.
+    expect(own.find(({ prelude }) => prelude === capsule)?.declarations).toMatch(/overflow:\s*clip;/u);
   });
 });
 
@@ -115,21 +125,6 @@ describe('jump to latest', () => {
 
   /** A shorthand this scan cannot expand, so that it fails rather than passes. */
   const UNREADABLE = '<unreadable to this scan>';
-
-  /**
-   * Every rule whose selector names one class, in source order, so a second
-   * rule cannot quietly restate what the first one settled. Rules nested in an
-   * `@media` block are found the same way `preludes()` finds them: the pattern
-   * cannot cross a brace, so the wrapper never matches and its contents do.
-   */
-  function rulesNaming(className: string): { prelude: string; declarations: string }[] {
-    // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
-    // for the class it is named after.
-    const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
-    return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
-      .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
-      .filter(({ prelude }) => named.test(prelude));
-  }
 
   /** A box shorthand's one to four values as `[top, bottom]`, in this app's writing mode. */
   function blockValues(declared: string, count: 2 | 4): [string, string] | null {
@@ -682,6 +677,23 @@ describe('clipped scroll edges on both navigation rails', () => {
     expect(restore).toContain('animation-duration: auto !important;');
   });
 });
+
+/**
+ * Every rule whose selector names one class, in source order, so a second
+ * rule cannot quietly restate what the first one settled. Rules nested in an
+ * `@media` block are found the same way `preludes()` finds them: the pattern
+ * cannot cross a brace, so the wrapper never matches and its contents do.
+ *
+ * Comments go first, so prose naming a property is never read as a declaration.
+ */
+function rulesNaming(className: string): { prelude: string; declarations: string }[] {
+  // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
+  // for the class it is named after.
+  const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
+  return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
+    .filter(({ prelude }) => named.test(prelude));
+}
 
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
