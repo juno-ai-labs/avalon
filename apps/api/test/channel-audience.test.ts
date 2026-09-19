@@ -1,3 +1,4 @@
+import { asUserId, type UserId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,13 +8,13 @@ import {
   type NamedAudienceSource,
 } from "../src/lib/channel-audience";
 
-// UUIDv7-shaped because `WorkstreamReaderAudienceSchema` refines on the
-// version nibble, exactly as production ids do.
-const alice = "00000000-0000-7000-8000-0000000000a1";
-const bob = "00000000-0000-7000-8000-0000000000b2";
-const carol = "00000000-0000-7000-8000-0000000000c3";
+// UUIDv7-shaped because `asUserId` refines on the version nibble, exactly as
+// production ids do.
+const alice = asUserId("00000000-0000-7000-8000-0000000000a1");
+const bob = asUserId("00000000-0000-7000-8000-0000000000b2");
+const carol = asUserId("00000000-0000-7000-8000-0000000000c3");
 
-function source(sourceId: string, scope: "personal" | "workspace", participantUserIds: string[] = []): NamedAudienceSource {
+function source(sourceId: string, scope: "personal" | "workspace", participantUserIds: UserId[] = []): NamedAudienceSource {
   return { sourceId, scope, participantUserIds };
 }
 
@@ -22,21 +23,21 @@ describe("the effective audience of a Channel", () => {
     expect(effectiveChannelAudience({
       direct: { scope: "personal", participantUserIds: [alice] },
       sources: [],
-    })).toEqual({ scope: "personal", userIds: [alice] });
+    })).toEqual({ scope: "personal", participantUserIds: [alice] });
   });
 
   it("given one Organization-wide source, when it is derived, then the whole audience is Organization-wide", () => {
     expect(effectiveChannelAudience({
       direct: { scope: "personal", participantUserIds: [alice] },
       sources: [source("space-a", "personal", [bob]), source("space-b", "workspace")],
-    })).toEqual({ scope: "workspace" });
+    })).toEqual({ scope: "workspace", participantUserIds: [] });
   });
 
   it("given several personal sources, when it is derived, then the readers are their union without duplicates", () => {
     expect(effectiveChannelAudience({
       direct: { scope: "personal", participantUserIds: [alice, bob] },
       sources: [source("space-a", "personal", [bob, carol]), source("space-b", "personal", [carol])],
-    })).toEqual({ scope: "personal", userIds: [alice, bob, carol] });
+    })).toEqual({ scope: "personal", participantUserIds: [alice, bob, carol] });
   });
 
   it("given an Organization-wide direct source, when a personal source is added, then it stays Organization-wide", () => {
@@ -46,7 +47,7 @@ describe("the effective audience of a Channel", () => {
     expect(effectiveChannelAudience({
       direct: { scope: "workspace", participantUserIds: [alice] },
       sources: [source("space-a", "personal", [bob])],
-    })).toEqual({ scope: "workspace" });
+    })).toEqual({ scope: "workspace", participantUserIds: [] });
   });
 });
 
