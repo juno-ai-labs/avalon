@@ -469,8 +469,15 @@ export class WorkspaceSpaceStorage {
     }
   }
 
-  /** Undo a reservation whose Space object could not be provisioned. */
-  cancelReservation(spaceId: string, now = Date.now()): boolean {
+  /**
+   * Undo a reservation whose Space object could not be provisioned.
+   *
+   * Only this caller's own reservation. `source_version = 0` alone is a window
+   * every Space passes through for the seconds between being reserved and its
+   * first projection, so a cancel that did not name the creator was a member
+   * able to delete whatever anybody else was in the middle of creating.
+   */
+  cancelReservation(spaceId: string, createdByUserId: string, now = Date.now()): boolean {
     if (!this.ready()) return false;
     return this.storage.transactionSync(() => {
       const removed = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
@@ -478,8 +485,10 @@ export class WorkspaceSpaceStorage {
         // object has published a version, cancelling the reservation would
         // delete a Space that exists.
         `DELETE FROM workspace_space_directory
-          WHERE space_id = ? AND source_version = 0 RETURNING space_id`,
+          WHERE space_id = ? AND source_version = 0 AND created_by_user_id = ?
+          RETURNING space_id`,
         spaceId,
+        createdByUserId,
       ).toArray().length === 1;
       if (!removed) return false;
       this.storage.sql.exec("DELETE FROM workspace_space_viewers WHERE space_id = ?", spaceId);

@@ -6048,12 +6048,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
-  /** Undo a reservation whose Space object could not be opened. */
+  /**
+   * Undo a reservation whose Space object could not be opened.
+   *
+   * Rechecked like every other Space write, and narrowed to the reservation
+   * this caller made. It carried a `userId` and ignored it, so any member could
+   * delete any Space still at source version zero — which for the seconds
+   * between `reserveSpace` and the first `directory_common` effect is every
+   * Space anybody is creating.
+   */
   async cancelSpaceReservation(input: WorkspaceSpaceRequest): Promise<{ cancelled: boolean }> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "cancel_space_reservation");
     this.assertWorkspace(request.workspaceId);
-    return { cancelled: this.spaceStorage().cancelReservation(request.spaceId) };
+    if (await this.spaceRefusalCode(request.workspaceId, request.userId, "write")) {
+      return { cancelled: false };
+    }
+    return { cancelled: this.spaceStorage().cancelReservation(request.spaceId, request.userId) };
   }
 
   /**
@@ -6509,7 +6520,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.spaceStorage().failDefaultTarget(request, "space_no_active_participant");
   }
 
-  /** Where the Organization is in its one-time Space cutover. */
+  /**
+   * Where the Organization is in its one-time Space cutover.
+   *
+   * Server-to-server, like `recordSpaceIntentReceipt` and the default-target
+   * settlement RPCs beside it, and deliberately without the membership recheck
+   * every *product* Space RPC carries: there is no person on the request to
+   * recheck. The cutover runs without anybody signed in, and the workspace id
+   * is the whole address. What it answers — a phase, General's id, and the
+   * Channels the cutover is stuck on — is the cutover's own state; the
+   * `spacesReady` a client sees comes off the socket, shaped for that viewer.
+   */
   async spaceBootstrapStatus(input: { workspaceId: string }): Promise<WorkspaceSpaceBootstrapStatus> {
     await this.initialized;
     const request = parseRpcInput(
