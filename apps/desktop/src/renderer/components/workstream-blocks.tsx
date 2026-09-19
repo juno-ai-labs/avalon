@@ -6,6 +6,7 @@ import {
   IconDeviceDesktop,
   IconImageGeneration,
   IconKeyframes,
+  IconMailAi,
   IconPlug,
   IconStackBackward,
   IconWebhook,
@@ -2060,6 +2061,10 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  * from `PLUGIN_BRAND_MARKS` instead.
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
+  // Mail, not the agent stack: this row counts what was said between agents,
+  // while `background-agents` stands for the agents themselves and still marks
+  // starting, listing and stopping one.
+  'agent-messages': IconMailAi,
   automations: IconKeyframes,
   'background-agents': IconStackBackward,
   computer: IconDeviceDesktop,

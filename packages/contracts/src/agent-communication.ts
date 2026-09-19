@@ -79,3 +79,44 @@ export type StartAgentResult = z.infer<typeof StartAgentResultSchema>;
 export type AgentMessageResult = z.infer<typeof AgentMessageResultSchema>;
 export type SendAgentMessageInput = z.infer<typeof SendAgentMessageInputSchema>;
 export type ReplyToAgentMessageInput = z.infer<typeof ReplyToAgentMessageInputSchema>;
+
+/**
+ * The structured-content kind an admitted agent-to-agent message carries.
+ *
+ * The API writes it onto the message it admits and the client reads it to
+ * decide the row that message gets, so the literal lives here rather than in
+ * either of them: a rename that reached only one side would quietly turn every
+ * agent message back into an anonymous system note, which is the state this
+ * constant exists to stop returning to.
+ */
+export const AGENT_MESSAGE_CONTENT_KIND = "agent_message";
+
+/**
+ * The tools that send one, by the name the transcript stores.
+ *
+ * `createAgentCommunicationPlugin` declares `shortWireName: ""`, so these are
+ * its tool names unprefixed. They are the two of that plugin's seven whose
+ * subject is a message rather than an agent — `start_agent`, `list_agents` and
+ * `stop_agent` are still the reader using the plugin, and stay on its own row.
+ *
+ * Named here for the reason `isConnectorConnectionCardWireName` is, and with
+ * the same one-directional caveat: a client older than a rename reads the new
+ * spelling as ordinary Background agents activity. It loses the message row,
+ * not the work.
+ */
+const AGENT_MESSAGE_SEND_WIRE_NAMES: ReadonlySet<string> = new Set([
+  "send_message",
+  "reply_to_message",
+]);
+
+/** True for a tool call whose subject is a message to a teammate. */
+export function isAgentMessageSendWireName(name: string | undefined): boolean {
+  return name !== undefined && AGENT_MESSAGE_SEND_WIRE_NAMES.has(name);
+}
+
+/** True for the structured content an admitted agent-to-agent message carries. */
+export function isAgentMessageContent(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  return structuredContent?.["kind"] === AGENT_MESSAGE_CONTENT_KIND;
+}

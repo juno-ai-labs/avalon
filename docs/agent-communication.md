@@ -103,6 +103,14 @@ stop request to owned conversations; independently owned Sidekicks continue.
 As approved on 2026-09-15, liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
+In the feed, a delivered message is machinery rather than a note to the room:
+`AGENT_MESSAGE_CONTENT_KIND` and `isAgentMessageSendWireName` (both in
+`packages/contracts/src/agent-communication.ts`) are what the client reads to
+draw it as a counted row beside the plugin rows, and
+[`plugin-activity-rows.md`](plugin-activity-rows.md) owns that row. Renaming
+either without the other silently returns the message to an anonymous system
+note.
+
 Model-authored agent-to-agent communication is explicit through `send_message` or `reply_to_message`,
 including final results, questions, and updates. Standard assistant messages stay
 in the sender's own transcript. Settlement never forwards the model's final

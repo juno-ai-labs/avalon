@@ -3487,3 +3487,129 @@ describe('openingTranscriptSnapshot', () => {
     expect(openingTranscriptSnapshot(snapshot)).toBe(snapshot);
   });
 });
+
+describe('agent messages as counted rows', () => {
+  const createdAt = '2026-09-18T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+  const sendRow = (id: string, name: 'send_message' | 'reply_to_message'): Message => row(id, {
+    messageType: 'tool_event',
+    workSpans: [{ startedAtMs: 1_000, endedAtMs: 1_400 }],
+    toolEvent: {
+      id, toolCallId: id, name, status: 'completed', durationMs: 400,
+      pluginId: 'avalon:agents', pluginName: 'Background agents',
+    },
+  });
+
+  it('counts outbound sends on their own row and leaves the rest of the plugin alone', () => {
+    const grouped = groupPluginToolMessages([
+      sendRow('send-one', 'send_message'),
+      row('start', {
+        messageType: 'tool_event',
+        toolEvent: {
+          id: 'start', toolCallId: 'start', name: 'start_agent', status: 'completed',
+          durationMs: 900, pluginId: 'avalon:agents', pluginName: 'Background agents',
+        },
+      }),
+      sendRow('reply-one', 'reply_to_message'),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 messages sent to a background agent',
+      'Used Background agents',
+    ]);
+    expect(grouped[0]!.pluginActivity?.icon).toBe('agent-messages');
+    expect(grouped[0]!.pluginActivity?.count).toBe(2);
+    // The phrase is the whole row: a counted group prints no duration, so the
+    // number beside it would be the second `send_message` spent rather than
+    // the messages it carried.
+    expect(grouped[0]!.pluginActivity?.durationMs).toBeNull();
+    // `start_agent` really is the reader using a plugin, and keeps its time.
+    expect(grouped[1]!.pluginActivity?.icon).toBe('background-agents');
+    expect(grouped[1]!.pluginActivity?.durationMs).toBe(900);
+  });
+
+  it('reads an inbound message as a counted row rather than a system note', () => {
+    const block = {
+      type: 'text' as const,
+      blockId: 'block-agent-message',
+      blockIndex: 0,
+      text: 'Working on Goose + Cline. Primary docs confirm neither presents a built-in /goal.',
+      streaming: false,
+      messageType: 'system' as const,
+      structuredContent: {
+        kind: 'agent_message',
+        teamId: 'workstream/workstream-one/0',
+        messageId: '019fc068-22e8-739a-8394-a760fdc7c376',
+        senderAgentId: 'workstream/workstream-one/2',
+        attachmentIds: [],
+      },
+    };
+    const turn = {
+      transcriptSequence: 1, turnId: 'turn-agent-message', entryKind: 'conversation' as const,
+      actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+      createdAtUtc: createdAt, revision: 1, blocks: [block], activityId: null,
+    };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'agent-message', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const [message] = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    expect(message?.messageType).toBe('plugin_activity');
+    expect(message?.pluginActivity?.completedVerb).toBe('1 message from a background agent');
+    expect(message?.pluginActivity?.icon).toBe('agent-messages');
+    // The prose was written by one agent for another. A row that still carried
+    // it would put the same wall of text back in the feed behind a `more`.
+    expect(message?.text).toBeUndefined();
+    // Machinery carries no ordinal: a row scrolling into view must not
+    // acknowledge an answer still below the fold.
+    expect(message?.attentionSequenceNumber).toBeNull();
+  });
+
+  it('folds counted rows into the accordion without silencing its total', () => {
+    const collapsed = collapseSettledWorkIntoAccordion(groupPluginToolMessages([
+      row('slack', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 0, endedAtMs: 4_000 }],
+        toolEvent: {
+          id: 'slack', toolCallId: 'slack', name: 'slack_read', status: 'completed',
+          durationMs: 4_000, pluginId: 'connection:one', pluginName: 'Slack',
+        },
+      }),
+      row('inbound', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'agent-messages:inbound', name: 'Background agents', icon: 'agent-messages',
+          active: false, durationMs: null, count: 1,
+          activeVerb: 'Receiving a message from a background agent',
+          completedVerb: '1 message from a background agent',
+        },
+      }),
+      row('answer', { messageType: 'text', text: 'Here is what they found.' }),
+    ]));
+
+    const accordion = collapsed.find((message) => message.messageType === 'work_accordion');
+    expect(accordion?.workAccordion?.rows.map((inner) => inner.pluginActivity?.completedVerb)).toEqual([
+      'Used Slack',
+      '1 message from a background agent',
+    ]);
+    // A message is an event, not an unmeasured stretch of work. Reading its
+    // missing spans as unknown time would drop this drawer to a bare "Worked"
+    // every time a teammate answered mid-run.
+    expect(accordion?.workAccordion?.durationMs).toBe(4_000);
+  });
+});
