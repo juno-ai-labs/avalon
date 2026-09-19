@@ -162,7 +162,10 @@ jobs:
       # release without review. Bump after checking the release notes.
       GITLEAKS_VERSION: 8.18.4
     steps:
-      - name: Check out the full history
+      # Full history on both sides: the scan below asks git for the commits
+      # this pull request adds to its base branch, which needs the base branch
+      # as well as the branch under review.
+      - name: Check out both sides of the range
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -179,6 +182,29 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
 
       - name: Run the configured Gitleaks gate
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose
+          # Scan what this pull request adds to its base branch, not the whole
+          # repository. `detect` without a range walks every ref the checkout
+          # fetched, so a finding on somebody's unmerged branch failed this job
+          # on every open pull request at once, each with nothing in its own
+          # diff to fix and no way to re-run its way out.
+          #
+          # Both sides of the base branch are excluded. Its live tip covers a
+          # finding that lands after this pull request opened and is then
+          # merged in; the base SHA recorded when the event fired covers the
+          # reverse, a base branch force-pushed so that commit is no longer
+          # reachable from the tip. Either one alone lets base commits back
+          # into the range, which is the whole bug.
+          #
+          # Resolve the range before scanning: when git rejects it, `detect`
+          # logs the error, reports no leaks and exits 0. A gate that cannot
+          # work out its own scope has to fail loudly rather than pass
+          # silently, which is what this line is for.
+          git rev-list --count "$HEAD_SHA" --not "origin/$BASE_REF" "$BASE_SHA" > /dev/null
+          "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose \
+            --log-opts="$HEAD_SHA --not origin/$BASE_REF $BASE_SHA"

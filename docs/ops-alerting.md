@@ -162,9 +162,10 @@ Cloudflare administration credentials never become Worker variables
   up on") — the exhausted-job notice is posted once at the ceiling, a Queue
   redelivery of the dead job posts nothing, and a failure the queue will retry
   posts nothing.
-- Fixture token: `xoxb-ops-test`. Gitleaks runs over the full history with
-  its default Slack token rules, which want digit groups; a realistic-looking
-  token in a test trips it.
+- Fixture token: `xoxb-ops-test`. Gitleaks runs its default Slack token rules,
+  which want digit groups, over the commits a pull request adds; a
+  realistic-looking token in a test trips the gate on the pull request that adds
+  it.
 
 ## Operations
 
