@@ -73,7 +73,7 @@ break a rolling deploy for nothing.
 
 ## Changelog
 
-### 2026-09-19 — The tables are dropped, behind a barrier that names itself
+### 2026-09-19 — The tables are dropped, and the barrier in front of them is deleted too
 
 **What changed:** WorkspaceDO migration 62 deleted the eight Project tables and
 everything that addressed them. The Queue's `project_default_resource` branch is

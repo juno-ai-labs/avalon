@@ -137,6 +137,15 @@ seed before product fixtures reach the Durable Objects.
 storage API. It does not recreate the retired message tables or their runtime
 views merely to import development fixtures.
 
+It also places every Channel it seeds in the Organization's General Space,
+through the same `placeConnectorChannelInGeneral` the Slack agent uses, because
+every non-deleted Channel belongs to a Space and this route does not go through
+the creation coordinator. That is why the command can take a few seconds longer
+on a cold container than the import itself explains: each Channel's placement
+waits for the Organization to see it, which happens when the Channel's parent
+authority publishes its first directory projection.
+[`spaces.md`](spaces.md) owns the mechanism.
+
 ## 3. Start the API Workers
 
 **Inside a sandbox, use `dev:api:local`, not `dev:api`.**

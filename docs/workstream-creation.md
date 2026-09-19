@@ -183,8 +183,10 @@ Space if this is the first thing that ever needed it.
 whatever scope the caller asked for: General is Organization-wide, its source
 unions into the birth audience, and a source only ever widens. That is true of
 the top-level composer, of a connector ingress that resolved a personal scope,
-of session import, of `createFromOpportunity`, and of the demo seeder. A Channel
-that is meant to stay personal has to be born in a personal Space that names it.
+of session import, of `createFromOpportunity`, and of the demo seeder — which
+refuses a pack room declared `personal` by name rather than seeding it
+Organization-wide ([`demo-workspaces.md`](demo-workspaces.md)). A Channel that
+is meant to stay personal has to be born in a personal Space that names it.
 
 The audience the Channel opens with is derived from those Spaces rather than
 taken from the request. `resolveSpaceWorkstreamStart` runs the same
@@ -219,10 +221,14 @@ key reuses the same id, and the settlement is idempotent at the generation it
 already has. A replayed receipt reconciles through
 `reconcileReplayedSpaceMembership` rather than staging a second placement.
 
-The one creation path that does not go through here is the Slack agent's, which
-opens a Channel for a Slack member with no Rally identity and provisions the
-conversation itself; it calls `placeConnectorChannelInGeneral` for the same
-step. [`spaces.md`](spaces.md) owns both.
+Two creation paths do not go through here, and both call
+`placeConnectorChannelInGeneral` for the same step. The Slack agent opens a
+Channel for a Slack member with no Rally identity and provisions the
+conversation itself. The local development seed route restores a captured
+fixture into objects it provisions under the ids the fixture chose, and waits
+for each Channel to reach the Organization's directory before placing it —
+without the parent authority that row's arrival announces, the placement is
+refused `conversation_parent_missing`. [`spaces.md`](spaces.md) owns both.
 
 The one saving kept is that the participant and attachment checks run
 concurrently. Both are no-ops when there is nothing to check, so it costs
@@ -481,7 +487,8 @@ race for anything else that drains a parent outbox.
 `reserveChild`. The residue swapped with the order: a failure after the
 settlement now leaves an active membership for a Channel whose conversation may
 never open, which the retry under the same create key reuses, and which the
-cutover's receipts skip.
+cutover's walk skips — it reads what is already placed off the membership row
+itself, which is the state a placement produces and cannot disagree with.
 
 ### 2026-09-17 — Keep grant handoff off ordinary creation
 
