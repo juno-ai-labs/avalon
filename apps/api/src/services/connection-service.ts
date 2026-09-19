@@ -949,7 +949,7 @@ export class ConnectionService {
       connectionScope: input.scope,
       scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
       ...(input.customMcp ? { serverUrl: input.customMcp.serverUrl } : {}),
-      ...(provider === "canva" && this.env.CANVA_LOOPBACK_ENABLED === "true" && input.loopbackRedirectUri ? { redirectUri: input.loopbackRedirectUri } : {}),
+      ...(provider === "canva" && input.loopbackRedirectUri ? { redirectUri: input.loopbackRedirectUri } : {}),
     });
     if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
     const statePayload = await sealString(JSON.stringify({

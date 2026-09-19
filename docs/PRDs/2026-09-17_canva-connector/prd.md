@@ -69,9 +69,8 @@ still.
 5. A work stream can watch a named Canva design and be told when it changes and
    when it gains a comment — and the connector offers no trigger it cannot
    deliver, so no Sidekick is ever built on an event that never arrives.
-6. Rally either reaches Canva's MCP server from a redirect Canva accepts, or the
-   connector stays absent from the catalog — never present and silently
-   unauthorizable.
+6. Every member can connect Canva through the tested desktop loopback flow
+   while Rally's server callback awaits approval, without an availability flag.
 
 ## Non-goals
 
@@ -376,18 +375,10 @@ the change that registers it, with the date each observation was made.
 
 ## Rollout
 
-Gated region by region on the non-secret `CANVA_CONNECTOR_ENABLED` variable,
-following Fireflies: unset, the type is absent from the catalog and creation is
-refused, while any existing rows are retained and inert. This is the precedent
-for a connector whose availability is an operational fact per region rather than
-an audience-targeted product flag — and here it is doing real work, because the
-connector must stay absent until a redirect Canva accepts exists (Goal 6).
-
-The product owner confirmed the regional environment switch on 2026-09-18.
-No Flagship flag is introduced: availability depends on regional callback
-approval and configuration, with no audience-targeted rollout required.
-
-Turning it off is unsetting the variable.
+Canva is available to every member without a feature flag. The product owner
+removed the earlier regional availability switch on 2026-09-19. Electron uses
+the tested loopback authorization flow until Canva approves Rally's server
+callback; pending callback approval does not hold back desktop availability.
 
 ## Acceptance
 
@@ -412,8 +403,8 @@ Turning it off is unsetting the variable.
    through subsequent calls; revocation removes that link-only access. No access
    token reaches ordinary
    resource metadata, logs or public navigation links. Test returned URLs too.
-10. With `CANVA_CONNECTOR_ENABLED` unset, the connector is absent from the
-    catalog and creation is refused.
+10. Canva is in the catalog without additional environment configuration, and
+    desktop authorization uses the loopback fallback without a feature flag.
 11. Watches are off by default, have pause/remove controls, and stop after
     disconnect. Shared outputs use normal work-stream permissions and digests use
     existing visibility rules; another member's token never substitutes for the
