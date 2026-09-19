@@ -161,6 +161,7 @@ import {
   summarizeHarnessRun,
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
 import {
   createAgentInferenceLogger,
@@ -230,7 +231,7 @@ import {
   refreshAgentTimerAlarm,
   resolveWakeupInstant,
 } from "./workstream-wakeup-service";
-import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
+import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
@@ -889,7 +890,7 @@ async function resolveValidationFailureInvocation(
   resolveStartedInvocationId: (toolCallId: string) => string | undefined,
   persistValidationReceipt: () => Promise<{
     invocationId: string;
-    state: "created" | "resume_read" | "replay_completed" | "ambiguous_external_write";
+    state: "created" | "resume_read" | "resume_write" | "replay_completed" | "ambiguous_external_write";
   }>,
 ): Promise<{ invocationId: string; planAlreadyAmbiguous: boolean }> {
   // A schema/refinement error may be emitted before `tool_started` (invalid
@@ -3651,13 +3652,14 @@ export async function runWorkstreamHarness(
         };
       }
       try {
-        const recovered = await reconcileRecoverableTerminalWrite({
+        const recovered = await reenterInterruptedWrite({
           row: {
             id: row.effectIntentId,
             // The reconciler reads the wire spelling; the object stores its own.
             status: wireToolStatus(row.status),
             inputHash: row.requestHash,
             inputJson: row.inputJson,
+            providerIdempotencyKey: row.providerIdempotencyKey,
           },
           expectedInputHash: inputHash,
           policyMatches,
@@ -3700,9 +3702,15 @@ export async function runWorkstreamHarness(
         }
       } catch (error) {
         const codedRecoveryFailure = typeof error === "object" && error !== null && "code" in error;
+        // A re-entry that fails has not proved anything, and for these two the
+        // honest answer is the ambiguity below rather than a thrown run: both
+        // reconcile by *looking* — the pull request its run already opened, the
+        // document its path identity already published — so a refusal means the
+        // lookup could not be made, not that the write is known to have landed.
         const cannotProveSafeRecovery = codedRecoveryFailure && (
           error.code === "command_recovery_unavailable"
           || expectedPolicy.definition.name === "publish_branch_and_pr"
+          || expectedPolicy.definition.name === "publish_resource"
         );
         if (!cannotProveSafeRecovery) {
           throw error;
@@ -6629,8 +6637,38 @@ export function createToolEffectIntents(): {
   };
 }
 
-async function reconcileRecoverableTerminalWrite(input: {
-  row: { id: string; status: string; inputHash: string; inputJson: string };
+/**
+ * Run an interrupted write again over the receipt it already holds.
+ *
+ * The tool decides whether this is allowed, through `HarnessTool.reenterable`,
+ * rather than a list of names kept here. The list version shipped with three
+ * Terminal tools hard-coded and no way for a fourth to join them, which is how
+ * `publish_resource` — an executor whose first act is to look up the document
+ * its path identity already published — came to be declared unrecoverable, and
+ * a run that was interrupted mid-publish died rather than asking.
+ *
+ * Both write classes are accepted, for the same reason and by different
+ * mechanisms. A `record_before_execute` tool reattaches through the
+ * `effectIntentId` this function supplies from the receipt. A `provider_key`
+ * tool re-submits under the key that receipt was admitted with, so the provider
+ * itself collapses the two calls. What neither class permits is re-entering a
+ * *settled* receipt: `completed` has a durable result to replay instead, and
+ * `failed` may already have been read by a caller.
+ */
+async function reenterInterruptedWrite(input: {
+  row: {
+    id: string;
+    status: string;
+    inputHash: string;
+    inputJson: string;
+    /**
+     * The key the interrupted attempt was admitted under, never a fresh one.
+     * Bind derives it from the receipt coordinate rather than the effect row,
+     * so re-deriving it here would hand the provider a key it has not seen and
+     * turn the dedupe this whole path depends on into a second write.
+     */
+    providerIdempotencyKey: string | null;
+  };
   expectedInputHash: string;
   policyMatches: boolean;
   expectedPolicy: { pluginId: string; definition: ToolDefinition };
@@ -6643,36 +6681,168 @@ async function reconcileRecoverableTerminalWrite(input: {
    */
   context: Omit<HarnessToolContext, "effectIntentId">;
 }): Promise<HarnessToolResult | null> {
-  const recoverableTerminalWrite = (
-    input.expectedPolicy.definition.name === "run_command"
-    && input.expectedPolicy.definition.capability === "terminal.command.run"
-  ) || (
-    input.expectedPolicy.definition.name === "publish_branch_and_pr"
-    && input.expectedPolicy.definition.capability === "terminal.repository.publish"
-  ) || (
-    input.expectedPolicy.definition.name === "checkout_repository"
-    && input.expectedPolicy.definition.capability === "terminal.repository.checkout"
-  );
   if (
     (input.row.status !== "started" && input.row.status !== "ambiguous")
     || input.row.inputHash !== input.expectedInputHash
     || !input.policyMatches
-    || input.expectedPolicy.pluginId !== TERMINAL_PLUGIN_ID
-    || !recoverableTerminalWrite
     || input.expectedPolicy.definition.mode !== "write"
-    || input.expectedPolicy.definition.idempotency !== "record_before_execute"
+    || input.expectedPolicy.definition.idempotency === "safe"
   ) {
     return null;
   }
-  const plugin = input.plugins.find((candidate) => candidate.canonicalId === TERMINAL_PLUGIN_ID);
+  const plugin = input.plugins.find((candidate) => (
+    candidate.canonicalId === input.expectedPolicy.pluginId
+  ));
   const tool = plugin?.tools.find((candidate) => (
     candidate.definition.name === input.expectedPolicy.definition.name
+    && candidate.definition.capability === input.expectedPolicy.definition.capability
   ));
-  if (!tool) return null;
+  // The live tool has to still be the tool the receipt was admitted against.
+  // `expectedPolicy` may come from a persisted plan written by an earlier
+  // deploy, and a tool whose class has since changed is not the one that
+  // recorded this effect — re-entering it would honour a contract nobody is
+  // offering any more.
+  if (
+    !tool?.reenterable
+    || tool.definition.mode !== input.expectedPolicy.definition.mode
+    || tool.definition.idempotency !== input.expectedPolicy.definition.idempotency
+  ) {
+    return null;
+  }
   return tool.execute(parseJson(input.row.inputJson, {}), {
     ...input.context,
     effectIntentId: input.row.id,
+    ...(input.row.providerIdempotencyKey !== null
+      ? { providerIdempotencyKey: input.row.providerIdempotencyKey }
+      : {}),
   });
+}
+
+/**
+ * The outcome of asking an interrupted write what it actually did.
+ *
+ * `unknown` keeps `ambiguous_external_write` and carries its reason so the log
+ * can name it. There is deliberately no "definitely did not run" outcome here:
+ * no Terminal executor can currently prove that, and a caller that cannot tell
+ * "proved absent" from "could not look" would report the first when it meant
+ * the second. A receipt that never left `admitted` is proved absent by the
+ * receipt itself, before re-entry is considered.
+ */
+export type InterruptedWriteReentry =
+  | { outcome: "completed"; result: HarnessToolResult }
+  | { outcome: "unknown"; reason: string };
+
+/**
+ * Re-enter one interrupted write from *outside* a harness run.
+ *
+ * Crash repair runs before the run's tool registry exists, so until now it had
+ * no way to ask a tool anything and classified every unsettled write as
+ * unknowable. It does not need the registry: it needs the one plugin that owns
+ * the one call it is repairing, and Terminal — the only plugin with
+ * re-enterable tools — is already built from exactly the `(env, input)` the
+ * repair path holds.
+ *
+ * Built per call rather than cached, because it runs at most once per
+ * interrupted batch and building it acquires provider clients a healthy claim
+ * has no reason to hold. A plugin this cannot build, or a tool that is not
+ * re-enterable, returns `unknown` and the receipt stays ambiguous — which is
+ * the behaviour every write had before.
+ */
+export async function reenterInterruptedWriteForRecovery(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  receipt: {
+    effectIntentId: string;
+    toolCallId: string;
+    toolName: string;
+    status: ToolReceiptStatus;
+    requestHash: string;
+    inputJson: string;
+    executionPlanJson: string | null;
+    providerIdempotencyKey: string | null;
+  },
+  lease: AttemptLease,
+  signal: AbortSignal,
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
+): Promise<InterruptedWriteReentry> {
+  const plan = parseJson<Record<string, unknown> | null>(receipt.executionPlanJson, null);
+  const pluginId = typeof plan?.pluginId === "string" ? plan.pluginId : null;
+  const canonicalToolName = typeof plan?.canonicalToolName === "string"
+    ? plan.canonicalToolName
+    : receipt.toolName;
+  const capability = typeof plan?.capability === "string" ? plan.capability : null;
+  const idempotency = plan?.idempotency;
+  if (pluginId !== TERMINAL_PLUGIN_ID || capability === null) {
+    return { outcome: "unknown", reason: "no_recovery_executor" };
+  }
+  if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
+    return { outcome: "unknown", reason: "not_a_recoverable_write" };
+  }
+  let plugin: HarnessPlugin | null;
+  try {
+    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+  } catch (error) {
+    return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
+  }
+  if (!plugin) return { outcome: "unknown", reason: "plugin_unavailable" };
+  try {
+    const result = await reenterInterruptedWrite({
+      row: {
+        id: receipt.effectIntentId,
+        status: wireToolStatus(receipt.status),
+        inputHash: receipt.requestHash,
+        inputJson: receipt.inputJson,
+        providerIdempotencyKey: receipt.providerIdempotencyKey,
+      },
+      expectedInputHash: receipt.requestHash,
+      policyMatches: true,
+      expectedPolicy: {
+        pluginId,
+        definition: { name: canonicalToolName, capability, mode: "write", idempotency } as ToolDefinition,
+      },
+      plugins: [plugin],
+      context: {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        harnessRunId: input.harnessRunId,
+        toolCallId: receipt.toolCallId,
+        executionPrincipal: input.executionPrincipal,
+        signal,
+      },
+    });
+    if (result === null) return { outcome: "unknown", reason: "tool_not_reenterable" };
+    // Settled here rather than by the caller, and through the same durable
+    // path a first-pass completion takes: the result has to be in R2 and the
+    // receipt `completed` before the repaired transcript can claim it, or a
+    // second interruption would find the same row unsettled and ask the tool a
+    // third time.
+    await persistSuccessfulToolResult(env, input, lease, {
+      invocationId: receipt.effectIntentId,
+      toolCallId: receipt.toolCallId,
+      output: durableToolReplayOutput(capability, result.output, result.summary),
+      outputSummary: result.summary,
+      ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+      memberSafePayload: { toolName: canonicalToolName, recovered: true },
+      allowCancellationRequested: true,
+    });
+    return { outcome: "completed", result };
+  } catch (error) {
+    // A throw leaves the question open, which is exactly what ambiguity is
+    // for. The reason travels so the log, and the member notice, name which of
+    // the many ways to fail to find out this was.
+    //
+    // A tool's own `code` first, because that is the sharpest thing anyone
+    // holds — `command_recovery_unavailable` says the durable submission
+    // authority was retired, which `diagnosticErrorCode` reduces to the
+    // fallback since a `TerminalToolError`'s message is prose. Both are run
+    // through `codeShaped` rather than trusted: this reason reaches a member
+    // notice, and a code is schema shape while an adapter's text is data.
+    const declared = readStructuredFailure(error)?.code;
+    return {
+      outcome: "unknown",
+      reason: declared ? codeShaped(declared) : diagnosticErrorCode(error, "reentry_failed"),
+    };
+  }
 }
 
 type ToolPolicyIdentity = { pluginId: string } & HarnessToolPolicyIdentity;
@@ -8165,7 +8335,7 @@ export const __integrationTesting = {
   resolveValidationFailureInvocation,
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,
-  reconcileRecoverableTerminalWrite,
+  reenterInterruptedWrite,
   storedToolPolicyMatches,
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,

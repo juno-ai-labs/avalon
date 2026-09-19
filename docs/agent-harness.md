@@ -561,11 +561,24 @@ If the object is evicted after `assistant_accepted` but before every
 provider request or pending input can cross the loop boundary, the host walks
 the missing call positions against their durable receipts. A completed or
 failed receipt becomes the corresponding exact tool result; an admitted call is
-terminalized as `not_run`; an executing write becomes
-`ambiguous_external_write`. Results are appended with their original call index
-and a separate dense accepted ordinal. An ambiguous recovery settles the whole
-tool batch and then fails the current cycle visibly without retrying the
-provider or pretending that human input was requested.
+terminalized as `not_run`; an executing *read* is failed. An executing **write**
+is not classified from its status: the host re-enters the tool over that same
+receipt, through `reenterInterruptedWriteForRecovery`, which builds the one
+plugin owning the call rather than the run's whole registry. A tool that
+declares `HarnessTool.reenterable` resolves its own durable effect before acting
+— `run_command` reattaches to the `terminal_tasks` row its `effect_intent_id`
+names, `publish_resource` returns the document its path identity already holds —
+so the answer is what the interrupted attempt did, not a second attempt at it. A
+`provider_key` tool is re-submitted under the key its receipt was admitted with,
+never a fresh one. Only a tool that is not re-enterable, a plugin that cannot be
+built, or a re-entry that threw settles `ambiguous_external_write`, and the
+receipt, the `harness_interrupted_write_recovered` log line and the model's tool
+result all name the tool and the reason. Results are appended with their
+original call index and a separate dense accepted ordinal. A residual ambiguity
+settles the whole tool batch and the cycle **continues**: the repaired protocol
+array already carries the ambiguity as a failed tool result telling the model to
+check the call before repeating it, and the model is the only reader able to act
+on it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and applies two normalizations. It normalizes
@@ -619,8 +632,11 @@ Historical protocol reconstruction applies that same rule before it replays a
 completed attachment tool pair from an earlier run; the persisted execution
 plan identifies attachment operations, and a failed current-authority check
 omits their assistant/tool messages rather than trusting the R2 result.
-Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior
-write, or timed-out `record_before_execute` write becomes
+Incomplete safe reads may resume, and so may an incomplete `provider_key` write
+whose plan, request hash and provider key all match the call asking to run —
+`admit` answers `resume_write`, because the provider collapses two calls
+carrying one key. A reused or mismatched plan, a provider key that differs from
+the admitted one, or an incomplete `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
 append-only, and terminalization is idempotent and lease-fenced.
 
@@ -1256,6 +1272,9 @@ proof.
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/workstream-tool-receipt-storage.test.ts` | `admit`'s decisions against real migrations, including `resume_write` for an unsettled `provider_key` write and the two guards that keep it narrow: the declared class, and the admitted provider key. |
+| `apps/api/test/terminal-command-recovery.test.ts` | That re-entry follows `HarnessTool.reenterable` rather than a tool name, re-enters over the receipt's own effect identity, and re-submits a `provider_key` write under the key it was admitted with. |
+| `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. |
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
@@ -1351,6 +1370,80 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-19 — An interrupted write is asked what it did before it is called unknowable
+
+**What changed:** Crash repair of an interrupted tool batch no longer classifies
+an unsettled write on `mode` alone. A receipt now carries the idempotency class
+its plan already recorded, and the repair walk *re-enters* the tool over that
+same receipt — through `reenterInterruptedWriteForRecovery`, which builds the
+one plugin owning the call — before considering the outcome unknown. Only a tool
+that cannot be asked, or an attempt to ask that failed, still settles
+`ambiguous_external_write`, and its receipt, its log line and the model's tool
+result now name the tool and why the question went unanswered.
+
+Three mechanisms moved with it. `reconcileRecoverableTerminalWrite` became
+`reenterInterruptedWrite` and takes its decision from `HarnessTool.reenterable`
+rather than three hard-coded Terminal names; `publish_resource` declares it, and
+so does every tool the old list held. `ToolReceiptStorage.admit` gained
+`resume_write`: an unsettled `provider_key` write whose plan, request hash and
+provider key all match the call asking to run is resumed rather than settled
+ambiguous. And a residual ambiguity no longer fails the cycle — the repair
+finishes the protocol array and the run continues.
+
+**Why:** On 2026-09-19 a `SubstreamAgent` isolate was replaced two seconds into
+a `publish_resource` call. The repair found the receipt `executing`, read
+`mode === "write"`, and killed the run — discarding seven completed tool calls
+in the same batch and giving the member `ambiguous_external_write` and a request
+ID. Nothing about that call was ambiguous. `publish_resource` is `provider_key`,
+it was admitted under a stable key, and its executor's first act is to look up
+the document `(work stream, published path)` already holds and return it
+untouched when the bytes match. The one thing that would have answered the
+question was running the tool again, which the repair path had no way to do
+because it runs before the run's tool registry exists. It does not need the
+registry: it needs the plugin owning the one call it is repairing, and Terminal
+is built from exactly the `(env, input)` the repair already holds.
+
+The class distinction is the point, and it is why this is not "retry writes".
+`record_before_execute` has no provider-side dedupe and keeps the ambiguous
+outcome; `provider_key` promises the provider collapses two calls carrying one
+key, and the repair re-submits under the key the interrupted attempt was
+admitted with, never a fresh one — a new key is a second write wearing the name
+of a retry. `reenterable` is a separate claim, host-authored and deliberately
+absent from `ToolDefinition`, which also parses remote MCP declarations: a
+server that could assert it would be asserting that Rally may repeat its writes.
+
+Continuing past a residual ambiguity is a traded-off loosening, and the trade is
+recorded because the next reader will want to undo it. The stop was there in
+case a model handed an ambiguous write simply repeats it. That risk is real and
+unchanged. What the stop did not do is prevent it: the member re-sends, a fresh
+run mints fresh receipt coordinates, and nothing in the receipt layer connects
+the new call to the abandoned one — so the cycle died for nothing, and took its
+siblings' completed work with it. Continuing puts the ambiguity in front of the
+only reader who can check before acting, as a tool result naming the call and
+saying to check it first. A future change that wants the stop back needs a
+receipt-layer link between a re-sent call and an abandoned one; without that it
+is buying the same nothing.
+
+**What a future change has to respect:** a `null` idempotency class — an
+unparseable plan, or a receipt written before the class was read back — is
+treated as `record_before_execute`, the class that assumes least. A settled
+receipt is never re-entered: `completed` has a durable result to replay and
+`failed` may already have been read. And the re-entry runs under no deadline of
+its own; the tools reached carry their own provider budgets, and a ceiling here
+would be a number nobody has measured.
+
+**Left undone:** `resume_write` applies to every `provider_key` write, and that
+is safe because every one of them in this tree — memory `add`/`update`
+/`invalidate`, the four table writes, `schedule_wakeup`/`cancel_wakeup`,
+`request_elicitation` — writes to a Rally-owned authority and begins with a
+replay lookup keyed on that same provider key. What none of them has is
+`reenterable`, so *crash repair* still cannot ask them and an interrupted
+attempt of one stays ambiguous. Picking it up means declaring the property on
+those tools and teaching `reenterInterruptedWriteForRecovery` to build their
+plugins, which are core rather than Terminal and are constructed differently —
+it is the one reason that function names Terminal rather than resolving a
+plugin by id.
 
 ### 2026-09-19 — Close abandoned Canva transactions from durable receipts
 
