@@ -39,10 +39,10 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationServic
     tools: [
       tool("sidekicks_list", "Find Sidekicks you can use. Returns authoring agentId values, with this workstream’s Sidekicks first.", z.strictObject({}), () => service.sidekicks("harness_command")),
       tool("create_sidekick", "Create a Sidekick only if no existing one fits. Returns its authoring agentId; send setup instructions to that agent next.", z.strictObject({ scope: z.enum(["workstream", "personal", "workspace"]).default("workstream").describe("Defaults to this workstream. Choose personal or workspace only when requested or clearly appropriate.") }), (input, context) => service.createSidekick(input.scope, context)),
-      tool("start_agent", "Delegate work to a new background agent. Returns its agentId at once; its reply arrives here later as a message from it. Include the full assignment and needed context.", StartAgentInputSchema, (input, context) => service.start(input, context)),
-      tool("list_agents", "Find teammates: their agentId, name and description, for choosing whom to message or stop. Not a way to wait for one; a reply arrives here as a message.", ListAgentsInputSchema, () => service.list()),
-      tool("send_message", "Send instructions or an update to a teammate using agentId. Returns at once and resumes idle or stopped agents; a reply arrives here as a message from that agent.", SendAgentMessageInputSchema, (input, context) => service.send(input, context)),
-      tool("reply_to_message", "Send a response to the sender of a received message. Use that messageId, not an agentId. Returns at once; a reply arrives here as a message from that agent.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
+      tool("start_agent", "Delegate work to a new background agent. Returns its agentId at once. Include the full assignment and needed context.", StartAgentInputSchema, (input, context) => service.start(input, context)),
+      tool("list_agents", "Find teammates: their agentId, name and description. Use it to choose whom to message or stop. To get a teammate's reply, wait for its message.", ListAgentsInputSchema, () => service.list()),
+      tool("send_message", "Send instructions or an update to a teammate using agentId. Returns at once and resumes idle or stopped agents.", SendAgentMessageInputSchema, (input, context) => service.send(input, context)),
+      tool("reply_to_message", "Send a response to the sender of a received message. Use that messageId, not an agentId. Returns at once.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("stop_agent", "Stop an agent you own and all agents it owns. Completed actions are not undone. A later message can resume the stopped agent.", StopAgentInputSchema, (input) => service.stop(input.agentId)),
     ],
   };

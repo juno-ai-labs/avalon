@@ -851,10 +851,10 @@ export function createDaytonaTerminalRuntime(
         if (result.exitCode !== 0 || printed.at(-1) !== "Done!") {
           const reason = sanitizeTerminalOutput(
             printed.find((line) => line !== "Done!") ?? result.stderr.trim().split("\n")[0] ?? "the applier gave no reason",
-          ).slice(0, 120);
+          ).slice(0, 120).replace(/[\s:]+$/u, "");
           throw new TerminalToolError(
             "patch_does_not_apply",
-            `The patch could not be applied (${reason}). Re-read the affected files, regenerate the patch from their current contents, and retry.`,
+            `The patch could not be applied: ${reason}. Re-read the affected files, regenerate the patch from their current contents, and retry.`,
             { reason: "Re-read every affected file and regenerate the patch from current contents." },
           );
         }

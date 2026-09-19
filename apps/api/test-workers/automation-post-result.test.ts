@@ -645,7 +645,7 @@ describe("post_result", () => {
       message: "no further action is needed.", attachmentIds: [] }, context);
     // The result says how the reply comes back, at the moment the model reads it.
     expect(started).toMatchObject({ name: "Quiet teammate" });
-    expect(started.next).toContain("Nothing to fetch; do not resend the assignment.");
+    expect(started.next).toContain("There is no tool to fetch it. Do not resend the assignment.");
     const quiet = conversation(started.agentId);
     const [run] = await settledRun(quiet);
     expect(run).toMatchObject({ status: "completed" });
