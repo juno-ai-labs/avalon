@@ -354,6 +354,96 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   `DROP TABLE _space_copy_workspace_retirement_graph`,
 ];
 
+/**
+ * The two counters behind {@link SpaceSummary.conversationWaterline}.
+ * Migration 63.
+ *
+ * The Space dashboard lists the conversations in a Space that currently need
+ * the viewer, newest activity first. That list changes on every message in a
+ * member Channel or breakout, on every run that starts or stops, and on every
+ * open, read or mention — none of which is a Space write and none of which
+ * reaches a client, because a Space has no socket of its own and breakouts are
+ * deliberately not published to the sidebar's. So the Organization counts the
+ * events instead, and the client refetches when the count it can see moves.
+ *
+ * Split in two because the third option — one counter per (Space, person)
+ * advanced for everybody — costs one write per member of an Organization-wide
+ * Channel on every message, and the fourth — one shared counter — makes every
+ * member refetch whenever any other member reads anything. A shared half for
+ * facts that are the Organization's (activity, run state, membership) and a
+ * personal half for facts that are one reader's (unread, mention, first open)
+ * is the cheapest arrangement that is still per-viewer. The sum is what a
+ * client compares, and both halves only ever increase, so it does too.
+ */
+export const SPACE_CONVERSATION_WATERLINE_STATEMENTS: readonly string[] = [
+  `CREATE TABLE space_conversation_state (
+    space_id TEXT PRIMARY KEY,
+    waterline INTEGER NOT NULL CHECK (waterline >= 0),
+    updated_at INTEGER NOT NULL
+  ) STRICT`,
+  `CREATE TABLE space_conversation_viewer_state (
+    space_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    waterline INTEGER NOT NULL CHECK (waterline >= 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (space_id, user_id)
+  ) STRICT`,
+];
+
+/**
+ * The run states a conversation is live in on its own account.
+ *
+ * The `exact_state` vocabulary rather than the wire's, because this predicate
+ * runs against the stored column. `workstreamHarnessStatus` in `workspace-do.ts`
+ * folds the middle three into `running` and `scheduled` stays itself, so these
+ * six are exactly the states whose `harnessStatus` is one of `scheduled`,
+ * `running` or `needs_input` — the three `conversationNeedsViewer` admits.
+ */
+const LIVE_EXACT_STATES = [
+  "scheduled",
+  "running",
+  "interrupting",
+  "preparing_context",
+  "waiting_capacity",
+  "needs_input",
+] as const;
+
+const LIVE_EXACT_STATE_LIST = LIVE_EXACT_STATES.map((state) => `'${state}'`).join(", ");
+
+/**
+ * `conversationNeedsViewer` in SQL, over one directory alias and one viewer
+ * alias.
+ *
+ * **This is the authority.** The page is decided here — a client-side filter
+ * over a server-ordered page would hand back short pages and a cursor that had
+ * already skipped rows — and `conversationNeedsViewer` in `@rally/contracts` is
+ * the desktop's copy of the same decision, used where it draws. Nothing makes
+ * the two agree except
+ * `apps/api/test-workers/space-conversation-page.test.ts`, which walks every
+ * combination of the four inputs and asserts this query and that function
+ * reach the same answer.
+ *
+ * One text rendered twice rather than two texts. The aliases are the only
+ * thing that varies, they are code-owned literals, and the breakout tables are
+ * deliberately named the way the Channel directory names the same facts so
+ * that this is possible — two spellings of the same predicate is how the two
+ * kinds of row would have started answering differently.
+ *
+ * The four clauses are `hasUnread`, `unseen` and `youAreMentioned` as
+ * `directoryWorkstream` derives them, plus the run. `seen` falls back to the
+ * directory's `unread_tracking_start_ordinal` when this person has no viewer
+ * row, exactly as the mapper does, which is what stops a workspace-scoped
+ * Channel nobody has opened from reading as unread to every member.
+ */
+function liveForViewerSql(directory: "directory" | "breakout", viewer: "viewer" | "breakout_viewer"): string {
+  const seen = `COALESCE(${viewer}.seen_attention_ordinal, ${directory}.unread_tracking_start_ordinal)`;
+  return `(${directory}.exact_state IN (${LIVE_EXACT_STATE_LIST})
+       OR ${viewer}.manual_unread_from_ordinal IS NOT NULL
+       OR ${directory}.latest_attention_ordinal > ${seen}
+       OR ${viewer}.unseen = 1
+       OR COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen})`;
+}
+
 interface SpaceRow extends Record<string, SqlStorageValue> {
   space_id: string;
   title: string;
@@ -456,6 +546,42 @@ function mergedOrder(named: readonly string[], rest: readonly string[]): string[
   return [...named, ...rest.filter((id) => !moved.has(id))];
 }
 
+/**
+ * Where an activity-ordered page stopped: the whole sort key, not an offset.
+ *
+ * Three parts because the order is three parts. Activity alone is not unique —
+ * a Channel and the breakout that produced the activity share a timestamp to
+ * the millisecond — so a cursor carrying only that would repeat or skip the
+ * rows either side of it. `kind` then id completes it, and the two are
+ * compared in exactly the order the query sorts by.
+ *
+ * Opaque on the wire for the reason the id cursor was: the ordering is the
+ * authority's, and a client that could construct one could ask for a page the
+ * ordering no longer has.
+ */
+interface SpaceConversationCursor {
+  lastActivityAt: number;
+  kind: "channel" | "breakout";
+  conversationId: string;
+}
+
+function encodeConversationCursor(cursor: SpaceConversationCursor): string {
+  return encodeChannelCursor(
+    `${cursor.lastActivityAt}\u0000${cursor.kind}\u0000${cursor.conversationId}`,
+  );
+}
+
+function decodeConversationCursor(cursor: string): SpaceConversationCursor | null {
+  const decoded = decodeChannelCursor(cursor);
+  if (decoded === null) return null;
+  const [activity, kind, conversationId] = decoded.split("\u0000");
+  if (activity === undefined || conversationId === undefined) return null;
+  if (kind !== "channel" && kind !== "breakout") return null;
+  const lastActivityAt = Number(activity);
+  if (!Number.isSafeInteger(lastActivityAt) || lastActivityAt < 0) return null;
+  return { lastActivityAt, kind, conversationId };
+}
+
 /** What the cutover's alarm claimed, and what the consumer should do with it. */
 export interface SpaceBootstrapClaim {
   kind: "general" | "preflight" | "memberships" | "finalize";
@@ -481,9 +607,18 @@ export interface SpaceBootstrapBlocked {
   code: string;
 }
 
-/** One page of the memberships a Space read is about, before the projection. */
-export interface SpaceChannelIdPage {
-  workstreamIds: string[];
+/** One conversation a Space page is about, before the projection. */
+export interface SpaceConversationKey {
+  kind: "channel" | "breakout";
+  /** The Channel: the conversation itself, or the breakout's parent. */
+  workstreamId: string;
+  /** The breakout's substream id, or `null` on a Channel. */
+  substreamId: string | null;
+}
+
+/** One page of the conversations a Space read is about, before the projection. */
+export interface SpaceConversationPage {
+  items: SpaceConversationKey[];
   nextCursor: string | null;
 }
 
@@ -576,7 +711,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.advanceWaterline(createdAt);
-      return this.space(spaceId);
+      return this.space(spaceId, request.userId);
     });
   }
 
@@ -605,7 +740,7 @@ export class WorkspaceSpaceStorage {
     } catch (error) {
       const winner = this.generalSpaceId();
       if (winner === null) throw error;
-      return { space: this.space(winner), created: false };
+      return { space: this.space(winner, request.userId), created: false };
     }
   }
 
@@ -671,7 +806,7 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row)),
+      items: rows.map((row) => this.summary(row, userId)),
     });
   }
 
@@ -898,7 +1033,7 @@ export class WorkspaceSpaceStorage {
   /** One Space as this viewer may see it, archived or not. */
   readable(userId: string, spaceId: string): SpaceSummary | false {
     if (!this.canRead(userId, spaceId)) return false;
-    return this.space(spaceId);
+    return this.space(spaceId, userId);
   }
 
   /**
@@ -923,7 +1058,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!updated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -969,7 +1104,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1118,39 +1253,232 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * One page of the Channel ids a surface can list in this Space.
+   * One page of the conversations in this Space that currently need this
+   * viewer, newest activity first.
    *
-   * Ids rather than rows, because the rows belong to the Channel directory and
-   * the projection that turns one into a `Workstream` is WorkspaceDO's — the
-   * same one `listDirectory` uses. This decides *which* Channels a page is
-   * about; the caller decides what a Channel looks like to this viewer.
+   * Keys rather than rows, because the rows belong to the Channel directory
+   * and the breakout directory and the projection that turns either into a
+   * `SpaceConversation` is WorkspaceDO's — the same mapper `listDirectory`
+   * uses. This decides *which* conversations a page is about and *in what
+   * order*; the caller decides what each one looks like to this viewer.
+   *
+   * Three decisions are made here and nowhere else.
+   *
+   * **Both kinds in one list.** A `UNION ALL` of the Space's active member
+   * Channels and those Channels' breakouts. The alternative — a page of
+   * Channels with each one's breakouts fetched beside it — cannot be ordered
+   * by activity across the two without reading every breakout of every member
+   * Channel first, which is the unbounded read the page bound exists to
+   * prevent.
+   *
+   * **Stale is left out here, not on the client.** `liveForViewerSql` is
+   * applied inside the query, so the page is `SPACE_CHANNEL_PAGE_SIZE`
+   * conversations that need this viewer rather than that many rows of which
+   * some do. A client-side filter would have made every page arbitrarily short
+   * and the cursor a promise about rows it had already discarded.
+   *
+   * **A breakout is visible only through its parent.** The Channel's own
+   * visibility predicate is applied to the breakout arm too — the same
+   * `scope = 'workspace' OR is_participant` test, against the same Channel row
+   * — and then the breakout's own viewer row has to say `listable`. Two gates
+   * rather than one because they answer different questions: the first is
+   * whether this person may know the Channel exists, the second is whether the
+   * breakout is one of theirs. Dropping the first would list a private
+   * Channel's side thread to somebody who cannot open the Channel.
+   *
+   * The optional-cursor predicate is written as an `OR` rather than as a range
+   * seek, against the advice in `docs/durable-object-sqlite.md`: the ordering
+   * is over a `UNION ALL` of two joins, so there is no index for it to seek
+   * into either way, and the bound on rows is the membership set rather than
+   * the cursor.
    */
-  channelIdPage(userId: string, spaceId: string, cursor: string | null): SpaceChannelIdPage | false {
+  conversationPage(
+    userId: string,
+    spaceId: string,
+    cursor: string | null,
+  ): SpaceConversationPage | false {
     if (!this.canRead(userId, spaceId)) return false;
-    const after = cursor === null ? null : decodeChannelCursor(cursor);
+    const after = cursor === null ? null : decodeConversationCursor(cursor);
     if (cursor !== null && after === null) return false;
-    const rows = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT membership.workstream_id
-         FROM space_channel_memberships membership
-         LEFT JOIN workspace_workstream_directory directory
-           ON directory.workstream_id = membership.workstream_id
-        WHERE membership.space_id = ? AND membership.state = 'active'
-          AND directory.archived_at IS NULL
-          AND (? IS NULL OR membership.workstream_id > ?)
-        ORDER BY membership.workstream_id
-        LIMIT ?`,
+    const rows = this.storage.sql.exec<{
+      kind: "channel" | "breakout";
+      workstream_id: string;
+      substream_id: string | null;
+      conversation_id: string;
+      last_activity_at: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT kind, workstream_id, substream_id, conversation_id, last_activity_at FROM (
+         SELECT 'channel' AS kind,
+                directory.workstream_id AS workstream_id,
+                NULL AS substream_id,
+                directory.workstream_id AS conversation_id,
+                directory.last_activity_at AS last_activity_at
+           FROM space_channel_memberships membership
+           JOIN workspace_workstream_directory directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE membership.space_id = ?2 AND membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+            AND ${liveForViewerSql("directory", "viewer")}
+         UNION ALL
+         SELECT 'breakout' AS kind,
+                breakout.workstream_id AS workstream_id,
+                breakout.substream_id AS substream_id,
+                breakout.substream_id AS conversation_id,
+                breakout.last_activity_at AS last_activity_at
+           FROM space_channel_memberships membership
+           JOIN workspace_workstream_directory directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+           JOIN workspace_breakout_directory breakout
+             ON breakout.workstream_id = membership.workstream_id
+           JOIN workspace_breakout_viewers breakout_viewer
+             ON breakout_viewer.workstream_id = breakout.workstream_id
+            AND breakout_viewer.substream_id = breakout.substream_id
+            AND breakout_viewer.user_id = ?1
+            AND breakout_viewer.authority_generation = breakout.authority_generation
+          WHERE membership.space_id = ?2 AND membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+            AND breakout.archived_at IS NULL
+            AND breakout_viewer.listable = 1
+            AND ${liveForViewerSql("breakout", "breakout_viewer")}
+       )
+       WHERE ?3 IS NULL
+          OR last_activity_at < ?3
+          OR (last_activity_at = ?3
+              AND (kind > ?4 OR (kind = ?4 AND conversation_id > ?5)))
+       ORDER BY last_activity_at DESC, kind, conversation_id
+       LIMIT ?6`,
+      userId,
       spaceId,
-      after,
-      after ?? "",
+      after?.lastActivityAt ?? null,
+      after?.kind ?? "",
+      after?.conversationId ?? "",
       SPACE_CHANNEL_PAGE_SIZE + 1,
     ).toArray();
     const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
     if (hasMore) rows.pop();
     const last = rows.at(-1);
     return {
-      workstreamIds: rows.map((row) => row.workstream_id),
-      nextCursor: hasMore && last ? encodeChannelCursor(last.workstream_id) : null,
+      items: rows.map((row) => ({
+        kind: row.kind,
+        workstreamId: row.workstream_id,
+        substreamId: row.substream_id,
+      })),
+      nextCursor: hasMore && last
+        ? encodeConversationCursor({
+          lastActivityAt: last.last_activity_at,
+          kind: last.kind,
+          conversationId: last.conversation_id,
+        })
+        : null,
     };
+  }
+
+  /**
+   * Note that a member conversation's shared row moved, for every Space that
+   * holds it.
+   *
+   * Shared rather than per-person because what changed — activity, title, run
+   * state, archival — is the Organization's fact about the conversation, and
+   * it reorders or removes the row on everybody's page at once. Called with
+   * the *Channel* ids in both cases: a breakout's page position is a fact
+   * about the Spaces its parent Channel is in, because a breakout has no
+   * membership of its own.
+   *
+   * Returns whether anything moved, so the caller can decide whether the
+   * snapshot is worth republishing.
+   */
+  noteConversationChange(workstreamIds: readonly string[], now = Date.now()): boolean {
+    if (!this.ready() || workstreamIds.length === 0) return false;
+    let advanced = false;
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      advanced = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+        `INSERT INTO space_conversation_state (space_id, waterline, updated_at)
+         SELECT DISTINCT membership.space_id, 1, ?
+           FROM space_channel_memberships membership
+          WHERE membership.state = 'active'
+            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
+         ON CONFLICT(space_id) DO UPDATE SET
+           waterline = space_conversation_state.waterline + 1,
+           updated_at = excluded.updated_at
+         RETURNING space_id`,
+        now,
+        ...chunk,
+      ).toArray().length > 0 || advanced;
+    }
+    return advanced;
+  }
+
+  /** The same note, for a change only this person can see. */
+  noteConversationViewerChange(
+    workstreamIds: readonly string[],
+    userId: string,
+    now = Date.now(),
+  ): boolean {
+    if (!this.ready() || workstreamIds.length === 0) return false;
+    let advanced = false;
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      advanced = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+        `INSERT INTO space_conversation_viewer_state (space_id, user_id, waterline, updated_at)
+         SELECT DISTINCT membership.space_id, ?, 1, ?
+           FROM space_channel_memberships membership
+          WHERE membership.state = 'active'
+            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
+         ON CONFLICT(space_id, user_id) DO UPDATE SET
+           waterline = space_conversation_viewer_state.waterline + 1,
+           updated_at = excluded.updated_at
+         RETURNING space_id`,
+        userId,
+        now,
+        ...chunk,
+      ).toArray().length > 0 || advanced;
+    }
+    return advanced;
+  }
+
+  /** The same note for one Space directly, when a membership settled in it. */
+  private noteSpaceConversationChange(spaceId: string, now: number): void {
+    if (!this.ready()) return;
+    this.storage.sql.exec(
+      `INSERT INTO space_conversation_state (space_id, waterline, updated_at)
+       VALUES (?, 1, ?)
+       ON CONFLICT(space_id) DO UPDATE SET
+         waterline = space_conversation_state.waterline + 1,
+         updated_at = excluded.updated_at`,
+      spaceId,
+      now,
+    );
+  }
+
+  /**
+   * What one viewer compares to decide their dashboard page is stale.
+   *
+   * The sum of the two halves. Each half only increases and each event
+   * advances exactly one of them, so the sum strictly increases on every
+   * change this viewer's page could be affected by, and never moves for one it
+   * could not.
+   */
+  private conversationWaterline(spaceId: string, userId: string): number {
+    const shared = this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
+      "SELECT waterline FROM space_conversation_state WHERE space_id = ?",
+      spaceId,
+    ).toArray()[0]?.waterline ?? 0;
+    const personal = this.storage.sql.exec<{ waterline: number } & Record<string, SqlStorageValue>>(
+      `SELECT waterline FROM space_conversation_viewer_state
+        WHERE space_id = ? AND user_id = ?`,
+      spaceId,
+      userId,
+    ).toArray()[0]?.waterline ?? 0;
+    return shared + personal;
   }
 
   /**
@@ -1280,7 +1608,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         return {
           ok: true,
-          space: this.space(request.spaceId),
+          space: this.space(request.spaceId, request.userId),
           membershipGeneration: existing.generation,
         };
       }
@@ -1308,7 +1636,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), membershipGeneration };
+      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration };
     });
   }
 
@@ -1347,8 +1675,12 @@ export class WorkspaceSpaceStorage {
         request.membershipGeneration,
       ).toArray()[0];
       if (!activated) return false;
+      // A settled membership changes which conversations this page is about,
+      // so it moves the same signal a message in one of them moves. One
+      // mechanism keeps the dashboard from needing a second.
+      this.noteSpaceConversationChange(request.spaceId, now);
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1367,7 +1699,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!cancelled) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1425,7 +1757,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), membershipGeneration: generation };
+      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration: generation };
     });
   }
 
@@ -1475,8 +1807,12 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
         request.workstreamId,
       );
+      // A settled membership changes which conversations this page is about,
+      // so it moves the same signal a message in one of them moves. One
+      // mechanism keeps the dashboard from needing a second.
+      this.noteSpaceConversationChange(request.spaceId, now);
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1552,7 +1888,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(spaceId) };
+      return { ok: true, space: this.space(spaceId, userId) };
     });
   }
 
@@ -1582,8 +1918,12 @@ export class WorkspaceSpaceStorage {
         now,
         spaceId,
       );
+      // A settled membership changes which conversations this page is about,
+      // so it moves the same signal a message in one of them moves. One
+      // mechanism keeps the dashboard from needing a second.
+      this.noteSpaceConversationChange(spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId);
+      return this.space(spaceId, userId);
     });
   }
 
@@ -1615,8 +1955,12 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.appendOrder(workspaceId, userId, spaceId, now);
+      // A settled membership changes which conversations this page is about,
+      // so it moves the same signal a message in one of them moves. One
+      // mechanism keeps the dashboard from needing a second.
+      this.noteSpaceConversationChange(spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId);
+      return this.space(spaceId, userId);
     });
   }
 
@@ -1645,7 +1989,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         const targets = this.pendingTargets(request, existing.generation);
         this.stageDefaultPublications(targets, request.userId, now);
-        return { ok: true, space: this.space(request.spaceId), targets };
+        return { ok: true, space: this.space(request.spaceId, request.userId), targets };
       }
       const defaultGeneration = (existing?.generation ?? 0) + 1;
       if (existing) {
@@ -1688,7 +2032,7 @@ export class WorkspaceSpaceStorage {
       for (const target of targets) this.insertDefaultTarget(target, now);
       this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), targets };
+      return { ok: true, space: this.space(request.spaceId, request.userId), targets };
     });
   }
 
@@ -1708,7 +2052,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!removed) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -2741,18 +3085,27 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row)),
+      items: rows.map((row) => this.summary(row, userId)),
     });
   }
 
-  private space(spaceId: string): SpaceSummary {
+  private space(spaceId: string, userId: string): SpaceSummary {
     return this.summary(this.storage.sql.exec<SpaceRow>(
       "SELECT * FROM workspace_space_directory WHERE space_id = ?",
       spaceId,
-    ).one());
+    ).one(), userId);
   }
 
-  private summary(row: SpaceRow): SpaceSummary {
+  /**
+   * A Space as one person sees it.
+   *
+   * The viewer was threaded through every caller rather than left out of the
+   * mutation responses, because `conversationWaterline` is per-person and a
+   * mutation's answer replaces the client's copy of the row. A summary that
+   * answered zero there would have made the next real snapshot look like a
+   * change and cost a refetch on every Space write.
+   */
+  private summary(row: SpaceRow, userId: string): SpaceSummary {
     const appearance = row.appearance_json
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
@@ -2785,6 +3138,7 @@ export class WorkspaceSpaceStorage {
             AND directory.archived_at IS NULL`,
         row.space_id,
       ).one().count,
+      conversationWaterline: this.conversationWaterline(row.space_id, userId),
       defaultResourceIds: this.defaultIds(row.space_id, "resource"),
       defaultSidekickIds: this.defaultIds(row.space_id, "sidekick"),
       createdAt: new Date(row.created_at).toISOString(),
