@@ -162,7 +162,10 @@ jobs:
       # release without review. Bump after checking the release notes.
       GITLEAKS_VERSION: 8.18.4
     steps:
-      - name: Check out the full history
+      # Full history on both sides: the scan below asks git for the commits
+      # this pull request adds to its base branch, which needs the base branch
+      # as well as the branch under review.
+      - name: Check out both sides of the range
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -179,6 +182,23 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
 
       - name: Run the configured Gitleaks gate
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose
+          # Scan what this pull request adds to its base branch, not the whole
+          # repository. `detect` without a range walks every ref the checkout
+          # fetched, so a finding on somebody's unmerged branch failed this job
+          # on every open pull request at once, each with nothing in its own
+          # diff to fix and no way to re-run its way out.
+          #
+          # The base branch's live tip is preferred over the base SHA recorded
+          # when the event fired, so a finding that reaches the base branch
+          # after this pull request opened stays excluded when the author
+          # merges the base branch in. It belongs to whoever put it there.
+          base_tip="origin/$BASE_REF"
+          git rev-parse --verify --quiet "$base_tip" > /dev/null || base_tip="$BASE_SHA"
+          "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose \
+            --log-opts="$HEAD_SHA --not $base_tip"
