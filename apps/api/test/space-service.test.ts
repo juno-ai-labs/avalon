@@ -39,6 +39,7 @@ function summary(overrides: Record<string, unknown> = {}) {
     revision: 3,
     participants: [{ userId: OWNER }, { userId: MEMBER }],
     channelCount: 1,
+    conversationWaterline: 0,
     defaultResourceIds: [],
     defaultSidekickIds: [],
     createdAt: "2026-09-19T00:00:00.000Z",

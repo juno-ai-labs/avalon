@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { SpaceDashboardScreen } from './space-dashboard';
-import type { Workspace, WorkstreamSummary } from '../lib/types';
+import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 
 const api = vi.hoisted(() => ({
   addChannelToSpace: vi.fn(),
@@ -59,6 +59,7 @@ function makeSpace(overrides: Record<string, unknown> = {}): SpaceSummary {
     revision: 1,
     participants: [{ userId: member.id }],
     channelCount: 0,
+    conversationWaterline: 0,
     defaultResourceIds: [],
     defaultSidekickIds: [],
     createdAt: '2026-08-27T00:00:00.000Z',
@@ -68,6 +69,36 @@ function makeSpace(overrides: Record<string, unknown> = {}): SpaceSummary {
 }
 
 const hiring = makeSpace();
+
+/** One Channel as the dashboard's page answers it. */
+function channelRow(overrides: Record<string, unknown> = {}): SpaceConversationSummary {
+  return {
+    id: '00000000-0000-7000-8000-0000000000e1',
+    title: 'Ship the launch',
+    lastActivityAt: '2026-08-27T01:00:00.000Z',
+    spaceIds: [hiring.id as string],
+    kind: 'channel',
+    breakoutOf: null,
+    ...overrides,
+  } as SpaceConversationSummary;
+}
+
+/** One breakout as the same page answers it, beside its Channel. */
+function breakoutRow(overrides: Record<string, unknown> = {}): SpaceConversationSummary {
+  return {
+    id: '00000000-0000-7000-8000-0000000000e9',
+    title: 'Pricing',
+    lastActivityAt: '2026-08-27T02:00:00.000Z',
+    spaceIds: [hiring.id as string],
+    kind: 'breakout',
+    breakoutOf: {
+      workstreamId: '00000000-0000-7000-8000-0000000000e1',
+      substreamId: '00000000-0000-7000-8000-0000000000e9',
+      title: 'Ship the launch',
+    },
+    ...overrides,
+  } as SpaceConversationSummary;
+}
 
 function Location(): React.JSX.Element {
   return <output data-testid="location">{useLocation().pathname}</output>;
@@ -139,14 +170,10 @@ describe('the Space dashboard', () => {
   it('shows the channels, resources and Sidekicks sections', async () => {
     // The Space's own page carries the Channels; the device's directory is a
     // separate list and is deliberately not what this section reads.
-    api.listSpaceChannels.mockResolvedValue({ items: [{
-      id: '00000000-0000-7000-8000-0000000000e1',
-      title: 'Ship the launch',
-      lastActivityAt: '2026-08-27T01:00:00.000Z',
-      spaceIds: [hiring.id as string],
-    } as WorkstreamSummary], nextCursor: null });
+    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
     renderSpace(makeSpace({
       channelCount: 1,
+      conversationWaterline: 0,
       defaultResourceIds: ['00000000-0000-7000-8000-0000000000c1'],
       defaultSidekickIds: ['00000000-0000-7000-8000-0000000000b1'],
     }));
@@ -154,6 +181,68 @@ describe('the Space dashboard', () => {
     expect(await screen.findByRole('link', { name: /Ship the launch/u })).toBeVisible();
     expect(await screen.findByText('Hiring plan')).toBeVisible();
     expect(screen.getByText('Weekly digest')).toBeVisible();
+  });
+
+  // The list is conversations, not memberships: a Channel and any of its
+  // breakouts that still need this reader, in one list ordered by activity.
+  it('draws channels and their breakouts as one activity-ordered list', async () => {
+    api.listSpaceChannels.mockResolvedValue({
+      items: [breakoutRow(), channelRow()],
+      nextCursor: null,
+    });
+    renderSpace(makeSpace({ channelCount: 1 }));
+
+    const list = await screen.findAllByRole('link');
+    expect(list.map((link) => link.getAttribute('href'))).toEqual([
+      // A breakout opens *its own conversation*, which is the parent Channel
+      // with the substream selected — the Channel's main transcript is a
+      // different room and landing there is the bug this pins.
+      '/workstreams/00000000-0000-7000-8000-0000000000e1?substream=00000000-0000-7000-8000-0000000000e9',
+      '/workstreams/00000000-0000-7000-8000-0000000000e1',
+    ]);
+    // The breakout says where it lives, because "Pricing" on its own says
+    // nothing, and it is marked with the ↳ the middle column uses for one.
+    const breakout = list[0]!;
+    expect(within(breakout).getByText('in Ship the launch')).toBeVisible();
+    expect(breakout.textContent).toContain('↳');
+    // A breakout follows its Channel, so there is one **Remove** on this
+    // screen and it belongs to the Channel.
+    expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(1);
+  });
+
+  // Two empty states, because they are two different facts. Telling somebody
+  // "no channels yet" about a Space with forty of them sends them looking for
+  // a bug; the count is what separates the two.
+  it('given a space whose conversations are all stale, then it says so rather than claiming it is empty', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
+    renderSpace(makeSpace({ channelCount: 4 }));
+
+    expect(await screen.findByText('Nothing here needs you right now')).toBeVisible();
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+  });
+
+  it('given a space with no channels at all, then it still says so', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
+    renderSpace(makeSpace({ channelCount: 0 }));
+
+    expect(await screen.findByText('No channels yet')).toBeVisible();
+    expect(screen.queryByText('Nothing here needs you right now')).not.toBeInTheDocument();
+  });
+
+  // The page is the one thing on this screen the socket cannot replace, and an
+  // activity-ordered, state-filtered list goes stale on far more than a
+  // membership change. One signal covers all of it.
+  it('refetches the page when the space conversation waterline moves', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
+    const queryClient = renderSpace(makeSpace({ channelCount: 1, conversationWaterline: 7 }));
+    await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(1));
+
+    queryClient.setQueryData(['spaces'], {
+      waterline: 2,
+      items: [makeSpace({ channelCount: 1, conversationWaterline: 8 })],
+    });
+
+    await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledTimes(2));
   });
 
   it('asks for the next page of channels when Load more is used', async () => {
@@ -230,12 +319,7 @@ describe('the Space dashboard', () => {
   });
 
   it('given a blocked archive that named channels, then it lists the ones to move', async () => {
-    api.listSpaceChannels.mockResolvedValue({ items: [{
-      id: '00000000-0000-7000-8000-0000000000e1',
-      title: 'Ship the launch',
-      lastActivityAt: '2026-08-27T01:00:00.000Z',
-      spaceIds: [hiring.id as string],
-    } as WorkstreamSummary], nextCursor: null });
+    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
     api.archiveSpace.mockRejectedValue(new ApiError(
       'A Channel in “Hiring” belongs to no other Space, so it would have no home',
       409,
@@ -274,12 +358,7 @@ describe('the Space dashboard', () => {
   });
 
   it('removes a channel from this space without touching its other spaces', async () => {
-    api.listSpaceChannels.mockResolvedValue({ items: [{
-      id: '00000000-0000-7000-8000-0000000000e1',
-      title: 'Ship the launch',
-      lastActivityAt: '2026-08-27T01:00:00.000Z',
-      spaceIds: [hiring.id as string],
-    } as WorkstreamSummary], nextCursor: null });
+    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
     api.removeChannelFromSpace.mockResolvedValue(makeSpace({ channelCount: 0 }));
     renderSpace(makeSpace({ channelCount: 1 }));
 
