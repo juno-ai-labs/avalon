@@ -25,7 +25,7 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 62, which retires Projects. |
 | `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
@@ -35,12 +35,15 @@ them; the product design is in
 | `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the placement the two creation paths outside the coordinator take for themselves. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
+| `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, **New space**, restore, and the Organization-opening card. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
-| `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, and the local cache slice. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
+| `apps/desktop/src/renderer/lib/personal-order.ts` | `orderByStoredIds`, the one rule every hand-arranged list in the client is drawn by, and `storedOrderFor`, which finds one container's arrangement in it. |
+| `packages/ui/src/components/workstream-sidebar.tsx` | The Breakout rail, including the `substreamDrag` a host supplies to let a person arrange it. |
 
 ## How it works
 
@@ -220,6 +223,85 @@ cursor, and the alarm's resume continues from that page rather than starting
 over. One walk function serves the request and the resume, because a request and
 its resume that walked differently would be two implementations of the same
 convergence and the resume is the one nobody watches.
+
+### Per-person ordering
+
+Three lists in the product are arranged by hand, and they are **one mechanism
+rather than three**: the Organization's Spaces, the Channels placed in one
+Space, and the Breakouts under one Channel. Each asks the same question — in
+what order does *this* person want the items of *this* container — so
+`workspace_container_order` is keyed by `(user_id, container_kind, container_id,
+item_id)` with a `position`. `container_kind` is one of `organization`, `space`
+and `channel`; `container_id` is the workspace id, the Space id, or the Channel
+id, so a row says what it is about without the object it is stored in being part
+of its key.
+
+**What may be in each list is the only thing that differs by kind**, and each
+answer is one this object already holds:
+
+- `organization` keeps the Space ordering's original semantics exactly. Every
+  visible Space is appended first, on the read as well as on the write, because
+  the Space directory is read *through* these rows and a Space with no row is
+  one the join cannot answer with. The request is then filtered to the Spaces
+  this viewer can see, and the ids nobody mentioned keep their relative order
+  behind the ones that were — which is what a sidebar sends when a search has
+  hidden rows.
+- `space` keeps the Channels actually placed in that Space that this viewer can
+  read. `spaceIdsByChannel` — the read the sidebar payload already makes for
+  every row it draws — answers the active membership and the Space's own
+  visibility, and `listableChannelIds` — which a Space refusal already uses to
+  decide what it may name — answers the Channel's. A membership cannot answer
+  the second: a placement is the Organization's fact about a Channel, and
+  visibility is the reader's.
+- `channel` **is stored as given.** A Channel's Breakouts are its own object's
+  children and WorkspaceDO has never seen one, so there is nothing here to
+  validate against. The client drops the ids it is not drawing. Storing an id
+  that names nothing costs this person one row and nobody else anything: the
+  rows are theirs, and the only reader is their own sidebar.
+
+The Organization's list is *updated in place* and the other two are *replaced*.
+Nothing but the client's own helper reads the second and third, so an item
+nobody mentioned belongs at its natural position rather than pinned to a stale
+one; the Organization's rows, by contrast, are what the directory join needs to
+exist at all.
+
+**Authorization is what every other Space write has**: an active non-guest
+member of this Organization, through `spaceRefusalCode(..., "write")`. A
+Breakout's order is not a Space fact, and it is kept behind the same gate
+deliberately — the rows live in this object, they ride the Space snapshot, and a
+second authorization rule for one of three kinds is a second thing to get wrong.
+
+**One delivery shape.** The whole ordering rides the per-viewer
+`workspace_space_snapshot` and the connect payload that seeds it, as one
+`ordering` field: a list of `{ container, itemIds }`, one entry per container
+this person has arranged. A list rather than a map because the key is a *pair*,
+and a map would have to encode it into a string every reader parses back. The
+Organization's own list is in there too, although the Space directory beside it
+already arrives sorted by the same rows. That redundancy is the point: with it
+the client has one rule — apply the stored order to the list you are drawing —
+and without it the Spaces would be the one list whose arrangement came from the
+order the server happened to serialize, which is not something a drag can move
+optimistically or roll back. A write republishes the whole ordering to every
+socket this person holds, which is what makes a drag in one window move the
+list in another without a reload.
+
+**One client helper.** `orderByStoredIds` puts the stored ids first in stored
+order, then everything the arrangement never mentioned in the order the list
+already had, and drops a stored id the list is not carrying. It is also what
+`orderPinnedWorkstreams` is built on, so the pinned section and these three are
+one arrangement rule rather than four. A drag writes its arrangement locally
+first and drops it if the server refuses; the list then shows what the
+Organization holds, which is what this person's other windows are showing.
+
+**The Space dashboard's paginated Channel list is not ordered per person.** It
+is a server-paged read, and arranging a list whose later pages have not arrived
+is a different feature from arranging one the client holds whole — the client
+could only ever order the page in front of it, and the stored ids would name
+Channels no page had fetched. It keeps its server order.
+
+The per-person pinned Channel order (`workspace_workstream_pins`) is a separate
+table and stays one; [`workstream-pinning.md`](workstream-pinning.md) records
+what folding it in would need.
 
 ### Defaults
 
@@ -584,9 +666,40 @@ the drag with it. The flag is optional on the wire and read as ready when
 absent, so a client talking to a server without the cutover is not permanently
 opening.
 
-A Channel row is draggable exactly while a pinned reorder or a placement is
-possible; a system Channel offers neither Space control, because the subsystem
-that writes it decides both its audience and its home.
+A Channel row is draggable exactly while a pinned reorder, a placement or a
+placement reorder is possible; a system Channel offers neither Space control,
+because the subsystem that writes it decides both its audience and its home.
+
+**There is no time-grouped list of Channels under the hierarchy.** Every Channel
+belongs to a Space, so the section above already says where each one lives and a
+second list of the same rows ordered by time was the same sidebar twice. What is
+left in its place is **Other channels**: the Channels whose `spaceIds` intersect
+this viewer's visible directory in nothing. A member can read a Channel whose
+only Spaces are ones they cannot see — **Manage access** already draws such a
+placement as a Space the viewer cannot see — and without that section the
+Channel would be in the sidebar nowhere at all. It is flat, ordered by recency,
+carries no group headings, and is absent when empty, which is the ordinary
+state. Pinned Channels are left out of it, as they were left out of the list it
+replaces: the section above already has them.
+
+The name is the plainest one the product's own language offers. "Unplaced" and
+"Unfiled" describe the Organization's hierarchy rather than the reader's view,
+and both are wrong about what is actually going on — the Channel *is* placed,
+in a Space this person cannot see.
+
+**A guest keeps the flat list.** A guest is handed no Space directory at all, so
+there is no hierarchy to say where anything lives; their sidebar is the
+time-grouped list exactly as it was, with its group headings and their bulk
+actions. The member session loses those bulk actions with the headings that
+carried them.
+
+**Three lists are arranged by drag, and each has the keyboard's version of the
+same gesture** — Alt with the up or down arrow, the mechanism the pinned list
+already had, said once per section rather than on every row. A drop inside the
+list a Channel is already in is a reorder; a drop on another Space is the
+placement it has always been. The row itself claims a release its own list took,
+so the event never reaches the Space underneath; a release anywhere else falls
+through to the Space row, which is what a placement is.
 
 ## Invariants
 
@@ -609,6 +722,12 @@ that writes it decides both its audience and its home.
   PRD gives that conversation no product surface at all — so without this,
   `PATCH /workstreams/<spaceId>` archives General behind the Space authority's
   back.
+- **One person's order for one container is stored under that container, and
+  read by nobody else.** The rows are per viewer and reach only that viewer's
+  own sockets. A Breakout's order is stored unchecked because this object cannot
+  see a Channel's children; that is safe precisely because nothing but the
+  person's own sidebar ever reads it, and a second reader would make an
+  unvalidated id somebody else's problem.
 - **A membership is invisible until it is finalized.** A `joining` row is not
   counted, not listed, and not on the snapshot. Publishing one before its
   audience was applied would show a placement to people who were granted
@@ -697,6 +816,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 | *(none)* — attempts before an unsettleable intent stops being republished | no ceiling | How long a staged operation that can never succeed keeps costing an alarm wake and a dead-letter message. | What an operator is expected to do about a `last_error_code` that never changes, weighed against a ceiling abandoning work nobody agreed to abandon. |
+| *(none)* — items in one person's order for one container | no bound | How many rows one `PUT /workspace/order` writes, and how much of the `ordering` field one container can take up on every socket payload this person receives. | What the largest list somebody would actually arrange looks like — an Organization's Spaces, a Space's Channels, a Channel's Breakouts — against what a payload can carry. |
 
 Each is a lower bound rather than a budget, and each is a transcription rather
 than a measurement — the sections below say what each was transcribed from.
@@ -752,6 +872,17 @@ product decision and is not invented here. What deciding it needs: what an
 operator is expected to do about an intent whose `last_error_code` never
 changes, against what abandoning one costs.
 
+**A stored order has no length bound, and the number is the team's to set.**
+Nothing caps the `itemIds` a person may store for one container. In practice the
+list is what one person dragged — the `organization` and `space` lists are
+filtered to what that person can see, so they cannot exceed the Spaces or the
+Channels they can read, and only `channel` is stored unchecked, because
+WorkspaceDO cannot see a Channel's Breakouts. What a cap would cost is a person
+whose real list is longer than it silently losing its tail, which is worse than
+the row it would prevent; what deciding one needs is the largest list somebody
+would actually arrange, against what one socket payload can carry. The guard is
+written open.
+
 There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
 hand down. Those are product decisions and are not invented here.
@@ -784,10 +915,10 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, and a write reaching a second session of the same person without it asking. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
-| `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
+| `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. |
@@ -799,7 +930,9 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement and absent otherwise — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
+| `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
+| `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
@@ -875,7 +1008,13 @@ generation/source-version/payload-hash triple every projection is fenced on, and
 one `revision` that advances on every accepted change. A unique partial index on
 `system_role` makes General singular. `workspace_space_viewers` is the
 per-person half of the same projection and is where a Space's participants live.
-`workspace_space_order` is `(user_id, space_id) → position`;
+`workspace_container_order` is `(user_id, container_kind, container_id,
+item_id) → position` — every list a person arranges by hand, keyed by the
+container it belongs to, with a `CHECK` narrowing `container_kind` to the three
+containers the product lets somebody arrange. It replaced a Space-only
+`workspace_space_order` **in place** in migration 61 rather than beside it,
+because 61 is unreleased and a rename dance would have been migration
+bookkeeping for a table nothing had yet stored.
 `workspace_space_state` holds the one waterline both directories share.
 
 `space_channel_memberships` is keyed by `(space_id, workstream_id)` with **no**
@@ -1116,6 +1255,60 @@ with the Space's conversation evicted first. Five of its six cases failed before
 this change. The testing section above now says which layer each Space suite
 proves, so the next author does not add the seventh case to a suite that cannot
 see the route.
+
+### 2026-09-19 — One ordering primitive, and a sidebar that stopped saying everything twice
+
+**What changed:** The per-person Space order became the per-person order of
+*anything*. `workspace_container_order` is keyed by `(user_id, container_kind,
+container_id, item_id)` and holds three kinds of list — the Organization's
+Spaces, the Channels placed in one Space, the Breakouts under one Channel — with
+one RPC (`reorderContainer`), one route (`PUT /workspace/order`, at the
+workspace level because two of the three containers are not Spaces), one request
+and result (`ContainerOrder`), one field on the workspace socket (`ordering`),
+and one client helper (`orderByStoredIds`) that the pinned section now uses too.
+It replaced `workspace_space_order` in migration 61 in place; 61 is unreleased,
+so a rename dance would have been bookkeeping for a table nothing had stored.
+Validation is per kind and reuses reads that already exist; a Channel's
+Breakouts are stored unchecked, because this object has never seen one.
+
+The sidebar lost its time-grouped list of Channels for a member session, and the
+group headings' bulk actions with it. Every Channel belongs to a Space, so the
+hierarchy says where each one lives and the list below it was the same sidebar
+twice. **Other channels** replaces it: the Channels whose only placements are
+Spaces this reader cannot see, flat and by recency, absent when empty. A guest
+is handed no directory and keeps the flat list exactly as it was.
+
+**Why:** Three tables would have been three of everything above them — three
+writes, three reads, three deliveries, three authorization decisions, three
+client rules — for one question asked of three containers. The alternative that
+was rejected outright is putting a Channel's Breakout order in `WorkstreamDO`,
+where the Breakouts actually live. It is the wrong owner twice over: the order
+is a *view preference of one person*, which the Channel's own authority has no
+business holding for every reader of it, and the person's sessions are already
+fanned out from WorkspaceDO — so a Channel-owned order would have needed a
+second delivery path to reach the same sidebar the other two arrive on. The
+price of the decision is exactly one thing: WorkspaceDO cannot check a Breakout
+id, so it stores what it is given and the client drops what it cannot draw.
+That is affordable only because the rows are per person and read by nobody else;
+if a second reader ever appears, the validation has to appear with it.
+
+The `ordering` field carries the Organization's list even though the Space
+directory beside it already arrives sorted by the same rows. The duplication is
+deliberate: without it the Spaces are the one list whose arrangement comes from
+the order the server happened to serialize, which a drag cannot move
+optimistically or roll back, and the client would have two rules where it now
+has one.
+
+A stored list has no length bound. Capping it would silently lose the tail of a
+list somebody actually arranged, which is worse than the row it prevents; the
+number, and what deciding it needs, is in "Numbers handed to the team" above.
+
+The Space dashboard's paginated Channel list keeps its server order. Arranging a
+list whose later pages have not arrived is a different feature: the client can
+only order the page in front of it, and the stored ids would name Channels no
+page had fetched.
+
+Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 

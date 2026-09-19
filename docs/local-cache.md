@@ -113,7 +113,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list and the active and archived Space directories. |
+| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list, the active and archived Space directories, and the order this person last put each hand-arranged list in. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -127,7 +127,8 @@ before the cache existed, waiting for the socket.
 dials. If the work-stream list is still empty, the cached lists go straight
 into the query-cache entries the sidebar, the landing route, and the Space
 dashboard read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
-`['spaces']`, and `['spaces-inactive']`. They go in directly,
+`['spaces']`, `['spaces-inactive']`, and `['personal-order']` — every list this
+person has arranged by hand. They go in directly,
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it
@@ -145,6 +146,18 @@ resident row page one cannot account for triggers the existing reconciling
 refetch, which is what retires a seeded row for a work stream archived while
 the device was away.
 
+The ordering *is* on the row, and it did not move the version. Without it a cold
+launch paints every Space's Channels and every Channel's Breakouts in the order
+the directory happens to hold them and reshuffles them a moment later, under
+somebody whose whole reason for dragging them was that the order mattered —
+which is the visible flicker the seed exists to prevent. A version 3 row written
+before it existed has no `ordering` key, and `parse` reads that absence as an
+empty arrangement: the natural order for one launch, corrected by the first
+payload. Bumping to version 4 to avoid that would have dropped every cached row
+and cost every person a cold, empty sidebar, which is the more expensive of the
+two by a wide margin. The rule the slice is under is unchanged — the version
+moves when the shape changes in a way `parse` *cannot* absorb.
+
 `spacesReady` is deliberately **not** on the row. It is the Organization's
 current cutover state rather than something the device last saw, and a
 remembered `true` would paint a hierarchy the next connect may contradict; the
@@ -154,7 +167,7 @@ version went to **3** for the same reason in reverse: a version 2 row holds
 Project directories and Channel rows written before `spaceIds` existed, and a
 Channel in no Space is a state no surface is allowed to render.
 
-After the first live payload the provider mirrors the five entries back to the
+After the first live payload the provider mirrors those entries back to the
 row: any change to any of them schedules one write, coalesced over
 `LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
 observes and writes nothing, so the seed never persists itself.
@@ -491,6 +504,35 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-09-19 — The remembered directory carries the arrangement, without a version bump
+
+**What changed:** The `directory` row gained `ordering`: every list this person
+has arranged by hand — the Organization's Spaces, each Space's Channels, each
+Channel's Breakouts — seeded into `['personal-order']` alongside the other four
+entries and mirrored back with them. The slice stayed at version 3, and `parse`
+reads a row written without the field as an empty arrangement.
+
+**Why:** A seed exists to stop the first frame being wrong. Without the
+arrangement it *is* wrong for everybody who has dragged anything: the sidebar
+paints the natural order, the socket answers a moment later, and the lists
+visibly reshuffle under the one reader who cared enough about their order to
+set it. Leaving it off the row would have made the seed worse than useless for
+exactly the people this feature is for.
+
+**Considered and rejected:** Bumping the slice to version 4, which is the reflex
+when a persisted shape changes. It would drop every cached row on every device
+to avoid one launch drawn in the natural order — a cold, empty sidebar for
+everyone, to prevent a flicker for some. The slice's rule already says the
+version moves when the shape changes in a way `parse` cannot absorb, and an
+absent optional field is the case `parse` absorbs.
+
+**Consequences:** A row written before this reads as "nothing arranged", which
+is indistinguishable from a person who has arranged nothing — and correct for
+both, because the first payload replaces it either way. Anything later that adds
+a *required* field to this row, or changes the meaning of one already on it,
+still has to bump: absorbing an absence is not a precedent for absorbing a
+change.
 
 ### 2026-09-19 — The directory slice goes to version 3, and the cutover flag stays off it
 
