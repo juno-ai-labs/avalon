@@ -34,7 +34,6 @@ import {
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
-import { SPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/space-do-schema";
 import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../durable-objects/automation-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
@@ -97,7 +96,9 @@ export function migrationCommandDispatchers(env: Env): Record<
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
   WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
-  SpaceDO: latestMigrationVersion(SPACE_DO_SCHEMA_MIGRATIONS),
+  // The same ledger `WorkstreamDO` runs: a Space is that class under a role,
+  // and only its component and class name are its own.
+  SpaceDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
   AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
   SidekickDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),

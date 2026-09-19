@@ -3,7 +3,6 @@ import { asSpaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { spaceDOName, workstreamDOName } from "./names";
-import { SPACE_DO_SCHEMA_MIGRATIONS } from "./space-do-schema";
 import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import type { WorkstreamDO } from "./workstream-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "./workstream-do-schema";
@@ -50,10 +49,15 @@ export interface ConversationParentRole {
    * The migration runner's component, the class the tracker reports, and the
    * ledger this object applies.
    *
-   * Three fields rather than one because `forceMigration` refuses a command
-   * whose `className` disagrees with the plan, and the tracker keys its rollup
-   * by `component`. A role that shared one of the three with another role would
-   * put two version histories under one count.
+   * Three fields rather than one because they do not move together.
+   * `component` and `className` are this role's alone — `forceMigration`
+   * refuses a command whose `className` disagrees with the plan, and the
+   * tracker keys its rollup by `component`, so two roles under one component
+   * would file two classes' version histories under one count. `migrations`
+   * is the opposite: both roles run {@link WORKSTREAM_DO_SCHEMA_MIGRATIONS},
+   * because they are the same class and an inherited method that met a missing
+   * table would fail at a request rather than at a deploy. Each component
+   * keeps its own `_sql_schema_migrations` receipts of that one array.
    */
   migration: {
     component: string;
@@ -119,7 +123,9 @@ export const SPACE_ROLE: ConversationParentRole = {
   migration: {
     component: "space_do",
     className: "SpaceDO",
-    migrations: SPACE_DO_SCHEMA_MIGRATIONS,
+    // The Channel's ledger, not a rendering of it. A hand-copied one version
+    // was tried and dropped: see the comment on the `migration` field.
+    migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
   },
   admitsClientSockets: false,
   publishesGrantDirectory: false,

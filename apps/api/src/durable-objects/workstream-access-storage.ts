@@ -5,8 +5,9 @@ import type { NamedAudienceSource } from "../lib/channel-audience";
 
 /**
  * Included in the parent object's versioned migrations, never run on the
- * request path. `workstream_do` 18 and `space_do` 2 are the same array, which
- * is why it is an array rather than two copies.
+ * request path. It sits here rather than in `workstream-do-schema.ts` for the
+ * reason every other statement group does: the tables belong to the storage
+ * class below, which is what has to be read to change them.
  */
 export const WORKSTREAM_ACCESS_SCHEMA_STATEMENTS = [
   // The Channel's *own* audience, which stops being readable from
