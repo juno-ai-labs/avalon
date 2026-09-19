@@ -28,7 +28,8 @@ Organization's Space directory instead. See
 [authorization](authorization.md#space-derived-access) for why — General holds
 every Channel in the Organization, so publishing one row per Space-derived
 reader per Channel would size this index at the Organization times its
-Channels. Direct provenance wins where both apply, so a Channel a person also
+Channels. Direct provenance wins where both apply, in both directions — a Space
+can neither claim such a row nor deactivate it — so a Channel a person also
 holds directly stays published. The same durable outbox owns
 versioning, retries and WorkspaceDO delivery; there is no intermediate delivery alarm.
 Migration 17 drains pending legacy delivery rows into that outbox transactionally,
@@ -90,6 +91,31 @@ shares, and unready/restricted children are absent. Negative controls bypass
 canonical admission or expose the Main title; both fail the corresponding tests.
 
 ## Changelog
+
+### 2026-09-19 — An absent candidate row is not absent access
+
+**What changed:** A grant a Space seats is written with
+`scope_grants.source_kind = 'space'` and does not invoke the projection writer,
+so this index is now complete for direct grants and deliberately incomplete for
+Space-derived ones. Direct provenance wins where both apply, in both directions:
+a Space can neither claim a row the Channel already held directly nor deactivate
+one, so such a row stays published.
+
+**Why:** Every Channel in an Organization is in General, so publishing one row
+per Space-derived reader per Channel would size this flat candidate index at the
+Organization's membership times its Channels — and buy nothing, because that
+reader finds the Channel through the Space directory rather than through here.
+
+**Considered and rejected:** publishing them and filtering at read time. The
+index exists to keep a directory read from scanning every parent; an index that
+has to be filtered by a second authority is the scan it replaced, and it would
+still have to be written.
+
+**What a future change has to respect:** nothing may read a missing candidate
+row as a negative answer. It narrows a search and the owner's admission decides,
+which was always true of a stale row and is now true of a whole class of live
+access. A feature that wants to *enumerate* a person's Channels has to ask the
+Space directory as well, not tighten this one.
 
 ### 2026-09-17 — Discover independent shares through the existing outbox
 
