@@ -847,11 +847,17 @@ export class WorkstreamService {
    * Organization-wide through a Space cannot be made private, because the
    * effective audience would stay Organization-wide and the record would then
    * disagree with the Channel.
+   *
+   * A narrowing seats first, for the reason a retraction does. A personal
+   * Space applied while the Channel was Organization-wide seated nobody, so
+   * the readers it supplies exist only as its roster; narrowing without
+   * seating them revokes access a Space that has not changed still provides.
    */
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
     if (input.scope === undefined) return client.update(input);
     const access = new ChannelAccessService(this.env, this.auth);
+    if (input.scope === "personal") await access.narrowDirectScope(id);
     const recorded = await access.recordDirectScope(id, input.scope);
     if (!recorded.ok) throw spaceAccessError(recorded.code, (await client.get()).title);
     try {
