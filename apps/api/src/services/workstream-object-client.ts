@@ -271,6 +271,16 @@ export class WorkstreamObjectClient {
       ...(options.spaceSourceId ? { spaceSourceId: options.spaceSourceId } : {}) });
   }
 
+  /**
+   * Set the icon and colour on the conversation that stores them.
+   *
+   * The Channel path for this is a socket command, which a Space has no socket
+   * for. Same write, same effect, reached over the product request instead.
+   */
+  async setAppearance(patch: { icon?: string | null; color?: string | null }): Promise<void> {
+    await this.request({ operation: "set_appearance", operationId: uuidV7(), patch });
+  }
+
   async attachResource(resourceId: string): Promise<WorkstreamResource> {
     return WorkstreamResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
   }

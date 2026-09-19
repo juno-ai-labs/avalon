@@ -83,6 +83,8 @@ export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePre
 /** The scope and participants a Space's own authority has just accepted. */
 export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
+  /** The operation this change is staged under, so its receipts can settle it. */
+  operationId: IdSchema,
   audience: z.strictObject({
     scope: SpaceScopeSchema,
     participantUserIds: z.array(UserIdSchema).min(1),
@@ -285,3 +287,17 @@ export const WorkspaceSpaceBootstrapStatusSchema = z.strictObject({
   ready: z.boolean(),
 });
 export type WorkspaceSpaceBootstrapStatus = z.infer<typeof WorkspaceSpaceBootstrapStatusSchema>;
+
+/**
+ * One step of a staged operation, recorded against its intent.
+ *
+ * `settled` is what stops the alarm republishing it. A step that finished part
+ * of the work writes a receipt without settling, so a resume knows what not to
+ * do again; the last step settles.
+ */
+export const WorkspaceSpaceIntentReceiptRequestSchema = SpaceActorSchema.extend({
+  operationId: IdSchema,
+  receipt: z.string().min(1).max(200),
+  settled: z.boolean(),
+}).strict();
+export type WorkspaceSpaceIntentReceiptRequest = z.infer<typeof WorkspaceSpaceIntentReceiptRequestSchema>;

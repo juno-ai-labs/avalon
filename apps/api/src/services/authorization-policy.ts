@@ -1,11 +1,22 @@
 import { z } from 'zod';
-import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema, UserIdSchema } from '@rally/contracts';
+import { ConversationParentKindSchema, IdSchema, SubstreamIdSchema, WorkspaceIdSchema, UserIdSchema } from '@rally/contracts';
 
 export const AUTHORIZATION_POLICY_VERSION = 1;
 
 export const AuthorizationResourceSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('conversation'), workspaceId: WorkspaceIdSchema,
-    parentId: IdSchema, substreamId: SubstreamIdSchema }),
+    parentId: IdSchema, substreamId: SubstreamIdSchema,
+    /**
+     * Which authority owns the parent, when the caller knows.
+     *
+     * Optional because every existing caller addresses a Channel or a Sidekick
+     * and the resolver still discovers which by asking the Channel first. What
+     * it buys is the third kind: a Space's hidden main conversation is not in
+     * the authorization universe at all, and without this the resolver would
+     * have to *name* two Durable Objects — materialising both — before it could
+     * say so.
+     */
+    parentKind: ConversationParentKindSchema.optional() }),
   z.strictObject({ kind: z.literal('resource'), workspaceId: WorkspaceIdSchema, resourceId: IdSchema }),
   z.strictObject({ kind: z.literal('memory'), workspaceId: WorkspaceIdSchema, scopeId: IdSchema, parentId: IdSchema }),
   // A connector's resources are readable exactly when the connection is: one
@@ -92,7 +103,7 @@ export function evaluateReadPolicy(policy: ReadPolicy, now: number): Authorizati
 
 export function authorizationResourceKey(resource: AuthorizationResource): string {
   switch (resource.kind) {
-    case 'conversation': return JSON.stringify([resource.workspaceId, resource.kind, resource.parentId, resource.substreamId]);
+    case 'conversation': return JSON.stringify([resource.workspaceId, resource.kind, resource.parentKind ?? 'workstream', resource.parentId, resource.substreamId]);
     case 'resource': return JSON.stringify([resource.workspaceId, resource.kind, resource.resourceId]);
     case 'memory': return JSON.stringify([resource.workspaceId, resource.kind, resource.scopeId, resource.parentId]);
     case 'connection': return JSON.stringify([resource.workspaceId, resource.kind, resource.connectionId]);
