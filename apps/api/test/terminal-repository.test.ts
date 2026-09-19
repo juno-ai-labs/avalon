@@ -265,7 +265,7 @@ describe("Terminal repository publication", () => {
     const bootstrapCommand = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     // After the checkout, isolated from `set -e`, reporting only.
     expect(bootstrapCommand.indexOf(".git/info/exclude")).toBeLessThan(bootstrapCommand.indexOf("( set +e; python3 -c '"));
-    expect(bootstrapCommand).toMatch(/'\/workspace' 'report' '0' '\[\]' '__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__' 'AGENTS\.md' \) \|\| true$/u);
+    expect(bootstrapCommand).toMatch(/'\/workspace' '0' '\[\]' '__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__' 'AGENTS\.md' \) \|\| true$/u);
     expect(ledger.pendingDeliveries().map((delivery) => [delivery.block.blockId, delivery.block.sourceGeneration, delivery.block.content]))
       .toEqual([["AGENTS.md", 3, "root rules\n"]]);
     expect(failures).toEqual([]);

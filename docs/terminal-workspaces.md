@@ -384,13 +384,14 @@ personless; it is not duplicated into these product events.
   instruction-file probe is not a tool: it rides the command a tool already
   runs, looks only at the ancestors of the path that tool addressed, and the
   model neither calls it nor sees its raw output.
-- **The probe never decides a tool's outcome, and a mutation waits for the
-  instructions that govern it.** The fragment runs in an isolated subshell and
-  only exit 52 escapes, in abort mode before a mutation, as the recoverable
-  `instructions_pending` refusal (or `instructions_unavailable` when the ledger
-  could not record what the probe found, after which the probe stops gating
-  for the rest of the run); every other probe failure leaves the tool's
-  or the bootstrap's own exit code alone. Each candidate is checked in its own
+- **The probe never decides a tool's outcome, and no mutation waits for it.**
+  The fragment rides the two reads only, the `read_file` page read and the
+  read an `edit_file` starts with, runs in an isolated subshell whose status
+  never escapes, and reports what it found; the instructions arrive with that
+  batch, and a write, a patch, a command or an import is never refused for an
+  instruction file it has not seen (the gate that did so was removed on
+  2026-09-19; the changelog records why). Every probe failure leaves the
+  tool's or the bootstrap's own exit code alone. Each candidate is checked in its own
   right for symlink and root containment before it is read, because a
   repository controls what `AGENTS.md` points at. The trailer the probe prints
   starts with a marker minted for that invocation, so output the repository
@@ -455,8 +456,8 @@ network proxy, or a general GitHub administration surface.
 - An instruction file's delivered content and a kind's prompt section are
   bounded by two limits that are open placeholders until the team sets them;
   [`resident-context.md`](resident-context.md#failure-modes-and-limits) owns
-  them. `run_command` and `import_resource` pay one probe command before the
-  mutation; every other tool's probe rides its own command.
+  them. The probe rides the two read commands only; no mutation carries one
+  or pays a probe command of its own.
 - A command is at most 32 KiB, defaults to 120 seconds, and is capped at 900
   seconds. Inline stdout and stderr are each head/tail bounded to 128 KiB; the
   complete generated log is capped at 5 MB and then the command reports
@@ -764,8 +765,7 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`,
-`instructions.probe`, one
+`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`, one
 of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
@@ -815,6 +815,42 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — A mutation no longer waits for its instructions
+
+**What changed:** The instruction-file probe rides only the two reads: the
+`read_file` page read and the read an `edit_file` starts with. It reports what
+it finds and the instructions arrive with that batch. `write_file`,
+`apply_patch`, `run_command` and `import_resource` carry no probe and pay no
+probe command; the `abort` mode, exit 52, the `instructions_pending` and
+`instructions_unavailable` refusals, the `instructions.probe` utility
+operation, and the system message's sentence about a refused mutation are
+gone. This reverses the gate half of the 2026-09-09 entry below; discovery,
+recording, delivery and the bootstrap's root probe are unchanged.
+
+**Why:** The gate fired on the first action of nearly every fresh agent,
+because that action is a mutation more often than not: a `run_command` used
+for discovery, a `write_file`, an import. In the "Avalon scroll gradients"
+substream of 2026-09-18 both the parent and its background agent paid it, and
+the parent's refused call was the one that had also carried the 57-second
+sandbox boot. The decision on 2026-09-19 was that a repository's instructions
+load as a side effect of reading, and that a mutation is never refused for
+them.
+
+**Considered and rejected:** Keeping a report-mode probe on mutations, so a
+write beneath an unread file still delivers the file one batch later. The two
+tools that cannot carry the fragment would still pay a probe command each, and
+the read that precedes an edit already delivers the same files. Injecting the
+root file at sandbox acquisition instead of on the first read: cheaper still
+for the root, but it does not reach a nested `AGENTS.md`, and the read path
+covers both.
+
+**Consequences:** A whole-file write, a patch, a command or an import beneath
+a file no read has touched proceeds without its instructions; the next read
+delivers them. The Terminal prompt's rule to read a file before editing it is
+now what puts a file's instructions in context before the edit, so weakening
+that sentence weakens this. `apps/api/test/terminal-runtime.test.ts` pins that
+a write is not refused and that the read records the chain.
 
 ### 2026-09-19 — Terminal sandboxes are built at 2 vCPU / 4 GiB / 8 GiB
 
