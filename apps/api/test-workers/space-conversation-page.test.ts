@@ -207,6 +207,7 @@ async function publishChannel(
 
 function breakoutCommonEffect(title: string, overrides: {
   state?: string;
+  scope?: "personal" | "workspace";
   lastActivityAt?: string;
   archivedAt?: string | null;
 } = {}): ConversationEffect {
@@ -215,7 +216,7 @@ function breakoutCommonEffect(title: string, overrides: {
     title,
     description: "",
     preview: "",
-    scope: "personal",
+    scope: overrides.scope ?? "personal",
     state: overrides.state ?? "needs_input",
     systemKind: null,
     lastActivityAt: overrides.lastActivityAt ?? "2026-09-19T10:00:00.000Z",
@@ -229,6 +230,7 @@ function childEnvelope(
   substreamId: string,
   effect: ConversationEffect,
   sourceVersion: number,
+  generation = 1,
 ) {
   return ConversationEffectEnvelopeSchema.parse({
     kind: "conversation_effect",
@@ -238,7 +240,7 @@ function childEnvelope(
     parentKind: "workstream",
     parentId: workstreamId,
     substreamId,
-    generation: 1,
+    generation,
     messageId: crypto.randomUUID(),
     partitionKey: `${effect.kind}:${substreamId}`,
     sourceVersion,
@@ -262,12 +264,35 @@ async function publishBreakout(
   substreamId: string,
   effects: readonly ConversationEffect[],
   sourceVersion = 1,
+  generation = 1,
 ): Promise<void> {
   await channelObject(workstreamId).receiveChildEffects({
     substreamId,
-    envelopes: effects.map((effect) => childEnvelope(workstreamId, substreamId, effect, sourceVersion)),
+    envelopes: effects.map((effect) => (
+      childEnvelope(workstreamId, substreamId, effect, sourceVersion, generation)
+    )),
   });
   await deliverParentEffects(env, channelObject(workstreamId));
+}
+
+/**
+ * Advance a Channel object's authority generation, the way an authority
+ * transfer or an object restore does.
+ *
+ * Written straight into `workstream_metadata` because what is under test is
+ * what the *Organization* does with the projections that follow, and driving a
+ * real transfer would be several objects' worth of setup for one number.
+ */
+async function advanceChannelGeneration(
+  workstreamId: WorkstreamId,
+  generation: number,
+): Promise<void> {
+  await runInDurableObject(channelObject(workstreamId), (_instance, state) => {
+    state.storage.sql.exec(
+      "UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1",
+      generation,
+    );
+  });
 }
 
 /** The identity row every effect path on a Channel object reads its address from. */
@@ -481,6 +506,55 @@ describe("space dashboard conversation page", () => {
     expect((await page(spaceId, OWNER)).items.map((item) => item.title))
       .toEqual(["Side thread", "Roadmap"]);
     expect((await page(spaceId, MEMBER)).items.map((item) => item.title)).toEqual(["Roadmap"]);
+  });
+
+  it("given a viewer row a generation behind, when the page is read, then an Organization-wide breakout is still listed", async () => {
+    const spaceId = await reserve("Hiring");
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [
+      channelCommonEffect("Roadmap"), viewerEffect(OWNER), viewerEffect(MEMBER),
+    ]);
+    await place(spaceId, CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Open thread", { scope: "workspace" }),
+      viewerEffect(OWNER) as ConversationEffect,
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      breakoutCommonEffect("Side thread", { lastActivityAt: "2026-09-19T09:00:00.000Z" }),
+      viewerEffect(OWNER) as ConversationEffect,
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+    expect((await page(spaceId, MEMBER)).items.map((item) => item.title))
+      .toEqual(["Open thread", "Side thread"]);
+
+    // An authority transfer or an object restore, followed by one more message
+    // in each breakout. `directory_user` effects only go out for the users an
+    // update affects, so nobody's viewer row moves with them and every one of
+    // them is now a generation behind the shared row.
+    await advanceChannelGeneration(CHANNEL_A, 2);
+    await publishBreakout(
+      CHANNEL_A, BREAKOUT_ONE,
+      [breakoutCommonEffect("Open thread", { scope: "workspace", lastActivityAt: "2026-09-19T12:00:00.000Z" })],
+      2, 2,
+    );
+    await publishBreakout(
+      CHANNEL_A, BREAKOUT_TWO,
+      [breakoutCommonEffect("Side thread", { lastActivityAt: "2026-09-19T11:00:00.000Z" })],
+      2, 2,
+    );
+
+    // The Organization-wide breakout survives it, because its own scope is
+    // what grants it and no viewer row is needed to read that. Under an inner
+    // join it disappeared from this person's dashboard until they happened to
+    // become an affected user of some later update.
+    //
+    // The personal one does not, and that is the deliberate other half: with
+    // no viewer row at this generation the Organization does not know whether
+    // this person is a participant of a private child, and a personal Channel
+    // beside it answers the same way.
+    expect((await page(spaceId, MEMBER)).items.map((item) => item.title))
+      .toEqual(["Open thread"]);
   });
 
   it("given conversations of both kinds, when the page is read, then it is newest first and the cursor continues it", async () => {
