@@ -364,6 +364,48 @@ export function conversationShowsStoppingRow(
 }
 
 /**
+ * Whether the conversation still ends in the stop somebody asked for.
+ *
+ * The notice describes the tail of the conversation, not the run row it is
+ * read off, and read off the run alone it outlived the moment it explains.
+ * `latestHarnessRun` only moves when a *new run* exists, and a member turn
+ * the addressing classifier reads as conversation between people starts none
+ * (`agent-harness.md`), so in a room with two people in it the notice stayed
+ * under every later message — where it reads as Rally having stopped on the
+ * message that person just sent, which is the one reading the classifier's
+ * deliberate silence leaves them with.
+ *
+ * Any member's turn clears it, not only the stopper's: the notice is the
+ * conversation's state rather than one reader's, and it is stale for
+ * everybody once somebody has spoken past it.
+ *
+ * Anchored on the settlement, not on the run's start. A colleague typing
+ * while a run is going has not seen the stop yet, and their turn must not
+ * take the acknowledgement away from the person who pressed the button a
+ * moment later. Settlement writes `completed_at` for every terminal status,
+ * so the fallbacks only cover a row that reached `stopped` without one.
+ */
+export function conversationShowsRunStoppedNotice(
+  run: Pick<HarnessRunMetadata, 'status' | 'startedAt' | 'completedAt' | 'createdAt'> | null | undefined,
+  messages: readonly Pick<Message, 'authorType' | 'createdAt'>[],
+): boolean {
+  if (run?.status !== 'stopped') return false;
+  const stoppedAt = Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt);
+  if (Number.isNaN(stoppedAt)) return true;
+  // Backwards, and stopping at the stop: the turns that can answer this are
+  // the ones after it, and the transcript above them runs to the whole
+  // conversation. An optimistic turn carries the sender's own clock, so a
+  // client running behind the room keeps the notice for the one frame before
+  // the accepted copy arrives with the room's timestamp.
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (Date.parse(message.createdAt) <= stoppedAt) return true;
+    if (message.authorType === 'human') return false;
+  }
+  return true;
+}
+
+/**
  * Fence the reused route subtree to the work stream named by the current URL.
  *
  * The socket pool deliberately keeps `WorkstreamScreen` mounted while its
@@ -2530,7 +2572,7 @@ export function ConversationSurface({
               retrying={retry.isPending}
             />
           )}
-          {detail.latestHarnessRun?.status === 'stopped' && (
+          {conversationShowsRunStoppedNotice(detail.latestHarnessRun, visibleTranscript) && (
             <RunStoppedNotice />
           )}
         </div>

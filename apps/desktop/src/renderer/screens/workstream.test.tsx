@@ -30,7 +30,7 @@ import {
   railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow, conversationShowsStoppingRow } from './conversation-surface';
+import { conversationActivityRow, conversationShowsRunStoppedNotice, conversationShowsStoppingRow } from './conversation-surface';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -994,6 +994,54 @@ describe('conversationShowsStoppingRow', () => {
     // over a run that has already stopped promises a wait that is over.
     expect(conversationShowsStoppingRow('stopped', true)).toBe(false);
     expect(conversationShowsStoppingRow('completed', true)).toBe(false);
+  });
+});
+
+describe('conversationShowsRunStoppedNotice', () => {
+  const stopped = {
+    status: 'stopped' as const,
+    createdAt: '2026-09-19T10:00:00.000Z',
+    startedAt: '2026-09-19T10:00:00.000Z',
+    completedAt: '2026-09-19T10:00:30.000Z',
+  };
+  const turn = (authorType: 'human' | 'agent', createdAt: string) => ({ authorType, createdAt });
+
+  it('explains the stop while the stop is still the last thing that happened', () => {
+    expect(conversationShowsRunStoppedNotice(stopped, [
+      turn('human', '2026-09-19T10:00:00.000Z'),
+      turn('agent', '2026-09-19T10:00:20.000Z'),
+    ])).toBe(true);
+    // The partial answer the stop cut off settles after it.
+    expect(conversationShowsRunStoppedNotice(stopped, [
+      turn('human', '2026-09-19T10:00:00.000Z'),
+      turn('agent', '2026-09-19T10:00:31.000Z'),
+    ])).toBe(true);
+  });
+
+  it('clears on the next member turn, including one that starts no run', () => {
+    // The whole point: a turn the addressing classifier reads as conversation
+    // between people leaves `latestHarnessRun` on the stopped run for good, so
+    // a notice that waits for a new run sits under it until somebody addresses
+    // Rally — in a room where people are talking to each other, never.
+    expect(conversationShowsRunStoppedNotice(stopped, [
+      turn('human', '2026-09-19T10:00:00.000Z'),
+      turn('human', '2026-09-19T10:00:31.000Z'),
+    ])).toBe(false);
+  });
+
+  it('keeps the acknowledgement for a colleague who typed before the stop settled', () => {
+    // They had not seen the stop yet. Their turn is not the conversation
+    // moving past it, and taking the notice away answers the wrong person.
+    expect(conversationShowsRunStoppedNotice(stopped, [
+      turn('human', '2026-09-19T10:00:00.000Z'),
+      turn('human', '2026-09-19T10:00:10.000Z'),
+    ])).toBe(true);
+  });
+
+  it('says nothing about a run that was not stopped', () => {
+    expect(conversationShowsRunStoppedNotice({ ...stopped, status: 'completed' }, [])).toBe(false);
+    expect(conversationShowsRunStoppedNotice(null, [])).toBe(false);
+    expect(conversationShowsRunStoppedNotice(undefined, [])).toBe(false);
   });
 });
 

@@ -246,6 +246,13 @@ prompt remains transcript history; continuing means composing a fresh turn,
 not replaying the stopped request. Failed runs remain a separate state and keep
 their Retry action.
 
+That notice belongs to the tail of the conversation, not to the run row it is
+read off, and `conversationShowsRunStoppedNotice` is where the difference is
+decided: it withdraws the notice as soon as a member turn lands after the stop
+settled, whatever the run row still says. Any member's turn does it, because
+the notice is the room's state rather than the stopper's. A turn sent before
+the stop settled does not, because whoever typed it had not seen the stop yet.
+
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`); `--composer-width` is three quarters of that, and the
@@ -692,6 +699,49 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-19 — The stopped notice withdraws once the room speaks past it
+
+**What changed:** The terminal stopped notice is guarded by
+`conversationShowsRunStoppedNotice(detail.latestHarnessRun, visibleTranscript)`
+rather than by `latestHarnessRun.status === 'stopped'` alone. A member turn
+created after the run settled withdraws it.
+
+**Why:** the run row was the wrong thing to read. `latestHarnessRun` only moves
+when a new run exists, and a member turn the addressing classifier reads as
+conversation between people starts no run at all — the decision in
+[`agent-harness.md`](agent-harness.md), and deliberately invisible in the UI. In
+a room with two people in it the notice therefore sat under every later message
+until somebody addressed Rally, which in a room where people are talking to each
+other is never. What a reader sees there is a message they just sent with "This
+run was stopped by request" underneath it, and the classifier's silence gives
+them nothing else to read it as: the notice looked like an answer to their
+message. The transcript is the honest source, because it is the one the client
+already updates on every turn, its own and other people's, without waiting for
+a run to exist.
+
+**Considered and rejected:** computing it in the object and putting a boolean
+on the detail. The truth is cheap there — the turns and the run are one
+SQLite — but the client only re-reads the detail on a harness status change or
+its own send, and a turn that starts no run produces neither, so the flag would
+not arrive in exactly the case this fixes. Also rejected: anchoring on the run's
+start instead of its settlement, which would let a colleague still typing
+through a run take the acknowledgement away from the person who pressed Stop a
+moment later. Also rejected: moving the notice into the feed, anchored to the
+run's last turn, which is the better shape and a larger change — the notice
+would then mark the stop in history rather than describing the present, and
+several stops in one conversation would each keep their place.
+
+**Consequences:** the notice is now a statement about the tail of the
+conversation, and a future guard on it has to hold that. It is derived from the
+loaded transcript, so a reader who has scrolled into history through an `around`
+cursor may hold a window with no turns after the stop, and keeps the notice —
+the same thing that surface did before this change. Timestamps decide it, and an
+optimistic turn carries the sender's own clock: a client running behind the room
+keeps the notice for the one frame before the accepted copy lands with the
+room's timestamp. The failure notice is untouched and still waits for a new run,
+which is the same defect one state over; it holds a Retry button, so what to do
+about it is a product decision rather than this one's to make.
 
 ### 2026-09-22 — Editable fields get native text actions
 
