@@ -1,5 +1,7 @@
 import type { ContainerOrder, PersonalOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
+
+import { sameContainer } from './personal-order';
 import type { AutomationSummary } from './types';
 
 /**
@@ -160,8 +162,7 @@ export function applyVersionedSpaceSnapshot(
  */
 export function applyContainerOrder(queryClient: QueryClient, order: ContainerOrder): void {
   queryClient.setQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY, (current = []) => [
-    ...current.filter((entry) =>
-      entry.container.kind !== order.container.kind || entry.container.id !== order.container.id),
+    ...current.filter((entry) => !sameContainer(entry.container, order.container)),
     order,
   ]);
 }
