@@ -1,4 +1,4 @@
-import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateSpaceRequest, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -22,8 +22,9 @@ import {
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
+import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { useProjectDirectories } from '../lib/use-project-directories';
+import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
@@ -44,17 +45,17 @@ interface AppShellProps extends PropsWithChildren {
 }
 
 /** Upsert a mutation response without duplicating an earlier socket push. */
-export function upsertProjectDirectory(
-  current: ProjectDirectory | undefined,
-  project: ProjectSummary,
-): ProjectDirectory {
+export function upsertSpaceDirectory(
+  current: SpaceDirectory | undefined,
+  space: SpaceSummary,
+): SpaceDirectory {
   return {
     // A REST response does not advance the socket receiver's ledger. The next
     // authoritative socket snapshot still has to be accepted at this version.
     waterline: current?.waterline ?? 0,
-    items: current?.items.some((item) => item.id === project.id)
-      ? current.items.map((item) => item.id === project.id ? project : item)
-      : [...(current?.items ?? []), project],
+    items: current?.items.some((item) => item.id === space.id)
+      ? current.items.map((item) => item.id === space.id ? space : item)
+      : [...(current?.items ?? []), space],
   };
 }
 
@@ -285,7 +286,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     return true;
   };
-  const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
+  const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
+  const spacesReady = useSpacesReady();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -409,7 +411,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
-  const { setForegroundWorkstreamId } = useWorkspaceSocket();
+  const { reconnect, setForegroundWorkstreamId, state: workspaceSocketState } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   useEffect(() => {
@@ -526,8 +528,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // has no list yet — which also keeps the skeletons up rather than
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
-        projects={projects.data?.items ?? []}
-        inactiveProjects={inactiveProjects.data?.items ?? []}
+        spaces={spaces.data?.items ?? []}
+        inactiveSpaces={inactiveSpaces.data?.items ?? []}
+        spacesReady={spacesReady}
+        // The rows on screen are the last ones the socket delivered and the
+        // connection is down. They stay, marked out of date, with the one retry
+        // there is: a list nothing fetches has nothing to refetch.
+        spacesOutOfDate={workspaceSocketState === 'unavailable'}
+        onRetrySpaces={reconnect}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having
@@ -618,42 +626,53 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
         }}
-        onCreateProject={async (input: CreateProjectRequest) => {
+        onCreateSpace={async (input: CreateSpaceRequest) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const created = await api.createProject(input);
-          queryClient.setQueryData<ProjectDirectory>(
-            ['projects'],
-            (current) => upsertProjectDirectory(current, created),
+          const created = await api.createSpace(input);
+          queryClient.setQueryData<SpaceDirectory>(
+            SPACES_QUERY_KEY,
+            (current) => upsertSpaceDirectory(current, created),
           );
           return created;
         }}
-        onAddWorkstreamToProject={async (projectId, workstreamId) => {
+        // A Channel keeps every Space it is already in: adding is additive, and
+        // the placement it produces is a second one rather than a move.
+        onAddChannelToSpace={async (spaceId, workstreamId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const updated = await api.addWorkstreamToProject(projectId, workstreamId);
-          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+          const updated = await api.addChannelToSpace(spaceId, workstreamId);
+          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
             ...current,
-            items: current.items.map((project) => project.id === updated.id ? updated : {
-              ...project,
-              workstreamIds: project.workstreamIds.filter((id) => id !== workstreamId),
-            }),
+            items: current.items.map((space) => space.id === updated.id ? updated : space),
           } : current);
+          // The placement is on the Channel's row, which only WorkspaceDO
+          // writes; its socket push is what puts the row under the Space.
+          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         }}
-        onReorderProjects={async (projectIds) => {
+        onRemoveChannelFromSpace={async (spaceId, workstreamId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const directory = await api.reorderProjects(projectIds);
-          queryClient.setQueryData(['projects'], directory);
-        }}
-        onRestoreProject={async (projectId) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const restored = await api.restoreProject(projectId);
-          queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
+          const updated = await api.removeChannelFromSpace(spaceId, workstreamId);
+          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
             ...current,
-            items: current.items.filter((project) => project.id !== restored.id),
+            items: current.items.map((space) => space.id === updated.id ? updated : space),
           } : current);
-          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+        }}
+        onReorderSpaces={async (spaceIds) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const directory = await api.reorderSpaces(spaceIds);
+          queryClient.setQueryData(SPACES_QUERY_KEY, directory);
+        }}
+        onRestoreSpace={async (spaceId) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const restored = await api.restoreSpace(spaceId);
+          queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
             ...current,
-            items: current.items.some((project) => project.id === restored.id)
-              ? current.items.map((project) => project.id === restored.id ? restored : project)
+            items: current.items.filter((space) => space.id !== restored.id),
+          } : current);
+          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+            ...current,
+            items: current.items.some((space) => space.id === restored.id)
+              ? current.items.map((space) => space.id === restored.id ? restored : space)
               : [...current.items, restored],
           } : current);
         }}

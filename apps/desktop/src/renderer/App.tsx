@@ -43,7 +43,7 @@ import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
-import { ProjectSpaceScreen } from './screens/project-space';
+import { SpaceDashboardScreen } from './screens/space-dashboard';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { WorkstreamScreen } from './screens/workstream';
@@ -296,8 +296,12 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
           <Routes>
             <Route element={<WorkstreamLandingScreen />} path="/" />
             <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/workstreams/new" />
-            <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
-            <Route element={<NewWorkstreamScreen workspace={workspace} projectId="route" />} path="/projects/:projectId/workstreams/new" />
+            <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} spaceId="route" />} path="/spaces/:spaceId/workstreams/new" />
+            {/* Projects are gone and their ids mean nothing here; the landing
+                route picks whatever this person should be looking at instead of
+                a dead screen naming an object that no longer exists. */}
+            <Route element={<Navigate replace to="/" />} path="/projects/*" />
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
