@@ -633,7 +633,10 @@ reconciliation.
 
 ### The owned snapshot and its weekly rebuild
 
-Configured deployments create sandboxes from `rally-terminal-1`, built by
+Configured deployments create sandboxes from the snapshot
+`DAYTONA_TERMINAL_SNAPSHOT` names — `rally-terminal-20260914-0610` as of this
+writing, adoption having replaced the original `rally-terminal-1` with dated
+names — built by
 `pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
 as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
 (`daytonaio/sandbox:0.9.0`; the environment variable of the same name
@@ -642,7 +645,8 @@ on their own, and the manifest cannot see a stale-but-working base, so
 `.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
 06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
 runs `terminal:verify-provider` against it, and opens a pull request labelled
-`daytona-snapshot-upgrade` that points both Wrangler configs at the result.
+`daytona-snapshot-upgrade` that points `wrangler.global.jsonc` — the one config
+that carries the variable — at the result.
 Adoption is that merge, rollback is its revert, and existing sandboxes are
 untouched either way. A red Monday job means the current snapshot keeps serving
 and the gap to Daytona's base widens by a week; an unmerged adoption pull
@@ -651,11 +655,15 @@ Daytona cannot hand back a cached image, and the stamp is readable inside every
 sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
 is a reused image, not a rebuild.
 
-Sandbox size is part of the snapshot, not of the sandboxes made from it. Daytona
-fixes it when the image is built — the snapshots API creates, activates,
-deactivates and removes a snapshot, and never resizes one, while `resources`
-exists only on the SDK's create-*from-image* parameters — so a sandbox created
-from a snapshot inherits whatever that snapshot was built with. Builds request
+Sandbox size is set by the snapshot, not by the create call that makes a sandbox
+from it. Daytona fixes a snapshot's size when the image is built — the snapshots
+API creates, activates, deactivates and removes a snapshot, and never resizes one,
+while `resources` exists only on the SDK's create-*from-image* parameters — so a
+sandbox created from a snapshot inherits whatever that snapshot was built with.
+One live sandbox can still be changed afterwards through `Sandbox.resize`, which
+grows CPU and memory hot and disk only while it is stopped; that is the lever for
+a single sandbox in trouble, not for what new ones get, and Rally's create path
+does not call it. Builds request
 `TERMINAL_SNAPSHOT_RESOURCES` from `snapshot-manifest.ts`, 2 vCPU / 4 GiB / 8 GiB,
 and fail naming each field Daytona reports back differently, because an
 under-sized image passes every capability probe the acceptance gate runs and
@@ -806,8 +814,10 @@ a decision, but Daytona's default for a build that passes no `resources`, which
 is what every snapshot through `rally-terminal-20260914-0610` was built with. One
 core and a gigabyte is a thin allowance for what the plugin prompt tells the
 model to do in there — install a toolchain, check a repository out, run its
-tests — and nothing can be done about it once a sandbox exists, because the size
-is fixed when the snapshot is built. 2 / 4 / 8 is the team's number, chosen
+tests — and the snapshot is where that is decided, because its size is fixed when
+the image is built and every sandbox made from it inherits that. (`Sandbox.resize`
+can grow one live sandbox, but nothing in Rally's create path calls it, so it
+remedies a sandbox rather than setting what new ones get.) 2 / 4 / 8 is the team's number, chosen
 rather than measured; it matches Daytona's own `daytona-medium` shape instead of
 being a lopsided one.
 
