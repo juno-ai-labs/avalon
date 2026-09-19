@@ -180,15 +180,28 @@ operations, so the retained-content containment preflight and its triggers stay
 the one fence and a Channel under grant authority writes a grant exactly as a
 direct share does.
 
+The provenance is committed **after** the audience it describes, not before:
+applying a source returns a plan, and the confirmation that follows the
+canonical operations is what records the source and the readers it seated. A
+source written first would survive a caller that never got to seat anybody and
+would then account for access nobody has. The order is therefore plan, apply,
+confirm — and a Channel that narrows must seat what a surviving source supplies
+*before* it narrows, whether the narrowing comes from a Space leaving or from
+the Channel's own scope going private.
+
 What a Space-derived grant does *not* do is enter the shared scope-grant
 directory. `scope_grants.source_kind` records it, and `ScopeGrantStorage`
 suppresses the directory writer for those rows. The directory is discovery, not
 admission: a Space-derived reader finds the Channel through the Organization's
 Space directory, and a directory row per reader per Channel would make
 General — which holds every Channel in the Organization — publish one row per
-member per Channel into a single flat candidate index. Direct provenance is
-sticky and wins, so a grant the Channel also holds directly stays published and
-stays active when the Space leaves.
+member per Channel into a single flat candidate index.
+
+Direct provenance is sticky and wins in both directions, decided at the
+authority rather than by which mutation arrived last: a Space cannot claim a row
+the Channel already held directly, and a Space withdrawing from one leaves it
+active. So a grant the Channel also holds directly stays published and stays
+active when the Space leaves, whichever way the two writes race.
 
 ### Invitation admission
 
