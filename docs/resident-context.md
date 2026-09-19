@@ -17,7 +17,7 @@ mechanism. The product requirements are in
 | `apps/api/src/durable-objects/workstream-resident-context-storage.ts` | The ledger over the conversation object's SQLite: record a load, invalidate a kind, drain pending deliveries, render the committed or proposed prompt sections, apply a compaction once per event. |
 | `apps/api/src/durable-objects/workstream-resident-context-protocol.ts`, `apps/api/src/runtime/resident-context-port.ts` | The `residentContext` object-port authority a producer of blocks uses: what is resident, record a load, invalidate. Resolves in-object under the persistent loop. |
 | `apps/api/src/services/terminal/instruction-files.ts` | The Terminal kind's discovery primitives: the candidate chain from a set of touched paths, and the probe script a sandbox command carries. |
-| `apps/api/src/services/terminal/instructions.ts` | The Terminal plugin's glue over the port: build a probe fragment from the known-resident set, split and sanitize the trailer, record, refuse a mutation. |
+| `apps/api/src/services/terminal/instructions.ts` | The Terminal plugin's glue over the port: build a probe fragment from the known-resident set, split and sanitize the trailer, record. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` (`settlePendingSteersAtStep`, `commitBindCompaction`, `bindMessagePositionsBySourceKind`) | Derived inputs appended at the settled step in the same commit that closes them; the compaction commit that carries the ledger's transitions; the positions the summariser must not see. |
 | `apps/api/src/durable-objects/substream-agent.ts` (`persistentLoopRuntime`, `settlePersistentLoopStep`) | Drains pending deliveries into the settled step, serves `renderResidentContext` and `prepareResidentContextCompaction`, applies the compaction transitions inside the checkpoint's transaction. |
 | `packages/agent-harness/src/index.ts` (`HarnessResidentContext`), `bind-runtime.ts` | The host port: `render()` placed last in the stable system prompt; `prepareCompaction()` before the summary turn, whose answer shapes the compacted system message and the summariser's input. |
@@ -33,18 +33,16 @@ and renders `./<path>`.
 
 **Load.** A producer finds a block and calls `recordLoaded`. A block already in
 context at that content is reported as already resident and nothing happens.
-The known set a producer's gate checks against (`residentBlocks`) holds only
-blocks the model has seen: recorded, delivered, current. A block recorded but
-not yet delivered is not in it, so a second mutation in the same batch is
-refused like the first, and the retry after the settled step, when the message
-has landed, proceeds.
+The known set a producer checks against (`residentBlocks`) holds only blocks
+the model has seen: recorded, delivered, current. A block recorded but not yet
+delivered is not in it, so a second read in the same batch reports the same
+file again and the ledger records nothing twice.
 Otherwise every other content for the same id is retired (a transcript block to
 `none`, a prompt-resident one flagged `superseded` so the prefix does not change
 mid-run), and the new block is written in `transcript` residency with a pending
-delivery. The Terminal kind loads from a probe that rides the tool's own sandbox
-command: after a read, or before a mutation in `abort` mode, where a candidate
-that is not yet resident stops the command with exit 52 before anything
-changes and the tool returns `instructions_pending`. The probe's JSON trailer
+delivery. The Terminal kind loads from a probe that rides a read's own sandbox command,
+after the read, and reports what it found; no mutation carries one or waits
+for one. The probe's JSON trailer
 starts with a marker minted for that one invocation, and the parser is handed
 the same value; the tool's own output, which is untrusted and precedes the
 trailer, cannot contain it. The repository bootstrap,
@@ -140,23 +138,16 @@ including the exception this subsystem introduces
   `terminal_instruction_probe_failed` and leaves the tool's or bootstrap's own
   outcome alone; the next touch retries, and the root is rediscovered by every
   chain and by the next run's `refreshed` bootstrap.
-- The first ledger failure in a run (the known set could not be read, a record
-  failed, a stopped command printed no trailer) turns the gate off for the rest
-  of that run: every later probe runs in report mode, so discovery and
-  recording keep being attempted and no mutation waits on a ledger that is not
-  answering. A mutation the probe had already stopped when that happened is
-  refused once with `instructions_unavailable`, which tells the model the retry
-  proceeds. Without this, a stopped mutation would be refused again on every
-  retry for instructions that never arrive.
-- A mutation whose governing file is not resident returns `instructions_pending`
-  having changed nothing; the instructions are recorded, arrive with that batch,
-  and the retry after the settled step proceeds. A second mutation beneath the
-  same file in the same batch is refused the same way, because the model has
-  not seen the message yet. The `read_file` tool never waits; the read that
-  precedes an edit does, because the edit will. `run_command` and `import_resource`
-  probe in a command of their own before the mutation, since neither the model's
-  command nor the resource bridge can carry the fragment; every other tool's
-  probe rides its own command.
+- A ledger failure (the known set could not be read, a record failed) is
+  reported the same way and changes nothing about the read; the next read
+  records again.
+- A mutation never waits for its instructions. They arrive through the read an
+  edit starts with, which the Terminal prompt requires, or through `read_file`;
+  a whole-file write, a patch, a command or an import beneath a file no read
+  has touched proceeds without them, and the next read delivers them. The
+  `instructions_pending` refusal that held a mutation until then was removed on
+  2026-09-19; [`terminal-workspaces.md`](terminal-workspaces.md#changelog)
+  records why.
 - Two limits are defined and, at the time of writing, open placeholders in
   `blocks.ts`, per
   [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md):
@@ -186,8 +177,9 @@ prompt blocks, the lifetime count, replayed compaction events, and invalidation.
 appended at the settled step, closed in the same commit, and not appended twice
 on replay. `apps/api/test/terminal-runtime.test.ts` runs the real probe and
 ledger through the runtime's simulated sandbox: the read that delivers the
-root, the refused first mutation and its retry, the probe before a command's
-durable task, and the checkout that retires everything.
+root, the write beneath an unread file that proceeds and the read after it
+that records the chain, the command that carries no probe, and the checkout
+that retires everything.
 `apps/api/test/terminal-repository.test.ts` proves the bootstrap carries the
 probe after the checkout and records the root.
 `packages/agent-harness/src/index.test.ts` proves the compacted system message
@@ -229,6 +221,26 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 `realpath` containment are what keep a repository from planting
 `AGENTS.md -> .git/config` and having the probe deliver the checkout's Git
 credential header.
+
+## Changelog
+
+### 2026-09-19 — The Terminal gate is gone; the ledger decides only what a read delivers
+
+**What changed:** The Terminal mutation gate the entry below describes no
+longer exists. A whole-file write, patch, command or import beneath an unread
+instruction file proceeds; the probe rides only the two reads and reports what
+it finds, and `residentBlocks` decides what that read delivers, not whether
+anything is refused. The probe's `pending` flag, which only the gate read, is
+gone with it.
+
+**Why:** Recorded under the same date in
+[`terminal-workspaces.md`](terminal-workspaces.md#changelog): the gate taxed
+every fresh agent's first mutation with a refused call, and the read an edit
+starts with already delivers the same files.
+
+**What a future change must respect:** Nothing here refuses a tool. A change
+that needs a file's instructions in context before an edit has to put them
+there through a read.
 
 ### 2026-09-09 — The gate counts delivered blocks, the render reads prompt rows, unknown kinds are skipped
 

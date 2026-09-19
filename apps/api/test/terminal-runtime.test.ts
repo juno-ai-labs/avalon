@@ -1,7 +1,7 @@
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import {
   type TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
+import { TERMINAL_PYDANTIC_REQUIREMENT, TERMINAL_SNAPSHOT_PYLIB } from "../src/services/terminal/snapshot-manifest";
 import {
   createDaytonaTerminalRuntime,
   TERMINAL_READ_TEXT_PAGE_PYTHON,
@@ -24,6 +25,7 @@ import {
   type TerminalResourceBridge,
 } from "../src/services/terminal/runtime";
 import { createTerminalInstructionFiles, type TerminalInstructionFiles } from "../src/services/terminal/instructions";
+import { APPLY_PATCH_SCRIPT } from "../src/services/terminal/patch-format";
 import { WorkstreamResidentContextStorage } from "../src/durable-objects/workstream-resident-context-storage";
 import { createResidentContextPortFactory } from "../src/runtime/resident-context-port";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -80,12 +82,8 @@ afterEach(() => {
 function splitProbe(command: string): { rest: string; fragment: string | null } {
   const start = command.indexOf("( set +e; python3 -c '");
   if (start === -1) return { rest: command, fragment: null };
-  const endings = [") || true", ") || exit $?"]
-    .map((ending) => ({ ending, index: command.indexOf(ending, start) }))
-    .filter((candidate) => candidate.index !== -1)
-    .sort((left, right) => left.index - right.index);
-  const end = endings[0]!;
-  const stop = end.index + end.ending.length;
+  const ending = ") || true";
+  const stop = command.indexOf(ending, start) + ending.length;
   return { rest: command.slice(0, start) + command.slice(stop), fragment: command.slice(start, stop) };
 }
 
@@ -223,12 +221,9 @@ function fixture(
   provider.runUtilityCommand = vi.fn(async (id, input) => {
     // A command carrying the instruction probe runs the probe for real, against
     // the temp root, and the rest of the command against the simulated shell.
-    // In abort mode a pending candidate stops the command exactly as the
-    // sandbox would: nothing after the probe runs.
     const { rest, fragment } = splitProbe(input.command);
     if (fragment) {
       const executed = spawnSync("bash", ["-c", fragment.split("'/workspace'").join(`'${probeRoot}'`)], { encoding: "utf8" });
-      if (executed.status === 52) return { exitCode: 52, stdout: executed.stdout, stderr: "" };
       const result = await provider.runUtilityCommand(id, { ...input, command: rest });
       return { ...result, stdout: `${result.stdout}${executed.stdout}` };
     }
@@ -646,6 +641,128 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining("git apply --check"),
     }));
+  });
+
+  it("applies a *** Begin Patch envelope with the vendored reference applier written beside the patch", async () => {
+    const { provider, runtime, files } = fixture();
+    const original = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
+    const commands: string[] = [];
+    let outcome: { exitCode: number; stdout: string; stderr: string; timedOut?: boolean } = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    vi.mocked(provider.runUtilityCommand).mockImplementation(async (id, input) => {
+      if (input.operation === "file.apply_patch" && input.command.includes(".apply_patch.py")) {
+        commands.push(input.command);
+        return outcome;
+      }
+      return original(id, input);
+    });
+    const patch = [
+      "",
+      "*** Begin Patch",
+      "*** Update File: src/file.txt",
+      "@@",
+      "-hello",
+      "+bye",
+      "*** Add File: docs/new.txt",
+      "+first",
+      "+second",
+      "*** End Patch",
+      "",
+    ].join("\n");
+    await expect(runtime.applyPatch(context, patch)).resolves.toEqual({
+      files: [
+        { path: "src/file.txt", operation: "edited", additions: 1, deletions: 1 },
+        { path: "docs/new.txt", operation: "created", additions: 2, deletions: 0 },
+      ],
+      additions: 3,
+      deletions: 1,
+    });
+    // The applier travels with the patch: the vendored text, unmodified, and
+    // the patch without the blank line the model put before its envelope.
+    const script = [...files.keys()].find((path) => path.endsWith(".apply_patch.py"))!;
+    const written = [...files.keys()].find((path) => path.endsWith(".patch"))!;
+    expect(new TextDecoder().decode(files.get(script))).toBe(APPLY_PATCH_SCRIPT);
+    expect(new TextDecoder().decode(files.get(written))).toBe(patch.slice(1));
+    expect(commands[0]).toContain(`python3 '${script}' < '${written}'`);
+    expect(commands[0]).toContain("import pydantic");
+    expect(commands[0]).not.toContain("git apply");
+    // The install is the snapshot's pin, staged and moved into place as one
+    // step, and the snapshot's own copy is searched first.
+    expect(commands[0]).toContain(`--target "$staging" '${TERMINAL_PYDANTIC_REQUIREMENT}'`);
+    expect(commands[0]).toContain(`mv -T -- "$staging" "$lib"`);
+    expect(commands[0]).toContain(`pythonpath='${TERMINAL_SNAPSHOT_PYLIB}':"$lib"`);
+    // Every path the patch names is contained before the applier runs.
+    expect(commands[0]).toContain("target='/workspace/src/file.txt'");
+    expect(commands[0]).toContain("target='/workspace/docs/new.txt'");
+    // A path an `*** Add File:` section would create must not exist yet: the
+    // applier would truncate it and still print `Done!`. The preflight is the
+    // command's own shell, so it runs here against a scratch root: clean until
+    // the destination appears, then exit 54 naming it, while an updated file's
+    // existence is not a collision.
+    const root = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands[0]!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${root}`);
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "src/file.txt"), "hello\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
+      mkdirSync(join(root, "docs"));
+      writeFileSync(join(root, "docs/new.txt"), "kept\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 54, stdout: "docs/new.txt\n" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    outcome = { exitCode: 54, stdout: "docs/new.txt\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied: `docs/new.txt` already exists, and `*** Add File:` would replace it. Read it and change it in place, or choose another path.",
+    });
+    // Containment runs in that same shell, before the applier: a path that
+    // resolves outside the root through a symlink exits 43.
+    outcome = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    await expect(runtime.applyPatch(context, [
+      "*** Begin Patch", "*** Update File: src/escape/passwd", "@@", "-root", "+toor", "*** End Patch",
+    ].join("\n"))).resolves.toBeDefined();
+    const escapeRoot = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands.at(-1)!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${escapeRoot}`);
+      mkdirSync(join(escapeRoot, "src/escape"), { recursive: true });
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0 });
+      rmSync(join(escapeRoot, "src/escape"), { recursive: true });
+      symlinkSync("/etc", join(escapeRoot, "src/escape"));
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 43 });
+    } finally {
+      rmSync(escapeRoot, { recursive: true, force: true });
+    }
+    // A rejected patch's classification comes first and the patch's own
+    // context lines follow, still at exit 0, so a file that ends in `Done!`
+    // cannot forge success; a crash's last line is the exception; a timeout,
+    // an empty output and a failed install each say what they are.
+    outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\nDone!\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied: Invalid Context 0. Re-read the affected files, regenerate the patch from their current contents, and retry.",
+    });
+    outcome = { exitCode: 1, stdout: "Traceback (most recent call last):\n  File \"apply_patch.py\", line 1\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("The patch could not be applied: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff."),
+    });
+    outcome = { exitCode: 0, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("the applier printed nothing"),
+    });
+    outcome = { exitCode: 124, stdout: "", stderr: "", timedOut: true };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("did not finish in time"),
+    });
+    outcome = { exitCode: 53, stdout: "ERROR: No matching distribution found for pydantic==2.13.5\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("(ERROR: No matching distribution found for pydantic==2.13.5)"),
+    });
+    outcome = { exitCode: 43, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "path_outside_root" });
   });
 
   it("refuses every write path before it touches the provider at all", async () => {
@@ -1328,64 +1445,58 @@ describe("Daytona Terminal runtime", () => {
       expect(probeFailures).toEqual([]);
     });
 
-    it("refuses the first mutation beneath an unread instruction file, records it, and lets the retry through", async () => {
+    it("lets a mutation beneath an unread instruction file proceed, and delivers the file with the read an edit starts with", async () => {
       const { runtime, ledger, files, probeRoot } = checkout();
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "never write generated files\n");
       const bytes = new TextEncoder().encode("new\n");
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_pending",
-        message: "Repository instructions for `./`, `./src/` were loaded with this call and nothing was changed. Read the `Instructions added from` message that follows, then retry the same call.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
-      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
-      // Recorded is not yet seen: a second mutation in the same batch is refused
-      // the same way, and nothing is recorded twice.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({ code: "instructions_pending" });
-      expect(ledger.allBlocks()).toHaveLength(2);
-      // The settled step delivers; the retry after it proceeds.
-      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // A whole-file write carries no probe: it is not refused, and it discovers nothing.
       await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
       expect(files.has("/workspace/src/new.txt")).toBe(true);
-      // An edit's read and a patch check the same way; both are resident now.
+      expect(ledger.pendingDeliveries()).toEqual([]);
+      // The read an edit starts with records the chain for delivery with that batch.
       await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
-      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
-        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
-      // Editing the instruction file itself delivers the new content once more.
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
+      // Recorded is not yet seen: a second read in the same batch reports the
+      // same files again, and nothing is recorded twice.
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      expect(ledger.allBlocks()).toHaveLength(2);
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // Editing the instruction file itself delivers the new content once more, through the next read.
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "revised\n");
-      await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "instructions_pending" });
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
       expect(ledger.allBlocks().filter((block) => block.blockId === "src/AGENTS.md").map((block) => [block.content, block.residency]).sort())
         .toEqual([["never write generated files\n", "none"], ["revised\n", "transcript"]]);
+      // A patch carries no probe either, and proceeds before that message has landed.
+      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
+        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
     });
 
-    it("refuses once with instructions_unavailable when the ledger fails, then stops gating for the run", async () => {
-      const { runtime, ledger, files, probeFailures } = checkout();
-      const bytes = new TextEncoder().encode("new\n");
+    it("reports a ledger failure once, leaves the read's outcome alone, and keeps discovering on the next read", async () => {
+      const { runtime, ledger, probeFailures } = checkout();
       vi.spyOn(ledger, "recordLoaded").mockImplementationOnce(() => { throw new Error("ledger unavailable"); });
-      // The probe stopped the write; the ledger could not record what it found,
-      // so no instructions message will follow and the refusal says so.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_unavailable",
-        message: "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      // The probe found the root file and the ledger could not record it: the
+      // read still succeeds, and the failure is reported rather than surfaced.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
+      expect(ledger.pendingDeliveries()).toEqual([]);
       expect(probeFailures).toEqual(["record"]);
-      // The retry is not refused again: the probe reports without gating, and
-      // recording is attempted as before.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
-      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      // The next read records it as before.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md"]);
       expect(probeFailures).toEqual(["record"]);
     });
 
-    it("probes before admitting a command's durable task and retires every block when the checkout is replaced", async () => {
+    it("admits a command without a probe of its own and retires every block when the checkout is replaced", async () => {
       const { runtime, ledger, objectStore, provider, resources, publisher, coordinator, instructions } = checkout();
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))
-        .rejects.toMatchObject({ code: "instructions_pending" });
-      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+      // A command runs the model's own text, which the probe cannot ride, and
+      // pays no probe command first: it is admitted at once and discovers nothing.
+      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
+      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 1 });
+      expect(ledger.pendingDeliveries()).toHaveLength(0);
+      // A read is what discovers the root file.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries()).toHaveLength(1);
       ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
       expect(ledger.residentBlocks({ kind: "repository_instructions" })).toHaveLength(1);
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
 
       const checkedOut: TerminalCheckoutRepositoryOutput = {
         repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
