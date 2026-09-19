@@ -324,10 +324,10 @@ describe("boundary contracts", () => {
       "run_cost_limit_exceeded",
       "context_limit_exceeded",
       // Near-namesakes that must not be merged: `context_limit_exceeded` is
-      // Avalon declining to send a run it cannot make fit, and this one is an
-      // endpoint refusing a prompt Avalon believed would fit. A member is told
+      // Rally declining to send a run it cannot make fit, and this one is an
+      // endpoint refusing a prompt Rally believed would fit. A member is told
       // something different by each, and an operator learns from this one that
-      // the window Avalon sized against is wrong.
+      // the window Rally sized against is wrong.
       "context_length_exceeded",
       "tool_receipt_persistence_failed",
       "run_state_persistence_failed",
