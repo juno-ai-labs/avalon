@@ -135,13 +135,20 @@ describe("space contracts", () => {
     }).success).toBe(false);
   });
 
-  it("given the refusal vocabulary, when a code is read, then it is one of the nine the authority can produce", () => {
+  it("given the refusal vocabulary, when a code is read, then it is one of the ten the authority can produce", () => {
+    // Two narrowings that read alike and are not: `space_audience_incompatible`
+    // is a *membership* removal that would strand a reader with no Space left
+    // to discover the Channel through, and `channel_scope_locked_by_space` is
+    // the Channel's own scope refusing to go private while a Space still makes
+    // it Organization-wide. One is fixed by adding a Space, the other by
+    // leaving one, so a single code would send an operator the wrong way.
     expect([...SpaceErrorCodeSchema.options]).toEqual([
       "space_access_denied",
       "space_not_found",
       "space_protected",
       "space_membership_final",
       "space_audience_incompatible",
+      "channel_scope_locked_by_space",
       "space_membership_content_fence",
       "space_default_audience_mismatch",
       "space_revision_conflict",
