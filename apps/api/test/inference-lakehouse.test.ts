@@ -184,6 +184,7 @@ describe("inference lakehouse", () => {
       latencyMs: 71,
       inputTokens: 8,
       outputTokens: 2,
+      costCents: 0.0456,
       responseBytes: 11,
       responsePayload: { id: "structured-generation", choices: [] },
     });
@@ -221,6 +222,9 @@ describe("inference lakehouse", () => {
         event_id: "structured-request-1:attempt",
         trace_id: "structured-trace-1",
         latency_ms: 71,
+        // A structured call carried no cost at all, so every classifier,
+        // extraction and repair call was free as far as spend reporting knew.
+        cost_microusd: 456,
         response: { id: "structured-generation", choices: [] },
       }),
     ]));

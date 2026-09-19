@@ -1127,6 +1127,147 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ embeddings: [[1, 0], [0, 1]] });
   });
 
+  /**
+   * `cost_microusd` read `0` on every OpenRouter row in the lakehouse. The
+   * usage object arrived complete in every respect except the one Rally bills
+   * on: OpenRouter reports `cost` only when the request opts into usage
+   * accounting, and nothing here asked for it.
+   */
+  it("asks OpenRouter for usage accounting on a structured call and bills what it returns", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({
+        id: "gen-1",
+        model: "test/model",
+        choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48, cost: 0.000123 },
+      });
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "usage_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(bodies[0]).toMatchObject({ usage: { include: true } });
+    expect(diagnostics.at(-1)).toMatchObject({
+      stage: "complete",
+      success: true,
+      inputTokens: 40,
+      outputTokens: 8,
+      costCents: 0.0123,
+    });
+  });
+
+  /**
+   * A repaired call is billed twice and was recorded once. The response that
+   * triggered the repair produced a `model_request` row and no terminal one,
+   * so its spend never reached the lakehouse and its request row dangled.
+   */
+  it("records the spend of a response that triggered repair", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    let call = 0;
+    const fetcher = vi.fn(async () => {
+      call += 1;
+      return Response.json({
+        id: `gen-${call}`,
+        model: "test/model",
+        choices: [{
+          message: { content: call === 1 ? "not json at all" : '{"ok":true}' },
+          finish_reason: "stop",
+        }],
+        usage: {
+          prompt_tokens: 40,
+          completion_tokens: 8,
+          total_tokens: 48,
+          cost: call === 1 ? 0.000111 : 0.000222,
+        },
+      });
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 1,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "repair_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).resolves.toEqual({ ok: true });
+
+    // Both provider calls were paid for, so both owe a terminal diagnostic —
+    // the lakehouse writes an attempt row for `complete` and nothing else.
+    const terminal = diagnostics.filter((diagnostic) => diagnostic.stage === "complete");
+    expect(terminal.map((diagnostic) => ({
+      success: diagnostic.success,
+      failureKind: diagnostic.failureKind,
+      costCents: diagnostic.costCents,
+    }))).toEqual([
+      { success: false, failureKind: "invalid_json", costCents: 0.0111 },
+      { success: true, failureKind: undefined, costCents: 0.0222 },
+    ]);
+    // One terminal diagnostic per provider request, joinable to its own
+    // `model_request` row.
+    expect(new Set(terminal.map((diagnostic) => diagnostic.inferenceRequestId)).size).toBe(2);
+  });
+
+  it("keeps the cost of a response whose validation then failed", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async () => Response.json({
+      id: "gen-1",
+      model: "test/model",
+      choices: [{ message: { content: '{"ok":"wrong type"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48, cost: 0.000333 },
+    })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "failed_validation_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => z.object({ ok: z.boolean() }).parse(value),
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "ZodError" });
+
+    // The repair retry is spent first, then the second rejection is terminal.
+    // Every one of those responses arrived and was billed.
+    const terminal = diagnostics.filter((diagnostic) => diagnostic.stage === "complete");
+    expect(terminal).toHaveLength(2);
+    expect(terminal.every((diagnostic) => diagnostic.success === false)).toBe(true);
+    expect(terminal.map((diagnostic) => diagnostic.costCents)).toEqual([0.0333, 0.0333]);
+    expect(terminal.at(-1)).toMatchObject({
+      failureKind: "validation_error",
+      inputTokens: 40,
+      outputTokens: 8,
+    });
+  });
+
   it("emits a failure diagnostic for every failed structured provider attempt", async () => {
     const diagnostics: StructuredModelDiagnostic[] = [];
     const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
@@ -2651,6 +2792,10 @@ describe("agent harness", () => {
       providerInvocationModel: "grok-4.3",
       payload: { parallel_tool_calls: true },
     });
+    // Azure is priced from Rally's own rate card, so it is never asked for
+    // usage accounting and its recorded request must not claim otherwise.
+    expect(requestBody).not.toHaveProperty("usage");
+    expect(requests[0]?.payload).not.toHaveProperty("usage");
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({
       success: true,
@@ -2660,6 +2805,62 @@ describe("agent harness", () => {
     // Bind rounds configured-rate billing to the inference ledger's 4-decimal
     // cent precision.
     expect(attempts[0]!.costCents).toBe(0.026);
+  });
+
+  it("asks OpenRouter for usage accounting on a streamed turn and bills what it returns", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const requests: InferenceRequestEvent[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        { choices: [{ delta: { content: "priced" }, finish_reason: "stop" }] },
+        {
+          choices: [],
+          usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150, cost: 0.000585 },
+        },
+      ]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { workspaceId: "workspace-openrouter-usage-accounting" }),
+      onInferenceRequest: (event) => { requests.push(event); },
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "priced" });
+    expect(requestBody).toMatchObject({ stream: true, usage: { include: true } });
+    // The recorded request is the request: the lakehouse `request` column is
+    // read during incidents as what Rally actually sent.
+    expect(requests[0]?.payload).toMatchObject({ usage: { include: true } });
+    expect(attempts[0]?.costCents).toBe(0.0585);
+    expect(outcome.usage?.cost_cents).toBe(0.0585);
+  });
+
+  /**
+   * The column this change exists to make trustworthy must not be manufactured
+   * by the path that reports it. A provider that returns usage without `cost`
+   * has reported nothing, which is a different fact from a free call, and
+   * `inference-lakehouse.ts` writes the column whenever the attempt carries a
+   * number.
+   */
+  it("omits the attempt's cost when the provider reported none", async () => {
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async () => streamResponse([
+      { choices: [{ delta: { content: "unpriced" }, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } },
+    ])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { workspaceId: "workspace-openrouter-unpriced" }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "unpriced" });
+    expect(attempts[0]?.inputTokens).toBe(120);
+    expect(attempts[0]).not.toHaveProperty("costCents");
+    // The run's own total is arithmetic and still defaults to zero.
+    expect(outcome.usage?.cost_cents).toBe(0);
   });
 
   it("routes GPT-5.6 Sol through its Azure deployment", async () => {

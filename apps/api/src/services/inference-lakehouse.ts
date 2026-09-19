@@ -358,6 +358,9 @@ export function captureStructuredInferenceDiagnostic(
     ...(diagnostic.cachedInputTokens !== undefined
       ? { cached_input_tokens: diagnostic.cachedInputTokens }
       : {}),
+    ...(diagnostic.costCents !== undefined
+      ? { cost_microusd: Math.max(0, Math.round(diagnostic.costCents * 10_000)) }
+      : {}),
     ...(diagnostic.responseBytes !== undefined ? { response_bytes: diagnostic.responseBytes } : {}),
     ...(diagnostic.responsePayload ? { response: diagnostic.responsePayload } : {}),
     ...(diagnostic.providerError ? { error: { providerError: diagnostic.providerError } } : {}),

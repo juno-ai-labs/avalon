@@ -5,6 +5,7 @@ import type {
   TerminalSandboxSnapshot,
   TerminalSandboxWaitOptions,
 } from "./provider-contract";
+import type { TerminalProviderRequestMeasurement } from "./tracing";
 
 export type SupportedTerminalConfiguration = Extract<
   TerminalRegionConfiguration,
@@ -40,16 +41,26 @@ export type TerminalProviderRpcResult<T> =
         | { kind: "provider"; message: string };
     };
 
+/**
+ * Session-scoped instrumentation: one callback for the whole session, invoked
+ * out of band. Only observations that need nothing but the environment belong
+ * here. Per-request measurement is deliberately *not* one of them — see
+ * `observeRequest` on `TerminalProviderRpcCallbacks`.
+ */
 export interface TerminalProviderRpcInstrumentation {
   observe?: (
     measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observe"]>>[0],
   ) => void | Promise<void>;
-  observeRequest?: (
-    measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observeRequest"]>>[0],
-  ) => void | Promise<void>;
 }
 
 export interface TerminalProviderRpcCallbacks {
+  /**
+   * Per-call rather than per-session, and awaited rather than deferred: one
+   * session serves every concurrent tool on a run, so a session callback can
+   * name neither the tool nor its trace, and a deferred one races the result
+   * of its own call. `docs/terminal-workspaces.md` records both failures.
+   */
+  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => Promise<void>;
   assertSubmissionAuthority?: () => Promise<TerminalProviderRpcCallbackResult>;
   onSubmitted?: (providerTaskId: string) => Promise<TerminalProviderRpcCallbackResult>;
   initiallyAborted?: boolean;
