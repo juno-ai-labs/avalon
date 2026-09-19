@@ -1687,7 +1687,12 @@ it only with the GET/POST requests documented here.
 R2 SQL is a Cloudflare beta surface. If the HTTP contract has changed, use
 Cloudflare's current [R2 SQL query
 guide](https://developers.cloudflare.com/r2-sql/query-data/) rather than
-guessing. The table and bucket names in this runbook remain repository-owned.
+guessing. The table and bucket names in this runbook remain repository-owned:
+`config/inference-lakehouse.json` declares the Data Catalog namespace and
+table, and `pnpm docs:check` fails when a query here names anything else. It
+does, because all three queries here once named the product instead of the
+namespace, and the table they asked for did not exist. They were found during
+an incident rather than before one.
 Start with the narrow typed columns and time window below; selecting every JSON
 column across an unbounded table is both an unnecessary exposure of customer
 content and an unnecessary scan.
@@ -1727,7 +1732,7 @@ SELECT
   cost_microusd,
   response_bytes,
   payload_object_key
-FROM rally.llm_inference
+FROM avalon.llm_inference
 WHERE workstream_id = '<workstream-uuid>'
   AND substream_id = '0'
   AND captured_at >= '2026-08-24T19:00:00Z'
@@ -1761,6 +1766,12 @@ Keep the response in the scratch directory rather than printing it into a
 terminal transcript. Inspect only the identifier and typed columns needed to
 choose the `inference_request_id` for the next query.
 
+`cost_microusd` is the provider's own figure and is trustworthy only from
+2026-09-19. Before that date it reads `0` on every OpenRouter row, because the
+request did not ask OpenRouter for usage accounting, and is absent on every
+structured row; Azure rows were always priced correctly. Read an older row's
+spend from `input_tokens`/`output_tokens` and the model, not from this column.
+
 Use `substream_id` to isolate the product conversation and `request_id` to
 isolate one API/harness run. `"0"` is the current main substream. An inline
 child remains in the same product substream as its root; identify it by its own
@@ -1790,7 +1801,7 @@ SELECT
   payload_object_key,
   payload_sha256,
   payload_bytes
-FROM rally.llm_inference
+FROM avalon.llm_inference
 WHERE inference_request_id = '<inference-request-id>'
 ORDER BY captured_at ASC
 LIMIT 10;
@@ -1816,7 +1827,7 @@ Interpret the pair rather than one row in isolation:
 
   ```sql
   SELECT event_id, COUNT(*) AS copies
-  FROM rally.llm_inference
+  FROM avalon.llm_inference
   WHERE inference_request_id = '<inference-request-id>'
   GROUP BY event_id
   HAVING COUNT(*) > 1;

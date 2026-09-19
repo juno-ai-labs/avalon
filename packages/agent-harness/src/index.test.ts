@@ -1127,6 +1127,51 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ embeddings: [[1, 0], [0, 1]] });
   });
 
+  /**
+   * `cost_microusd` read `0` on every OpenRouter row in the lakehouse. The
+   * usage object arrived complete in every respect except the one Rally bills
+   * on: OpenRouter reports `cost` only when the request opts into usage
+   * accounting, and nothing here asked for it.
+   */
+  it("asks OpenRouter for usage accounting on a structured call and bills what it returns", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({
+        id: "gen-1",
+        model: "test/model",
+        choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48, cost: 0.000123 },
+      });
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "usage_accounting",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(bodies[0]).toMatchObject({ usage: { include: true } });
+    expect(diagnostics.at(-1)).toMatchObject({
+      stage: "complete",
+      success: true,
+      inputTokens: 40,
+      outputTokens: 8,
+      costCents: 0.0123,
+    });
+  });
+
   it("emits a failure diagnostic for every failed structured provider attempt", async () => {
     const diagnostics: StructuredModelDiagnostic[] = [];
     const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
@@ -2651,6 +2696,10 @@ describe("agent harness", () => {
       providerInvocationModel: "grok-4.3",
       payload: { parallel_tool_calls: true },
     });
+    // Azure is priced from Rally's own rate card, so it is never asked for
+    // usage accounting and its recorded request must not claim otherwise.
+    expect(requestBody).not.toHaveProperty("usage");
+    expect(requests[0]?.payload).not.toHaveProperty("usage");
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({
       success: true,
@@ -2660,6 +2709,36 @@ describe("agent harness", () => {
     // Bind rounds configured-rate billing to the inference ledger's 4-decimal
     // cent precision.
     expect(attempts[0]!.costCents).toBe(0.026);
+  });
+
+  it("asks OpenRouter for usage accounting on a streamed turn and bills what it returns", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const requests: InferenceRequestEvent[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        { choices: [{ delta: { content: "priced" }, finish_reason: "stop" }] },
+        {
+          choices: [],
+          usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150, cost: 0.000585 },
+        },
+      ]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { workspaceId: "workspace-openrouter-usage-accounting" }),
+      onInferenceRequest: (event) => { requests.push(event); },
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "priced" });
+    expect(requestBody).toMatchObject({ stream: true, usage: { include: true } });
+    // The recorded request is the request: the lakehouse `request` column is
+    // read during incidents as what Rally actually sent.
+    expect(requests[0]?.payload).toMatchObject({ usage: { include: true } });
+    expect(attempts[0]?.costCents).toBe(0.0585);
+    expect(outcome.usage?.cost_cents).toBe(0.0585);
   });
 
   it("routes GPT-5.6 Sol through its Azure deployment", async () => {

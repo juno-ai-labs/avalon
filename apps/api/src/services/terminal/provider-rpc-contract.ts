@@ -5,6 +5,7 @@ import type {
   TerminalSandboxSnapshot,
   TerminalSandboxWaitOptions,
 } from "./provider-contract";
+import type { TerminalProviderRequestMeasurement } from "./tracing";
 
 export type SupportedTerminalConfiguration = Extract<
   TerminalRegionConfiguration,
@@ -40,16 +41,32 @@ export type TerminalProviderRpcResult<T> =
         | { kind: "provider"; message: string };
     };
 
+/**
+ * Session-scoped instrumentation: one callback for the whole session, invoked
+ * out of band. Only observations that need nothing but the environment belong
+ * here. Per-request measurement is deliberately *not* one of them — see
+ * `observeRequest` on `TerminalProviderRpcCallbacks`.
+ */
 export interface TerminalProviderRpcInstrumentation {
   observe?: (
     measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observe"]>>[0],
   ) => void | Promise<void>;
-  observeRequest?: (
-    measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observeRequest"]>>[0],
-  ) => void | Promise<void>;
 }
 
 export interface TerminalProviderRpcCallbacks {
+  /**
+   * Per-call rather than per-session, and awaited rather than deferred, for two
+   * reasons the session-scoped form could not satisfy.
+   *
+   * A session callback is created once, outside any tool invocation, so the
+   * caller cannot tell which of several concurrent tools a measurement belongs
+   * to; a call-scoped one is created by the caller inside the invocation that
+   * is about to issue the request, which is where the trace lives. And the
+   * provider must await it: fired through `waitUntil`, the measurement raced
+   * the RPC result and routinely lost, so the tool's own log row was written
+   * before the last request it made had been counted.
+   */
+  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => Promise<void>;
   assertSubmissionAuthority?: () => Promise<TerminalProviderRpcCallbackResult>;
   onSubmitted?: (providerTaskId: string) => Promise<TerminalProviderRpcCallbackResult>;
   initiallyAborted?: boolean;

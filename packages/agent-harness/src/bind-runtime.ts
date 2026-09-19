@@ -2240,6 +2240,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             messages: requestMessages,
             stream: true as const,
             stream_options: { include_usage: true as const },
+            // Mirrors what the OpenRouter client actually serializes, so the
+            // recorded request is the request. Azure is priced from Rally's
+            // own rate card and takes no accounting flag.
+            ...(candidate.providerId === OPENROUTER_PROVIDER
+              ? { usage: { include: true as const } }
+              : {}),
             ...(wireTools.length > 0
               ? {
                   tools: wireTools,
