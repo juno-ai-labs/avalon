@@ -4,11 +4,14 @@
  */
 export const presentationBoundaryFiles = [
   "apps/browser/src/conversation.tsx",
+  "apps/desktop/src/renderer/components/scope-sharing-panel.tsx",
   "apps/desktop/src/renderer/components/**/*{sidebar,rail}*.tsx",
   "apps/desktop/src/renderer/components/sidekick-picker.tsx",
   "apps/desktop/src/renderer/components/sidekick-section.tsx",
+  "apps/desktop/src/renderer/components/workstream-blocks.tsx",
   "apps/desktop/src/renderer/screens/conversation-surface.tsx",
   "apps/desktop/src/renderer/screens/workstream.tsx",
+  "packages/ui/src/components/conversation-header.tsx",
   "packages/ui/src/components/**/*{sidebar,rail}*.tsx",
   "packages/ui/src/components/sidekick-picker.tsx",
   "packages/ui/src/components/sidekick-section.tsx",
@@ -30,21 +33,23 @@ function unwrap(node) {
   return node;
 }
 
-function isDiagnosticExpression(candidate) {
+function isDiagnosticExpression(candidate, catchBindings = new Set()) {
   const node = unwrap(candidate);
   if (!node) return false;
   if (node.type === "Identifier") {
-    return /^(?:error|err|cause|exception)$/iu.test(node.name) || /(?:Error|Exception)$/u.test(node.name);
+    return catchBindings.has(node.name)
+      || /^(?:error|err|cause|exception)$/iu.test(node.name)
+      || /(?:Error|Exception)$/u.test(node.name);
   }
   if (node.type === "MemberExpression") {
     const property = staticPropertyName(node);
-    return property === "error" || property === "cause" || isDiagnosticExpression(node.object);
+    return property === "error" || property === "cause" || isDiagnosticExpression(node.object, catchBindings);
   }
   if (node.type === "LogicalExpression") {
-    return isDiagnosticExpression(node.left) || isDiagnosticExpression(node.right);
+    return isDiagnosticExpression(node.left, catchBindings) || isDiagnosticExpression(node.right, catchBindings);
   }
   if (node.type === "ConditionalExpression") {
-    return isDiagnosticExpression(node.consequent) || isDiagnosticExpression(node.alternate);
+    return isDiagnosticExpression(node.consequent, catchBindings) || isDiagnosticExpression(node.alternate, catchBindings);
   }
   return false;
 }
@@ -68,26 +73,37 @@ export const noDiagnosticMessageInPresentationRule = {
     },
   },
   create(context) {
+    const catchBindings = new Map();
     return {
       MemberExpression(node) {
         const propertyName = staticPropertyName(node);
-        if ((propertyName === "message" || propertyName === "toString") && isDiagnosticExpression(node.object)) {
+        if ((propertyName === "message" || propertyName === "toString") && isDiagnosticExpression(node.object, catchBindings)) {
           context.report({ node: node.property, messageId: "diagnosticMessage" });
         }
       },
       VariableDeclarator(node) {
-        if (node.id.type === "ObjectPattern" && objectPatternReadsMessage(node.id) && isDiagnosticExpression(node.init)) {
+        if (node.id.type === "ObjectPattern" && objectPatternReadsMessage(node.id) && isDiagnosticExpression(node.init, catchBindings)) {
           context.report({ node: node.id, messageId: "diagnosticMessage" });
         }
       },
       CatchClause(node) {
+        if (node.param?.type === "Identifier") {
+          catchBindings.set(node.param.name, (catchBindings.get(node.param.name) ?? 0) + 1);
+        }
         if (node.param?.type === "ObjectPattern" && objectPatternReadsMessage(node.param)) {
           context.report({ node: node.param, messageId: "diagnosticMessage" });
         }
       },
+      "CatchClause:exit"(node) {
+        if (node.param?.type === "Identifier") {
+          const remaining = (catchBindings.get(node.param.name) ?? 1) - 1;
+          if (remaining === 0) catchBindings.delete(node.param.name);
+          else catchBindings.set(node.param.name, remaining);
+        }
+      },
       CallExpression(node) {
         if (node.callee.type === "Identifier" && node.callee.name === "String"
-          && node.arguments.some((argument) => argument.type !== "SpreadElement" && isDiagnosticExpression(argument))) {
+          && node.arguments.some((argument) => argument.type !== "SpreadElement" && isDiagnosticExpression(argument, catchBindings))) {
           context.report({ node: node.callee, messageId: "diagnosticMessage" });
         }
       },

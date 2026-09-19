@@ -57,8 +57,10 @@ The scoped `rally/no-diagnostic-message-in-presentation` ESLint rule enforces
 this boundary over the registered sidebar, rail, and adapter modules. It rejects
 diagnostic `.message` reads, destructuring, `String(error)`, and
 `error.toString()` while allowing domain objects whose fields happen to be named
-`message`. Sidebar/rail filenames join that scope automatically; presentation
-modules with another name must be added to the registry and its scope test.
+`message`. A catch binding is diagnostic regardless of its local name, so
+renaming `error` to `caught` or `failure` cannot bypass the rule. Sidebar/rail
+filenames join that scope automatically; presentation modules with another name
+must be added to the registry and its scope test.
 
 ## Construct Zod object modes directly
 

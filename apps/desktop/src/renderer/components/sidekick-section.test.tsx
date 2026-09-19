@@ -109,6 +109,18 @@ describe('SidekickSection', () => {
     expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
   });
+
+  it.each([
+    ['recommend', 'That Sidekick couldn’t be recommended.'],
+    ['unrecommend', 'That Sidekick recommendation couldn’t be removed.'],
+  ] as const)('reports a failed %s action accurately', (failure, copy) => {
+    renderSection({
+      items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
+      failure,
+    });
+    expect(screen.getByText(copy)).toBeVisible();
+    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
+  });
 });
 
 describe('workstreamSidekickRows', () => {
