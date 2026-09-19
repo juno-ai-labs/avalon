@@ -200,6 +200,39 @@ describe("Terminal provider Service Binding RPC protocol", () => {
     expect(trace.providerDurationMs).toBe(24);
   });
 
+  /**
+   * The regression this change is against would look like working code: a
+   * caller that puts request measurement back on the session instrumentation
+   * still compiles, still delivers, and silently loses both the trace and the
+   * attribution. Pin that the client sends nothing there.
+   */
+  it("sends no request observer on the session instrumentation", async () => {
+    let session: Awaited<ReturnType<typeof binding.createSession>> | undefined;
+    const provider = createTerminalProviderRpcClient({
+      createSession: async (configuration, instrumentation) => {
+        session = await binding.createSession(configuration, instrumentation);
+        return session;
+      },
+    }, CONFIGURATION, {
+      observe: () => undefined,
+      observeRequest: recordTerminalProviderRequest,
+    });
+    const trace = createTerminalToolTrace({
+      toolName: "read_file",
+      toolCallId: "call-session-scope",
+      toolInvocationId: null,
+    });
+
+    await withTerminalToolTrace(trace, () => provider.getSandbox("sandbox-session-scope"));
+
+    await expect(session?.sessionObservations()).resolves.toEqual({
+      installed: false,
+      delivered: 0,
+    });
+    // The measurements still arrived — by the per-call route.
+    expect(trace.providerOperationCount).toBe(2);
+  });
+
   it("attributes a request to the concurrent tool call that issued it", async () => {
     const provider = createTerminalProviderRpcClient(binding, CONFIGURATION, {
       observeRequest: recordTerminalProviderRequest,

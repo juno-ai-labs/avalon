@@ -1,9 +1,12 @@
 import type { Env as AvalonEnv } from "../src/env";
 import type { MigrationProbeDO } from "../src/durable-objects/migration-probe-do";
 import type {
+  SupportedTerminalConfiguration,
   TerminalProviderRpcBinding,
   TerminalProviderRpcCallbackResult,
+  TerminalProviderRpcInstrumentation,
   TerminalProviderRpcResult,
+  TerminalProviderRpcSession,
 } from "../src/services/terminal/provider-rpc-contract";
 import type { TelemetryDeliveryRpcBinding } from "../src/telemetry/telemetry-delivery-contract";
 
@@ -21,9 +24,20 @@ interface TerminalRpcTestBinding extends TerminalProviderRpcBinding {
     call(value: string): Promise<string>;
     [Symbol.dispose](): void;
   }>;
-  createSession(): Promise<{
+  /**
+   * The fixture's one session serves both boundary tests, so `configuration`
+   * is optional here where the real binding requires it: the deadline test
+   * drives the session directly and passes none.
+   */
+  createSession(
+    configuration?: SupportedTerminalConfiguration,
+    instrumentation?: TerminalProviderRpcInstrumentation & {
+      observeRequest?: (measurement: unknown) => Promise<void>;
+    },
+  ): Promise<TerminalProviderRpcSession & {
     startSandbox(idOrName: string, options?: unknown, callbacks?: unknown): Promise<unknown>;
     recoverSandbox(idOrName: string, options?: unknown, callbacks?: unknown): Promise<unknown>;
+    sessionObservations(): Promise<{ installed: boolean; delivered: number }>;
     [Symbol.dispose](): void;
   }>;
 }

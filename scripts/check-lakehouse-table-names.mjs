@@ -42,18 +42,32 @@ export async function lakehouseTables(directory = 'config') {
   return tables.sort((left, right) => left.table.localeCompare(right.table));
 }
 
+const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
+
+/** A manifest name is an identifier today; do not let a future one be a pattern. */
+function literal(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
 /**
  * Every mention of `table` in `text` that is not `namespace.table`.
  *
  * A mention is either qualified by some other namespace or left bare after a
- * `FROM`/`JOIN`. A bare name outside a query — the manifest's own `"table":
- * "llm_inference"`, or prose naming the table — is not a query anyone will run
- * and is left alone.
+ * `FROM`/`JOIN`, in each case with or without the double quotes SQL allows
+ * around an identifier. A bare name outside a query — the manifest's own
+ * `"table": "llm_inference"`, or prose naming the table — is not a query
+ * anyone will run and is left alone.
+ *
+ * Matching ignores case so that a differently-cased mention is still *found*,
+ * but the comparison below does not: R2 SQL is backed by an Iceberg catalog,
+ * whose namespace and table names are case-sensitive, so `AVALON.llm_inference`
+ * is a name that does not resolve and is worth reporting rather than excusing.
  */
 export function misqualifiedReferences(text, { namespace, table }) {
+  const name = literal(table);
   const pattern = new RegExp(
-    `(?:\\b(?<qualifier>[A-Za-z_][A-Za-z0-9_]*)\\.${table}\\b)`
-    + `|(?:\\b(?:FROM|JOIN)\\s+(?<bare>${table})\\b)`,
+    `(?<![\\w"])(?:"?(?<qualifier>${IDENTIFIER})"?\\s*\\.\\s*"?${name}"?`
+    + `|(?:FROM|JOIN)\\s+"?(?<bare>${name})"?)(?![\\w"])`,
     'giu',
   );
   const found = [];
