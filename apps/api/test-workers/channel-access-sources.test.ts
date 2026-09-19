@@ -54,6 +54,8 @@ function applySource(input: {
   spaceRevision?: number;
   membershipGeneration?: number;
   operationId?: string;
+  /** The birth mode: this call commits the source rather than only planning it. */
+  bornWithSourceApplied?: boolean;
 }) {
   return channel().applySpaceAccessSource({
     ...address,
@@ -64,7 +66,22 @@ function applySource(input: {
     membershipGeneration: input.membershipGeneration ?? 1,
     operationId: input.operationId ?? crypto.randomUUID(),
     channel: input.channel,
+    ...(input.bornWithSourceApplied === undefined
+      ? {}
+      : { bornWithSourceApplied: input.bornWithSourceApplied }),
   });
+}
+
+/** What this object has actually written, read past every plan. */
+function storedSources() {
+  return runInDurableObject(channel(), (_instance, state) => ({
+    sources: state.storage.sql.exec<{ space_id: string; participants_json: string }>(
+      "SELECT space_id, participants_json FROM workstream_space_access_sources ORDER BY space_id",
+    ).toArray(),
+    supplied: state.storage.sql.exec<{ space_id: string; user_id: string }>(
+      "SELECT space_id, user_id FROM workstream_space_supplied_readers ORDER BY space_id, user_id",
+    ).toArray(),
+  }));
 }
 
 /**
@@ -163,6 +180,84 @@ describe("a Channel's Space access sources", () => {
       expect(state.storage.sql.exec<{ updated_at: number }>(
         "SELECT updated_at FROM workstream_direct_audience WHERE id = 1",
       ).one().updated_at).toBe(0);
+    });
+  });
+
+  it("given a Channel born with this source's audience, when it is applied in the birth mode, then one call records the source and the readers it supplied", async () => {
+    // The creation coordinator derived the union of every named Space and
+    // handed it to `initialize`, so the conversation opened with this roster
+    // already written. There is no canonical operation between the plan and
+    // the commit for a crash to land in, which is the whole reason the other
+    // callers take two calls.
+    expect(await applySource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), bornWithSourceApplied: true,
+    })).toEqual({
+      ok: true,
+      plan: { widenScope: false, seatUserIds: [READER] },
+      suppliedUserIds: [READER],
+    });
+
+    // Everything the confirmation used to be the only writer of: the source
+    // row, and the direct scope seeded from what the caller observed.
+    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
+      .toEqual({
+        direct: { scope: "personal", participantUserIds: [OWNER] },
+        spaces: [{ spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER] }],
+      });
+    // And the supplied readers, which are what a retraction acts on. Without
+    // them `READER` reads as the Channel's own and stays behind when the Space
+    // that put them there leaves.
+    expect(await retract(SPACE_A, personal([OWNER, READER]))).toEqual({
+      ok: true,
+      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [READER] },
+    });
+  });
+
+  it("given a birth-mode application that already ran, when it is redelivered, then it answers the first attempt and writes nothing again", async () => {
+    const operationId = crypto.randomUUID();
+    const first = await applySource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), operationId, bornWithSourceApplied: true,
+    });
+    expect(first).toEqual({
+      ok: true,
+      plan: { widenScope: false, seatUserIds: [READER] },
+      suppliedUserIds: [READER],
+    });
+
+    // Redelivered against the Channel as it is *now* — which is what a retried
+    // creation observes, because the first attempt already seated `READER`.
+    // Recomputing against that would plan to seat nobody and supply nobody; the
+    // receipt is what makes the second answer the first one.
+    expect(await applySource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER, READER]), operationId, bornWithSourceApplied: true,
+    })).toEqual(first);
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [{ space_id: SPACE_A, user_id: READER }],
+    });
+  });
+
+  it("given a source the Channel has moved past, when a birth-mode application arrives behind it, then the fence refuses it and commits nothing", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), spaceRevision: 2,
+    });
+
+    // The birth mode writes the source row, so it needs the same fence the
+    // confirmation carries: without it a stale creation replay would install
+    // its own roster over a newer one, which is exactly what the split
+    // protected against before this mode existed.
+    expect(await applySource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, OTHER],
+      channel: personal([OWNER]), spaceRevision: 1, bornWithSourceApplied: true,
+    })).toEqual({ ok: false, code: "space_revision_conflict" });
+
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [{ space_id: SPACE_A, user_id: READER }],
     });
   });
 

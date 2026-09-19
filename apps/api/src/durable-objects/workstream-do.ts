@@ -230,15 +230,38 @@ import {
   SetChannelDirectScopeRequestSchema,
   SetChannelDirectScopeResultSchema,
   type ApplySpaceAccessSourceResult,
+  type ConfirmedAccessSource,
   type ConfirmSpaceAccessSourceResult,
   type ObservedChannel,
   type RetractSpaceAccessSourceResult,
   type SetChannelDirectScopeResult,
 } from "./workstream-access-protocol";
 import { WorkstreamAccessStorage } from "./workstream-access-storage";
-import { ChannelAccessSourcesSchema, type ChannelAccessSources } from "@rally/contracts";
+import { ChannelAccessSourcesSchema, type ChannelAccessSources, type SpaceId } from "@rally/contracts";
 
 export { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "./workstream-do-schema";
+
+/**
+ * Whether a Space source already on this Channel is newer than the work being
+ * applied, which is the one fence every Space-source write re-reads inside its
+ * own transaction.
+ *
+ * One predicate because two calls read it — the plan and the commit — and a
+ * copy that drifted would refuse the application while the commit installed
+ * the stale roster it had just planned, or the reverse. The retraction carries
+ * a fence of its own shape and is deliberately not this one: it has only the
+ * revision the caller staged against, because the row it is about is the row
+ * it deletes.
+ */
+function spaceAccessSourceSuperseded(
+  existing: { spaceRevision: number; membershipGeneration: number } | null,
+  staged: { spaceRevision: number; membershipGeneration: number },
+): boolean {
+  if (!existing) return false;
+  return existing.spaceRevision > staged.spaceRevision
+    || (existing.spaceRevision === staged.spaceRevision
+      && existing.membershipGeneration > staged.membershipGeneration);
+}
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
   return cursor.toArray()[0] ?? null;
@@ -821,15 +844,24 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   /**
-   * The audience delta this source's arrival asks for. It records nothing.
+   * The audience delta this source's arrival asks for, and — only when the
+   * Channel was born with that audience — the commit of the source as well.
    *
-   * Provenance is committed at `confirmSpaceAccessSource`, because a source row
-   * written here would, after any crash before the audience was applied, claim
-   * a Space reaches this Channel while that Space had seated nobody — access
-   * the provenance accounts for and that does not exist. The receipt this earns
-   * is what a redelivery converges on; the fence below still refuses a plan the
-   * Channel has already moved past, so a stale application never reaches the
-   * canonical operations at all.
+   * Provenance is ordinarily committed at `confirmSpaceAccessSource`, because a
+   * source row written here would, after any crash before the audience was
+   * applied, claim a Space reaches this Channel while that Space had seated
+   * nobody — access the provenance accounts for and that does not exist. The
+   * receipt this earns is what a redelivery converges on; the fence below still
+   * refuses a plan the Channel has already moved past, so a stale application
+   * never reaches the canonical operations at all.
+   *
+   * `bornWithSourceApplied` is the caller saying there are no canonical
+   * operations between the two halves: the conversation opened with this
+   * source's scope and roster already written, so the crash window the split
+   * exists to close does not exist on that path. It commits through the same
+   * body `confirmSpaceAccessSource` uses, inside this call's own transaction,
+   * and the mode is part of the receipt's fence so a redelivery under the other
+   * mode is a caller defect rather than a silent convergence.
    */
   async applySpaceAccessSource(input: z.infer<typeof ApplySpaceAccessSourceRequestSchema>): Promise<ApplySpaceAccessSourceResult> {
     await this.initialized;
@@ -837,34 +869,108 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.assertParent(request.workspaceId, request.parentId);
     const access = this.channelAccess();
     const now = Date.now();
+    // Normalized before it becomes the receipt's fence, so a caller that
+    // omitted it and one that passed `false` are the same request.
+    const bornWithSourceApplied = request.bornWithSourceApplied ?? false;
     return access.operate({
       operationId: request.operationId,
       request: {
         kind: "apply_space_source", spaceId: request.spaceId, scope: request.scope,
         participantUserIds: request.participantUserIds, spaceRevision: request.spaceRevision,
         membershipGeneration: request.membershipGeneration,
+        bornWithSourceApplied,
       },
       resultSchema: ApplySpaceAccessSourceResultSchema,
       now,
       body: () => {
-        const existing = access.source(request.spaceId);
         // Re-read inside the transaction, after every external boundary the
         // caller crossed to get here. A staged application that lost the race
         // with a newer one must not overwrite it with the Space it saw.
-        if (existing && (existing.spaceRevision > request.spaceRevision
-          || (existing.spaceRevision === request.spaceRevision
-            && existing.membershipGeneration > request.membershipGeneration))) {
+        if (spaceAccessSourceSuperseded(access.source(request.spaceId), request)) {
           return { ok: false as const, code: "space_revision_conflict" as const };
         }
-        return {
-          ok: true as const,
-          plan: audienceSourceApplicationPlan({
-            current: request.channel.readers,
-            source: { scope: request.scope, participantUserIds: request.participantUserIds },
-          }),
-        };
+        const plan = audienceSourceApplicationPlan({
+          current: request.channel.readers,
+          source: { scope: request.scope, participantUserIds: request.participantUserIds },
+        });
+        if (!bornWithSourceApplied) return { ok: true as const, plan };
+        // The same body the confirmation runs, in this transaction: the plan
+        // named the readers this source adds, and at birth they are already
+        // seated, so committing here is the whole of the second call.
+        const committed = this.commitSpaceAccessSource(access, {
+          spaceId: request.spaceId,
+          source: {
+            scope: request.scope,
+            participantUserIds: request.participantUserIds,
+            spaceRevision: request.spaceRevision,
+            membershipGeneration: request.membershipGeneration,
+            channel: request.channel,
+          },
+          seatedUserIds: plan.seatUserIds,
+          operationId: request.operationId,
+          now,
+        });
+        if (!committed.ok) return committed;
+        return { ok: true as const, plan, suppliedUserIds: committed.suppliedUserIds };
       },
     });
+  }
+
+  /**
+   * Commit a Space source and the readers it seated, or say why it cannot.
+   *
+   * One body for both callers rather than two that agree today. It holds the
+   * revision fence, the one-shot seeding of the Channel's own scope, the source
+   * row and the supplied readers — and every one of those is a rule a copy
+   * could drift on while each half still looked right on its own.
+   *
+   * A `null` source is the narrowing case: readers attributed to a Space that
+   * was committed when it arrived. That is the one place `space_not_found` is
+   * still the answer — the Space was withdrawn under this call, so the readers
+   * just seated would otherwise be attributed to nothing.
+   */
+  private commitSpaceAccessSource(
+    access: WorkstreamAccessStorage,
+    input: {
+      spaceId: SpaceId;
+      source: ConfirmedAccessSource | null;
+      seatedUserIds: readonly UserId[];
+      operationId: string;
+      now: number;
+    },
+  ): ConfirmSpaceAccessSourceResult {
+    const source = input.source;
+    if (!source) {
+      if (!access.source(input.spaceId)) {
+        return { ok: false as const, code: "space_not_found" as const };
+      }
+    } else {
+      // The same fence the application ran, re-read here because this is where
+      // the write lands. A confirmation that crossed a boundary behind a newer
+      // one must not commit the Space it saw.
+      if (spaceAccessSourceSuperseded(access.source(input.spaceId), source)) {
+        return { ok: false as const, code: "space_revision_conflict" as const };
+      }
+      // The first Space to reach this Channel is the last moment the effective
+      // audience is known to be the direct one, and `channel` is what the
+      // caller saw before it applied this one. Seeding here is what makes the
+      // record exact for a Channel created after migration 18 ran, whose
+      // backfill could only guess.
+      if (!access.directAudience().observed && access.sources().length === 0) {
+        access.recordDirectScope(source.channel.readers.scope, input.now);
+      }
+      access.upsertSource({
+        spaceId: input.spaceId,
+        scope: source.scope,
+        participantUserIds: source.participantUserIds,
+        spaceRevision: source.spaceRevision,
+        membershipGeneration: source.membershipGeneration,
+        operationId: input.operationId,
+        now: input.now,
+      });
+    }
+    access.recordSuppliedReaders(input.spaceId, input.seatedUserIds);
+    return { ok: true as const, suppliedUserIds: access.suppliedReaders(input.spaceId) };
   }
 
   /**
@@ -907,43 +1013,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       },
       resultSchema: ConfirmSpaceAccessSourceResultSchema,
       now,
-      body: () => {
-        const source = request.source;
-        if (!source) {
-          if (!access.source(request.spaceId)) {
-            return { ok: false as const, code: "space_not_found" as const };
-          }
-        } else {
-          const existing = access.source(request.spaceId);
-          // The same fence the application ran, re-read here because this is
-          // where the write lands. A confirmation that crossed a boundary
-          // behind a newer one must not commit the Space it saw.
-          if (existing && (existing.spaceRevision > source.spaceRevision
-            || (existing.spaceRevision === source.spaceRevision
-              && existing.membershipGeneration > source.membershipGeneration))) {
-            return { ok: false as const, code: "space_revision_conflict" as const };
-          }
-          // The first Space to reach this Channel is the last moment the
-          // effective audience is known to be the direct one, and `channel` is
-          // what the caller saw before it applied this one. Seeding here is
-          // what makes the record exact for a Channel created after migration
-          // 18 ran, whose backfill could only guess.
-          if (!access.directAudience().observed && access.sources().length === 0) {
-            access.recordDirectScope(source.channel.readers.scope, now);
-          }
-          access.upsertSource({
-            spaceId: request.spaceId,
-            scope: source.scope,
-            participantUserIds: source.participantUserIds,
-            spaceRevision: source.spaceRevision,
-            membershipGeneration: source.membershipGeneration,
-            operationId: request.operationId,
-            now,
-          });
-        }
-        access.recordSuppliedReaders(request.spaceId, request.seatedUserIds);
-        return { ok: true as const, suppliedUserIds: access.suppliedReaders(request.spaceId) };
-      },
+      body: () => this.commitSpaceAccessSource(access, {
+        spaceId: request.spaceId,
+        source: request.source ?? null,
+        seatedUserIds: request.seatedUserIds,
+        operationId: request.operationId,
+        now,
+      }),
     });
   }
 

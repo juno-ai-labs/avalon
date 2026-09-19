@@ -8,7 +8,11 @@ import { vi } from "vitest";
  * stages a membership, records the source on the Channel's own authority, and
  * settles the membership before the conversation is reserved — so a test about
  * Slack assignment, origin attachment or the audience a create asks for now
- * passes through three WorkspaceDO RPCs and two on the Channel's room.
+ * passes through three WorkspaceDO RPCs and, on the Channel's room, either one
+ * or two. One is the ordinary create, which records the source in the birth
+ * mode because the conversation opened with that audience already written; two
+ * is the connector placement, which widens an existing Channel between the plan
+ * and the commit. Both are doubled here, because this helper serves both.
  *
  * These doubles answer the *steady* case: the Space already exists, so nothing
  * provisions a `SpaceDO`, and every step succeeds. That is deliberate. What a
@@ -35,6 +39,8 @@ import { vi } from "vitest";
  */
 interface SpaceSourceApplication {
   channel: { readers: { scope: string } };
+  /** The birth mode: this call commits the source, and no confirmation follows. */
+  bornWithSourceApplied?: boolean;
 }
 
 /** The Organization's General, already open, so `ensureGeneral` provisions nothing. */
@@ -107,7 +113,10 @@ export function spaceCreationRoomRpcs() {
     applySpaceAccessSource: vi.fn<(input: SpaceSourceApplication) => Promise<{
       ok: true;
       plan: { seatUserIds: string[] };
-    }>>(async () => ({ ok: true, plan: { seatUserIds: [] } })),
+      suppliedUserIds?: string[];
+    }>>(async (input) => (input.bornWithSourceApplied
+      ? { ok: true, plan: { seatUserIds: [] }, suppliedUserIds: [] }
+      : { ok: true, plan: { seatUserIds: [] } })),
     confirmSpaceAccessSource: vi.fn(async () => ({ ok: true as const })),
   };
 }
