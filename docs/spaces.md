@@ -212,10 +212,11 @@ page's cursor is only known once the page before it has been reported:
 and `attempts` are the same retry gate every other staged fan-out in this object
 uses — advanced *before* the send, cleared by progress — so a rejected batch is
 retried rather than spinning the alarm, and a page delivered but never reported
-is republished rather than lost. `space_bootstrap_receipts` is what makes a
-redelivery cost nothing: a Channel some Space already holds is receipted and
-skipped, which covers both a replayed page and a Channel the ordinary creation
-path placed while the cutover was running.
+is republished rather than lost. What makes a redelivery cost nothing is the
+membership row itself: a Channel some Space already holds is skipped, which
+covers both a replayed page and a Channel the ordinary creation path placed
+while the cutover was running. There is no second receipt table, because the
+membership is the state a placement produces and cannot disagree with.
 
 **The cutover acts as a person, per Channel.** The audience change a placement
 implies goes through the Channel's canonical scope operation, which authorizes
@@ -633,7 +634,7 @@ when one of them refuses.
 
 ## Data model
 
-Eleven tables, all in WorkspaceDO's migration 61.
+Ten tables, all in WorkspaceDO's migration 61.
 
 `workspace_space_directory` is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
@@ -659,9 +660,9 @@ resume after a failed send.
 Organization: the phase (`pending`, `general`, `memberships`, `finalize`,
 `complete`), General's id once it exists, the walk's cursor, the blocked
 Channels as JSON, and `not_before`/`attempts` — the retry gate the alarm claims
-on, advanced before the send and cleared by progress.
-`space_bootstrap_receipts` is `(workstream_id, phase)`, which is what makes a
-redelivered page cost nothing.
+on, advanced before the send and cleared by progress. A redelivered page
+costs nothing because the membership row says what is already placed; there is
+no receipt table beside it.
 
 Migration 61 also rebuilds `workspace_retirement_graph` so its `parent_kind`
 CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts —

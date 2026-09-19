@@ -280,12 +280,6 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
      (id, phase, general_space_id, cursor, blocked_json, not_before, attempts,
       started_at, updated_at, completed_at)
    VALUES (1, 'pending', NULL, NULL, '[]', 0, 0, 0, 0, NULL)`,
-  `CREATE TABLE space_bootstrap_receipts (
-    workstream_id TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
-    PRIMARY KEY (workstream_id, phase)
-  ) STRICT`,
   // Migration 42's CHECK admits two of the three parent kinds, and SQLite
   // cannot widen one in place. Rows are carried through a scratch table rather
   // than recreated from the directories, because the graph is captured
@@ -1884,33 +1878,6 @@ export class WorkspaceSpaceStorage {
       })),
       nextCursor: hasMore ? (rows.at(-1)?.workstream_id ?? null) : null,
     };
-  }
-
-  /**
-   * One row per Channel a pass finished, which is the PRD's durable receipt.
-   *
-   * Nothing reads it back: `bootstrapPage` decides what is already done from
-   * the membership row itself, which is the state a placement actually
-   * produces and cannot disagree with. This is the operator's record of *when*
-   * each Channel was finished — the forensics for a cutover that stopped part
-   * way — and it is deliberately not a second source of truth for whether one
-   * was.
-   */
-  recordBootstrapReceipts(
-    workstreamIds: readonly string[],
-    phase: string,
-    now = Date.now(),
-  ): void {
-    if (!this.ready()) return;
-    for (const workstreamId of workstreamIds) {
-      this.storage.sql.exec(
-        `INSERT INTO space_bootstrap_receipts (workstream_id, phase, completed_at)
-         VALUES (?, ?, ?) ON CONFLICT (workstream_id, phase) DO NOTHING`,
-        workstreamId,
-        phase,
-        now,
-      );
-    }
   }
 
   /**
