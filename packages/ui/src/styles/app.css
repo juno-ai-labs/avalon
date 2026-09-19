@@ -4362,7 +4362,13 @@ pre {
    surface colour, with the window behind it blurred enough to stop competing for
    attention and not so much that a person loses where they were. The wash used
    to be `scrim.solid`, which is opaque in practice, and the 1px blur under it
-   was invisible. */
+   was invisible.
+
+   The blur holds under `prefers-reduced-motion`, which asks for less movement
+   rather than less depth: a static blur does not move. A reduced-motion block
+   used to cancel it here, back when cancelling it changed nothing on screen;
+   against this wash it would have left that reader alone looking at a sharp,
+   legible window through a half-transparent veil. */
 .attachment-lightbox-overlay { backdrop-filter: blur(6px); background: var(--av-sys-color-scrim-veil); inset: 0; position: fixed; z-index: 1000; }
 .attachment-lightbox { inset: 0; position: fixed; z-index: 1001; }
 .attachment-lightbox-a11y-title { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
@@ -4430,9 +4436,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-gallery-arrow:hover { background: var(--av-sys-color-scrim-solid); }
 .attachment-gallery-arrow.is-previous { left: 20px; }
 .attachment-gallery-arrow.is-next { right: 20px; }
-@media (prefers-reduced-motion: reduce) {
-  .attachment-lightbox-overlay { backdrop-filter: none; }
-}
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
 .workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); }
 .composer-input-shell { position: relative; }
