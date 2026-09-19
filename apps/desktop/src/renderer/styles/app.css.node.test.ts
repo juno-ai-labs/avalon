@@ -1089,7 +1089,7 @@ describe('the one hover wash', () => {
     );
     const family = [
       icon,
-      rule('.participant-header-button:hover'),
+      rule('.participant-header-button:hover:not(:disabled)'),
       rule('.header-socket-state:hover,\n.header-socket-state:focus-visible'),
       rule('.workstream-title-button:hover'),
       rule('.menu-item[data-highlighted]'),
@@ -1144,7 +1144,11 @@ describe('the one hover wash', () => {
       .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
       .filter(({ body }) => !body.includes('var(--hover-layer)'))
       .filter(({ body }) => {
-        const background = /(?:^|[;{\s])background(?:-color)?:\s*([^;}]+);?/u.exec(body)?.[1] ?? '';
+        // The *last* declaration, not the first: a rule that opens with the
+        // wash and then overrides it with a neutral surface violates the
+        // invariant through the one that actually paints.
+        const declared = [...body.matchAll(/(?:^|[;{\s])background(?:-color)?:\s*([^;}]+);?/gu)];
+        const background = declared.at(-1)?.[1] ?? '';
         return neutralSurface.test(background) && !hue.test(background);
       })
       .map(({ selector }) => selector);
