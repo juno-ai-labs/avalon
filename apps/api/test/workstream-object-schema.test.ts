@@ -933,6 +933,93 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("upgrades a populated v65 root to the space parent kind without losing its row or triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 65),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v65",
+        now: 1_000,
+      });
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at, parent_kind, appearance_json, model_override)
+         VALUES (1, ?, ?, 'global', 'authoritative', 4, 'Hiring', 'About hiring',
+                 'personal', 'idle', 'test', 7, 3, 2, 1, 0, 1, 0, 1,
+                 1000, 1100, 1200, 1300, 'automation', '{"icon":"briefcase"}', 'sonnet')`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      // A fence narrower than the workspace, so the restricted-content trigger
+      // has something to abort on below. Its absence after the rebuild would be
+      // a silent hole in the containment preflight rather than an error.
+      database.prepare(
+        `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+         VALUES ('fence-1', '{"scope":"users","userIds":["${RECIPIENT_ID}"]}', 1000)`,
+      ).run();
+
+      applyWorkstreamObjectSchema(storage, "worker-v66", 2_000);
+
+      // Every column of the singleton survived the swap, not just the one the
+      // migration is about.
+      expect(database.prepare(`SELECT * FROM workstream WHERE id = 1`).get()).toMatchObject({
+        workstream_key: WORKSTREAM_ID,
+        parent_workspace_key: WORKSPACE_ID,
+        authority_generation: 4,
+        title: "Hiring",
+        description: "About hiring",
+        scope: "personal",
+        next_sequence_number: 7,
+        next_attention_ordinal: 3,
+        parent_kind: "automation",
+        appearance_json: '{"icon":"briefcase"}',
+        model_override: "sonnet",
+        created_at: 1000,
+        last_people_activity_at: 1100,
+        state_changed_at: 1200,
+        updated_at: 1300,
+      });
+
+      expect(() => database.prepare(
+        `UPDATE workstream SET parent_kind = 'space' WHERE id = 1`,
+      ).run()).not.toThrow();
+      expect(database.prepare(`SELECT parent_kind FROM workstream WHERE id = 1`).get())
+        .toEqual({ parent_kind: "space" });
+      // Still closed: widening one value is not opening the column.
+      expect(() => database.prepare(
+        `UPDATE workstream SET parent_kind = 'project' WHERE id = 1`,
+      ).run()).toThrow();
+
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'workstream'
+          ORDER BY name`,
+      ).all()).toEqual([
+        { name: "authorization_workstream_delete" },
+        { name: "authorization_workstream_insert" },
+        { name: "authorization_workstream_update" },
+        { name: "workstream_restricted_content_scope" },
+        { name: "workstream_search_display_update" },
+      ]);
+      // Present by name is not the same as installed and firing.
+      expect(() => database.prepare(
+        `UPDATE workstream SET scope = 'workspace' WHERE id = 1`,
+      ).run()).toThrow(/workstream_audience_restricted_content/u);
+
+      expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE name = '_parent_kind_copy_workstream'`,
+      ).all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("enforces substream and semantic-part shapes in SQLite", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);

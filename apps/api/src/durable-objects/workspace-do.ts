@@ -1,6 +1,24 @@
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+
+/**
+ * One object the retirement walk has to close before this workspace can report
+ * complete.
+ *
+ * Typed as the full conversation-parent vocabulary while
+ * `workspace_retirement_graph`'s own CHECK still admits only two of the three:
+ * a Space is enumerated into this graph by the WorkspaceDO migration that
+ * introduces the Space directory, and the CHECK widens in that same migration.
+ * Widening the type first is what lets the walk's third arm — the one that
+ * addresses `SPACE_DOS` — be written and reviewed beside the other two rather
+ * than arriving as an untyped afterthought with the migration.
+ */
+interface RetirementGraphNode {
+  parentKind: ConversationParentKind;
+  parentId: string;
+}
 import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
@@ -6716,6 +6734,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceDirectoryApplyRequest,
   ): Promise<WorkspaceDirectoryApplyResult> {
     await this.initialized;
+    // A Space publishes the same `directory_common` and `directory_user`
+    // effects a Channel does, and this object has nowhere to put them yet: the
+    // Space directory arrives with the WorkspaceDO migration that introduces
+    // it. Storing them in `workspace_workstream_directory` would put a Space in
+    // the Channel sidebar; the schema below would refuse them as a `ZodError`,
+    // which reaches the Queue consumer as a bare `Error` with no issues and no
+    // field. So the refusal is named here, ahead of the parse. The consumer
+    // retries with backoff like any other throw, which is the behavior wanted:
+    // the effect stays on the Queue for the release that can apply it.
+    const envelopes = (input as { envelopes?: readonly { parentKind?: string }[] }).envelopes ?? [];
+    if (envelopes.some((envelope) => envelope?.parentKind === "space")) {
+      throw new Error("space_directory_not_ready");
+    }
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);
     if (!this.workspaceId()) {
       this.ensureIdentity(
@@ -10519,7 +10550,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     operationId: string;
     actorUserId: string | null;
     reason: string;
-  }): Promise<{ nodes: { parentKind: "workstream" | "automation"; parentId: string }[] }> {
+  }): Promise<{ nodes: RetirementGraphNode[] }> {
     await this.initialized;
     const sql = this.state.storage.sql;
     // `INSERT OR IGNORE` rather than a replace: a node already receipted keeps
@@ -10554,10 +10585,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** One descendant confirmed retired. Terminal: a replay does not reopen it. */
-  async recordRetiredNode(input: {
-    parentKind: "workstream" | "automation";
-    parentId: string;
-  }): Promise<{ remaining: number; complete: boolean }> {
+  async recordRetiredNode(input: RetirementGraphNode): Promise<{ remaining: number; complete: boolean }> {
     await this.initialized;
     this.state.storage.sql.exec(
       `UPDATE workspace_retirement_graph
@@ -10580,12 +10608,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async workspaceRetirementProgress(): Promise<{
     remaining: number;
     complete: boolean;
-    nodes: { parentKind: "workstream" | "automation"; parentId: string; retired: boolean }[];
+    nodes: (RetirementGraphNode & { retired: boolean })[];
   }> {
     await this.initialized;
     const progress = this.retirementProgress();
     const nodes = this.state.storage.sql.exec<{
-      parent_kind: "workstream" | "automation";
+      parent_kind: ConversationParentKind;
       parent_id: string;
       retired_at: number | null;
     }>(
@@ -10602,9 +10630,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
   }
 
-  private retirementGraphNodes(): { parentKind: "workstream" | "automation"; parentId: string }[] {
+  private retirementGraphNodes(): RetirementGraphNode[] {
     return this.state.storage.sql.exec<{
-      parent_kind: "workstream" | "automation";
+      parent_kind: ConversationParentKind;
       parent_id: string;
     }>(
       `SELECT parent_kind, parent_id FROM workspace_retirement_graph
