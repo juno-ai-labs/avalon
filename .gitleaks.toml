@@ -44,4 +44,17 @@ regexes = [
   # The lifecycle race test needs valid Svix key encoding, not a real credential.
   # Keep this literal-only; a whsec_ shape exception would hide real keys.
   '''^whsec_cHJvdmlkZXItaXNzdWVkLXNlY3JldA==$''',
+  # A scoped invitation link fixture that no longer exists in the tree. It was a
+  # plausible-looking `inv_` token — 43 random-looking characters, entropy 5.35 —
+  # which is what a minted one looks like and therefore what the generic rule
+  # flags. The fixtures were rewritten to build the same shape out of a padded
+  # sentence, but this scan reads the pull request's whole commit range, so the
+  # commit that introduced the literal keeps failing the gate after the tree is
+  # clean. Rewriting that commit was the alternative; pinning the one dead value
+  # is cheaper and leaves the branch's history intact.
+  #
+  # Nothing ever accepted this value: it is a `defineLinkPayload` fixture in two
+  # renderer tests, not a credential any deployment minted. Pinned literally, so
+  # an `inv_` shape exception cannot hide a token that was really issued.
+  '''^inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2$''',
 ]
