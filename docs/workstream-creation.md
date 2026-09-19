@@ -411,8 +411,10 @@ see
 the base row underneath it, and it takes that height on the frame `is-launching`
 lands rather than growing into it over 220ms — the transition now rides
 `:not(.is-launching)`, so only the collapse back is eased.
-`.workstream-launch-screen > .launch-header` also releases the `min-height: 48px`
-it inherits from the `.workstream-header` class it borrows its dressing from.
+`.workstream-launch-screen > .launch-header` also gives back two things it
+inherits from the `.workstream-header` class it borrows its dressing from: the
+`min-height: 48px` that outranked both stated heights, and the hairline
+`border-bottom` the destination does not draw.
 
 **Why:** The endpoint had been the base row since before the newer header
 existed, and `min-height` outranked both stated heights anyway — so the header
@@ -439,7 +441,9 @@ that renders a different header, or a header restyled to a different row, fails
 there rather than showing up as a step at the swap, which is what the old
 assertion, pointed at the base row, allowed for two header generations. The
 launcher's header now appears rather than opening; what motion the hand-off has
-left is the dock's participant row and the transcript's own arrival.
+left is the dock's participant row and the transcript's own arrival. "Dressed
+exactly as the screen it is about to become" is true of the border too, which it
+had not been: the rule blinked off at the swap, at 55px and at 44px alike.
 
 ### 2026-09-17 — Keep grant handoff off ordinary creation
 

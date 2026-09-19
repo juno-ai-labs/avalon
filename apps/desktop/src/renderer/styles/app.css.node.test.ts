@@ -790,9 +790,13 @@ describe('work-stream launch surface geometry', () => {
     // transition here applies in both directions.
     expect(shared).not.toContain('transition');
     expect(resting).toContain('transition: height');
-    // The `.workstream-header` class this element borrows for its padding and
-    // border brings a `min-height` that outranks both stated heights.
+    // The `.workstream-header` class this element borrows for its padding
+    // brings two things the destination does not have: a `min-height` that
+    // outranks both stated heights, and a hairline the destination zeroes. A
+    // header that keeps either hands over to a row that has neither.
     expect(shared).toContain('min-height: 0;');
+    expect(shared).toContain('border-bottom-width: 0;');
+    expect(rule('.grokbot-workstream-header')).toContain('border-bottom: 0;');
   });
 
 });
