@@ -779,7 +779,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const now = Date.now();
     return access.operate({
       operationId: request.operationId,
-      request: { kind: "set_direct_scope", scope: request.scope },
+      // Normalized before it becomes the receipt's fence, so a caller that
+      // omitted it and one that passed `true` are the same request.
+      request: { kind: "set_direct_scope", scope: request.scope, observed: request.observed ?? true },
       resultSchema: SetChannelDirectScopeResultSchema,
       now,
       body: () => {
@@ -788,8 +790,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           && access.sources().some((source) => source.scope === "workspace")) {
           return { ok: false as const, code: "channel_scope_locked_by_space" as const };
         }
-        access.recordDirectScope(request.scope, now);
-        return { ok: true as const, previousScope: previous.scope };
+        access.recordDirectScope(request.scope, now, request.observed ?? true);
+        return {
+          ok: true as const,
+          previousScope: previous.scope,
+          previousObserved: previous.observed,
+        };
       },
     });
   }

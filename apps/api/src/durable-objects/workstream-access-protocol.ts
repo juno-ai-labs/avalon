@@ -53,13 +53,30 @@ export const ReadChannelAccessSourcesRequestSchema = ChannelAccessAddressSchema.
 
 export const SetChannelDirectScopeRequestSchema = ChannelAccessAddressSchema.extend({
   scope: SpaceScopeSchema,
+  /**
+   * Whether this is something establishing the Channel's own audience, or a
+   * restore putting back what was there.
+   *
+   * Absent means true, which is every caller that means it. A restore passes
+   * false,
+   * because the record it is undoing may never have been established at all:
+   * the row was still the migration's guess, and putting the *scope* back while
+   * marking it observed would tell the first Space to reach this Channel that
+   * the guess was a decision, and stop it seeding the real value.
+   */
+  observed: z.boolean().optional(),
   operationId: IdSchema,
 });
 export const SetChannelDirectScopeResultSchema = z.discriminatedUnion("ok", [
-  // The scope recorded before this call, so a caller whose canonical update
-  // then fails can put the record back rather than leaving it claiming an
-  // audience the Channel never took.
-  z.strictObject({ ok: z.literal(true), previousScope: SpaceScopeSchema }),
+  // The record as it was before this call, so a caller whose canonical update
+  // then fails can put it back rather than leaving it claiming an audience the
+  // Channel never took. Both halves, because a scope restored without its
+  // `observed` is a different record.
+  z.strictObject({
+    ok: z.literal(true),
+    previousScope: SpaceScopeSchema,
+    previousObserved: z.boolean(),
+  }),
   z.strictObject({ ok: z.literal(false), code: SpaceErrorCodeSchema }),
 ]);
 export type SetChannelDirectScopeResult = z.infer<typeof SetChannelDirectScopeResultSchema>;
