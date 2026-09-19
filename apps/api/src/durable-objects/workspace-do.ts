@@ -3845,12 +3845,13 @@ function mapDirectoryWorkstreams(
   rows: readonly WorkspaceDirectoryRow[],
   workspaceId: string,
   spaces: WorkspaceSpaceStorage,
+  userId: string,
 ): Workstream[] {
   const personalIds = [...new Set(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
   )];
   const previews = loadParticipantPreviews(sql, personalIds);
-  const spaceIds = spaces.spaceIdsByChannel(rows.map((row) => row.workstream_id));
+  const spaceIds = spaces.spaceIdsByChannel(userId, rows.map((row) => row.workstream_id));
   return rows.map((row) => directoryWorkstream(
     row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
   ));
@@ -4287,7 +4288,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
           type: "workspace_workstream_recency",
           directoryWaterline: this.directoryWaterline(),
-          workstream: mapDirectoryWorkstreams(this.state.storage.sql, [row], currentAttachment.workspaceId, this.spaceStorage())[0],
+          workstream: mapDirectoryWorkstreams(
+            this.state.storage.sql, [row], currentAttachment.workspaceId,
+            this.spaceStorage(), currentAttachment.userId,
+          )[0],
           stateVersion: directoryStateVersion(row),
         }));
         for (const peer of this.state.getWebSockets()) {
@@ -6187,7 +6191,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return WorkspaceChannelSpacesResultSchema.parse({ spaceIds: [] });
     }
     return WorkspaceChannelSpacesResultSchema.parse({
-      spaceIds: this.spaceStorage().channelSpaceIds(request.workstreamId),
+      spaceIds: this.spaceStorage().channelSpaceIds(request.userId, request.workstreamId),
     });
   }
 
@@ -9895,6 +9899,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true),
       request.workspaceId,
       this.spaceStorage(),
+      request.userId,
     ) };
   }
 
@@ -9922,6 +9927,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true),
       request.workspaceId,
       this.spaceStorage(),
+      request.userId,
     ) };
   }
 
@@ -9942,6 +9948,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true),
       request.workspaceId,
       this.spaceStorage(),
+      request.userId,
     ) };
   }
 
@@ -10924,7 +10931,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     return {
-      items: mapDirectoryWorkstreams(this.state.storage.sql, rows, request.workspaceId, this.spaceStorage()),
+      items: mapDirectoryWorkstreams(
+        this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
+      ),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
@@ -11038,7 +11047,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const occurredAt = new Date().toISOString();
     // Viewer-independent: one query for every subscribed socket, not one per socket.
     const preview = loadParticipantPreviews(this.state.storage.sql, [workstreamId]).get(workstreamId);
-    const spaceIds = this.spaceStorage().spaceIdsByChannel([workstreamId]).get(workstreamId) ?? [];
+    // Per socket rather than once: the Spaces a Channel is in are the ones
+    // *this* viewer may see, and a personal Space's id on somebody else's row
+    // is the existence of a private Space leaking through a shared Channel.
+    const spaces = this.spaceStorage();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -11065,7 +11077,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonWaterline: stateVersion.commonWaterline,
           viewerWaterline: stateVersion.viewerWaterline,
         },
-        workstream: visible ? directoryWorkstream(row, attachment.workspaceId, preview, spaceIds) : null,
+        workstream: visible
+          ? directoryWorkstream(
+            row, attachment.workspaceId, preview,
+            spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
+          )
+          : null,
       }));
       try {
         socket.send(payload);
