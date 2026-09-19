@@ -93,6 +93,12 @@ every current default for the new member. A membership is invisible until it is
 finalized — no summary counts it and no page lists it — because a placement whose
 readers have not been granted anything must not reach a client.
 
+Adding a Channel a Space already holds is the same path and succeeds. The
+preflight answers an already-active row with the generation it already has
+rather than staging a new one, and the settlement accepts that row at *that*
+generation: a retry, and two people dragging the same Channel onto the same
+Space, are ordinary rather than a 404.
+
 Removing one is the same shape in reverse, with two refusals in front of it.
 `space_membership_final` is the invariant that every Channel has a home.
 `space_audience_incompatible` is the weaker one that also has to hold: a reader
@@ -100,6 +106,19 @@ who keeps access through some other source must still be able to *find* the
 Channel, which means discovering one of the Spaces it stays in. The service
 computes the remaining audience from the Channel's own access sources with this
 Space taken out, because WorkspaceDO cannot see a Channel's direct source.
+
+A removal and an archive both *stage* before they ask a Channel for anything:
+the preflight flips the membership out of `active` and only then does the
+fan-out withdraw the source. So the set a staged operation still has work for is
+`active` plus `removing`, which is what `listSpaceMembers` answers for a
+`reaching` read — an archive that asked for the Space's active members would
+walk nothing and leave its source live on every Channel it had. An audience
+change and a restore mean the active set and ask for it.
+
+Every fan-out carries the membership generation the row it is about is actually
+at. Both halves of the fence are the caller's to supply and the Channel's to
+re-read, and a constant in that position is a fence against a generation the row
+may have left behind.
 
 ### Audience
 
@@ -124,6 +143,15 @@ names seated with nothing accounting for them. Withdrawing the source first is
 what takes them out, and the retraction plan seats every surviving reader before
 it narrows anything.
 
+The retraction carries the Space revision too, and that is not symmetry. It is
+the step that *deletes* the source row the application and its confirmation
+fence on, so an older audience change interleaved behind a newer one would
+otherwise find nothing to lose to and install its stale roster unfenced. A
+removal and an archive withdraw a source rather than replace it and pass no
+revision: there is no newer application for them to race. The walk also re-reads
+the Space between Channels and abandons when the revision moves, because the
+change that overtook it walks every member itself.
+
 ### Defaults
 
 A resource and a Sidekick recommendation are one mechanism with two consumers,
@@ -145,7 +173,12 @@ transcript and execution context were built with it.
 `ensureGeneralSpace` reserves the Organization's one General Space — named
 General, Organization-wide, `system_role = 'general'` — or answers with the
 existing one. It is idempotent, and the unique partial index on `system_role` is
-what decides a race between two callers rather than a check-then-write.
+what decides a race between two callers rather than a check-then-write: there is
+no read in front of the insert at all. Every caller reserves, the index refuses
+all but one, and the loser is answered with the Space the winner made, re-read
+outside the transaction its own statement aborted. Three callers reach this RPC
+and each is a retry of another, so the second one through is the ordinary path
+rather than the exception.
 
 **It reserves; it does not provision.** Opening the object is the caller's, the
 way it is for any other reservation, and nothing in this phase calls it: the
@@ -166,6 +199,20 @@ fences the intent recorded. A redelivery is safe because those steps are
 idempotent deltas and the settlement refuses a generation or revision that has
 moved.
 
+The operation id is the caller's, minted once and carried to both halves. An
+archive used to derive it at settlement from the Space revision minus one, which
+made two writes in two objects agree by arithmetic; anything that moved the
+revision in between left the intent pending and the alarm republishing an
+archive that had already happened.
+
+An intent whose Space has moved is not abandoned. A superseded audience change
+is still an *interrupted* one — its walk stopped part way, so some member
+Channels carry the roster it was applying and the rest do not — so the resume
+converges against the Space as it is now and settles `audience_superseded`,
+naming the Space and both revisions in the log. A resume that fails for any
+other reason names its reason too, rather than being retried in silence until it
+reaches the dead-letter queue with nothing on it.
+
 ### Reads
 
 Space state comes down the workspace socket, not over HTTP. The connect payload
@@ -174,6 +221,23 @@ and `spacesReady`, and every Space write republishes the same pair to every
 subscribed socket. There is deliberately no `GET /spaces`: a client that fetched
 one would hold a second answer to a question the socket already answers, and the
 two would disagree across a mutation.
+
+Both payloads are shaped for the viewer in two ways beyond ordering. **A guest
+is sent nothing**: both directories empty and `spacesReady` true, because a
+guest holds explicit Channel grants and no Organization-wide discovery, and is
+not waiting on a cutover. The relationship is read at accept time and pinned on
+the socket attachment, because nothing re-asks on the way out — an open socket
+is closed by the access-revocation queue rather than by a publisher querying D1
+again. And a Channel's `spaceIds` name only the Spaces *that* viewer may see: a
+Channel in somebody's personal Space would otherwise put that Space's id, and
+through `channelCount` its size, on every reader's row.
+
+**An Organization that has not reached migration 61 answers empty rather than
+failing.** The meeting-notes retirement holds an object at schema 57 until its
+external cleanup finishes, and the connect payload reads the Space tables before
+anything product-shaped can refuse. Every Space read therefore goes through
+`WorkspaceSpaceStorage`, which answers empty state when its tables are absent;
+every Space *write* is refused by name with `space_bootstrap_pending`.
 
 The two exceptions are paginated and therefore cannot ride the socket: a Space's
 member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
@@ -253,10 +317,21 @@ that writes it decides both its audience and its home.
   into a child object or D1 would give two objects an answer to "does this
   Channel have another Space", which is the question both the final-membership
   and the archive refusals turn on.
-- **Every Space RPC rechecks active Organization membership and refuses a
-  guest.** Guest access to Spaces is deferred; a guest holds explicit Channel
-  grants and no Organization-wide discovery, so admitting one would put every
-  Organization-wide Space in their sidebar.
+- **Every Space RPC a person can reach rechecks active Organization membership
+  and refuses a guest.** Guest access to Spaces is deferred; a guest holds
+  explicit Channel grants and no Organization-wide discovery, so admitting one
+  would put every Organization-wide Space in their sidebar — through an RPC or
+  through the socket, which is why the snapshot is shaped for the relationship
+  too. The exceptions are named and have no person on the request:
+  `recordSpaceIntentReceipt`, `spaceBootstrapStatus` and the default-target
+  settlements are server-to-server, and each says so where it is defined.
+- **A Space's hidden main conversation is not addressable as a Channel.** Every
+  product request carries the parent kind the caller expects and is refused
+  `conversation_parent_kind_mismatch` when the object disagrees. A conversation
+  is reached by id, every member is handed every Space id on the socket, and the
+  PRD gives that conversation no product surface at all — so without this,
+  `PATCH /workstreams/<spaceId>` archives General behind the Space authority's
+  back.
 - **A membership is invisible until it is finalized.** A `joining` row is not
   counted, not listed, and not on the snapshot. Publishing one before its
   audience was applied would show a placement to people who were granted
@@ -321,15 +396,29 @@ Organization membership and access class only.
 ## Failure modes and limits
 
 A malformed input fails strict contract parsing at the object boundary. Every
-refusal is one of the nine closed `SpaceErrorCode` values, which is the code a
+refusal is one of the ten closed `SpaceErrorCode` values, which is the code a
 route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
-`spaceRefusal` for a Space, `spaceAccessError` for a Channel.
+`spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler
+that fails for a reason outside that union records `diagnosticErrorCode` rather
+than a fixed literal: `last_error_code` on a default target and the
+`space_intent_resume` log are the only durable record of *why* a delivery or a
+resume has not finished.
 
 A transaction is local to one WorkspaceDO, so a failed write leaves no partial
 Space, membership or ordering row. A cross-object operation is not a
 transaction, and that is what the intents are for: an interruption leaves a
 `pending` intent that the alarm republishes.
+
+### Numbers handed to the team
+
+| Number | Value | What it bounds | What deciding it needs |
+| --- | --- | --- | --- |
+| `SPACE_CHANNEL_PAGE_SIZE` | 250 | Rows in one `GET /spaces/:id/channels` answer, and therefore one RPC result and one HTTP body. | Round trips against bytes per answer, weighed against the Organization sizes nobody here has. |
+| `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
+
+Both are lower bounds rather than budgets, and both are transcriptions rather
+than measurements — the sections below say what each was transcribed from.
 
 **`SPACE_CHANNEL_PAGE_SIZE` is 250, and the number is the team's to set.** It
 bounds one page of `GET /spaces/:id/channels`, which without it grows with the
@@ -435,7 +524,24 @@ same-region D1 membership and access-class check.
 Every RPC payload is untrusted and parsed at the object boundary. The workspace
 identity is pinned by the object and asserted on every call, and active
 Organization membership with `access_class = 'member'` is rechecked before any
-Space visibility is evaluated.
+Space visibility is evaluated. That recheck and the migration-61 readiness check
+are one gate, so a Space write on an Organization the cutover has not reached
+answers `space_bootstrap_pending` rather than aborting on a missing table.
+
+**A Space id is not an address for a Channel operation.** Every member holds
+every Space id — they arrive on the workspace socket — and a conversation object
+is reached by id alone, so the Space's hidden main conversation was reachable
+through `/workstreams/:id`: archivable, narrowable, readable, none of it through
+the Space authority and none of it a surface the PRD admits. Every product
+request now states the parent kind it expects and is answered `404
+conversation_parent_kind_mismatch` when the object's own identity disagrees,
+before authentication, because the answer is about the address rather than about
+the caller.
+
+A reservation is cancellable only by the person who made it. `source_version = 0`
+is a window every Space passes through between being reserved and its first
+projection, so a cancel that named only the id could delete whatever anybody
+else was in the middle of creating.
 
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content by themselves**: a
@@ -473,7 +579,10 @@ is reachable through the substream tools because
 row under the Space id.
 
 A non-empty regional activity dead-letter queue remains the terminal failure
-signal for default delivery and intent resumption.
+signal for default delivery and intent resumption, and is no longer the only
+one: `space_default_delivery_failed` and `space_intent_resume_failed` carry the
+Space id and `diagnosticErrorCode`, and a default target's `last_error_code`
+holds the same word for whoever reads the row afterwards.
 
 ## Changelog
 
@@ -533,7 +642,12 @@ kind-keyed default registry with its generation-fenced targets and
 publications, the staged operation intents, the bootstrap state, and a rebuilt
 retirement graph that admits `parent_kind = 'space'`. `SpaceService` orders the
 three authorities, `/spaces` exposes the mutations, and `/projects/*` answers
-`410 client_update_required`.
+`410 client_update_required`. Every product request on a conversation carries
+the parent kind its caller expects, so a Space id cannot be used as a Channel
+address; every Space read in WorkspaceDO goes through `WorkspaceSpaceStorage`,
+which answers empty state on an Organization the cutover has not reached; and
+the workspace socket's Space payload is shaped for the viewer's relationship as
+well as for their visibility.
 
 **Why:** The PRD's design decision 3 — the Organization owns the relationship —
 is not a preference. Two of the three invariants this module exists to hold
@@ -550,7 +664,29 @@ WorkstreamDO, and applying it goes back through the Channel's canonical scope
 and participant operations — which is where the retained-content containment
 preflight and its SQL triggers already are.
 
-**Considered and rejected:** A narrowing planner beside the widening one. It
+**Considered and rejected:** Deriving a staged operation's identity from state
+that the operation itself moves. The archive settled its intent at
+`${spaceId}:archive:${revision - 1}`, which is two writes in two objects made to
+agree by arithmetic; the caller mints one id and hands it to both halves
+instead. The same reasoning retired `membershipGeneration: 1` at three fan-out
+call sites: a fence this module calls load-bearing, fed a constant that reads as
+"generation one" and means "we did not look".
+
+Reading `generalSpaceId()` before reserving General. The check and the write are
+two statements and the unique partial index is the decision, so there is no read
+in front of the insert at all: every caller reserves, and the one the index
+refuses is answered with the Space the winner made. Three callers reach that RPC
+and each is a retry of another, so the recovery path is the ordinary one and is
+exercised every time.
+
+Re-asking who a socket belongs to when publishing a Space snapshot. Access
+revocation closes an open socket through its own queue and
+[`access-revocation.md`](access-revocation.md) asks for that not to come back,
+so the relationship is read at accept time and pinned on the attachment — which
+is also what makes a guest's empty Space payload a property of the socket rather
+than a D1 read per publication.
+
+A narrowing planner beside the widening one. It
 reads as the symmetric thing to build and it is the wrong shape: a source that
 can narrow can revoke access another source still supplies, and the composition
 rule that makes a Space's audience safe to change without auditing every other
@@ -572,7 +708,13 @@ recheck and the receipt are identical to a resource's; only the canonical
 operation that applies them differs, so `kind` rides on the row and the message
 and there is one mechanism.
 
-**Consequences:** Two limits ship known-incomplete and are the next change's to
+**Consequences:** A Channel's `spaceIds` and the `channelSpaces` answer are
+shaped per viewer, which costs one query per socket on
+`publishWorkstreamState` where it used to cost one per publication. The
+alternative was a personal Space's id, and through `channelCount` its size,
+arriving on every reader's row of a Channel it holds.
+
+Two limits ship known-incomplete and are the next change's to
 close. `prepareSpaceArchive` tests the *departing Space's* audience against the
 remaining Spaces rather than each member Channel's remaining readers, because
 the precise test needs one cross-object read per member inside a refusal;
