@@ -16,6 +16,7 @@ import {
   type PersonalOrder,
   type SpaceDefaultKind,
   type SpaceDirectory,
+  type SpaceReach,
   type SpaceSummary,
   type UserId,
 } from "@rally/contracts";
@@ -429,6 +430,83 @@ export function channelVisibleToViewerSql(directory: string, viewer: string): st
 }
 
 /**
+ * Whether this person reaches a Space through a Channel placed in it, in SQL.
+ *
+ * The third way a Space becomes visible, beside its own Organization-wide
+ * scope and this person's participation in it: **if you can see a Channel in a
+ * Space, you can see that Space's mark and name.** Without it a Channel in a
+ * participants-only Space is drawn under no Space at all for everybody but
+ * that Space's participants — in **Other channels**, a flat list whose whole
+ * purpose was to keep such a Channel reachable — and the hierarchy is silent
+ * about where the Channel actually lives.
+ *
+ * The Channel half is {@link channelVisibleToViewerSql}, the one code-owned
+ * text, rendered here against this subquery's own aliases. The membership has
+ * to be `active` (a `joining` one has granted nobody anything yet) and the
+ * Channel's directory row not archived — the same pair the viewer-scoped
+ * channel count is taken over, so a Space that is reachable this way always
+ * has at least one Channel to draw under it rather than a row a reader cannot
+ * account for.
+ *
+ * **Binds one `?` for the user id**, at the position this fragment sits in the
+ * statement — the convention every viewer-scoped query in this file already
+ * follows.
+ */
+export function spaceReachedThroughChannelSql(space: string): string {
+  return `EXISTS (SELECT 1
+            FROM space_channel_memberships reach_membership
+            JOIN workspace_workstream_directory reach_directory
+              ON reach_directory.workstream_id = reach_membership.workstream_id
+            LEFT JOIN workspace_workstream_viewers reach_viewer
+              ON reach_viewer.workstream_id = reach_directory.workstream_id
+             AND reach_viewer.user_id = ?
+             AND reach_viewer.authority_generation = reach_directory.authority_generation
+           WHERE reach_membership.space_id = ${space}.space_id
+             AND reach_membership.state = 'active'
+             AND reach_directory.archived_at IS NULL
+             AND ${channelVisibleToViewerSql("reach_directory", "reach_viewer")})`;
+}
+
+/**
+ * Whether this person may be told a Space exists, in SQL: the three ways, in
+ * one text.
+ *
+ * `viewer` is the Space's own left-joined viewer row, already narrowed to
+ * `is_participant = 1` by its join. One text rather than one per query for the
+ * reason {@link channelVisibleToViewerSql} is one: the directory, the inactive
+ * list, the per-Channel placement read and the nudge's addressing all decide
+ * the same question, and a spelling that drifted looser in one of them would
+ * disclose a Space through whichever query was left behind.
+ *
+ * **Binds one `?` for the user id**, for
+ * {@link spaceReachedThroughChannelSql}, after whatever the viewer join binds.
+ */
+export function spaceVisibleToViewerSql(space: string, viewer: string): string {
+  return `(${space}.scope = 'workspace'
+            OR ${viewer}.user_id IS NOT NULL
+            OR ${spaceReachedThroughChannelSql(space)})`;
+}
+
+/**
+ * Why this viewer can see this Space, as a column.
+ *
+ * Computed by the query that selects the row rather than asked per summary: it
+ * is three comparisons over columns already joined, and the alternative is one
+ * more statement per Space per socket publication.
+ *
+ * The strongest relationship wins. `ELSE 'through_channel'` is sound only
+ * because every query rendering this has already applied
+ * {@link spaceVisibleToViewerSql}, so a row that reaches it is one of the
+ * three; a row selected without that filter would be labelled
+ * `through_channel` whether or not it is reachable at all.
+ */
+export function spaceReachSql(space: string, viewer: string): string {
+  return `CASE WHEN ${viewer}.user_id IS NOT NULL THEN 'participant'
+               WHEN ${space}.scope = 'workspace' THEN 'organization'
+               ELSE 'through_channel' END`;
+}
+
+/**
  * The keyset seek for one arm of the conversation page.
  *
  * Rendered per arm rather than once over the union, because `kind` is a
@@ -483,6 +561,8 @@ function afterCursorSql(
 }
 
 interface SpaceRow extends Record<string, SqlStorageValue> {
+  /** {@link spaceReachSql}'s column. Every select that builds one renders it. */
+  reach: SpaceReach;
   space_id: string;
   title: string;
   scope: "personal" | "workspace";
@@ -749,7 +829,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.advanceWaterline(createdAt);
-      return this.space(spaceId);
+      return this.space(spaceId, request.userId);
     });
   }
 
@@ -778,7 +858,7 @@ export class WorkspaceSpaceStorage {
     } catch (error) {
       const winner = this.generalSpaceId();
       if (winner === null) throw error;
-      return { space: this.space(winner), created: false };
+      return { space: this.space(winner, request.userId), created: false };
     }
   }
 
@@ -830,21 +910,35 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * The archived Spaces this viewer may see.
+   *
+   * Under the same visibility text as the active list, and today its third
+   * clause never widens this one: an archive stages every membership out of
+   * `active` before it commits, so nobody reaches an archived Space through a
+   * Channel placed in it — and no surface draws a Channel under an archived
+   * Space either, so there would be nothing for the mark and name to explain.
+   * That is a property of the archive rather than of the predicate, and the
+   * predicate is written once so a change to the archive carries here instead
+   * of being re-derived.
+   */
   listInactive(userId: string): SpaceDirectory {
     if (!this.ready()) return EMPTY_DIRECTORY;
     const rows = this.storage.sql.exec<SpaceRow>(
-      `SELECT space.* FROM workspace_space_directory space
+      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
+         FROM workspace_space_directory space
          LEFT JOIN workspace_space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NOT NULL
-          AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
         ORDER BY space.updated_at DESC, space.space_id`,
+      userId,
       userId,
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row)),
+      items: rows.map((row) => this.summary(row, userId)),
     });
   }
 
@@ -1071,7 +1165,7 @@ export class WorkspaceSpaceStorage {
   /** One Space as this viewer may see it, archived or not. */
   readable(userId: string, spaceId: string): SpaceSummary | false {
     if (!this.canRead(userId, spaceId)) return false;
-    return this.space(spaceId);
+    return this.space(spaceId, userId);
   }
 
   /**
@@ -1084,7 +1178,7 @@ export class WorkspaceSpaceStorage {
    */
   applyPresentation(request: WorkspaceSpacePresentationRequest, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
-      if (!this.canRead(request.userId, request.spaceId)) return false;
+      if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE workspace_space_directory
             SET title = ?, appearance_json = ?, revision = revision + 1, updated_at = ?
@@ -1096,7 +1190,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!updated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1109,7 +1203,7 @@ export class WorkspaceSpaceStorage {
    */
   applyAudience(request: WorkspaceSpaceAudienceNoteRequest, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
-      if (!this.canRead(request.userId, request.spaceId)) return false;
+      if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE workspace_space_directory
             SET scope = ?, revision = revision + 1, updated_at = ?
@@ -1142,7 +1236,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1531,9 +1625,10 @@ export class WorkspaceSpaceStorage {
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
           WHERE membership.state = 'active' AND space.archived_at IS NULL
-            AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+            AND ${spaceVisibleToViewerSql("space", "viewer")}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY membership.workstream_id, membership.space_id`,
+        userId,
         userId,
         ...chunk,
       ).toArray()) {
@@ -1555,7 +1650,7 @@ export class WorkspaceSpaceStorage {
     now = Date.now(),
   ): WorkspaceSpaceMembershipPlanResult {
     return this.storage.transactionSync(() => {
-      if (!this.visibleSpaceIds(request.userId).includes(request.spaceId)) {
+      if (!this.canEdit(request.userId, request.spaceId, true)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const existing = this.storage.sql.exec<{
@@ -1570,7 +1665,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         return {
           ok: true,
-          space: this.space(request.spaceId),
+          space: this.space(request.spaceId, request.userId),
           membershipGeneration: existing.generation,
         };
       }
@@ -1598,7 +1693,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), membershipGeneration };
+      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration };
     });
   }
 
@@ -1638,7 +1733,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!activated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1657,7 +1752,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!cancelled) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1675,7 +1770,7 @@ export class WorkspaceSpaceStorage {
     now = Date.now(),
   ): WorkspaceSpaceMembershipPlanResult {
     return this.storage.transactionSync(() => {
-      if (!this.canRead(request.userId, request.spaceId)) {
+      if (!this.canEdit(request.userId, request.spaceId)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const membership = this.storage.sql.exec<{
@@ -1715,7 +1810,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), membershipGeneration: generation };
+      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration: generation };
     });
   }
 
@@ -1766,7 +1861,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -1782,7 +1877,7 @@ export class WorkspaceSpaceStorage {
    */
   prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
-      if (!this.visibleSpaceIds(userId).includes(spaceId)) {
+      if (!this.canEdit(userId, spaceId, true)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const row = this.storage.sql.exec<{
@@ -1842,14 +1937,14 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(spaceId) };
+      return { ok: true, space: this.space(spaceId, userId) };
     });
   }
 
   /** Commit the archive the preflight staged. General is refused here too. */
   finalizeArchive(userId: string, spaceId: string, now = Date.now()): SpaceSummary | "protected" | false {
     return this.storage.transactionSync(() => {
-      if (!this.visibleSpaceIds(userId).includes(spaceId)) return false;
+      if (!this.canEdit(userId, spaceId, true)) return false;
       const protectedRow = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS one FROM workspace_space_directory
           WHERE space_id = ? AND system_role = 'general'`,
@@ -1873,7 +1968,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return this.space(spaceId);
+      return this.space(spaceId, userId);
     });
   }
 
@@ -1887,8 +1982,10 @@ export class WorkspaceSpaceStorage {
    */
   restore(workspaceId: string, userId: string, spaceId: string, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
-      const readable = this.listInactive(userId).items.some((space) => space.id === spaceId);
-      if (!readable) return false;
+      // An archived Space, and one this person may change: a viewer who
+      // reaches it only through a Channel in it is told it exists so the
+      // Channel has somewhere to be drawn, and restoring it is not theirs.
+      if (!this.canEdit(userId, spaceId)) return false;
       const restored = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE workspace_space_directory
             SET archived_at = NULL, revision = revision + 1, updated_at = ?
@@ -1906,7 +2003,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(workspaceId, userId, spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId);
+      return this.space(spaceId, userId);
     });
   }
 
@@ -1919,7 +2016,7 @@ export class WorkspaceSpaceStorage {
    */
   addDefault(request: WorkspaceSpaceDefaultRequest, now = Date.now()): WorkspaceSpaceDefaultResult {
     return this.storage.transactionSync(() => {
-      if (!this.visibleSpaceIds(request.userId).includes(request.spaceId)) {
+      if (!this.canEdit(request.userId, request.spaceId, true)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const existing = this.storage.sql.exec<{
@@ -1935,7 +2032,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         const targets = this.pendingTargets(request, existing.generation);
         this.stageDefaultPublications(targets, request.userId, now);
-        return { ok: true, space: this.space(request.spaceId), targets };
+        return { ok: true, space: this.space(request.spaceId, request.userId), targets };
       }
       const defaultGeneration = (existing?.generation ?? 0) + 1;
       if (existing) {
@@ -1978,13 +2075,13 @@ export class WorkspaceSpaceStorage {
       for (const target of targets) this.insertDefaultTarget(target, now);
       this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId), targets };
+      return { ok: true, space: this.space(request.spaceId, request.userId), targets };
     });
   }
 
   removeDefault(request: WorkspaceSpaceDefaultRequest, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
-      if (!this.visibleSpaceIds(request.userId).includes(request.spaceId)) return false;
+      if (!this.canEdit(request.userId, request.spaceId, true)) return false;
       const removed = this.storage.sql.exec<{ target_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE space_defaults
             SET state = 'removed', generation = generation + 1, updated_at = ?, removed_at = ?
@@ -1998,7 +2095,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!removed) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId);
+      return this.space(request.spaceId, request.userId);
     });
   }
 
@@ -2989,9 +3086,10 @@ export class WorkspaceSpaceStorage {
            LEFT JOIN workspace_space_viewers viewer
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
-          WHERE (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+          WHERE ${spaceVisibleToViewerSql("space", "viewer")}
             AND space.space_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.space_id`,
+        userId,
         userId,
         ...chunk,
       ).toArray()) visible.push(row.space_id);
@@ -3009,15 +3107,62 @@ export class WorkspaceSpaceStorage {
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NULL
-          AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
         ORDER BY space.created_at, space.space_id`,
+      userId,
       userId,
     ).toArray().map((row) => row.space_id);
   }
 
+  /**
+   * Why this viewer can see this Space, or `null` when they cannot see it at
+   * all.
+   *
+   * The one predicate every Space authorization decision is derived from — the
+   * read below, the edit rule beside it, and the word `WorkspaceDO` refuses a
+   * write with. One indexed lookup rather than the two whole-directory scans
+   * `canRead` used to intersect.
+   *
+   * `activeOnly` is for the operations that are about a Space that is *there*:
+   * an archive, a membership, a default. A read, a restore and a removal reach
+   * an archived Space on purpose.
+   */
+  reach(userId: string, spaceId: string, activeOnly = false): SpaceReach | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{ reach: SpaceReach } & Record<string, SqlStorageValue>>(
+      `SELECT ${spaceReachSql("space", "viewer")} AS reach
+         FROM workspace_space_directory space
+         LEFT JOIN workspace_space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ? AND viewer.is_participant = 1
+        WHERE space.space_id = ?
+          AND (? = 0 OR space.archived_at IS NULL)
+          AND ${spaceVisibleToViewerSql("space", "viewer")}`,
+      userId,
+      spaceId,
+      activeOnly ? 1 : 0,
+      userId,
+    ).toArray()[0]?.reach ?? null;
+  }
+
   private canRead(userId: string, spaceId: string): boolean {
-    return this.visibleSpaceIds(userId).includes(spaceId)
-      || this.listInactive(userId).items.some((space) => space.id === spaceId);
+    return this.reach(userId, spaceId) !== null;
+  }
+
+  /**
+   * Whether this viewer may *change* this Space: any reach but
+   * `through_channel`.
+   *
+   * The same rule `WorkspaceDO.spaceRefusalCode` renders as
+   * `space_access_denied`, kept here as the fence inside the transaction — one
+   * predicate, two depths, the way the Channel visibility text is one text in
+   * several queries. Somebody who reaches a Space only through a Channel in it
+   * has been told the Space's mark and name so the Channel can be drawn under
+   * it; every write on it is somebody else's.
+   */
+  private canEdit(userId: string, spaceId: string, activeOnly = false): boolean {
+    const reach = this.reach(userId, spaceId, activeOnly);
+    return reach !== null && reach !== "through_channel";
   }
 
   /**
@@ -3050,7 +3195,7 @@ export class WorkspaceSpaceStorage {
 
   private directory(workspaceId: string, userId: string): SpaceDirectory {
     const rows = this.storage.sql.exec<SpaceRow>(
-      `SELECT space.*
+      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
          FROM workspace_container_order ordering
          JOIN workspace_space_directory space ON space.space_id = ordering.item_id
          LEFT JOIN workspace_space_viewers viewer
@@ -3058,35 +3203,60 @@ export class WorkspaceSpaceStorage {
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE ordering.user_id = ? AND ordering.container_kind = 'organization'
           AND ordering.container_id = ? AND space.archived_at IS NULL
-          AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
         ORDER BY ordering.position, space.space_id`,
       userId,
       userId,
       workspaceId,
+      userId,
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row)),
+      items: rows.map((row) => this.summary(row, userId)),
     });
   }
 
-  private space(spaceId: string): SpaceSummary {
+  /**
+   * One Space as this viewer is answered with it.
+   *
+   * Takes the viewer because the summary now carries one viewer-dependent
+   * field. Every caller is a mutation answering the person who asked for it,
+   * or a read that has already decided this person may see the Space — the
+   * reach is the *why* of that decision rather than a second one.
+   */
+  private space(spaceId: string, userId: string): SpaceSummary {
     return this.summary(this.storage.sql.exec<SpaceRow>(
-      "SELECT * FROM workspace_space_directory WHERE space_id = ?",
+      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
+         FROM workspace_space_directory space
+         LEFT JOIN workspace_space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ? AND viewer.is_participant = 1
+        WHERE space.space_id = ?`,
+      userId,
       spaceId,
-    ).one());
+    ).one(), userId);
   }
 
   /**
-   * A Space as anybody sees it.
+   * A Space as this viewer sees it.
    *
-   * Viewer-independent, deliberately: every field here is the Organization's
-   * fact about the Space, and the two that are not — which Spaces a person can
-   * see at all, and their order — are decided by the queries that select the
-   * rows rather than by this projection. A per-viewer field here would have to
-   * be recomputed for every socket on every publication.
+   * Almost viewer-independent, and the exception is the whole of the
+   * disclosure rule. Every field here but three is the Organization's fact
+   * about the Space, and the two that never were — which Spaces a person can
+   * see at all, and their order — are still decided by the queries that select
+   * the rows rather than by this projection.
+   *
+   * What the reach decides: a `through_channel` viewer has been told a Space's
+   * mark, name, audience setting and lifecycle so the Channel they *can* read
+   * has somewhere to be drawn. They are told nothing else about it. The
+   * participants and the defaults are emptied rather than made optional —
+   * empty is a state each of them already has, and a second summary schema
+   * would be a second shape every reader has to branch on — and the Channel
+   * count is taken over the Channels that viewer can see, which is the
+   * disclosure `spaceIdsByChannel` used to keep a personal Space's id off a
+   * Channel row to avoid.
    */
-  private summary(row: SpaceRow): SpaceSummary {
+  private summary(row: SpaceRow, userId: string): SpaceSummary {
     const appearance = row.appearance_json
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
@@ -3105,25 +3275,58 @@ export class WorkspaceSpaceStorage {
       status: row.archived_at === null ? "active" : "archived",
       systemRole: row.system_role,
       revision: row.revision,
-      participants: this.participantUserIds(row.space_id).map((userId) => ({ userId })),
-      // An inner join, because `archived_at IS NULL` is true of a missing
-      // directory row as well as of an active Channel: outer-joined, a
-      // membership whose projection has not landed — or whose Channel has been
-      // deleted — would be counted as an active one.
-      channelCount: this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-        `SELECT COUNT(*) AS count
-           FROM space_channel_memberships membership
-           JOIN workspace_workstream_directory directory
-             ON directory.workstream_id = membership.workstream_id
-          WHERE membership.space_id = ? AND membership.state = 'active'
-            AND directory.archived_at IS NULL`,
-        row.space_id,
-      ).one().count,
-      defaultResourceIds: this.defaultIds(row.space_id, "resource"),
-      defaultSidekickIds: this.defaultIds(row.space_id, "sidekick"),
+      reach: row.reach,
+      participants: row.reach === "through_channel"
+        ? []
+        : this.participantUserIds(row.space_id).map((participantId) => ({ userId: participantId })),
+      channelCount: this.channelCount(row.space_id, userId, row.reach),
+      defaultResourceIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "resource"),
+      defaultSidekickIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "sidekick"),
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
     });
+  }
+
+  /**
+   * Channels a surface can show in this Space: a listable active membership
+   * whose Channel is not archived.
+   *
+   * An inner join on the directory, because `archived_at IS NULL` is true of a
+   * missing row as well as of an active Channel: outer-joined, a membership
+   * whose projection has not landed — or whose Channel has been deleted —
+   * would be counted as an active one.
+   *
+   * Narrowed to this viewer for a `through_channel` reach and to nobody for
+   * the other two, which is two readings of one number on purpose. For a
+   * member of the Space it is the Organization's count: it is what keeps an
+   * expansion holding no rows from claiming the Space is empty, and being
+   * short of it is not proof a page is missing. For somebody who reaches the
+   * Space through one Channel the Organization's count is the *size of a
+   * participants-only Space*, which is the disclosure the whole of this change
+   * is written around not making. Narrowing it also makes the two agree by
+   * construction: this predicate is exactly the one
+   * {@link spaceReachedThroughChannelSql} tests for existence, so such a
+   * viewer's count is never zero.
+   */
+  private channelCount(spaceId: string, userId: string, reach: SpaceReach): number {
+    const viewerScoped = reach === "through_channel";
+    return this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count
+         FROM space_channel_memberships membership
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = membership.workstream_id
+         ${viewerScoped
+           ? `LEFT JOIN workspace_workstream_viewers viewer
+                ON viewer.workstream_id = directory.workstream_id
+               AND viewer.user_id = ?
+               AND viewer.authority_generation = directory.authority_generation`
+           : ""}
+        WHERE membership.space_id = ? AND membership.state = 'active'
+          AND directory.archived_at IS NULL
+          ${viewerScoped ? `AND ${channelVisibleToViewerSql("directory", "viewer")}` : ""}`,
+      ...(viewerScoped ? [userId] : []),
+      spaceId,
+    ).one().count;
   }
 
   private defaultIds(spaceId: string, kind: SpaceDefaultKind): string[] {
