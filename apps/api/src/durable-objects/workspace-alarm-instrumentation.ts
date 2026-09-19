@@ -8,7 +8,6 @@ export type WorkspaceScheduledAlarmPhase =
   | "authority_check"
   | "stored_target"
   | "activity_reap"
-  | "project_default_publish"
   | "space_default_publish"
   | "space_intent_resume"
   | "space_bootstrap"

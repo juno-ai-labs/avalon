@@ -395,11 +395,14 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           {/* The Channels the refusal named, which is what turns "some channel
               has to move" into something a person can act on. It can be empty
               even on a refusal: the server names only the Channels this viewer
-              may already read, and the sentence above stands without it. */}
+              may already read, and the sentence above stands without it.
+              An id with no title is one this device has not loaded a page for —
+              not one the viewer cannot see, which the server would not have
+              named. */}
           {blockedChannelIds.length > 0 && (
             <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
               {blockedChannelIds.map((id) => (
-                <li key={id}>{placed.find((channel) => channel.id === id)?.title ?? 'A channel you can’t see'}</li>
+                <li key={id}>{placed.find((channel) => channel.id === id)?.title ?? 'A channel not loaded on this device'}</li>
               ))}
             </ul>
           )}
