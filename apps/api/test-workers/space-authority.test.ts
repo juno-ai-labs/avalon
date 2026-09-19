@@ -990,7 +990,7 @@ describe("WorkspaceDO space authority", () => {
       );
       for (const table of [
         "space_default_publications", "space_default_targets", "space_defaults",
-        "space_channel_memberships", "space_intents", "space_bootstrap_receipts",
+        "space_channel_memberships", "space_intents",
         "space_bootstrap", "workspace_space_order", "workspace_space_viewers",
         "workspace_space_state", "workspace_space_directory",
       ]) sql.exec(`DROP TABLE ${table}`);

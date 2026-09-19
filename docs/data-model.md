@@ -431,8 +431,8 @@ SQL joins.
   and receipt. `space_bootstrap` is the singleton cutover row — phase, General's
   id, the walk's cursor, the blocked Channels as JSON, and the
   `not_before`/`attempts` retry gate the alarm claims on — seeded `pending` for
-  every Organization, with `space_bootstrap_receipts` keyed
-  `(workstream_id, phase)` so a redelivered page costs nothing. The
+  every Organization. A redelivered page costs nothing because the membership
+  row says what is already placed, so there is no receipt table beside it. The
   same migration rebuilds `workspace_retirement_graph` so `parent_kind` admits
   `'space'`, carrying its rows and their `retired_at` receipts through a scratch
   table — migration 42 is released and is not edited. A unique partial index on

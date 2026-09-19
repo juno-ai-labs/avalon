@@ -6200,11 +6200,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Record what one page of cutover work finished, and move the pass on.
    *
-   * Receipts and blockers land in the same call as the phase advance, so a
-   * redelivery of the page skips the Channels the first delivery placed and
-   * reports the same blockers once. Clearing a Channel's blocker when it is
-   * placed is what lets an operator remediate a fence and have the next pass
-   * close the Organization.
+   * Blockers land in the same call as the phase advance, so a redelivery of the
+   * page reports the same blockers once. What a redelivery skips is decided by
+   * the membership row itself rather than by a receipt: it is the state a
+   * placement actually produces, and it cannot disagree with one.
+   *
+   * `placedWorkstreamIds` is what the page settled *for*, and clearing those
+   * Channels' blockers is what lets a remediated Channel close the
+   * Organization: a pass that places it, or a preflight that now finds it safe,
+   * takes it off the row.
    */
   async settleSpaceBootstrapPage(
     input: WorkspaceSpaceBootstrapSettleRequest,
@@ -6215,10 +6219,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     const storage = this.spaceStorage();
-    if (request.placedWorkstreamIds.length > 0) {
-      storage.recordBootstrapReceipts(request.placedWorkstreamIds, request.phase);
-      storage.clearBootstrapBlocked(request.placedWorkstreamIds);
-    }
+    storage.clearBootstrapBlocked(request.placedWorkstreamIds);
     storage.recordBootstrapBlocked(request.blocked);
     storage.advanceBootstrap(
       request.phase === "memberships" && request.cursor !== null ? "memberships"
