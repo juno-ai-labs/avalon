@@ -1,9 +1,7 @@
 import {
   CreateSpaceRequestSchema,
-  ReorderSpacesRequestSchema,
   SpaceChannelPageSchema,
   SpaceDefaultKindSchema,
-  SpaceDirectorySchema,
   SpaceIdSchema,
   SpaceSummarySchema,
   UpdateSpaceAudienceRequestSchema,
@@ -45,12 +43,6 @@ spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
   c.json(SpaceSummarySchema.parse(
     await new SpaceService(c.env, getAuth(c)).create(c.req.valid("json")),
   ), 201),
-);
-
-spaceRoutes.put("/order", zValidator("json", ReorderSpacesRequestSchema), async (c) =>
-  c.json(SpaceDirectorySchema.parse(
-    await new SpaceService(c.env, getAuth(c)).reorder(c.req.valid("json")),
-  )),
 );
 
 spaceRoutes.get(

@@ -31,6 +31,7 @@ import {
   type ParentEffect,
   type SpaceId,
   type UserId,
+  type PersonalOrder,
   type WorkspaceSidebar,
   type WorkspaceSpaceSnapshotEvent,
   type WorkspaceWorkstreamStateEvent,
@@ -50,6 +51,15 @@ const CHANNEL_A = asWorkstreamId("00000000-0000-7000-8000-00000000cf05");
 const CHANNEL_B = asWorkstreamId("00000000-0000-7000-8000-00000000cf06");
 const CHANNEL_C = asWorkstreamId("00000000-0000-7000-8000-00000000cf07");
 const RESOURCE_ID = "00000000-0000-7000-8000-00000000cf0c";
+/**
+ * Two Breakout ids, which WorkspaceDO has never seen and never will.
+ *
+ * A Channel's Breakouts are its own object's children; the Organization stores
+ * the arrangement this person dragged and nothing about what is in it, which is
+ * exactly what these two literals stand for.
+ */
+const BREAKOUT_A = "00000000-0000-7000-8000-00000000cf0d";
+const BREAKOUT_B = "00000000-0000-7000-8000-00000000cf0e";
 
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
@@ -433,6 +443,27 @@ async function spaceDirectories(userId: string): Promise<NonNullable<WorkspaceSi
   // missing pair here is a regression rather than a case to tolerate.
   if (!sidebar.spaces) throw new Error("workspace sidebar answered without Space directories");
   return sidebar.spaces;
+}
+
+/** Every list this person has arranged, as their own client reads it. */
+async function personalOrder(userId: string): Promise<PersonalOrder> {
+  ticketSequence += 1;
+  const { socket, sidebar } = await connectViewer(userId, `e${ticketSequence.toString(16)}`);
+  socket.close();
+  // Optional on the wire so a client can talk to a server without the ordering;
+  // a server that has it always sends it, so a missing field is a regression.
+  if (!sidebar.ordering) throw new Error("workspace sidebar answered without an ordering");
+  return sidebar.ordering;
+}
+
+/** One container's stored item ids, or `null` when this person has no row for it. */
+function storedItemIds(
+  ordering: PersonalOrder,
+  kind: "organization" | "space" | "channel",
+  containerId: string,
+): string[] | null {
+  return ordering.find((entry) => entry.container.kind === kind && entry.container.id === containerId)
+    ?.itemIds ?? null;
 }
 
 beforeEach(async () => {
@@ -1032,7 +1063,7 @@ describe("WorkspaceDO space authority", () => {
       for (const table of [
         "space_default_publications", "space_default_targets", "space_defaults",
         "space_channel_memberships", "space_intents",
-        "space_bootstrap", "workspace_space_order", "workspace_space_viewers",
+        "space_bootstrap", "workspace_container_order", "workspace_space_viewers",
         "workspace_space_state", "workspace_space_directory",
       ]) sql.exec(`DROP TABLE ${table}`);
     });
@@ -1096,8 +1127,10 @@ describe("WorkspaceDO space authority", () => {
     // And on the republication every Space write sends, which is the path a
     // guest holds open rather than asks for.
     const snapshot = nextSpaceSnapshot(socket);
-    await workspace().reorderSpaces({
-      workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [] },
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [] },
     });
     const event = await snapshot;
     expect(event.spaces.active.items).toEqual([]);
@@ -1125,6 +1158,98 @@ describe("WorkspaceDO space authority", () => {
       .resolves.toMatchObject({ phase: "general", generalSpaceId: general.space.id, ready: false });
   });
 
+  it("given each kind of container, when one person arranges it, then only their own sidebar carries it", async () => {
+    const first = await reserve("Company");
+    const second = await reserve("Recruiting");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(first, CHANNEL_A);
+    await place(first, CHANNEL_B);
+    // The read is what gives a viewer their Organization rows, and it is the
+    // read the other member's untouched order has to survive.
+    expect(storedItemIds(await personalOrder(MEMBER), "organization", WORKSPACE_ID))
+      .toEqual([first, second]);
+
+    for (const order of [
+      { container: { kind: "organization" as const, id: WORKSPACE_ID }, itemIds: [second, first] },
+      { container: { kind: "space" as const, id: first }, itemIds: [CHANNEL_B, CHANNEL_A] },
+      { container: { kind: "channel" as const, id: CHANNEL_A }, itemIds: [BREAKOUT_B, BREAKOUT_A] },
+    ]) {
+      await expect(workspace().reorderContainer({ workspaceId: WORKSPACE_ID, userId: OWNER, order }))
+        .resolves.toMatchObject({ ok: true, order });
+    }
+
+    // All three come back on the one field, so a session paints every list it
+    // orders from the same answer rather than from three.
+    const owner = await personalOrder(OWNER);
+    expect(storedItemIds(owner, "organization", WORKSPACE_ID)).toEqual([second, first]);
+    expect(storedItemIds(owner, "space", first)).toEqual([CHANNEL_B, CHANNEL_A]);
+    // Stored as given: a Breakout is the Channel's own object's child and this
+    // authority cannot see one, so there is nothing here to validate against.
+    expect(storedItemIds(owner, "channel", CHANNEL_A)).toEqual([BREAKOUT_B, BREAKOUT_A]);
+
+    // The order is the person's, so the member beside them is untouched — in
+    // the list they earned by reading and in the two they never arranged.
+    const member = await personalOrder(MEMBER);
+    expect(storedItemIds(member, "organization", WORKSPACE_ID)).toEqual([first, second]);
+    expect(storedItemIds(member, "space", first)).toBeNull();
+    expect(storedItemIds(member, "channel", CHANNEL_A)).toBeNull();
+  });
+
+  it("given a Space's Channels, when the order names one it does not hold or the viewer cannot read, then it is dropped", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    // Published into the directory and deliberately left in no Space of its
+    // own: a Channel somebody can read is still not a row in *this* Space's
+    // list.
+    await publishChannel(CHANNEL_B, null);
+    // A member's personal Channel, placed in the Space. The membership is the
+    // Organization's fact and the visibility is the reader's, so this one is
+    // in the list and still not the owner's to arrange.
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_C);
+
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_B, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_A] } });
+
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId)).toEqual([CHANNEL_A]);
+    // And the member, who can read theirs, may arrange it.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_C, CHANNEL_A] } });
+  });
+
+  it("given two sessions of one person, when one arranges a list, then the other is told without asking", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_B);
+    const desk = await connectViewer(OWNER, "cf20");
+    const laptop = await connectViewer(OWNER, "cf21");
+    const onLaptop = nextSpaceSnapshot(laptop.socket);
+
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    });
+
+    // The whole ordering rather than the container that moved: this is the one
+    // message a viewer's other windows get, and a delta would make each of them
+    // keep a copy to apply it to.
+    expect(storedItemIds((await onLaptop).ordering, "space", spaceId))
+      .toEqual([CHANNEL_B, CHANNEL_A]);
+    desk.socket.close();
+    laptop.socket.close();
+  });
+
   it("given a viewer's order, when they reorder Spaces, then only their own order moves", async () => {
     const first = await reserve("Company");
     const second = await reserve("Recruiting");
@@ -1133,9 +1258,13 @@ describe("WorkspaceDO space authority", () => {
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([first, second]);
 
-    await expect(workspace().reorderSpaces({
-      workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [second, first] },
-    })).resolves.toMatchObject({ ok: true, directory: { items: [{ id: second }, { id: first }] } });
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization", id: WORKSPACE_ID }, itemIds: [second, first] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [second, first] } });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id))
+      .toEqual([second, first]);
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([first, second]);
   });

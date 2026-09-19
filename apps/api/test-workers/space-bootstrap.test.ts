@@ -115,7 +115,7 @@ async function forgetSpaces(): Promise<void> {
       "space_channel_memberships",
       "workspace_space_directory",
       "workspace_space_viewers",
-      "workspace_space_order",
+      "workspace_container_order",
     ]) state.storage.sql.exec(`DELETE FROM ${table}`);
     state.storage.sql.exec(
       `UPDATE space_bootstrap SET phase = 'pending', general_space_id = NULL, cursor = NULL,

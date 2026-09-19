@@ -4,18 +4,17 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  ContainerOrderSchema,
   SpaceChannelPageSchema,
-  SpaceDirectorySchema,
   SpaceRefusalDetailsSchema,
   SpaceSummarySchema,
   type CreateSpaceRequest,
   type SpaceChannelPage,
-  type SpaceDirectory,
   type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
   type SpaceSummary,
-  type ReorderSpacesRequest,
+  type ContainerOrder,
   type UpdateSpaceAudienceRequest,
   type UpdateSpacePresentationRequest,
   type UserId,
@@ -26,7 +25,7 @@ import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName 
 import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
-  WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceContainerOrderResultSchema,
   WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
@@ -133,14 +132,28 @@ export function spaceRefusal(
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
-  async reorder(input: ReorderSpacesRequest): Promise<SpaceDirectory> {
-    const result = WorkspaceSpaceDirectoryResultSchema.parse(await (await this.workspace()).reorderSpaces({
+  /**
+   * One container's order for the person asking: the Organization's Spaces, a
+   * Space's Channels, or a Channel's Breakouts.
+   *
+   * It lives on this service rather than beside the workspace's own settings
+   * because everything it touches is the Space authority's — the rows, the
+   * refusal vocabulary, the snapshot the answer is republished on — even though
+   * only one of the three containers is a Space. The route is at the workspace
+   * level for the mirror-image reason: a Breakout's order is not a `/spaces`
+   * fact.
+   *
+   * The answer is what was *stored*, not an acknowledgement, so a client can
+   * see what its request lost to this container's rule.
+   */
+  async reorderContainer(input: ContainerOrder): Promise<ContainerOrder> {
+    const result = WorkspaceContainerOrderResultSchema.parse(await (await this.workspace()).reorderContainer({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       order: input,
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
-    return SpaceDirectorySchema.parse(result.directory);
+    return ContainerOrderSchema.parse(result.order);
   }
 
   async summary(spaceId: SpaceId): Promise<SpaceSummary> {

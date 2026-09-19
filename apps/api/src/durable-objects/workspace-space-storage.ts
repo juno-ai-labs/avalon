@@ -1,6 +1,9 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 
 import {
+  ContainerOrderSchema,
+  OrderedContainerKindSchema,
+  PersonalOrderSchema,
   SpaceDirectorySchema,
   SpaceSummarySchema,
   asSpaceId,
@@ -8,6 +11,9 @@ import {
   asWorkstreamId,
   SPACE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
+  type ContainerOrder,
+  type OrderedContainer,
+  type PersonalOrder,
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceSummary,
@@ -155,16 +161,34 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX workspace_space_viewers_user_idx
     ON workspace_space_viewers(user_id, is_participant, space_id)`,
-  `CREATE TABLE workspace_space_order (
+  // One table for every list a person arranges by hand, keyed by the container
+  // the list belongs to: the Organization's Spaces, the Channels placed in one
+  // Space, the Breakouts under one Channel. They are the same question asked of
+  // three containers — in what order does this person want these items — and
+  // three tables would have been three of everything above them: three writes,
+  // three reads, three deliveries. `container_kind` says which list,
+  // `container_id` says which container of that kind (the workspace id for
+  // `organization`, so a row is addressed without the object it sits in being
+  // part of the key), and `item_id` is a Space, a Channel or a Breakout
+  // accordingly.
+  //
+  // Nothing here constrains `item_id` to anything this object knows about. The
+  // Organization's and a Space's lists are filtered against this object's own
+  // rows when they are written; a Channel's Breakouts are its own object's
+  // children, which WorkspaceDO cannot see at all — see
+  // `WorkspaceSpaceStorage.writeOrder`.
+  `CREATE TABLE workspace_container_order (
     user_id TEXT NOT NULL,
-    space_id TEXT NOT NULL,
+    container_kind TEXT NOT NULL CHECK (container_kind IN ('organization', 'space', 'channel')),
+    container_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
     position INTEGER NOT NULL CHECK (position >= 0),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, space_id)
+    PRIMARY KEY (user_id, container_kind, container_id, item_id)
   ) STRICT`,
-  `CREATE INDEX workspace_space_order_user_position_idx
-    ON workspace_space_order(user_id, position, space_id)`,
+  `CREATE INDEX workspace_container_order_position_idx
+    ON workspace_container_order(user_id, container_kind, container_id, position, item_id)`,
   `CREATE TABLE workspace_space_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     waterline INTEGER NOT NULL CHECK (waterline >= 0),
@@ -534,7 +558,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
         request.userId,
       );
-      this.appendOrder(request.userId, spaceId, createdAt);
+      this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.advanceWaterline(createdAt);
       return this.space(spaceId);
     });
@@ -592,17 +616,28 @@ export class WorkspaceSpaceStorage {
       ).toArray().length === 1;
       if (!removed) return false;
       this.storage.sql.exec("DELETE FROM workspace_space_viewers WHERE space_id = ?", spaceId);
-      this.storage.sql.exec("DELETE FROM workspace_space_order WHERE space_id = ?", spaceId);
+      // Both directions: the Space leaves everybody's Organization order, and
+      // the order of the Channels somebody had arranged inside it goes with the
+      // container it was about.
+      this.storage.sql.exec(
+        `DELETE FROM workspace_container_order
+          WHERE (container_kind = 'organization' AND item_id = ?)
+             OR (container_kind = 'space' AND container_id = ?)`,
+        spaceId,
+        spaceId,
+      );
       this.advanceWaterline(now);
       return true;
     });
   }
 
-  list(userId: string, now = Date.now()): SpaceDirectory {
+  list(workspaceId: string, userId: string, now = Date.now()): SpaceDirectory {
     if (!this.ready()) return EMPTY_DIRECTORY;
     return this.storage.transactionSync(() => {
-      for (const spaceId of this.visibleSpaceIds(userId)) this.appendOrder(userId, spaceId, now);
-      return this.directory(userId);
+      for (const spaceId of this.visibleSpaceIds(userId)) {
+        this.appendOrder(workspaceId, userId, spaceId, now);
+      }
+      return this.directory(workspaceId, userId);
     });
   }
 
@@ -624,32 +659,201 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  reorder(userId: string, requestedIds: readonly string[], now = Date.now()): SpaceDirectory {
+  /**
+   * Every list this person has arranged by hand, whatever contains it.
+   *
+   * One read for all three kinds, because the socket sends all three in one
+   * field: a reader that asked per container would be one query per Space on
+   * screen, on the connect payload of every session.
+   *
+   * The Organization's own list is in here too, although the Space directory
+   * beside it already arrives sorted by these same rows. That duplication is
+   * the point: with it the client has *one* rule — apply the stored order to
+   * the list you are drawing — and without it the Spaces would be the one list
+   * whose arrangement came from the order the server happened to serialize,
+   * which is not a thing a drag can move optimistically or roll back. One
+   * mechanism that is redundant for one of its three callers is cheaper than
+   * two mechanisms, and the redundancy is a few ids on a payload that already
+   * carries every Space's name.
+   */
+  readOrders(userId: string): PersonalOrder {
+    if (!this.ready()) return [];
+    const rows = this.storage.sql.exec<{
+      container_kind: string;
+      container_id: string;
+      item_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT container_kind, container_id, item_id
+         FROM workspace_container_order
+        WHERE user_id = ?
+        ORDER BY container_kind, container_id, position, item_id`,
+      userId,
+    ).toArray();
+    const byContainer = new Map<string, ContainerOrder>();
+    for (const row of rows) {
+      const key = `${row.container_kind}:${row.container_id}`;
+      const existing = byContainer.get(key);
+      if (existing) existing.itemIds.push(row.item_id);
+      else {
+        byContainer.set(key, {
+          container: {
+            kind: OrderedContainerKindSchema.parse(row.container_kind),
+            id: row.container_id,
+          },
+          itemIds: [row.item_id],
+        });
+      }
+    }
+    return PersonalOrderSchema.parse([...byContainer.values()]);
+  }
+
+  /**
+   * Put one container's items in the order this person asked for, and answer
+   * with what was actually stored.
+   *
+   * The three kinds differ only in what may be in the list, and each answer is
+   * one this object already holds:
+   *
+   * - `organization` keeps the Space ordering's semantics exactly, because the
+   *   Space directory is read *through* these rows: every visible Space is
+   *   appended first so none is unorderable and none falls out of the
+   *   directory, the request is filtered to the Spaces this viewer can see, and
+   *   the ids nobody mentioned keep their relative order behind the ones that
+   *   were. A partial list is what the sidebar sends when a search has hidden
+   *   rows.
+   * - `space` keeps the Channels actually placed in that Space that this viewer
+   *   can read, and nothing else. `spaceIdsByChannel` answers the membership
+   *   and the Space's own visibility in one read, and the directory answers
+   *   whether the viewer may see the Channel at all — a placement whose Channel
+   *   is not on this person's sidebar is not a row they were arranging.
+   * - `channel` is stored as given. A Channel's Breakouts are its own object's
+   *   children and WorkspaceDO has never seen them, so there is nothing here to
+   *   validate against; the client drops the ids it cannot draw. Storing an id
+   *   that names nothing costs this person one row and nobody else anything —
+   *   the rows are theirs, and the only reader is their own sidebar.
+   *
+   * Unlike the Organization's list, the other two are replaced rather than
+   * merged: nothing reads them but the client's own helper, so an item nobody
+   * mentioned belongs at its natural position rather than pinned to a stale
+   * one.
+   */
+  writeOrder(
+    workspaceId: string,
+    userId: string,
+    order: ContainerOrder,
+    now = Date.now(),
+  ): ContainerOrder {
     return this.storage.transactionSync(() => {
-      const visible = this.visibleSpaceIds(userId);
-      for (const spaceId of visible) this.appendOrder(userId, spaceId, now);
-      const visibleSet = new Set(visible);
-      const current = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT space_id FROM workspace_space_order
-          WHERE user_id = ? ORDER BY position, space_id`,
-        userId,
-      ).toArray().map((row) => row.space_id).filter((id) => visibleSet.has(id));
-      const requested = [...new Set(requestedIds)].filter((id) => visibleSet.has(id));
-      const requestedSet = new Set(requested);
-      const ordered = [...requested, ...current.filter((id) => !requestedSet.has(id))];
-      for (const [position, spaceId] of ordered.entries()) {
+      const requested = [...new Set(order.itemIds)];
+      const stored = this.storableOrder(workspaceId, userId, order.container, requested, now);
+      if (order.container.kind !== "organization") {
         this.storage.sql.exec(
-          `UPDATE workspace_space_order SET position = ?, updated_at = ?
-            WHERE user_id = ? AND space_id = ?`,
-          position,
-          now,
+          `DELETE FROM workspace_container_order
+            WHERE user_id = ? AND container_kind = ? AND container_id = ?`,
           userId,
-          spaceId,
+          order.container.kind,
+          order.container.id,
         );
+        for (const [position, itemId] of stored.entries()) {
+          this.storage.sql.exec(
+            `INSERT INTO workspace_container_order
+               (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            userId,
+            order.container.kind,
+            order.container.id,
+            itemId,
+            position,
+            now,
+            now,
+          );
+        }
       }
       this.advanceWaterline(now);
-      return this.directory(userId);
+      return ContainerOrderSchema.parse({ container: order.container, itemIds: stored });
     });
+  }
+
+  /** What is left of a requested list once this container's rule has run. */
+  private storableOrder(
+    workspaceId: string,
+    userId: string,
+    container: OrderedContainer,
+    requestedIds: readonly string[],
+    now: number,
+  ): string[] {
+    if (container.kind === "organization") {
+      return this.organizationOrder(workspaceId, userId, requestedIds, now);
+    }
+    if (container.kind === "space") {
+      const orderable = this.orderableChannelIds(userId, container.id, requestedIds);
+      return requestedIds.filter((id) => orderable.has(id));
+    }
+    return [...requestedIds];
+  }
+
+  /**
+   * The Organization's Spaces, arranged and written in place.
+   *
+   * Separate from the two lists above because it is the one whose rows another
+   * read depends on: a Space with no row is a Space the directory join cannot
+   * answer with, so this appends before it arranges and updates rather than
+   * replacing.
+   */
+  private organizationOrder(
+    workspaceId: string,
+    userId: string,
+    requestedIds: readonly string[],
+    now: number,
+  ): string[] {
+    const visible = this.visibleSpaceIds(userId);
+    for (const spaceId of visible) this.appendOrder(workspaceId, userId, spaceId, now);
+    const visibleSet = new Set(visible);
+    const current = this.storage.sql.exec<{ item_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT item_id FROM workspace_container_order
+        WHERE user_id = ? AND container_kind = 'organization' AND container_id = ?
+        ORDER BY position, item_id`,
+      userId,
+      workspaceId,
+    ).toArray().map((row) => row.item_id).filter((id) => visibleSet.has(id));
+    const requested = requestedIds.filter((id) => visibleSet.has(id));
+    const requestedSet = new Set(requested);
+    const ordered = [...requested, ...current.filter((id) => !requestedSet.has(id))];
+    for (const [position, spaceId] of ordered.entries()) {
+      this.storage.sql.exec(
+        `UPDATE workspace_container_order SET position = ?, updated_at = ?
+          WHERE user_id = ? AND container_kind = 'organization'
+            AND container_id = ? AND item_id = ?`,
+        position,
+        now,
+        userId,
+        workspaceId,
+        spaceId,
+      );
+    }
+    return ordered;
+  }
+
+  /**
+   * Which of these Channels this person could be arranging inside this Space.
+   *
+   * Two facts, and neither is a new read. `spaceIdsByChannel` — the one the
+   * sidebar payload already asks for every row it draws — answers the active
+   * membership *and* the Space's own visibility to this viewer, and
+   * `listableChannelIds`, which a Space refusal already uses to decide what it
+   * may name, answers whether this viewer may see the Channel at all. A
+   * membership cannot answer the second: a placement is the Organization's fact
+   * about a Channel, and visibility is the reader's.
+   */
+  private orderableChannelIds(
+    userId: string,
+    spaceId: string,
+    workstreamIds: readonly string[],
+  ): Set<string> {
+    const placed = [...this.spaceIdsByChannel(userId, workstreamIds)]
+      .filter(([, spaceIds]) => spaceIds.includes(spaceId))
+      .map(([workstreamId]) => workstreamId);
+    return new Set(this.listableChannelIds(userId, placed));
   }
 
   /** One Space as this viewer may see it, archived or not. */
@@ -1331,7 +1535,7 @@ export class WorkspaceSpaceStorage {
    * back. One that was already `removed` stays removed — that was a decision
    * about the Channel rather than about the Space.
    */
-  restore(userId: string, spaceId: string, now = Date.now()): SpaceSummary | false {
+  restore(workspaceId: string, userId: string, spaceId: string, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
       const readable = this.listInactive(userId).items.some((space) => space.id === spaceId);
       if (!readable) return false;
@@ -1350,7 +1554,7 @@ export class WorkspaceSpaceStorage {
         now,
         spaceId,
       );
-      this.appendOrder(userId, spaceId, now);
+      this.appendOrder(workspaceId, userId, spaceId, now);
       this.advanceWaterline(now);
       return this.space(spaceId);
     });
@@ -2431,33 +2635,49 @@ export class WorkspaceSpaceStorage {
       || this.listInactive(userId).items.some((space) => space.id === spaceId);
   }
 
-  private appendOrder(userId: string, spaceId: string, now: number): void {
+  /**
+   * Give this person a row for a Space they can now see, at the end of their
+   * Organization order.
+   *
+   * On first visibility rather than on creation, because the order is per
+   * person and a Space becomes visible to somebody long after it was made — a
+   * personal Space they were added to, an archived one restored. Without a row
+   * the Space would not be in {@link WorkspaceSpaceStorage.directory} at all,
+   * which is why this runs on the read as well as on every write.
+   */
+  private appendOrder(workspaceId: string, userId: string, spaceId: string, now: number): void {
     this.storage.sql.exec(
-      `INSERT OR IGNORE INTO workspace_space_order
-         (user_id, space_id, position, created_at, updated_at)
-       VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM workspace_space_order
-                                WHERE user_id = ?), 0), ?, ?)`,
+      `INSERT OR IGNORE INTO workspace_container_order
+         (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+       VALUES (?, 'organization', ?, ?,
+               COALESCE((SELECT MAX(position) + 1 FROM workspace_container_order
+                          WHERE user_id = ? AND container_kind = 'organization'
+                            AND container_id = ?), 0), ?, ?)`,
       userId,
+      workspaceId,
       spaceId,
       userId,
+      workspaceId,
       now,
       now,
     );
   }
 
-  private directory(userId: string): SpaceDirectory {
+  private directory(workspaceId: string, userId: string): SpaceDirectory {
     const rows = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*
-         FROM workspace_space_order ordering
-         JOIN workspace_space_directory space ON space.space_id = ordering.space_id
+         FROM workspace_container_order ordering
+         JOIN workspace_space_directory space ON space.space_id = ordering.item_id
          LEFT JOIN workspace_space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
-        WHERE ordering.user_id = ? AND space.archived_at IS NULL
+        WHERE ordering.user_id = ? AND ordering.container_kind = 'organization'
+          AND ordering.container_id = ? AND space.archived_at IS NULL
           AND (space.scope = 'workspace' OR viewer.user_id IS NOT NULL)
         ORDER BY ordering.position, space.space_id`,
       userId,
       userId,
+      workspaceId,
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),

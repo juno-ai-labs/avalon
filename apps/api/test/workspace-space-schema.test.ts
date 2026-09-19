@@ -21,6 +21,7 @@ const SPACE_ID = "00000000-0000-7000-8000-0000000000c1";
 const OTHER_SPACE_ID = "00000000-0000-7000-8000-0000000000c2";
 const CHANNEL_ID = "00000000-0000-7000-8000-0000000000c3";
 const USER_ID = "00000000-0000-7000-8000-0000000000c4";
+const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000c5";
 
 /**
  * Handles opened by a test, closed from a hook rather than by the last line of
@@ -80,7 +81,7 @@ describe("WorkspaceDO space schema", () => {
     for (const table of [
       "workspace_space_directory",
       "workspace_space_viewers",
-      "workspace_space_order",
+      "workspace_container_order",
       "workspace_space_state",
       "space_channel_memberships",
       "space_intents",
@@ -125,6 +126,33 @@ describe("WorkspaceDO space schema", () => {
     }
     expect(() => insertIntent("default")).toThrow(/CHECK constraint failed/u);
     expect(() => insertIntent("bootstrap")).toThrow(/CHECK constraint failed/u);
+  });
+
+  it("given a personal order row, when its container is not one of the three, then the insert is refused", () => {
+    const database = openDatabase();
+    apply(database, SPACE_SCHEMA_VERSION);
+    const insertOrder = (kind: string, containerId: string, itemId: string): void => {
+      database.prepare(
+        `INSERT INTO workspace_container_order
+           (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 0, 1, 1)`,
+      ).run(USER_ID, kind, containerId, itemId);
+    };
+
+    // Exactly the three containers a person can arrange by hand. A fourth name
+    // would describe rows the client has no list to apply them to, and the
+    // client is the only reader these rows have.
+    expect(() => insertOrder("organization", WORKSPACE_ID, SPACE_ID)).not.toThrow();
+    expect(() => insertOrder("space", SPACE_ID, CHANNEL_ID)).not.toThrow();
+    expect(() => insertOrder("channel", CHANNEL_ID, OTHER_SPACE_ID)).not.toThrow();
+    expect(() => insertOrder("workstream", CHANNEL_ID, SPACE_ID))
+      .toThrow(/CHECK constraint failed/u);
+
+    // Keyed by the container as well as the item, so the same Space can hold a
+    // position in the Organization's list and one inside another container
+    // without the two rows colliding.
+    expect(() => insertOrder("organization", WORKSPACE_ID, SPACE_ID))
+      .toThrow(/UNIQUE constraint failed/u);
   });
 
   it("given one General Space, when a second claims the role, then the unique index refuses it", () => {
