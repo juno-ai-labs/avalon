@@ -154,14 +154,14 @@ export const HarnessFailureCodeSchema = z.enum([
   "run_state_persistence_failed",
   "context_limit_exceeded",
   // The endpoint refused the prompt as longer than it accepts. Distinct from
-  // `context_limit_exceeded`, which is Avalon's own accounting saying a run
-  // cannot be made to fit: this one is Avalon believing it fits and the
+  // `context_limit_exceeded`, which is Rally's own accounting saying a run
+  // cannot be made to fit: this one is Rally believing it fits and the
   // endpoint disagreeing, which is the only way the two can be told apart and
-  // is the difference between a compaction defect and a window Avalon has
+  // is the difference between a compaction defect and a window Rally has
   // wrong. The deployment's limit is the authority and it is not always the
   // catalog's: a run died on 2026-09-17 sized from OpenRouter's 1,050,000-token
   // figure against an Azure deployment that accepts 922,000, and the request
-  // error came back as `harness_execution_failed` — Avalon's own defect, no
+  // error came back as `harness_execution_failed` — Rally's own defect, no
   // remedy, "copy the request ID for support" — when the reason was in the 400
   // body the whole time. The name is the endpoint's own machine code so an
   // operator grepping what the provider said finds the run that got it.

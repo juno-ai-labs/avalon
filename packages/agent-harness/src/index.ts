@@ -4008,11 +4008,11 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   run_state_persistence_failed: "Rally could not save this run's progress. Retrying is unlikely to help — copy the request ID for support",
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   // Separable from `context_limit_exceeded` by remedy, which is the test the
-  // note above sets. That one is Avalon declining to send a run it cannot make
+  // note above sets. That one is Rally declining to send a run it cannot make
   // fit, and nothing about the conversation changes if it is sent again. This
-  // one is an endpoint refusing a prompt Avalon believed would fit, so a
+  // one is an endpoint refusing a prompt Rally believed would fit, so a
   // smaller conversation is a real next action and starting one is the member's
-  // to take — while the window Avalon had wrong is an operator's, which is why
+  // to take — while the window Rally had wrong is an operator's, which is why
   // the sentence still asks for the request ID.
   context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support",
   tool_surface_too_large: "The authorized tool surface is too large for one run",

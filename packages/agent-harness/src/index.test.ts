@@ -3331,11 +3331,11 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("names a context-length refusal the endpoint declared rather than blaming Avalon", async () => {
+  it("names a context-length refusal the endpoint declared rather than blaming Rally", async () => {
     // The 17 September failure. Compaction sized the run from OpenRouter's
     // catalog figure for the model, the Azure deployment behind it accepts far
     // less, and the 400 that came back said exactly which limit was crossed —
-    // which Avalon then discarded, reporting `harness_execution_failed`: its
+    // which Rally then discarded, reporting `harness_execution_failed`: its
     // own defect, no remedy, "copy the request ID for support".
     const azureUrls: string[] = [];
     const azureFetcher = vi.fn(async (request: RequestInfo | URL) => {
@@ -3351,7 +3351,7 @@ describe("agent harness", () => {
     }) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
 
     // `kind: "context"`, not `provider`: a 400 is our request and the invariant
-    // that Avalon never names its own request as the provider's still holds.
+    // that Rally never names its own request as the provider's still holds.
     // The code changes what a reader is told went wrong, not who owns it.
     await expect(runHarness(runInput(azureFetcher, {
       primaryModel: "x-ai/grok-4.6",
@@ -3362,7 +3362,7 @@ describe("agent harness", () => {
       status: "failed",
       failure: { kind: "context", code: "context_length_exceeded" },
     });
-    // A rejection Avalon owns still traverses: another endpoint for the same
+    // A rejection Rally owns still traverses: another endpoint for the same
     // model may have a larger window, and one that does is a recovery rather
     // than a failure. The code is what is left when every candidate has
     // refused, which is why it is read from the last attempt's error and not
