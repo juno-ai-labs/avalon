@@ -134,7 +134,6 @@ export class SlackWorkspaceWorkstreamService {
     await placeConnectorChannelInGeneral(this.env, this.workspaceId, {
       workstreamId: asWorkstreamId(workstreamId),
       scope: input.scope ?? "personal",
-      archived: false,
       placed: false,
       participantUserIds: [
         ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
