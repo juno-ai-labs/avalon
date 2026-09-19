@@ -630,17 +630,20 @@ function WorkstreamRow({
   // `lib/naming-skeleton.ts` before changing when it comes down.
   const naming = useNamingSkeleton(workstream);
   const isPinned = workstream.pinPosition !== null;
+  // A subsystem's own Channel takes both its audience and its home from the
+  // subsystem that writes it, so neither of the two controls that would claim
+  // otherwise is raised on one: a system Channel is not a product Channel. The
+  // API refuses either change; the menu simply does not ask the question.
+  const isProductChannel = !workstream.systemKind;
   // Every active Space the viewer can see that does not already hold this
   // Channel. Adding never removes another placement, so the ones it is already
   // in are simply not offered again.
-  const addableSpaces = spaces.filter((space) => !workstream.spaceIds.includes(space.id));
+  const addableSpaces = isProductChannel
+    ? spaces.filter((space) => !workstream.spaceIds.includes(space.id))
+    : [];
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
-  // A subsystem's own work stream takes its audience from the subsystem, so
-  // offering the toggle on it would describe a change that does not happen.
-  // The API refuses it; the menu simply does not raise the question.
-  const scopeIsThisRowsToDecide = !workstream.systemKind;
   return (
     <>
     {collaboration?.api && <ShareConversationDialog api={collaboration.api} workspaceId={workspace.id} parentId={workstream.id} substreamId="0" open={sharing} onOpenChange={setSharing} />}
@@ -889,7 +892,7 @@ function WorkstreamRow({
               and every active Space that holds it, so the row cannot say
               whether it is private without reading those sources — which is
               what the dialog does. */}
-          {scopeIsThisRowsToDecide && (
+          {isProductChannel && (
             <ContextMenu.Item className="menu-item" onSelect={() => setManagingAccess(true)}>
               <Globe2 aria-hidden="true" size={16} /> Manage access
             </ContextMenu.Item>
