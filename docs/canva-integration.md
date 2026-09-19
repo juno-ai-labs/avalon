@@ -111,16 +111,13 @@ real event ingestion and stops provider calls for a paused watch.
 
 ## Changelog
 
-### 2026-09-19 — Requester-controlled sharing
+### 2026-09-19 — Personal Canva with native login and explicit observation
 
 The product decision places responsibility for sharing Canva content on the
 member who requests it in a work stream. The extra recipient-eligibility gate
 was therefore removed instead of requiring every viewer to connect Canva.
 Polling no longer withholds otherwise digestible events for that gate; existing
 owner-targeted visibility and personal credential ownership remain unchanged.
-
-
-### 2026-09-19 — Native handoff and explicit observation foundation
 
 The server callback is awaiting Canva approval, so the interim listener forwards
 only a code to the API instead of storing desktop provider credentials. Shared

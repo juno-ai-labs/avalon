@@ -149,6 +149,25 @@ function insertConnection(object: DatabaseSync, id: string): void {
 }
 
 describe("connector OAuth handoff", () => {
+  it("starts Canva desktop authorization without feature flags", async () => {
+    const { auth, env } = fixture();
+    const redirectUri = "http://127.0.0.1:4321/callback";
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("oauth-protected-resource")) return Response.json({ resource: "https://mcp.canva.com", authorization_servers: ["https://mcp.canva.com"] });
+      if (url.includes("oauth-authorization-server")) return Response.json({ authorization_endpoint: "https://mcp.canva.com/authorize", token_endpoint: "https://mcp.canva.com/token", registration_endpoint: "https://mcp.canva.com/register", code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_post"] });
+      if (url.endsWith("/register")) {
+        expect(JSON.parse(String(init?.body)).redirect_uris).toEqual([redirectUri]);
+        return Response.json({ client_id: "fixture-client", client_secret: "fixture-secret", token_endpoint_auth_method: "client_secret_post" });
+      }
+      throw new Error(`Unexpected provider request: ${url}`);
+    });
+    const result = await new ConnectionService(env, auth).beginProvider("canva", {
+      scope: "personal", capabilities: ["canva.personal.mcp"], loopbackRedirectUri: redirectUri, desktopHandoffVersion: 2,
+    });
+    expect(new URL(result.url).searchParams.get("redirect_uri")).toBe(redirectUri);
+  });
+
   it("rejects public completion of a desktop Canva authorization without consuming it", async () => {
     const { env, regional } = fixture();
     const sealed = await sealString(JSON.stringify({

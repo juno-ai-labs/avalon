@@ -449,8 +449,9 @@ repository. What can be:
 
 DCR creates the interim native client; the submitted provider application covers
 Rally's server callback. Neither success is treated as blanket production policy
-approval. Keeping both runtime gates off avoids enabling an unverified connector
-merely because dynamic registration succeeds.
+approval. The tested desktop handoff is the interim fallback until server callback
+approval. The product owner requested availability for every member on 2026-09-19,
+so neither connector availability nor loopback authorization has a feature flag.
 
 ### 2026-09-12 — Ashby metadata and independent webhook management
 
