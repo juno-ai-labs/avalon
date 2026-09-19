@@ -37,8 +37,38 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
   "x-avalon-",
 ]);
 
+/**
+ * The wire contract this build of a client speaks.
+ *
+ * One integer, sent on every request a client makes, so a Worker can tell a
+ * build that understands its payloads from one that would drop them. It exists
+ * because the Spaces cutover changed two payloads a shipped desktop parses with
+ * **strict** schemas — the workspace socket's opening sidebar and the Channel
+ * rows inside it — and a strict schema does not ignore a field it has never
+ * heard of, it rejects the whole object. An explicit refusal is the only honest
+ * answer to a build that would render nothing.
+ *
+ * `1` is the Organization/Space/Channel hierarchy. Absent means a build from
+ * before this header, which is exactly what a pre-cutover desktop is.
+ */
+export const CLIENT_CONTRACT_VERSION = 1;
+
+/**
+ * The oldest client contract a Worker still answers.
+ *
+ * Deliberately a second constant equal to the first rather than a reuse of it.
+ * The Worker deploys before the client does, so a Worker that required
+ * whatever the newest client sends would refuse every shipped build for the
+ * length of a rollout. Raising this is a decision about which builds are still
+ * in the field; raising {@link CLIENT_CONTRACT_VERSION} is a statement about
+ * what this source tree speaks.
+ */
+export const MINIMUM_SERVED_CLIENT_CONTRACT = 1;
+
 /** Every product header name a request may carry, canonical spelling. */
 export const RALLY_HEADERS = Object.freeze({
+  /** The wire contract the calling build speaks; see {@link CLIENT_CONTRACT_VERSION}. */
+  CLIENT_CONTRACT: "x-rally-client-contract",
   DEV_USER_ID: "x-rally-dev-user-id",
   DEV_WORKSPACE_ID: "x-rally-dev-workspace-id",
   DRAFT_ID: "x-rally-draft-id",
