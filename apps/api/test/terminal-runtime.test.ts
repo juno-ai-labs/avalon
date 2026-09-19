@@ -910,7 +910,7 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-runtime",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(provider.readFile).toHaveBeenCalledTimes(2);
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
@@ -1074,7 +1074,7 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-runtime",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(workstreamObjectGet(
       objectStore,

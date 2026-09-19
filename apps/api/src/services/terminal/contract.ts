@@ -121,8 +121,7 @@ export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
   TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
 
 /**
- * What is left of the acquisition budget for a provider wait about to start
- * inside it.
+ * The wall-clock instant an acquisition's provider waits must not outlive.
  *
  * The budget above sizes every tool deadline in this file, but it used to stop
  * there: the coordinator never saw it, so the longest a sandbox restore could
@@ -134,12 +133,16 @@ export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
  * order to choose a real one. One deadline, owned where it is advertised,
  * replaces the two.
  *
- * Zero is a legitimate answer, not an error: acquisition has already outlived
- * the deadline the model was given, and the provider call should ask for the
- * start and stop waiting for it rather than spending time nobody is holding.
+ * This is an instant rather than a duration on purpose. A remaining-duration
+ * is only true at the moment it is computed, and several awaits sit between
+ * the coordinator and the SDK call that finally waits — the provider RPC
+ * session, then the adapter's own sandbox lookup. A duration snapshotted
+ * before those would let the wait outlive the budget by however long they
+ * took; an instant survives every hop unchanged and is subtracted from where
+ * it is spent.
  */
-export function remainingTerminalAcquisitionBudgetMs(elapsedMs: number): number {
-  return Math.max(0, TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS - Math.max(0, elapsedMs));
+export function terminalAcquisitionDeadlineAt(startedAtMs: number): number {
+  return startedAtMs + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS;
 }
 
 const definitions: Record<TerminalToolName, ToolDefinition> = {

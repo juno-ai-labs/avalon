@@ -305,20 +305,31 @@ export function createDaytonaTerminalProvider(
   } as const;
 
   /**
-   * A caller's wait budget in the units `Sandbox.start`/`Sandbox.recover` take.
+   * What is left of a caller's deadline, in the units `Sandbox.start` and
+   * `Sandbox.recover` take.
    *
-   * Three properties of the SDK decide this conversion. It reads seconds;
-   * it reads `0` as "wait forever", so a budget that rounds down to nothing
-   * must never arrive as `0`; and it spends the same number on the start
-   * request itself (`{ timeout: seconds * 1000 }`) before giving the remainder
-   * to its poll loop. That last one is why a caller whose budget is nearly
-   * spent gets a short request timeout rather than a generous one: the result
-   * of a request nobody is still waiting for is not worth a minute, and
-   * Daytona begins restoring whether or not this client stays to see it.
-   * `undefined` leaves the SDK's own default (60 seconds) in place.
+   * Call this immediately before the SDK call, never earlier: the sandbox
+   * lookup above it is a provider round trip, and time spent there is the
+   * caller's deadline being spent. `Date.now()` rather than the injected
+   * `now`, which is a measurement fixture the tests drive as a fixed sequence
+   * and not a wall clock.
+   *
+   * Three properties of the SDK decide the conversion. It reads seconds, and
+   * rounding is *down* so a wait can never outlive the instant it was given.
+   * It reads `0` as "wait forever", so a deadline already reached must not
+   * arrive as `0` — one second is the smallest finite wait the SDK accepts,
+   * and that sub-second overshoot is the floor's unavoidable cost rather than
+   * a grace anyone chose. And it spends the same number on the start request
+   * itself (`{ timeout: seconds * 1000 }`) before giving the remainder to its
+   * poll loop, which is why a nearly-spent deadline yields a short request
+   * timeout: the result of a request nobody is still waiting for is not worth
+   * a minute, and Daytona begins restoring whether or not this client stays to
+   * see it. `undefined` leaves the SDK's own default (60 seconds) in place.
    */
   const waitSeconds = (options?: TerminalSandboxWaitOptions): number | undefined => (
-    options?.waitMs === undefined ? undefined : Math.max(1, Math.ceil(options.waitMs / 1_000))
+    options?.deadlineAtMs === undefined
+      ? undefined
+      : Math.max(1, Math.floor((options.deadlineAtMs - Date.now()) / 1_000))
   );
 
   const secretPrefix = (idOrName: string) => `AVALON_READ_${idOrName.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60)}_`;

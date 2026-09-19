@@ -250,7 +250,7 @@ describe("Terminal sandbox coordinator", () => {
     const acquired = await coordinator.acquire(context());
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-1",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(acquired).toMatchObject({ state: "running" });
     expect(workstreamObjectGet(
@@ -277,33 +277,29 @@ describe("Terminal sandbox coordinator", () => {
 
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-1",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(acquired).toMatchObject({ providerSandboxId: "sandbox-1", state: "running" });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
-  it("gives a restore what is left of the tool's acquisition budget, not a provider default", async () => {
+  it("gives a restore the tool's acquisition deadline, not a provider default", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     advance(90);
 
-    // Acquisition spends wall-clock time before any sandbox is started: the
-    // workspace policy read, the repository-authority join and the provider
-    // state read-back all precede the restore. The wait Daytona is given is
-    // read at the moment the restore begins, so it is the budget minus what
-    // those already cost — never the whole budget, and never a fixed number of
-    // the adapter's own.
-    const spentBeforeRestore = 25_000;
-    let wallClock = Date.now();
-    let charged = false;
+    // The deadline is anchored to when acquisition began, so everything it
+    // spends before the restore — the workspace policy read, the
+    // repository-authority join, the provider state read-back — comes out of
+    // the same budget rather than resetting it. Handing the provider an
+    // instant rather than a duration is what makes that true across the RPC
+    // hop and the adapter's own lookup as well.
+    const acquisitionStartedAt = 1_700_000_000_000;
+    let wallClock = acquisitionStartedAt;
     const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => wallClock);
     vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
-      if (!charged) {
-        charged = true;
-        wallClock += spentBeforeRestore;
-      }
+      wallClock += 25_000;
       return {
         id: "sandbox-1",
         name: requested,
@@ -319,7 +315,7 @@ describe("Terminal sandbox coordinator", () => {
     }
 
     expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
-      waitMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS - spentBeforeRestore,
+      deadlineAtMs: acquisitionStartedAt + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
     });
   });
 
@@ -409,7 +405,7 @@ describe("Terminal sandbox coordinator", () => {
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-1",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
@@ -471,7 +467,7 @@ describe("Terminal sandbox coordinator", () => {
     await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
     expect(provider.startSandbox).toHaveBeenCalledWith(
       "sandbox-1",
-      expect.objectContaining({ waitMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
     );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
