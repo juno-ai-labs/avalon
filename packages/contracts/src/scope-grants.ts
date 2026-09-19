@@ -108,6 +108,33 @@ export const AcceptScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   userId: UserIdSchema, token: z.string().min(1),
 });
+/**
+ * What a recipient's invitation link hands back.
+ *
+ * `link` is the opaque credential current invitation emails carry: the
+ * workspace, the workstream, the invitation and its secret are sealed inside
+ * it, so neither the recipient nor the page they open learns which scope they
+ * were offered until they accept it. The addressed form is the fragment format
+ * those emails used before, kept usable while links sent under it are still in
+ * inboxes; nothing mints it any more.
+ */
+export const ScopeInvitationCredentialSchema = z.union([
+  z.strictObject({ link: z.string().min(1) }),
+  AcceptScopeInvitationSchema.omit({ userId: true }),
+]);
+export type ScopeInvitationCredential = z.infer<typeof ScopeInvitationCredentialSchema>;
+
+/** Opening a link releases the invited mailbox and nothing else: a sign-in form needs it before there is a session to ask. */
+export const ScopeInvitationPreviewSchema = z.strictObject({ email: z.string().email() });
+export type ScopeInvitationPreview = z.infer<typeof ScopeInvitationPreviewSchema>;
+
+export const DescribeScopeInvitationSchema = AcceptScopeInvitationSchema.omit({ userId: true });
+export const ScopeInvitationDescriptionSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("ready"), email: z.string().email() }),
+  z.strictObject({ status: z.literal("denied"), reason: z.literal("invitation_unavailable") }),
+]);
+export type ScopeInvitationDescription = z.infer<typeof ScopeInvitationDescriptionSchema>;
+
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   actorUserId: UserIdSchema, expectedRevision: z.number().int().positive(),

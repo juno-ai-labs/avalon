@@ -20,6 +20,9 @@ conversation owner.
 | `packages/contracts/src/scope-grants.ts` | Batch, acceptance, revision and result contracts. |
 | `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email invitation form, stable retry operation and pending revocation. |
 | `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
+| `apps/api/src/services/scope-invitation-link.ts` | The emailed link's sealed credential, what opens it, and the workstream address it names. |
+| `apps/api/src/lib/crypto.ts` | `sealPayload`/`openPayload`: one purpose-bound opaque string for any link a person receives. |
+| `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, verified mailbox, relationship admission, grant activation and email delivery. |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, invitation state, encrypted delivery and acceptance binding. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Addressed RPCs, migration 14 and delivery alarm execution. |
@@ -53,10 +56,37 @@ Workspace-public reading alone is insufficient even to start preparation.
 
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
-existing alarm mechanism. The email's link carries its acceptance secret in a
-fragment. No GET consumes an invitation. Retrying the same operation returns its
-recorded invitations; changing its input conflicts. Delivery retries use the same
-provider idempotency key and encrypted body.
+existing alarm mechanism. No GET consumes an invitation. Retrying the same
+operation returns its recorded invitations; changing its input conflicts.
+Delivery retries use the same provider idempotency key and encrypted body.
+
+The email's link is `<browser origin>/invite#<sealed credential>` and nothing
+else. Workspace, work stream, invitation and acceptance secret are sealed
+together with AES-GCM under the deployment's existing encryption key, bound to
+the purpose `scope-invitation-link` so no other link minted with that key opens
+as an invitation. Only the secret was ever a credential; the three identifiers
+beside it were the server's own routing, published to whoever the mail was
+forwarded to and describing the shape of a team they hold no access to. They are
+now unreadable to everyone but the deployment that sealed them, and the
+recipient learns where the invitation points from the acceptance they
+authorized, not from the link.
+
+`POST /sharing/accept` and `POST /browser/invitation` both take that credential
+and open it server-side; a credential this deployment cannot open is refused in
+the same sentence as a revoked one, because distinguishing them would tell a
+holder something about an invitation they do not hold. The addressed request
+body those routes took before — workspace, work stream, invitation and token —
+is still accepted, so links already in inboxes when this shipped continue to
+work; nothing mints that form any more, and it can be dropped once no such link
+is outstanding.
+
+`POST /browser/invitation` is the one unauthenticated read here, and it exists
+because a sealed link cannot tell the sign-in form under it which mailbox to
+fill in. It checks the secret exactly as acceptance does, on the same
+invitation state, and returns that mailbox alone — never the workspace, the work
+stream, the sharer or the scopes. A holder who can read it can also accept with
+it once they hold the mailbox, so it releases no authority that the link did not
+already carry.
 
 `POST /sharing/accept` accepts an identity-only session. The owner checks the
 secret, a current `user_verified_emails` binding, invitation state/expiry and the
@@ -141,6 +171,15 @@ and the panel states that distinction. Existing last-participant rules apply.
 - The grant transaction and invitation acceptance cannot be separated. A grant
   commit without its receipt would allow an interrupted acceptance to restore a
   later revocation.
+- The emailed link names no deployment, so the lite client opens it against the
+  one serving the page. A second browser deployment must give the link its own
+  routing again rather than offering a credential addressed to one deployment to
+  every other in turn.
+- A sealed payload that decrypts but no longer matches its schema is this
+  deployment's own drift, not a forged link, and is raised as
+  `scope_invitation_link_invalid:<field>:<issue>` rather than reported as one
+  more unavailable invitation — otherwise a deploy that stopped honouring every
+  outstanding link looks exactly like recipients mistyping.
 - Email bodies and credentials are not returned by public routes. The only stored
   readable credential representation is encrypted with the existing server key.
 - Browser setup, onboarding and connector configuration are outside the lite
@@ -176,13 +215,46 @@ runs real D1, WorkstreamDO SQLite, RPCs, alarms and HTTP routing. The fixture
 declares the D1 columns it uses. It covers verified-recipient admission, child-only
 access, atomic multi-target activation, replay after removal/revocation,
 sharer replacement, stable operation/email receipts and identity-only HTTP
-acceptance. The deliberate SQL failure is caught inside the real object because
+acceptance. It also reads the link out of the delivered encrypted body to prove
+it contains no identifier, region or secret in readable form, previews and
+accepts by that credential alone, and refuses an edited credential, a wrong
+secret and a revoked invitation. `apps/api/test/scope-invitation-link.test.ts`
+covers sealing in isolation: another deployment's key, another purpose, an
+edited character and a drifted payload. The deliberate SQL failure is caught inside the real object because
 the test RPC bridge otherwise reports its expected rejection twice.
 `message-to-output-pipeline.test.ts` additionally exercises invitation-triggered
 handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-09-19 — Seal the emailed link and fill in the mailbox it was sent to
+
+The invitation email published the server's routing to its recipient:
+`#region=…&workspace=…&workstream=…&invitation=…&token=…` told anyone the mail
+reached which deployment, workspace and work stream they were being offered,
+before they had accepted anything and whether or not the invitation was theirs
+to accept. Only the token was ever a credential. Sealing all four under the
+deployment's existing encryption key was chosen over shortening the link to a
+random handle with a lookup row: a handle needs a table, a write on the sending
+path and a read on every open, in a region that already holds a key that makes
+the link self-describing to itself and opaque to everyone else. The key is also
+why the link no longer names a region — a deployment that did not seal a
+credential cannot open it, so naming one would be routing the client already
+has.
+
+Taking the identifiers out took the invited address with them, and the form
+still asks the recipient to sign in with the mailbox that received the
+invitation. `POST /browser/invitation` gives it back, unauthenticated, because
+the page needs it before a session can exist; it checks the same secret on the
+same invitation state acceptance does and releases nothing else, so the link's
+authority is unchanged. A future change must keep those two checks identical:
+a preview that outlives acceptance's conditions turns a revoked invitation into
+a mailbox oracle.
+
+The addressed request body is still accepted so that links already sent keep
+working. It is the only part of this that is temporary — drop it once no such
+link is outstanding, and the union at both routes goes with it.
 
 ### 2026-09-19 — Dismiss the share dialog, and drop the invited-address notice
 

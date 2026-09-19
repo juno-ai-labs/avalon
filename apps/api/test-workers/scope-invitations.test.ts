@@ -9,6 +9,7 @@ import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/c
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
 import { decryptString } from "../src/lib/crypto";
+import { openScopeInvitationCredential } from "../src/services/scope-invitation-link";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
@@ -25,7 +26,8 @@ const room = (id = parentId) => env.WORKSTREAM_DOS.getByName(workstreamDOName("g
 const invitation = (targets: ScopeGrantTarget[] = [child]) => ({ operationId: crypto.randomUUID(), workspaceId, parentId,
   actorUserId: actorId, emails: ["guest@example.test"], targets, expiresAt: null });
 
-async function tokenFor(id: string, parent = parentId): Promise<string> {
+/** The URL the recipient receives, read out of the durable encrypted body the sender delivers. */
+async function deliveredLink(id: string, parent = parentId): Promise<URL> {
   const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
     new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
   const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
@@ -33,7 +35,15 @@ async function tokenFor(id: string, parent = parentId): Promise<string> {
     env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string };
   const link = delivery.text.split("\n").find((line) => line.startsWith("https://app.test/invite"));
   if (!link) throw new Error("invitation link missing");
-  return new URLSearchParams(new URL(link).hash.slice(1)).get("token")!;
+  return new URL(link);
+}
+
+const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
+
+async function tokenFor(id: string, parent = parentId): Promise<string> {
+  const address = await openScopeInvitationCredential(env, await credentialFor(id, parent));
+  if (!address) throw new Error("invitation credential unreadable");
+  return address.token;
 }
 
 async function create(targets: ScopeGrantTarget[] = [child]) {
@@ -175,6 +185,59 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
   expect(accepted.status).toBe(200);
   expect(await accepted.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("emails one opaque credential, fills in the mailbox it was sent to, and accepts by that credential alone", async () => {
+  const created = await room().createScopeInvitations(invitation());
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const invitationId = created.invitations[0]!.id;
+  const link = await deliveredLink(invitationId);
+  const credential = { link: link.hash.slice(1) };
+  // Nothing a recipient can read out of the link says which deployment,
+  // workspace, work stream or invitation it addresses.
+  expect(link.pathname).toBe("/invite");
+  expect(link.search).toBe("");
+  // The client reads a fragment with no `=` in it as the whole credential, so a
+  // credential that grew one would be parsed as the addressed format instead.
+  expect(credential.link).not.toContain("=");
+  for (const secret of [workspaceId, parentId, invitationId, await tokenFor(invitationId), "region", "global"]) {
+    expect(link.toString()).not.toContain(secret);
+  }
+
+  const app = createApp();
+  const origin = { origin: "https://app.test", "content-type": "application/json" };
+  const preview = async (body: unknown) => app.request("/browser/invitation",
+    { method: "POST", headers: origin, body: JSON.stringify(body) }, env);
+  // No session: the sign-in form has to fill this in before there is one.
+  const filled = await preview(credential);
+  expect(filled.status, await filled.clone().text()).toBe(200);
+  expect(await filled.json()).toEqual({ email: "guest@example.test" });
+  const edited = `${credential.link.slice(0, -1)}${credential.link.endsWith("A") ? "B" : "A"}`;
+  expect((await preview({ link: edited })).status).toBe(403);
+  // Links already in inboxes spell their address out; they still open, and the
+  // secret in them is still what is checked.
+  const addressed = { workspaceId, parentId, invitationId, token: await tokenFor(invitationId) };
+  expect(await (await preview(addressed)).json()).toEqual({ email: "guest@example.test" });
+  expect((await preview({ ...addressed, token: "wrong" })).status).toBe(403);
+
+  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
+  const acceptance = await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify(credential) }, env);
+  expect(acceptance.status, await acceptance.clone().text()).toBe(200);
+  expect(await acceptance.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+  expect((await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify({ link: edited }) }, env)).status).toBe(403);
+});
+
+it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {
+  const request = await create();
+  const credential = await credentialFor(request.invitationId);
+  const app = createApp();
+  const preview = () => app.request("/browser/invitation", { method: "POST",
+    headers: { origin: "https://app.test", "content-type": "application/json" }, body: JSON.stringify(credential) }, env);
+  expect((await preview()).status).toBe(200);
+  expect(await room().revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+    invitationId: request.invitationId, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+  expect((await preview()).status).toBe(403);
 });
 
 it("preserves a full member's administrative role when accepting a scope share", async () => {
