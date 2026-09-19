@@ -618,6 +618,7 @@ import {
   SpaceDefaultQueueMessageSchema,
   WorkspaceChannelSpacesRequestSchema,
   WorkspaceChannelSpacesResultSchema,
+  WorkspaceSpaceArchiveRequestSchema,
   WorkspaceSpaceAudienceNoteRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
@@ -641,6 +642,7 @@ import {
   type SpaceDefaultQueueMessage,
   type WorkspaceChannelSpacesRequest,
   type WorkspaceChannelSpacesResult,
+  type WorkspaceSpaceArchiveRequest,
   type WorkspaceSpaceAudienceNoteRequest,
   type WorkspaceSpaceBootstrapStatus,
   type WorkspaceSpaceChannelPageRequest,
@@ -6246,18 +6248,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Stage an archive, refusing one that would strand any member Channel. */
-  async prepareSpaceArchive(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
+  async prepareSpaceArchive(input: WorkspaceSpaceArchiveRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "prepare_space_archive");
+    const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "prepare_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
-    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
+    const result = WorkspaceSpaceMutationResultSchema.parse(
       this.spaceStorage().prepareArchive(request.userId, request.spaceId),
     );
     if (result.ok) {
       this.spaceStorage().recordIntent({
-        operationId: `${request.spaceId}:archive:${result.membershipGeneration}`,
+        operationId: request.operationId,
         kind: "archive",
         spaceId: request.spaceId,
         workstreamId: null,
@@ -6273,9 +6275,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  async finalizeSpaceArchive(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
+  async finalizeSpaceArchive(input: WorkspaceSpaceArchiveRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "finalize_space_archive");
+    const request = parseRpcInput(WorkspaceSpaceArchiveRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
@@ -6285,7 +6287,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "space_protected", unreachableUserIds: [] };
     }
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
-    storage.settleIntent(`${request.spaceId}:archive:${space.revision - 1}`, "archived", true);
+    storage.settleIntent(request.operationId, "archived", true);
     this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
