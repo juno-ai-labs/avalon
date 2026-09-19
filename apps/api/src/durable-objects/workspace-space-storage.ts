@@ -387,7 +387,6 @@ export interface SpaceBootstrapClaim {
 export interface SpaceBootstrapChannel {
   workstreamId: string;
   scope: "personal" | "workspace";
-  archived: boolean;
   placed: boolean;
   participantUserIds: string[];
 }
@@ -1849,10 +1848,9 @@ export class WorkspaceSpaceStorage {
     const rows = this.storage.sql.exec<{
       workstream_id: string;
       scope: "personal" | "workspace";
-      archived_at: number | null;
       placed: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT directory.workstream_id, directory.scope, directory.archived_at,
+      `SELECT directory.workstream_id, directory.scope,
               EXISTS (SELECT 1 FROM space_channel_memberships membership
                        WHERE membership.workstream_id = directory.workstream_id
                          AND membership.state = 'active') AS placed
@@ -1872,7 +1870,6 @@ export class WorkspaceSpaceStorage {
       items: rows.map((row) => ({
         workstreamId: row.workstream_id,
         scope: row.scope,
-        archived: row.archived_at !== null,
         placed: row.placed === 1,
         participantUserIds: participants.get(row.workstream_id) ?? [],
       })),
