@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import type { CitationTarget } from '@rally/contracts/citations';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
 import type { CitationContext, CitationResource } from './markdown-citations';
 import { MarkdownBody } from './workstream-blocks';
@@ -10,6 +10,13 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText: vi.fn(), exportMessage: vi.fn(), reportTelemetryProductIntent: vi.fn() }),
   desktopServicesAvailable: () => false,
 }));
+
+/** The one session capability a Markdown body reads; null in this file by default. */
+const faviconApi = vi.hoisted(() => ({ getFavicon: vi.fn<(hostname: string) => Promise<Blob | null>>(async () => null) }));
+vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => faviconApi }));
+// A hoisted mock outlives `restoreMocks`, so a test that asserts on what was
+// asked for has to start from a known history rather than the last test's.
+beforeEach(() => { faviconApi.getFavicon.mockReset(); faviconApi.getFavicon.mockResolvedValue(null); });
 
 const DECK: CitationResource = { id: 'board-deck', title: 'Q3 board deck', resourceType: 'document' };
 
@@ -410,6 +417,25 @@ describe('resource citations', () => {
 });
 
 describe('footnote citations', () => {
+  // Installed in a hook rather than in a body, per
+  // docs/testing.md#installing-and-restoring-state: the desktop config's
+  // `restoreMocks` takes both spies back off afterwards, which a restore at the
+  // end of a body cannot promise once an assertion throws past it. Each blob a
+  // test mints is named in order, so a test can say which URL it expects to see
+  // in the DOM and which one it expects to have been revoked.
+  let minted: string[];
+  let revoked: string[];
+  beforeEach(() => {
+    minted = [];
+    revoked = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+      const url = `blob:favicon-${minted.length + 1}`;
+      minted.push(url);
+      return url;
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => { revoked.push(url); });
+  });
+
   const grounded = [
     'Revenue grew 40%.[^rev] Margin held.[^mar]',
     '',
@@ -448,6 +474,134 @@ describe('footnote citations', () => {
     // The vertical cost of a source footer is the frustration this replaces.
     expect(document.querySelector('.footnotes')).toBeNull();
     expect(document.body).not.toHaveTextContent('Footnotes');
+  });
+
+  it('marks a web source with the site favicon and leaves an internal one an asterisk', async () => {
+    // The asterisk says only that a source is here. A web source has a mark of
+    // its own, and it is the one already drawn in front of a link to the same
+    // site — so the two readings of one destination agree. A resource has no
+    // host to ask, and keeps the glyph.
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    faviconApi.getFavicon.mockResolvedValue(new Blob([png], { type: 'image/png' }));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toBeInTheDocument());
+    expect(faviconApi.getFavicon).toHaveBeenCalledWith('example.com');
+    const pills = [...document.querySelectorAll('.citation-pill')];
+    // The icon is decoration: the source still reaches assistive technology
+    // through the pill's own label, and the popover still names it.
+    expect(pills.map((pill) => pill.getAttribute('aria-label'))).toEqual([
+      'Source 1: Q3 board deck', 'Source 2: Margin memo',
+    ]);
+    expect(pills.map((pill) => pill.querySelector('img')?.getAttribute('src') ?? pill.textContent)).toEqual([
+      '*', minted[0],
+    ]);
+    expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('keeps the marker an asterisk when the favicon request is rejected outright', async () => {
+    // `getFavicon` throws rather than resolving null for a non-404 failure or a
+    // response that is not an image. In front of a link that is empty space
+    // either way; here the fallback is the marker a reader has to be able to
+    // find, so the rejected path is worth its own case.
+    faviconApi.getFavicon.mockRejectedValue(new Error('The favicon response was not an image.'));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledWith('example.com'));
+    const pill = screen.getByRole('button', { name: 'Source 2: Margin memo' });
+    expect(pill.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
+  it('names the host in the popover, so an unreadable icon is not the only answer', async () => {
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    fireEvent.focus(screen.getByRole('button', { name: 'Source 2: Margin memo' }));
+    const tip = await screen.findByText('example.com · Opens in your browser');
+    expect(tip).toBeInTheDocument();
+  });
+
+  it('does not resurrect a revoked icon when a marker returns to a host it already showed', async () => {
+    // The guard on the stored record is about *reading* it; the record itself
+    // survives the target leaving. Coming back to a host whose URL was already
+    // revoked on the way out would match the guard again and hand back bytes
+    // that no longer exist — an <img> pointing at nothing, which is an empty
+    // plate rather than the asterisk.
+    const marker = (url: string) => `Margin held.[^mar]\n\n[^mar]: [Margin memo](${url})\n`;
+    faviconApi.getFavicon.mockImplementation(async (hostname) => (
+      hostname === 'first.example' ? new Blob([Uint8Array.from([0x89])], { type: 'image/png' }) : null
+    ));
+
+    const { rerender } = render(<MarkdownBody citations={context()}>{marker('https://first.example/a')}</MarkdownBody>);
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', minted[0]!));
+
+    rerender(<MarkdownBody citations={context()}>{marker('https://second.example/b')}</MarkdownBody>);
+    await waitFor(() => expect(revoked).toContain(minted[0]));
+
+    faviconApi.getFavicon.mockResolvedValue(null);
+    rerender(<MarkdownBody citations={context()}>{marker('https://first.example/a')}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledTimes(3));
+    const pill = document.querySelector('.citation-pill');
+    expect(pill?.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
+  it('falls back to the asterisk when the fetched icon will not paint', async () => {
+    // The endpoint validates that it is serving an image and serves SVG among
+    // others, so a blob can be a good response and still fail to decode here.
+    // Left alone the marker is a broken-image glyph, which is worse than the
+    // asterisk it replaced: in this position the icon is the whole signal.
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x3c])], { type: 'image/svg+xml' }));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    const icon = await screen.findByRole('button', { name: 'Source 2: Margin memo' })
+      .then((pill) => waitFor(() => { const img = pill.querySelector('img'); expect(img).not.toBeNull(); return img!; }));
+    fireEvent.error(icon);
+
+    const pill = screen.getByRole('button', { name: 'Source 2: Margin memo' });
+    expect(pill.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+    expect(pill).not.toHaveClass('citation-pill-favicon');
+  });
+
+  it('drops a resolved icon when the same marker is re-pointed at another host', async () => {
+    // The pill holds its position across a re-parse, so a definition that
+    // changes target hands the *same* component a new host. The object URL for
+    // the old one is revoked on the way out: returning it while the new host's
+    // request is in flight — or after it comes back empty — draws a broken
+    // image where the asterisk belongs.
+    const marker = (url: string) => `Margin held.[^mar]\n\n[^mar]: [Margin memo](${url})\n`;
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+
+    const { rerender } = render(<MarkdownBody citations={context()}>{marker('https://first.example/memo')}</MarkdownBody>);
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', minted[0]!));
+
+    faviconApi.getFavicon.mockResolvedValue(null);
+    rerender(<MarkdownBody citations={context()}>{marker('https://second.example/memo')}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledWith('second.example'));
+    expect(revoked).toContain(minted[0]);
+    const pill = document.querySelector('.citation-pill');
+    expect(pill?.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
+  it('keeps a still\'s numbered markers rather than fetching icons into a picture', () => {
+    // A still is rendered synchronously and photographed; an icon that lands
+    // after the shutter is an empty box in the file somebody keeps, and the
+    // numbers are what its trailing source list is read by.
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+
+    render(<MarkdownBody citations={context()} still>{grounded}</MarkdownBody>);
+
+    expect(faviconApi.getFavicon).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1', '2']);
   });
 
   it('keeps the source list in a still, where no popover can be opened', () => {
