@@ -1508,7 +1508,14 @@ export class RallyApi {
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
-    projectId?: string;
+    /**
+     * The Spaces this Channel is being started in.
+     *
+     * Empty means General, which is what the top-level composer means: every
+     * Channel has a home, and the server places one that names no Space rather
+     * than the client having to choose.
+     */
+    spaceIds?: string[];
     mentions?: MentionIdentity[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
@@ -1532,7 +1539,7 @@ export class RallyApi {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
-        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.spaceIds && input.spaceIds.length > 0 ? { spaceIds: input.spaceIds } : {}),
         openingMessage: input.openingMessage,
         participantUserIds,
         clientMessageId,
