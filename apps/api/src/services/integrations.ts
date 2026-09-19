@@ -53,6 +53,7 @@ import {
   type HarnessActivationInput,
   type HarnessEvent,
   type HarnessPlugin,
+  HarnessToolEffectUnresolvedError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolPolicyIdentity,
@@ -3659,6 +3660,7 @@ export async function runWorkstreamHarness(
             status: wireToolStatus(row.status),
             inputHash: row.requestHash,
             inputJson: row.inputJson,
+            attemptStartedAt: row.startedAt ?? 0,
             providerIdempotencyKey: row.providerIdempotencyKey,
           },
           expectedInputHash: inputHash,
@@ -6662,6 +6664,11 @@ async function reenterInterruptedWrite(input: {
     inputHash: string;
     inputJson: string;
     /**
+     * When the interrupted attempt's receipt began executing, which is the
+     * window a reconciler asks its question about.
+     */
+    attemptStartedAt: number;
+    /**
      * The key the interrupted attempt was admitted under, never a fresh one.
      * Bind derives it from the receipt coordinate rather than the effect row,
      * so re-deriving it here would hand the provider a key it has not seen and
@@ -6709,13 +6716,31 @@ async function reenterInterruptedWrite(input: {
   ) {
     return null;
   }
-  return tool.execute(parseJson(input.row.inputJson, {}), {
+  const recordedInput = parseJson(input.row.inputJson, {});
+  const callContext = {
     ...input.context,
     effectIntentId: input.row.id,
     ...(input.row.providerIdempotencyKey !== null
       ? { providerIdempotencyKey: input.row.providerIdempotencyKey }
       : {}),
-  });
+  };
+  // A tool that resolves its effect by subject rather than by receipt answers
+  // here first, and its answer is what decides whether the executor runs at
+  // all. `landed` is returned without touching anything; `not_landed` is the
+  // only licence to execute, because it says the external effect is provably
+  // absent and the call below is therefore a first execution rather than a
+  // second write; anything else leaves the attempt unresolved.
+  if (tool.reconcileEffect) {
+    const reconciled = await tool.reconcileEffect(recordedInput, {
+      ...callContext,
+      attemptStartedAt: input.row.attemptStartedAt,
+    });
+    if (reconciled.outcome === "landed") return reconciled.result;
+    if (reconciled.outcome === "unknown") {
+      throw new HarnessToolEffectUnresolvedError(reconciled.reason);
+    }
+  }
+  return tool.execute(recordedInput, callContext);
 }
 
 /**
@@ -6759,6 +6784,7 @@ export async function reenterInterruptedWriteForRecovery(
     requestHash: string;
     inputJson: string;
     executionPlanJson: string | null;
+    startedAt: number;
     providerIdempotencyKey: string | null;
   },
   lease: AttemptLease,
@@ -6814,6 +6840,7 @@ export async function reenterInterruptedWriteForRecovery(
         status: wireToolStatus(receipt.status),
         inputHash: receipt.requestHash,
         inputJson: receipt.inputJson,
+        attemptStartedAt: receipt.startedAt,
         providerIdempotencyKey: receipt.providerIdempotencyKey,
       },
       expectedInputHash: receipt.requestHash,

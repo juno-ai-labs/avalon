@@ -4459,6 +4459,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             requestHash: receipt.requestHash,
             inputJson: receipt.inputJson,
             executionPlanJson: receipt.executionPlanJson,
+            startedAt: receipt.startedAt ?? 0,
             providerIdempotencyKey: receipt.providerIdempotencyKey,
           },
           lease,
