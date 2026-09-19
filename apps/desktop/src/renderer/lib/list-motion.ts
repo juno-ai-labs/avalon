@@ -49,8 +49,8 @@ export interface ListMotionRow {
   key: string;
   /**
    * The list this row is ranked within. Rows in different scopes never pass
-   * one another: a project's members keep their order among themselves while
-   * the whole project moves past another, and shift with it rather than
+   * one another: a Space's placements keep their order among themselves while
+   * the whole Space moves past another, and shift with it rather than
    * leaving as if each had been moved on its own.
    */
   scope?: string;
@@ -130,7 +130,7 @@ export function longestIncreasingRun(sequence: readonly number[]): number[] {
  * the ranking: a row leaving the pinned section for the top of the recent list
  * passes that list's heading, and the heading must not be the thing that is
  * seen to leave. The ranking is per scope, so a block of rows moving as one —
- * a project and its members, reordered past another project — shifts as one.
+ * a Space and its placements, reordered past another Space — shifts as one.
  *
  * Rows that were not there before are left alone: they have no old position to
  * leave from, and a page of them arriving at once is not a move. Rows that are
