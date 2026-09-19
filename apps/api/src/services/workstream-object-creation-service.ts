@@ -373,12 +373,27 @@ export class WorkstreamObjectCreationService {
     } as const;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
-    // Everything from here to the last settled membership is one attempt. A
-    // failure anywhere inside it cancels every staged membership, because a
+    // One attempt, and the order inside it is what keeps a Channel from ever
+    // being seen outside a Space.
+    //
+    // The memberships settle *before* the parent reserves its main
+    // conversation, because reserving one arms the object's recovery alarm —
+    // and that alarm delivers the deferred provisional directory row itself if
+    // it wins the race with this coordinator. A settlement after it would
+    // therefore publish, on any failure in between, a Channel that is
+    // Organization-wide and in no Space at all. Settled first, the row carries
+    // its placement whichever path publishes it.
+    //
+    // A failure before the settlement cancels every staged membership: a
     // `joining` row no list shows and no alarm finishes is a placement that
-    // would never become one.
+    // would never become one. A failure *after* it leaves an active membership
+    // for a Channel whose conversation may never open, which is the residue to
+    // prefer — the retry under the same create key reuses the same id, and the
+    // settlement is idempotent at the generation it already has.
     try {
       const email = await span.step("workstream.create.email_address.reserve", () => emailRouting.reserve(routeInput));
+      await span.step("workstream.create.spaces.finalize", () =>
+        this.finalizeSpaceMemberships(workspace, stages));
 
       await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
         this.env,
@@ -436,6 +451,13 @@ export class WorkstreamObjectCreationService {
         },
         deferDirectoryDelivery: true,
       }));
+      // The provenance behind the audience the conversation is about to open
+      // with. After the reservation, because the Channel's authority asserts
+      // an identity that the reservation is what writes; before `initialize`,
+      // because which Space reaches a Channel is true of it whether or not
+      // anybody ever opened it.
+      await span.step("workstream.create.spaces.record", () =>
+        this.recordSpaceSources(stages, workstreamId, title, requestedScope, body.participantUserIds));
 
       created = await span.step("workstream.create.child.initialize", () => client.initialize({
         workspaceId: this.auth.workspaceId,
@@ -479,14 +501,6 @@ export class WorkstreamObjectCreationService {
         } : {}),
         reason: options.reason ?? "opening_message",
       }));
-      // The provenance behind the audience `initialize` just opened with, and
-      // then the memberships themselves. Both before the directory flush: the
-      // Channel becomes visible on that flush, and a placement that is not
-      // active yet would render a Channel in no Space at all.
-      await span.step("workstream.create.spaces.record", () =>
-        this.recordSpaceSources(stages, workstreamId, title, requestedScope, body.participantUserIds));
-      await span.step("workstream.create.spaces.finalize", () =>
-        this.finalizeSpaceMemberships(workspace, stages));
       await span.step("workstream.create.directory.flush", () =>
         workstream.flushProvisionalDirectory({
           workspaceId: this.auth.workspaceId,
