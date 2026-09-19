@@ -21,6 +21,7 @@ import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-data
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { createAutomation } from "../services/automation-service";
+import { openGeneralSpaceForNewWorkspace } from "../services/space-bootstrap-service";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
@@ -197,6 +198,9 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     workspaceId,
     fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
   );
+  // The same step onboarding takes: every Channel this seed is about to write
+  // belongs to a Space, and the sidebar cannot be drawn without General.
+  await openGeneralSpaceForNewWorkspace(env, workspaceId);
   const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
 
   const workspaceCounts: Record<string, number> = {};
