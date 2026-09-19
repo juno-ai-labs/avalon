@@ -529,6 +529,7 @@ export function orderedTranscriptMessages(
             ...(pluginName === undefined ? {} : { pluginName }),
             ...((run?.connectorType ?? owner?.connectorType) ? { connectorType: run?.connectorType ?? owner?.connectorType } : {}),
             name: block.toolName,
+            wireName: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
               : block.status === 'cancelled'
@@ -1262,7 +1263,8 @@ function pluginGroupContribution(message: Message): {
   // Folding all seven together is what produced "Used Background agents for 1s"
   // over a second that contained two messages — a duration standing in for a
   // count nobody could see.
-  const counted = countedGroupForToolCall(tool.name, tool.status);
+  // `wireName`, not `name`: a live invocation's `name` is the activity's prose.
+  const counted = countedGroupForToolCall(tool.wireName ?? tool.name, tool.status);
   if (counted) {
     return {
       key: counted.key,

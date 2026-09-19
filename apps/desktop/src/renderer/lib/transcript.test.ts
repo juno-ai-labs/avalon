@@ -3783,3 +3783,61 @@ describe('counted rows and the plugin run behind them', () => {
     ]);
   });
 });
+
+describe('counted rows across the rename and before reconciliation', () => {
+  const row = (id: string, toolEvent: Message['toolEvent']): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'tool_event',
+    createdAt: '2026-09-19T12:00:00.000Z',
+    toolEvent,
+  });
+
+  it('counts calls stored under the retired wire names', () => {
+    // `avalon:agents` dropped its wire prefix and renamed `reply`, and a stored
+    // row keeps the name it was written under. A predicate that knows only the
+    // current spellings drops every historical call onto the generic row.
+    const grouped = groupPluginToolMessages([
+      row('old-send', {
+        id: 'old-send', toolCallId: 'old-send', name: 'agents_send_message',
+        wireName: 'agents_send_message', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+      row('old-reply', {
+        id: 'old-reply', toolCallId: 'old-reply', name: 'agents_reply',
+        wireName: 'agents_reply', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+      row('old-start', {
+        id: 'old-start', toolCallId: 'old-start', name: 'agents_start_agent',
+        wireName: 'agents_start_agent', status: 'completed',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 messages sent to a background agent',
+      '1 background agent started',
+    ]);
+  });
+
+  it('routes a live invocation on its wire name, not the prose it displays', () => {
+    // A live row's `name` is the activity's prose. Reading it would leave the
+    // row on the generic plugin row until canonical reconciliation replaced it,
+    // so the counted row would appear a beat late and the feed would jump.
+    const grouped = groupPluginToolMessages([
+      row('live', {
+        id: 'live', toolCallId: 'live', name: 'Messaging a teammate',
+        wireName: 'send_message', status: 'started',
+        pluginId: 'avalon:agents', pluginName: 'Background agents',
+      }),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.activeVerb)).toEqual([
+      'Sending a message to a background agent',
+    ]);
+    expect(grouped[0]!.pluginActivity?.active).toBe(true);
+  });
+});

@@ -1,6 +1,6 @@
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
-import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
@@ -1416,7 +1416,7 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    if (message.structuredContent?.kind === "agent_message") {
+    if (message.structuredContent?.kind === AGENT_MESSAGE_CONTENT_KIND) {
       const content = AgentMessageContentSchema.parse(message.structuredContent);
       const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
         id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType,

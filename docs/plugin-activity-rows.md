@@ -161,6 +161,16 @@ wire name, ahead of the plugin lookup:
 | `send_message`, `reply_to_message` | **messages sent to a background agent** | **mail-ai** |
 | `start_agent` | **background agents started** | **stack-backward** |
 
+Routing reads `toolEvent.wireName`, never `name`. A live invocation's `name` is
+the activity's **prose** — "Messaging a teammate", not `send_message` — so a
+predicate reading it would leave the row on the generic plugin row until
+canonical reconciliation replaced it, and the counted row would appear a beat
+late with the feed jumping under the reader. The predicates also recognize the
+retired spellings (`agents_send_message`, `agents_reply`,
+`agents_start_agent`): `avalon:agents` dropped its wire prefix and renamed
+`reply`, a stored row keeps the name it was written under, and
+`tool-activity.ts` keeps those spellings registered for the same reason.
+
 A call that **failed** did none of those things, so it is not one of the things
 those rows count and falls back to the Background agents plugin row, which says
 only that Rally used the plugin and is still true. `countedGroupForToolCall` is
@@ -746,8 +756,10 @@ something a person read. `PluginGroup` gained `countPhrase` and
 `PluginActivityData` gained `count`; `AGENT_MESSAGE_CONTENT_KIND` and
 `isAgentMessageSendWireName` are in `@rally/contracts`.
 
-A call that failed sent nothing and started nothing, so it keeps the plugin
-row; `countedGroupForToolCall` holds that rule for both the contribution and
+Routing reads the call's wire name rather than its display name, which a live
+invocation fills with prose, and recognizes the pre-rename spellings so a
+historical call is not dropped onto the generic row. A call that failed sent
+nothing and started nothing, so it keeps the plugin row; `countedGroupForToolCall` holds that rule for both the contribution and
 the aggregate-run check, and the aggregate run itself is dropped when every one
 of its calls was rerouted, which is what stops the old row reappearing beside
 the new one.

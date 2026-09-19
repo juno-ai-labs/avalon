@@ -104,7 +104,10 @@ export type ReplyToAgentMessageInput = z.infer<typeof ReplyToAgentMessageInputSc
  * agent message back into an anonymous system note, which is the state this
  * constant exists to stop returning to.
  */
-export const AGENT_MESSAGE_CONTENT_KIND = "agent_message";
+// `as const` rather than a bare `const`: the latter produces a widening
+// literal, so an object literal built with it gets `kind: string` and stops
+// satisfying the schema this constant exists to be the single spelling for.
+export const AGENT_MESSAGE_CONTENT_KIND = "agent_message" as const;
 
 /**
  * The tools whose subject is something other than the plugin carrying them, by
@@ -130,16 +133,54 @@ export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as 
 export const AGENT_START_TOOL_NAME = "start_agent";
 
 /**
+ * What the same three tools were called before the plugin dropped its wire
+ * prefix, and before `reply_to_message` was renamed from `reply`.
+ *
+ * A stored row keeps the name it was written under — `tool_activity.ts` keeps
+ * the retired spellings registered for exactly this reason, so an old row and
+ * a new one for the same action still read alike — so a predicate that knows
+ * only the current names silently drops every historical call back onto the
+ * generic plugin row.
+ *
+ * It matters more than presentation on `tool_effects`, which the hand-off
+ * query reads: a run that spans the rename can settle with an old completed
+ * spelling, and a query blind to it reports a worker that did reply as having
+ * finished without replying. That was already true before these names moved
+ * here; recognizing the aliases fixes it in the one place both callers read.
+ *
+ * `agents_reply` rather than `agents_reply_to_message`: the prefix was dropped
+ * and the tool renamed in separate changes, so no row was ever written under
+ * the combination. The derived spelling is listed anyway — it costs a string
+ * and removes the need to be right about that ordering.
+ */
+const AGENT_MESSAGE_TOOL_NAME_ALIASES = [
+  "agents_send_message",
+  "agents_reply",
+  "agents_reply_to_message",
+] as const;
+const AGENT_START_TOOL_NAME_ALIASES = ["agents_start_agent"] as const;
+
+/**
  * The tools whose completed use means a run handed work or findings to another
  * agent, so its owner is not told it finished without replying: a message, or
- * a delegation the run then ends its turn to wait on.
+ * a delegation the run then ends its turn to wait on. Retired spellings
+ * included, because this list is matched against stored effects.
  */
 export const AGENT_HANDOFF_TOOL_NAMES = [
   ...AGENT_MESSAGE_TOOL_NAMES,
+  ...AGENT_MESSAGE_TOOL_NAME_ALIASES,
   AGENT_START_TOOL_NAME,
+  ...AGENT_START_TOOL_NAME_ALIASES,
 ] as const;
 
-const AGENT_MESSAGE_TOOL_NAME_SET: ReadonlySet<string> = new Set(AGENT_MESSAGE_TOOL_NAMES);
+const AGENT_MESSAGE_TOOL_NAME_SET: ReadonlySet<string> = new Set([
+  ...AGENT_MESSAGE_TOOL_NAMES,
+  ...AGENT_MESSAGE_TOOL_NAME_ALIASES,
+]);
+const AGENT_START_TOOL_NAME_SET: ReadonlySet<string> = new Set([
+  AGENT_START_TOOL_NAME,
+  ...AGENT_START_TOOL_NAME_ALIASES,
+]);
 
 /** True for a tool call whose subject is a message to a teammate. */
 export function isAgentMessageSendWireName(name: string | undefined): boolean {
@@ -148,7 +189,7 @@ export function isAgentMessageSendWireName(name: string | undefined): boolean {
 
 /** True for a tool call whose subject is a worker being started. */
 export function isAgentStartWireName(name: string | undefined): boolean {
-  return name === AGENT_START_TOOL_NAME;
+  return name !== undefined && AGENT_START_TOOL_NAME_SET.has(name);
 }
 
 /** True for the structured content an admitted agent-to-agent message carries. */

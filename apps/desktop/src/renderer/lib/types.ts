@@ -278,6 +278,17 @@ export interface ToolEventData {
   name: string;
   summary?: string;
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
+  /**
+   * The tool's own wire name, when the row can say it.
+   *
+   * `name` is what the row would *display*, and a live invocation carries the
+   * activity's prose there — "Messaging a teammate", not `send_message`. Any
+   * decision keyed on which tool ran has to read this instead, or it works
+   * only after canonical reconciliation replaces the row: the counted
+   * agent-message rows did exactly that, appearing a beat late while the live
+   * row sat on the generic plugin row and then jumped.
+   */
+  wireName?: string;
   durationMs?: number;
   toolType?: string;
   /** The single plugin that owns this tool; absent for Rally-owned tools. */
