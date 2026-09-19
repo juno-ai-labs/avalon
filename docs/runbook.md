@@ -881,10 +881,14 @@ to be signed in.
                         FROM space_bootstrap WHERE id = 1
    ```
 
-   The phases run `pending` → `general` → `memberships` → `finalize` →
-   `complete`. An Organization sitting in `memberships` with a moving `cursor`
-   is working. One sitting in `finalize` is refusing to close, and
-   `blocked_json` says why.
+   The phases run `pending` → `general` → `preflight` → `memberships` →
+   `finalize` → `complete`. An Organization sitting in `preflight` or
+   `memberships` with a moving `cursor` is working: `preflight` walks the whole
+   directory asking whether each Channel may be widened and writes nothing, and
+   `memberships` is only entered when it found nothing. One sitting in
+   `finalize` is refusing to close, and `blocked_json` says why. A blocker
+   recorded in `preflight` means **no** Channel in that Organization was
+   widened or placed.
 
 3. **Remediate blockers.** `space_membership_content_fence` means the Channel
    holds retained content the Organization may not read, so placing it in

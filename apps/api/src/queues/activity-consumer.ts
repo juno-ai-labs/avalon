@@ -548,6 +548,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
     try {
       const cutover = new SpaceBootstrapService(env, driver);
       if (work.kind === "general") await cutover.runGeneral();
+      else if (work.kind === "preflight") await cutover.runPreflight(work.cursor);
       else if (work.kind === "memberships") await cutover.runMemberships(work.cursor);
       else await cutover.runFinalize();
       message.ack();
