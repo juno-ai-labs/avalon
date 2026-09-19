@@ -46,3 +46,16 @@ test('the adoption pull request can run CI and commits only the configured regio
   assert.match(workflow, /git add apps\/api\/wrangler\.global\.jsonc\n\s+git commit -qm/u);
   assert.doesNotMatch(workflow, /git commit -a/u);
 });
+
+test('a verified snapshot lands on main without a human when the PR token is configured', async () => {
+  const workflow = await readWorkflow();
+  // Auto-merge is behind the token check: a GITHUB_TOKEN merge would not start
+  // deploy-api.yml on the resulting push to main, which is a silent skip of
+  // the only thing adoption is for.
+  assert.match(workflow, /--body-file - <<BODY/u);
+  assert.match(
+    workflow,
+    /if \[ "\$PR_TOKEN_CONFIGURED" != "true" \]; then[\s\S]*?exit 0\n {10}fi\n(?: {10}#[^\n]*\n)* {10}gh pr merge --auto --merge "\$pr_url"/u,
+  );
+  assert.doesNotMatch(workflow, /gh pr merge --(?:squash|rebase)/u);
+});
