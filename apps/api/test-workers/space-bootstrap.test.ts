@@ -19,7 +19,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from "@rally/contracts";
@@ -194,6 +194,20 @@ async function generalCount(): Promise<number> {
     bindings: [],
   });
   return (result.rows[0] as { count: number }).count;
+}
+
+/**
+ * Wake this Organization's object and read the alarm it armed for itself.
+ *
+ * Inside `runInDurableObject`, so the object's input gate is held for both
+ * steps: an alarm parked at `now + 1` would otherwise fire between them and the
+ * read would race the handler that consumed it.
+ */
+async function alarmArmedOnWake(): Promise<number | null> {
+  return runInDurableObject(workspace(), async (instance, state) => {
+    await instance.spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
+    return state.storage.getAlarm();
+  });
 }
 
 /** The audience the conversation itself holds, which is the one that decides. */
@@ -387,6 +401,31 @@ describe("the Space cutover", () => {
     expect(await membershipRows()).toContainEqual({ workstream_id: homeless, state: "active" });
     expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
       .toMatchObject({ phase: "complete", ready: true });
+  });
+
+  it("arms its own alarm for an Organization that has not finished its cutover", async () => {
+    await createChannel("needs-a-home");
+    await forgetSpaces();
+    await evictDurableObject(workspace());
+
+    // Constructing the object is the whole trigger. The PRD's fleet migration
+    // has to finish without relying on user access, so the tracker's forced
+    // pass wakes every WorkspaceDO and the alarm it arms for itself is what
+    // claims the first page — there is no request behind any of this.
+    const armed = await alarmArmedOnWake();
+    expect(armed).not.toBeNull();
+    // Due now, not eventually. An unstarted cutover's `not_before` is zero, and
+    // an overdue candidate is parked one millisecond out — which is how this
+    // tells the cutover's own candidate from the month-away retention sweep.
+    expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+
+    await runWholeCutover();
+    await evictDurableObject(workspace());
+
+    // A finished cutover contributes no candidate, so the object wakes only for
+    // whatever else it owes — none of which is owed now.
+    const after = await alarmArmedOnWake();
+    expect(after === null || after > Date.now() + 1).toBe(true);
   });
 
   it("refuses to close while a Channel is still outside every Space", async () => {
