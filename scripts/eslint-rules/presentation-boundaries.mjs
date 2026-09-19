@@ -4,6 +4,7 @@
  */
 export const presentationBoundaryFiles = [
   "apps/browser/src/conversation.tsx",
+  "apps/desktop/src/renderer/components/message-feed.tsx",
   "apps/desktop/src/renderer/components/scope-sharing-panel.tsx",
   "apps/desktop/src/renderer/components/**/*{sidebar,rail}*.tsx",
   "apps/desktop/src/renderer/components/sidekick-picker.tsx",
@@ -33,27 +34,6 @@ function unwrap(node) {
   return node;
 }
 
-function isDiagnosticExpression(candidate, catchBindings = new Set()) {
-  const node = unwrap(candidate);
-  if (!node) return false;
-  if (node.type === "Identifier") {
-    return catchBindings.has(node.name)
-      || /^(?:error|err|cause|exception)$/iu.test(node.name)
-      || /(?:Error|Exception)$/u.test(node.name);
-  }
-  if (node.type === "MemberExpression") {
-    const property = staticPropertyName(node);
-    return property === "error" || property === "cause" || isDiagnosticExpression(node.object, catchBindings);
-  }
-  if (node.type === "LogicalExpression") {
-    return isDiagnosticExpression(node.left, catchBindings) || isDiagnosticExpression(node.right, catchBindings);
-  }
-  if (node.type === "ConditionalExpression") {
-    return isDiagnosticExpression(node.consequent, catchBindings) || isDiagnosticExpression(node.alternate, catchBindings);
-  }
-  return false;
-}
-
 function objectPatternReadsMessage(pattern) {
   return pattern.properties.some((property) => property.type === "Property"
     && ((!property.computed && property.key.type === "Identifier" && property.key.name === "message")
@@ -73,37 +53,66 @@ export const noDiagnosticMessageInPresentationRule = {
     },
   },
   create(context) {
-    const catchBindings = new Map();
+    const sourceCode = context.sourceCode;
+    const diagnosticVariables = new WeakSet();
+
+    function variableFor(identifier) {
+      let scope = sourceCode.getScope(identifier);
+      while (scope) {
+        const variable = scope.set.get(identifier.name);
+        if (variable) return variable;
+        scope = scope.upper;
+      }
+      return undefined;
+    }
+
+    function isDiagnosticExpression(candidate) {
+      const node = unwrap(candidate);
+      if (!node) return false;
+      if (node.type === "Identifier") {
+        const variable = variableFor(node);
+        if (variable && diagnosticVariables.has(variable)) return true;
+        if (variable?.defs.some((definition) => definition.type === "Parameter")) return false;
+        return /^(?:error|err|cause|exception)$/iu.test(node.name)
+          || /(?:Error|Exception)$/u.test(node.name);
+      }
+      if (node.type === "MemberExpression") {
+        const property = staticPropertyName(node);
+        return property === "error" || property === "cause" || isDiagnosticExpression(node.object);
+      }
+      if (node.type === "LogicalExpression") {
+        return isDiagnosticExpression(node.left) || isDiagnosticExpression(node.right);
+      }
+      if (node.type === "ConditionalExpression") {
+        return isDiagnosticExpression(node.consequent) || isDiagnosticExpression(node.alternate);
+      }
+      return false;
+    }
+
     return {
       MemberExpression(node) {
         const propertyName = staticPropertyName(node);
-        if ((propertyName === "message" || propertyName === "toString") && isDiagnosticExpression(node.object, catchBindings)) {
+        if ((propertyName === "message" || propertyName === "toString") && isDiagnosticExpression(node.object)) {
           context.report({ node: node.property, messageId: "diagnosticMessage" });
         }
       },
       VariableDeclarator(node) {
-        if (node.id.type === "ObjectPattern" && objectPatternReadsMessage(node.id) && isDiagnosticExpression(node.init, catchBindings)) {
+        if (node.id.type === "ObjectPattern" && objectPatternReadsMessage(node.id) && isDiagnosticExpression(node.init)) {
           context.report({ node: node.id, messageId: "diagnosticMessage" });
+        }
+        if (node.parent.kind === "const" && node.id.type === "Identifier" && isDiagnosticExpression(node.init)) {
+          for (const variable of sourceCode.getDeclaredVariables(node)) diagnosticVariables.add(variable);
         }
       },
       CatchClause(node) {
-        if (node.param?.type === "Identifier") {
-          catchBindings.set(node.param.name, (catchBindings.get(node.param.name) ?? 0) + 1);
-        }
+        for (const variable of sourceCode.getDeclaredVariables(node)) diagnosticVariables.add(variable);
         if (node.param?.type === "ObjectPattern" && objectPatternReadsMessage(node.param)) {
           context.report({ node: node.param, messageId: "diagnosticMessage" });
         }
       },
-      "CatchClause:exit"(node) {
-        if (node.param?.type === "Identifier") {
-          const remaining = (catchBindings.get(node.param.name) ?? 1) - 1;
-          if (remaining === 0) catchBindings.delete(node.param.name);
-          else catchBindings.set(node.param.name, remaining);
-        }
-      },
       CallExpression(node) {
         if (node.callee.type === "Identifier" && node.callee.name === "String"
-          && node.arguments.some((argument) => argument.type !== "SpreadElement" && isDiagnosticExpression(argument, catchBindings))) {
+          && node.arguments.some((argument) => argument.type !== "SpreadElement" && isDiagnosticExpression(argument))) {
           context.report({ node: node.callee, messageId: "diagnosticMessage" });
         }
       },
