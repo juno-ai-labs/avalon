@@ -428,6 +428,41 @@ telemetry roles.
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
 
+## Changelog
+
+### 2026-09-19 — The graph admits a third parent kind, and gets a changelog heading
+
+**What changed:** `workspace_retirement_graph`'s `parent_kind` CHECK admits
+`'space'` beside `'workstream'` and `'automation'`, rebuilt in WorkspaceDO
+migration 61. The table is carried through a scratch table rather than
+re-derived, and this heading now sits over the entries below it.
+
+**Why:** A Space is a conversation parent with a hidden main conversation and
+children of its own, so Organization retirement has to reach it — and the
+retirement graph is where a walk records what it has left to close. The CHECK
+was written when there were two kinds and nothing could produce a third.
+
+**Considered and rejected:** Re-deriving the graph from the directories during
+the rebuild. It is fewer statements and it loses the only thing the table
+actually holds: `retired_at` is the receipt that a node was already closed, and
+the graph is captured *before* the workspace tombstone precisely because the
+directories refuse afterwards. A rebuild that re-derived it would un-retire
+whatever the last pass finished, and a walk resumed after an interruption would
+close those children a second time.
+
+**Consequences:** The widened CHECK is all that lands here. Nothing enumerates
+Spaces into the graph yet — `beginWorkspaceRetirement` still walks
+`workspace_workstream_directory` and `automation_directory` — so an Organization
+with Spaces reports complete without closing them. Phase 5 of
+[the Spaces plan](PRDs/2026-09-18_spaces-and-product-hierarchy/plan.md) adds the
+enumeration and the dispatcher hop; until it does, this is a known gap rather
+than a supported state.
+
+The entries below predate this heading and were filed, structurally, under
+**Open questions**. They are the record of how retirement came to work the way
+it does; what is *not* recorded anywhere is why the original CHECK named exactly
+two kinds, and that reasoning has not been reconstructed here.
+
 ### 2026-09-08 — The walk stamps the demo register
 
 **What changed:** After the graph reports closed, `retireWorkspaceGraph`

@@ -408,6 +408,25 @@ SQL joins.
   names are unique after normalization across active and inactive rows, and the
   icon/color columns accept only the shared V1 registries. See
   [`projects.md`](projects.md).
+- WorkspaceDO migration 61 adds the Space authority that replaces those rows:
+  `workspace_space_directory` and `workspace_space_viewers` are the *projection*
+  a Space's own object publishes, so they carry the generation, source version
+  and payload hash each effect is fenced on rather than being written by a
+  mutation; a reservation is written at source version zero so the first real
+  projection supersedes it. `workspace_space_order` and `workspace_space_state`
+  are the per-person order and the one waterline both directories share.
+  `space_channel_memberships` is keyed by Space and Channel with **no**
+  uniqueness on the Channel, because a Channel belongs to as many Spaces as it
+  was added to. `space_intents` is one row per staged cross-object operation
+  with the three fences it was staged against. `space_defaults`,
+  `space_default_targets` and `space_default_publications` mirror the Project
+  trio with a `kind` column, so a resource and a Sidekick recommendation share
+  one staging, fence and receipt. `space_bootstrap` and
+  `space_bootstrap_receipts` are seeded `pending` for every Organization. The
+  same migration rebuilds `workspace_retirement_graph` so `parent_kind` admits
+  `'space'`, carrying its rows and their `retired_at` receipts through a scratch
+  table — migration 42 is released and is not edited. A unique partial index on
+  `system_role` makes General singular. See [`spaces.md`](spaces.md).
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the

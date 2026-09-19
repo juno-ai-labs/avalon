@@ -241,6 +241,12 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
         { phase: "project_default_publish", alarmKind: undefined },
+        // The Space authority's two phases sit beside the Project one and
+        // before the sweep, for the same reason it does: both publish onto the
+        // activity Queue, and a rejected send has to leave its rows claimed and
+        // pending rather than spin this alarm.
+        { phase: "space_default_publish", alarmKind: undefined },
+        { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },
