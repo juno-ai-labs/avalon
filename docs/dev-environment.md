@@ -115,6 +115,14 @@ re-running this on a warm container does what it always did. Hosted databases
 never use a baseline. [`d1-baseline-migrations.md`](d1-baseline-migrations.md)
 owns the mechanism; read it before regenerating one or moving its boundary.
 
+If the seed route answers `workspace_do_schema_hash_mismatch:<n>` for a Durable
+Object migration that has not shipped yet, the local state holds a receipt
+written before that migration's DDL was last edited: delete
+`apps/api/.wrangler/state` and re-run `pnpm db:migrate` and `pnpm db:seed`.
+[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
+explains why the hash is checked at all — and why wiping is the remedy only
+while the migration is unreleased.
+
 After the Workers are running (§3), open the authority:
 
 ```bash
