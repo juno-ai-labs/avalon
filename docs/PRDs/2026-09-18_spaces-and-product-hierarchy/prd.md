@@ -322,6 +322,34 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
+### 2026-09-19 — A Channel created without a named Space is born Organization-wide
+
+**Decided:** Empty `spaceIds` means General, General is Organization-wide, and
+a Space source only ever widens — so the Channel opens `workspace` whatever
+scope the caller asked for. This is the behavior, not a defect to correct: the
+top-level composer, a connector ingress that resolved a personal scope, session
+import, `createFromOpportunity` with a personal audience, and the demo seeder
+all create Organization-wide Channels unless they name a Space. A Channel that
+is meant to stay personal must be born in a personal Space.
+
+**Why:** It follows from three sentences already agreed. Channel membership:
+"Creating a Channel from a top-level composer, connector, import, demo,
+recovery, or scheduled automation or Sidekick path assigns it to General when
+no Space was supplied." General: it "is Organization-wide, and cannot be
+archived or made personal." Audience: "Adding it to an Organization-wide Space
+makes the Channel Organization-wide." Design decision 6 chose a protected
+fallback over asking every creation surface for a bespoke Space, and the
+composition rule in decision 4 is a union — a narrower direct scope cannot
+subtract from a broader source. Deriving the birth audience any other way would
+mean a Channel whose Space's audience does not apply to it, which the Existing
+Organizations section rejects for the cutover for the same reason.
+
+**Changes:** Nothing in the agreed goals, and no behavior change. It is
+recorded because it is not obvious from any one sentence and because it has one
+consequence worth naming: the demo seeder now refuses a pack room declared
+`personal` by name rather than seeding it Organization-wide, since the
+readiness barrier compares against the scope the pack stated.
+
 ### 2026-09-19 — Space-derived access is provenance in WorkstreamDO, applied through the Channel's canonical audience operations
 
 **Decided:** WorkstreamDO records which Space sources currently reach a Channel
