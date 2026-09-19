@@ -454,6 +454,21 @@ SQL joins.
   `'space'`, carrying its rows and their `retired_at` receipts through a scratch
   table — migration 42 is released and is not edited. A unique partial index on
   `system_role` makes General singular. See [`spaces.md`](spaces.md).
+- **WorkspaceDO migration 63 adds the Organization's view of a Channel's
+  breakouts, and the Space dashboard's refresh counters.**
+  `workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
+  and `workspace_breakout_viewers` is its per-person half, both applied from
+  the `directory_common` and `directory_user` effects a Channel now forwards on
+  its breakouts' behalf, under the same generation-then-version fence and the
+  same `workspace_workstream_effect_receipts` receipt the Channel directory
+  uses. They are separate tables rather than a `substream_id` column on
+  `workspace_workstream_directory` because every other query over that table
+  reads it as one row per Channel. Their columns are spelled the way the
+  Channel directory spells the same facts, because one code-owned SQL predicate
+  is rendered against both. `space_conversation_state` (per Space) and
+  `space_conversation_viewer_state` (per Space and person) are two monotonic
+  counters whose sum is the `conversationWaterline` a client refetches its
+  dashboard page on. See [`spaces.md`](spaces.md#the-refresh-signal).
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the

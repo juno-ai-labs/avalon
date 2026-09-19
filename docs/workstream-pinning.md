@@ -278,6 +278,15 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **A rewrite covers every stored pin, not just the visible ones.** Skipping a
   pin whose work stream has gone out of sight strands it at a position the
   visible run is about to reuse.
+- **`workspace_workstream_directory` is one row per Channel, and every query
+  here may assume it.** That assumption is what lets this module's paging, the
+  pin join, the cursor and the live-state supplement be written without a kind
+  filter. It is deliberate rather than incidental: a Channel's *breakouts* now
+  reach the Organization too, and they are projected into
+  `workspace_breakout_directory` instead of into this table precisely so that
+  none of the queries here has to learn a filter it would eventually forget.
+  Anything that needs a second kind of conversation gets a table, not a column —
+  [`spaces.md`](spaces.md#breakouts-reach-the-organization) holds the reasoning.
 - **A work stream is returned exactly once across a WorkspaceDO directory walk.** Pins are
   excluded from the paged query and appended to the first page instead. Leaving
   them in both would return a quiet pin twice — once appended, once on whichever
@@ -331,7 +340,9 @@ It deliberately does not:
   WorkspaceDO applies its local common/viewer directory to decide whether that
   active member may pin the work stream — see [`data-model.md`](data-model.md#work-streams).
 - **Pin anything but a work stream.** Automations and notes have their own
-  sections and no pin.
+  sections and no pin. A breakout is not pinnable and is not in this module's
+  directory at all: its projection lands in `workspace_breakout_directory`,
+  read only by the Space dashboard's conversation page.
 
 ## Failure modes and limits
 
@@ -393,6 +404,24 @@ indexed on `(user_id, position)`: a reorder
 rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
+
+### 2026-09-19 — The Channel directory stays one row per Channel
+
+**What changed:** Nothing in this module's code. The invariant that
+`workspace_workstream_directory` holds exactly one row per Channel is now
+written down, because a change outside this module could have broken it.
+
+**Why:** The Space dashboard needed the Organization to know about a Channel's
+breakouts, and the cheap way to do that was a `substream_id` column on this
+module's directory table. Every query here — the paged walk, the pin join, the
+cursor, the live-state supplement, the visible-ids page — would then have
+needed a filter none of them has, and the first one written without it would
+have put a breakout in somebody's sidebar. The breakouts went into tables of
+their own instead. [`spaces.md`](spaces.md) holds the full entry.
+
+**Consequences:** A future conversation kind that wants to be listed somewhere
+gets its own projection table. Adding a discriminator column to this one is a
+change to every query in this document.
 
 ### 2026-09-18 — Sidebar actions own their failure copy
 
