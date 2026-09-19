@@ -26,7 +26,11 @@ import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import { SpaceBootstrapService, spaceBootstrapDriver } from "../src/services/space-bootstrap-service";
+import {
+  SpaceBootstrapService,
+  placeConnectorChannelInGeneral,
+  spaceBootstrapDriver,
+} from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -113,6 +117,16 @@ async function fenceRetainedContent(workstreamId: string): Promise<void> {
       );
     },
   );
+}
+
+/** Take a Channel back out of every Space, the way one the coordinator never placed looks. */
+async function forgetMembership(workstreamId: string): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      "DELETE FROM space_channel_memberships WHERE workstream_id = ?",
+      workstreamId,
+    );
+  });
 }
 
 /** Archive a Channel the way the Organization sees it. */
@@ -334,6 +348,43 @@ describe("the Space cutover", () => {
     expect(await membershipRows()).toEqual([first, second]
       .map((workstreamId) => ({ workstream_id: workstreamId, state: "active" }))
       .sort((left, right) => left.workstream_id.localeCompare(right.workstream_id)));
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ phase: "complete", ready: true });
+  });
+
+  it("reopens a finished cutover for a Channel the connector path could not place", async () => {
+    await createChannel("already-placed");
+    await forgetSpaces();
+    await runWholeCutover();
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ phase: "complete", ready: true });
+
+    // A Channel in no Space on a finished Organization: the Slack agent
+    // provisions its own conversation rather than going through the creation
+    // coordinator, so its placement is a separate step that can be refused.
+    const homeless = await createChannel("slack-opened");
+    await forgetMembership(homeless);
+    // The refusal a Slack member with no Rally identity produces: the
+    // connector's own record of the Channel names nobody the disclosure could
+    // be attributed to, so the one-off placement has no actor.
+    await placeConnectorChannelInGeneral(creationEnv(), WORKSPACE_ID, {
+      workstreamId: asWorkstreamId(homeless),
+      scope: "personal",
+      placed: false,
+      participantUserIds: [],
+    });
+
+    // The Organization stops claiming a hierarchy it does not have, which is
+    // what gets the alarm to walk it again.
+    expect((await bootstrapRow()).phase).not.toBe("complete");
+    expect((await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID })).ready).toBe(false);
+
+    await runWholeCutover();
+
+    // The walk reads the Organization's own directory projection, which knows
+    // the participants the connector's record did not, so it places what the
+    // one-off step could not.
+    expect(await membershipRows()).toContainEqual({ workstream_id: homeless, state: "active" });
     expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
       .toMatchObject({ phase: "complete", ready: true });
   });

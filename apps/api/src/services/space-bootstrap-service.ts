@@ -183,9 +183,8 @@ export class SpaceBootstrapService {
    * `scheduledAlarmRetryDelay`'s interval instead of spinning the alarm.
    */
   async runFinalize(): Promise<void> {
-    const workspace = await this.workspace();
     const result = WorkspaceSpaceBootstrapFinalizeResultSchema.parse(
-      await workspace.finalizeSpaceBootstrap({ workspaceId: this.driver.workspaceId }),
+      await (await this.workspace()).finalizeSpaceBootstrap({ workspaceId: this.driver.workspaceId }),
     );
     if (result.outcome === "complete") {
       logInfo(this.env, "space_bootstrap_complete", { workspace_id: this.driver.workspaceId });
@@ -202,7 +201,18 @@ export class SpaceBootstrapService {
       workspace_id: this.driver.workspaceId,
       reason: result.outcome,
     });
-    await workspace.reopenSpaceBootstrap({ workspaceId: this.driver.workspaceId });
+    await this.reopen();
+  }
+
+  /**
+   * Put this Organization's cutover back on the walk.
+   *
+   * Idempotent, and it keeps the claim's retry gate: an Organization already
+   * walking is left where it is, and one that had settled starts again on the
+   * ordinary interval.
+   */
+  async reopen(): Promise<void> {
+    await (await this.workspace()).reopenSpaceBootstrap({ workspaceId: this.driver.workspaceId });
   }
 
   /**
@@ -471,7 +481,16 @@ export async function openGeneralSpaceForNewWorkspace(
  * not cover, and PRD goal 4 covers connectors explicitly. Best effort and
  * never throws: the person's Slack message has already produced a Channel and
  * a run, and a placement that could not be made must not turn that into an
- * error they see. What it costs when it fails is named here.
+ * error they see.
+ *
+ * **A refusal reopens the cutover.** Saying so in a log and stopping there left
+ * the Channel homeless for good: a `complete` Organization is never walked
+ * again, and this is the one placement path with no page behind it. The
+ * Organization goes back to the walk instead, which is the same pass that
+ * places every other Channel and reaches this one with the directory's own
+ * record of who may act on it rather than the connector's. The Organization is
+ * not `spacesReady` while that runs, which is the honest answer: one of its
+ * Channels is in no Space.
  */
 export async function placeConnectorChannelInGeneral(
   env: Env,
@@ -481,13 +500,15 @@ export async function placeConnectorChannelInGeneral(
   try {
     const driver = await spaceBootstrapDriver(env, workspaceId, env.AVALON_REGION);
     if (!driver) return;
-    const refusal = await new SpaceBootstrapService(env, driver).placeChannel(channel);
+    const cutover = new SpaceBootstrapService(env, driver);
+    const refusal = await cutover.placeChannel(channel);
     if (refusal === null) return;
     logWarn(env, "space_connector_channel_unplaced", {
       workspace_id: workspaceId,
       workstream_id: channel.workstreamId,
       reason: refusal,
     });
+    await cutover.reopen();
   } catch (error) {
     logWarn(env, "space_connector_channel_unplaced", {
       workspace_id: workspaceId,
