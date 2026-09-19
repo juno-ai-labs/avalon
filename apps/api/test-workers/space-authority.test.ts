@@ -133,7 +133,14 @@ function messageId(): string {
   return `00000000-0000-7000-8000-${String(effectSequence).padStart(10, "0")}cf`;
 }
 
-/** One Channel published into the Organization's Channel directory. */
+/**
+ * One Channel published into the Organization's Channel directory.
+ *
+ * `needs_input` rather than `idle`, because the Space dashboard's page answers
+ * only the conversations that currently need the reader. An idle Channel
+ * nobody has unread is correctly absent from it, so a fixture built that way
+ * would make every page assertion below pass for the wrong reason.
+ */
 async function publishChannel(workstreamId: WorkstreamId, archivedAt: string | null): Promise<void> {
   const effect: ParentEffect = {
     kind: "directory_common",
@@ -141,7 +148,7 @@ async function publishChannel(workstreamId: WorkstreamId, archivedAt: string | n
     description: "",
     preview: "",
     scope: "workspace",
-    state: "idle",
+    state: "needs_input",
     systemKind: null,
     lastActivityAt: "2026-09-19T00:00:00.000Z",
     completedAt: null,
@@ -242,7 +249,7 @@ async function publishPersonalChannel(
     description: "",
     preview: "",
     scope: "personal",
-    state: "idle",
+    state: "needs_input",
     systemKind: null,
     lastActivityAt: "2026-09-19T00:00:00.000Z",
     completedAt: null,
@@ -663,11 +670,17 @@ describe("WorkspaceDO space authority", () => {
     // directory select and mapper the sidebar's own list uses, so a Space page
     // and a sidebar row cannot drift. The placement travels on the row, which
     // is what lets a client draw the Channel under its Space on first paint.
+    // `kind` is what lets one row type carry a breakout beside it; the
+    // dashboard list and its breakouts are proved in
+    // `space-conversation-page.test.ts`.
     await expect(workspace().listSpaceChannels({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, cursor: null,
     })).resolves.toMatchObject({
       ok: true,
-      page: { items: [{ id: CHANNEL_A, spaceIds: [spaceId] }], nextCursor: null },
+      page: {
+        items: [{ id: CHANNEL_A, spaceIds: [spaceId], kind: "channel", breakoutOf: null }],
+        nextCursor: null,
+      },
     });
     await expect(workspace().listSpaceMembers({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({
