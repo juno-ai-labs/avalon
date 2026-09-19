@@ -28,6 +28,7 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-08-18T00:00:00.000Z',
     ...overrides,
   };
@@ -134,6 +135,7 @@ describe('applyVersionedWorkstreamState', () => {
       scope: 'personal',
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
     applyVersionedWorkstreamState(queryClient, {
       workstreamId: id,
@@ -151,6 +153,7 @@ describe('applyVersionedWorkstreamState', () => {
         title: 'Staffing',
         participantUserIds: ['user-a', 'user-b'],
         participantExtraCount: 1,
+        spaceIds: [],
       },
       viewer: {},
       visible: true,
@@ -160,6 +163,7 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       participantUserIds: ['user-a', 'user-b'],
       participantExtraCount: 1,
+      spaceIds: [],
     });
   });
 
@@ -186,6 +190,7 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
   });
 
@@ -196,6 +201,7 @@ describe('applyVersionedWorkstreamState', () => {
       scope: 'personal',
       participantUserIds: ['user-a', 'user-b'],
       participantExtraCount: 1,
+      spaceIds: [],
     });
     applyVersionedWorkstreamState(queryClient, {
       workstreamId: id,
@@ -218,6 +224,7 @@ describe('applyVersionedWorkstreamState', () => {
       scope: 'workspace',
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
   });
 });

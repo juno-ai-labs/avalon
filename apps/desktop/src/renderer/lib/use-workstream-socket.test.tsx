@@ -219,6 +219,7 @@ function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): Workstre
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-07-31T20:00:00.000Z',
     ...overrides,
   };

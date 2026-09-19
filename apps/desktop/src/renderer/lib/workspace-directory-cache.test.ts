@@ -31,6 +31,7 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     ...overrides,
   };
 }
@@ -48,8 +49,8 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
   return {
     workstreams: [summary()],
     automations: [automation],
-    projects: { waterline: 3, items: [] },
-    inactiveProjects: { waterline: 3, items: [] },
+    spaces: { waterline: 3, items: [] },
+    inactiveSpaces: { waterline: 3, items: [] },
     ...overrides,
   };
 }
@@ -58,7 +59,7 @@ describe('organization directory cache', () => {
   beforeEach(() => clearAllLocalCache());
   afterEach(() => closeLocalCache());
 
-  it('seeds every list the sidebar and the project space read, when none is there yet', async () => {
+  it('seeds every list the sidebar and the space dashboard read, when none is there yet', async () => {
     await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory());
     const queryClient = new QueryClient();
 
@@ -67,8 +68,8 @@ describe('organization directory cache', () => {
     expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual([summary()]);
     expect(queryClient.getQueryData(['automations'])).toEqual([automation]);
     expect(queryClient.getQueryData(['notes'])).toBeUndefined();
-    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 3, items: [] });
-    expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 3, items: [] });
+    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 3, items: [] });
+    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 3, items: [] });
   });
 
   it('does not write over a directory the socket already delivered', async () => {
@@ -95,7 +96,7 @@ describe('organization directory cache', () => {
     await wipe;
 
     expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toBeUndefined();
-    expect(queryClient.getQueryData(['projects'])).toBeUndefined();
+    expect(queryClient.getQueryData(['spaces'])).toBeUndefined();
   });
 
   it('refuses a stored directory with a row this build cannot read', async () => {
@@ -140,7 +141,7 @@ describe('organization directory cache', () => {
     const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
     expect(row?.workstreams[0]?.title).toBe('From the socket');
     expect(row?.automations).toEqual([automation]);
-    expect(row?.projects).toBeNull();
+    expect(row?.spaces).toBeNull();
     mirror.stop();
   });
 });
