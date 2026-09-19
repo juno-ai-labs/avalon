@@ -199,7 +199,7 @@ describe('the Spaces sidebar section', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Red' }));
     expect(within(dialog).getByRole('button', { name: 'Briefcase' }).querySelector('svg'))
       .toHaveAttribute('stroke', 'var(--av-sys-color-project-red)');
-  }, 30_000);
+  });
 
   it('given space creation is pending, when it succeeds, then the dialog waits before opening and selecting the space', async () => {
     const created = space('00000000-0000-7000-8000-0000000000f5', 'Planning');
