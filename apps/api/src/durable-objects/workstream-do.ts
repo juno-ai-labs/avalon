@@ -214,6 +214,31 @@ interface PrivateChildMembershipEffectRow extends Record<string, SqlStorageValue
   membership_version: number;
 }
 
+import {
+  audienceSourceApplicationPlan,
+  audienceSourceRetractionPlan,
+  type AudienceSource,
+} from "../lib/channel-audience";
+import {
+  ApplySpaceAccessSourceRequestSchema,
+  ApplySpaceAccessSourceResultSchema,
+  ConfirmSpaceAccessSourceRequestSchema,
+  ConfirmSpaceAccessSourceResultSchema,
+  NoteChannelDirectReaderRequestSchema,
+  ReadChannelAccessSourcesRequestSchema,
+  RetractSpaceAccessSourceRequestSchema,
+  RetractSpaceAccessSourceResultSchema,
+  SetChannelDirectScopeRequestSchema,
+  SetChannelDirectScopeResultSchema,
+  type ApplySpaceAccessSourceResult,
+  type ConfirmSpaceAccessSourceResult,
+  type ObservedChannel,
+  type RetractSpaceAccessSourceResult,
+  type SetChannelDirectScopeResult,
+} from "./workstream-access-protocol";
+import { WorkstreamAccessStorage } from "./workstream-access-storage";
+import { ChannelAccessSourcesSchema, type ChannelAccessSources } from "@rally/contracts";
+
 export { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "./workstream-do-schema";
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -679,6 +704,222 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       this.parentSql.exec(`DELETE FROM workstream_sidekick_attachments WHERE sidekick_id = ?`, request.sidekickId);
     }
     return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Space access provenance.
+  //
+  // This object records *why* somebody may read the Channel; it does not admit
+  // them. Admission is still `resolveScopeAccess` over the grant ledger, or the
+  // main conversation's scope and participant rows on a Channel that has never
+  // been shared. What these methods own is the question neither of those can
+  // answer — which Space currently reaches this Channel, and which readers it
+  // seated — because that is what decides what has to be withdrawn when one
+  // Space stops reaching it, and what must not be.
+  //
+  // They plan rather than apply. Applying goes back through the Channel's
+  // canonical scope and participant operations, which is where the
+  // retained-content containment preflight and its SQL triggers run, so there
+  // is one fence rather than a second audience writer beside it.
+  // ---------------------------------------------------------------------------
+
+  private channelAccess(): WorkstreamAccessStorage {
+    return new WorkstreamAccessStorage(this.state.storage);
+  }
+
+  /**
+   * The Channel's own audience: its recorded scope, and the roster with every
+   * reader a Space seated taken out of it.
+   *
+   * The scope falls back to what the caller observed when nothing has recorded
+   * one, which is exact: the record is written the first time a Space reaches
+   * this Channel, and until then the effective audience *is* the direct one.
+   */
+  private directSource(access: WorkstreamAccessStorage, channel: ObservedChannel): AudienceSource<UserId> {
+    const supplied = new Set(access.sources().flatMap((source) => access.suppliedReaders(source.sourceId)));
+    const recorded = access.directAudience();
+    return {
+      scope: recorded.observed ? recorded.scope : channel.readers.scope,
+      participantUserIds: channel.participantUserIds.filter((userId) => !supplied.has(userId)),
+    };
+  }
+
+  async readAccessSources(input: z.infer<typeof ReadChannelAccessSourcesRequestSchema>): Promise<ChannelAccessSources> {
+    await this.initialized;
+    const request = parseRpcInput(ReadChannelAccessSourcesRequestSchema, input, "channel_access_sources");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const direct = this.directSource(access, request.channel);
+    // Listed rather than merged: removing one source is only legal when the
+    // others still cover the readers it supplied, and a merged audience cannot
+    // answer that.
+    return ChannelAccessSourcesSchema.parse({
+      direct: { scope: direct.scope, participantUserIds: direct.participantUserIds },
+      spaces: access.sources().map((source) => ({
+        spaceId: source.sourceId,
+        scope: source.scope,
+        participantUserIds: source.participantUserIds,
+      })),
+    });
+  }
+
+  /**
+   * Record what the Channel's audience is on its own account.
+   *
+   * Refused while an active Space source is Organization-wide: the effective
+   * audience would stay Organization-wide anyway, so the narrowing would be a
+   * write that changed nothing a reader could see, and the record would then
+   * disagree with the Channel.
+   */
+  async setDirectScope(input: z.infer<typeof SetChannelDirectScopeRequestSchema>): Promise<SetChannelDirectScopeResult> {
+    await this.initialized;
+    const request = parseRpcInput(SetChannelDirectScopeRequestSchema, input, "channel_direct_scope");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    return access.operate({
+      operationId: request.operationId,
+      request: { kind: "set_direct_scope", scope: request.scope },
+      resultSchema: SetChannelDirectScopeResultSchema,
+      now,
+      body: () => {
+        const previous = access.directAudience();
+        if (request.scope === "personal"
+          && access.sources().some((source) => source.scope === "workspace")) {
+          return { ok: false as const, code: "space_audience_incompatible" as const };
+        }
+        access.recordDirectScope(request.scope, now);
+        return { ok: true as const, previousScope: previous.scope };
+      },
+    });
+  }
+
+  /**
+   * Stop attributing this reader to any Space.
+   *
+   * A direct add is the Channel taking responsibility for somebody. Whichever
+   * Space seated them first, they are here on the Channel's own account now,
+   * and a Space leaving must not take them with it.
+   */
+  async noteDirectReader(input: z.infer<typeof NoteChannelDirectReaderRequestSchema>): Promise<{ ok: true }> {
+    await this.initialized;
+    const request = parseRpcInput(NoteChannelDirectReaderRequestSchema, input, "channel_direct_reader");
+    this.assertParent(request.workspaceId, request.parentId);
+    this.channelAccess().claimReaderAsDirect(request.userId);
+    return { ok: true };
+  }
+
+  async applySpaceAccessSource(input: z.infer<typeof ApplySpaceAccessSourceRequestSchema>): Promise<ApplySpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(ApplySpaceAccessSourceRequestSchema, input, "space_access_source");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    return access.operate({
+      operationId: request.operationId,
+      request: {
+        kind: "apply_space_source", spaceId: request.spaceId, scope: request.scope,
+        participantUserIds: request.participantUserIds, spaceRevision: request.spaceRevision,
+        membershipGeneration: request.membershipGeneration,
+      },
+      resultSchema: ApplySpaceAccessSourceResultSchema,
+      now,
+      body: () => {
+        const existing = access.source(request.spaceId);
+        // Re-read inside the transaction, after every external boundary the
+        // caller crossed to get here. A staged application that lost the race
+        // with a newer one must not overwrite it with the Space it saw.
+        if (existing && (existing.spaceRevision > request.spaceRevision
+          || (existing.spaceRevision === request.spaceRevision
+            && existing.membershipGeneration > request.membershipGeneration))) {
+          return { ok: false as const, code: "space_revision_conflict" as const };
+        }
+        // The first Space to reach this Channel is the last moment the
+        // effective audience is known to be the direct one. Seeding here is
+        // what makes the record exact for a Channel created after migration 18
+        // ran, whose backfill could only guess.
+        if (!access.directAudience().observed && access.sources().length === 0) {
+          access.recordDirectScope(request.channel.readers.scope, now);
+        }
+        access.upsertSource({
+          spaceId: request.spaceId,
+          scope: request.scope,
+          participantUserIds: request.participantUserIds,
+          spaceRevision: request.spaceRevision,
+          membershipGeneration: request.membershipGeneration,
+          operationId: request.operationId,
+          now,
+        });
+        return {
+          ok: true as const,
+          plan: audienceSourceApplicationPlan({
+            current: request.channel.readers,
+            source: { scope: request.scope, participantUserIds: request.participantUserIds },
+          }),
+        };
+      },
+    });
+  }
+
+  /**
+   * Record which readers this source actually seated.
+   *
+   * Separate from the application because it is the caller that finds out: the
+   * plan says who *should* be seated, and the canonical participant operation
+   * is what decides whether each one was. Attributing readers before that
+   * would make a refused seating look like access this Space supplies.
+   */
+  async confirmSpaceAccessSource(input: z.infer<typeof ConfirmSpaceAccessSourceRequestSchema>): Promise<ConfirmSpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(ConfirmSpaceAccessSourceRequestSchema, input, "space_access_confirmation");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    return access.operate({
+      operationId: request.operationId,
+      request: { kind: "confirm_space_source", spaceId: request.spaceId, seatedUserIds: request.seatedUserIds },
+      resultSchema: ConfirmSpaceAccessSourceResultSchema,
+      now: Date.now(),
+      body: () => {
+        // Named rather than silently converging: the source was withdrawn
+        // between the application and this call, so the readers just seated
+        // are attributed to nothing and the caller has to retract again.
+        if (!access.source(request.spaceId)) {
+          return { ok: false as const, code: "space_not_found" as const };
+        }
+        access.recordSuppliedReaders(request.spaceId, request.seatedUserIds);
+        return { ok: true as const, suppliedUserIds: access.suppliedReaders(request.spaceId) };
+      },
+    });
+  }
+
+  async retractSpaceAccessSource(input: z.infer<typeof RetractSpaceAccessSourceRequestSchema>): Promise<RetractSpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(RetractSpaceAccessSourceRequestSchema, input, "space_access_retraction");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    return access.operate({
+      operationId: request.operationId,
+      request: { kind: "retract_space_source", spaceId: request.spaceId },
+      resultSchema: RetractSpaceAccessSourceResultSchema,
+      now: Date.now(),
+      body: () => {
+        // Retracting a source that is already gone converges rather than
+        // refusing: access is live, a source that does not exist grants
+        // nothing, and a retraction reissued under a new operation id after a
+        // crash has to be able to finish.
+        const suppliedByDeparting = access.suppliedReaders(request.spaceId);
+        const remainingSources = access.sources()
+          .filter((source) => source.sourceId !== request.spaceId);
+        const plan = audienceSourceRetractionPlan({
+          direct: this.directSource(access, request.channel),
+          remainingSources,
+          currentReaders: request.channel.readers,
+          suppliedByDeparting,
+        });
+        access.deleteSource(request.spaceId);
+        return { ok: true as const, plan };
+      },
+    });
   }
 
   // ---------------------------------------------------------------------------
