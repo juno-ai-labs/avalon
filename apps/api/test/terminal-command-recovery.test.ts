@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 
 const RECEIPT = "60fdb63e-25e5-4a58-a3d5-7cf7b6f8b2c1";
+const ATTEMPT_STARTED_AT = 1_789_844_823_311;
 
 const context: Omit<HarnessToolContext, "effectIntentId"> = {
   workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
@@ -47,6 +48,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "ambiguous",
         inputHash: "same",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{"command":"pwd"}',
         providerIdempotencyKey: null,
       },
@@ -75,6 +77,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "started",
         inputHash: "old",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{}',
         providerIdempotencyKey: null,
       },
@@ -112,6 +115,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "started",
         inputHash: "same",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{"filePath":"a.txt","content":"x"}',
         providerIdempotencyKey: null,
       },
@@ -140,6 +144,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "started",
         inputHash: "same",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{"title":"Ship","body":"Why"}',
         providerIdempotencyKey: null,
       },
@@ -168,6 +173,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "ambiguous",
         inputHash: "same",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{"repositoryFullName":"owner/repo","requiredRemoteAccess":"read_only"}',
         providerIdempotencyKey: null,
       },
@@ -178,6 +184,89 @@ describe("Terminal command receipt recovery", () => {
       context,
     })).resolves.toMatchObject({ summary: "Recovered checkout" });
     expect(execute).toHaveBeenCalledOnce();
+  });
+
+  const publishDefinition = {
+    name: "publish_resource",
+    description: "Publish",
+    capability: "terminal.resource.publish",
+    mode: "write" as const,
+    idempotency: "provider_key" as const,
+    inputSchema: { type: "object", additionalProperties: true },
+  };
+
+  function publishRow() {
+    return {
+      id: RECEIPT,
+      status: "started",
+      inputHash: "same",
+      inputJson: '{"filePath":"prd.md"}',
+      attemptStartedAt: ATTEMPT_STARTED_AT,
+      providerIdempotencyKey: "workstream:w:substream:s:loop:turn:64:tool:0",
+    };
+  }
+
+  it("returns a reconciler's landed result without running the tool", async () => {
+    const execute = vi.fn(async () => ({ output: {}, summary: "Should not run" }));
+    const reconcileEffect = vi.fn(async () => ({
+      outcome: "landed" as const,
+      result: { output: { resourceId: "doc" }, summary: "Published prd.md" },
+    }));
+
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: publishRow(),
+      expectedInputHash: "same",
+      policyMatches: true,
+      expectedPolicy: { pluginId: "rally:terminal", definition: publishDefinition },
+      plugins: [terminalPlugin({ definition: publishDefinition, reenterable: true, reconcileEffect, execute })],
+      context,
+    })).resolves.toMatchObject({ summary: "Published prd.md" });
+
+    // The whole point of the hook: an attempt that landed is confirmed, not
+    // performed again. Running the executor here would be the second write.
+    expect(execute).not.toHaveBeenCalled();
+    expect(reconcileEffect).toHaveBeenCalledWith(
+      { filePath: "prd.md" },
+      expect.objectContaining({ effectIntentId: RECEIPT, attemptStartedAt: ATTEMPT_STARTED_AT }),
+    );
+  });
+
+  it("runs the tool only once the reconciler proves the effect is absent", async () => {
+    const execute = vi.fn(async () => ({ output: { resourceId: "doc" }, summary: "Published" }));
+
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: publishRow(),
+      expectedInputHash: "same",
+      policyMatches: true,
+      expectedPolicy: { pluginId: "rally:terminal", definition: publishDefinition },
+      plugins: [terminalPlugin({
+        definition: publishDefinition,
+        reenterable: true,
+        reconcileEffect: async () => ({ outcome: "not_landed" as const }),
+        execute,
+      })],
+      context,
+    })).resolves.toMatchObject({ summary: "Published" });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to run the tool when the reconciler cannot tell what happened", async () => {
+    const execute = vi.fn(async () => ({ output: {}, summary: "Should not run" }));
+
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: publishRow(),
+      expectedInputHash: "same",
+      policyMatches: true,
+      expectedPolicy: { pluginId: "rally:terminal", definition: publishDefinition },
+      plugins: [terminalPlugin({
+        definition: publishDefinition,
+        reenterable: true,
+        reconcileEffect: async () => ({ outcome: "unknown" as const, reason: "publication_revised_by_another_run" }),
+        execute,
+      })],
+      context,
+    })).rejects.toMatchObject({ code: "effect_reconcile_unknown" });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("re-enters a provider-keyed publish under the key its receipt was admitted with", async () => {
@@ -197,6 +286,7 @@ describe("Terminal command receipt recovery", () => {
         id: RECEIPT,
         status: "started",
         inputHash: "same",
+        attemptStartedAt: ATTEMPT_STARTED_AT,
         inputJson: '{"filePath":"prd.md"}',
         providerIdempotencyKey: admittedKey,
       },

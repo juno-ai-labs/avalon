@@ -474,17 +474,32 @@ labels:
   reused or mismatched plan, an incomplete prior write, or a timed-out record
   becomes `ambiguous_external_write` and is never blindly repeated.
 
-A fourth property is separate from all three, and is about the *executor* rather
-than the provider. **`HarnessTool.reenterable`** says the host may run this tool
-again over the receipt an interrupted attempt already started, instead of
-reporting `ambiguous_external_write`. Declare it only when the executor's first
-act is to resolve what that `effectIntentId` already did — reattach to the
-provider task it names, or find and return the record its stable identity
-already holds. A tool that would simply perform the write a second time must
-leave it unset, whatever its idempotency class says. It is host-authored and
-deliberately not part of `ToolDefinition`: that schema also parses tool
-declarations from remote MCP servers, and a server able to assert this would be
-asserting that Rally may repeat its writes.
+Two further properties are separate from all three, and are about the *executor*
+rather than the provider. Both are host-authored and deliberately absent from
+`ToolDefinition`: that schema also parses tool declarations from remote MCP
+servers, and a server able to assert either would be asserting that Rally may
+repeat its writes.
+
+**`HarnessTool.reenterable`** says the host may run this tool again over the
+receipt an interrupted attempt already started, instead of reporting
+`ambiguous_external_write`. Declare it only when the executor's first act is to
+resolve what that `effectIntentId` already did — reattach to the provider task
+it names, or find and return the record its stable identity already holds.
+
+**`HarnessTool.reconcileEffect`** is what a tool declares when it cannot do
+that. An executor that resolves its effect by *subject* — the document at this
+path, the row with this name — answers "what is there now", which is a different
+question from "did my attempt put it there", and re-entering it blind performs
+the write again whenever the two differ. A reconciler answers the second
+question without performing anything: `landed` returns the result and the
+executor is never reached, `not_landed` is the only licence to run it, and
+`unknown` leaves the attempt ambiguous. Prefer a durable record that names the
+*writer* — an append-only version or audit row carrying the run that wrote it —
+over comparing content, because content cannot distinguish your write from
+somebody else's.
+
+A tool that would simply perform the write a second time, and has no reconciler,
+declares neither, whatever its idempotency class says.
 
 That last mechanism only works if the request is **byte-stable**. Per-call
 randomness in the arguments — a client-side generated id, a timestamp, a nonce —
@@ -1154,15 +1169,20 @@ future agent tool or plugin, not just this family.
 
 **What changed:** `HarnessTool.reenterable` replaced the hard-coded list of
 three Terminal tools the host was willing to run again over an interrupted
-receipt. `publish_resource` declares it. The idempotency section above gained
-the property and the `provider_key` resume rule.
+receipt, and `HarnessTool.reconcileEffect` joined it for a tool that resolves
+its effect by subject rather than by receipt. `publish_resource` declares both.
+The idempotency section above gained the two properties and the `provider_key`
+resume rule.
 
 **Why:** the list had no way for a fourth tool to join it, so
-`publish_resource` — an executor that looks up the document its path identity
-already published before writing anything — was treated as unrecoverable, and an
-interrupted publish killed its run on 2026-09-19. The claim belongs next to the
-executor that has to honour it. `docs/agent-harness.md` has the mechanism and
-the full incident.
+`publish_resource` was treated as unrecoverable and an interrupted publish
+killed its run on 2026-09-19. Adding it exposed the second gap: looking up the
+document at a path answers what is published there, not whether this attempt
+published it, and that executor *swaps* the stored content when the two
+disagree — so re-entry on its own was a second write, not a confirmation. One
+property says the host may re-enter; the other says how the tool proves there is
+nothing to duplicate. Both belong next to the executor that has to honour them.
+`docs/agent-harness.md` has the mechanism and the full incident.
 
 ### 2026-09-19 — A `get` is a declared record too
 

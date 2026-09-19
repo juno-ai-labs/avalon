@@ -3010,6 +3010,44 @@ export interface HarnessToolContext {
   signal: AbortSignal;
 }
 
+/**
+ * What an interrupted attempt of a tool actually did, as the tool itself can
+ * establish it.
+ *
+ * `not_landed` is a positive finding and the only one that licenses running the
+ * tool again: it says the external effect is provably absent, so the next call
+ * is a first execution rather than a second. `unknown` is what a tool answers
+ * when it cannot tell those apart, and it keeps the interrupted attempt
+ * `ambiguous_external_write`.
+ */
+export type HarnessToolEffectReconciliation =
+  | { outcome: "landed"; result: HarnessToolResult }
+  | { outcome: "not_landed" }
+  | { outcome: "unknown"; reason: string };
+
+/** Raised by a reconciler that could not establish what an attempt did. */
+export class HarnessToolEffectUnresolvedError extends Error {
+  readonly code = "effect_reconcile_unknown";
+
+  constructor(readonly reason: string) {
+    super(`The interrupted effect could not be resolved: ${reason}`);
+    this.name = "HarnessToolEffectUnresolvedError";
+  }
+}
+
+/** The receipt coordinates a reconciler needs beyond an ordinary call's. */
+export interface HarnessToolReconcileContext extends HarnessToolContext {
+  /**
+   * When the interrupted attempt's receipt began executing.
+   *
+   * A reconciler compares against this rather than against wall-clock now:
+   * "did *my* attempt land" is a question about the window that opened when
+   * this receipt started, and anything a later writer did to the same subject
+   * is what makes the answer unknowable rather than negative.
+   */
+  attemptStartedAt: number;
+}
+
 export interface HarnessToolResult {
   pagination?: ToolPaginationResult;
   output: unknown;
@@ -3495,6 +3533,26 @@ export interface HarnessTool {
    * could assert this would be asserting that Rally may repeat its writes.
    */
   reenterable?: boolean;
+  /**
+   * Establish what an interrupted attempt of this tool did, without performing
+   * it.
+   *
+   * A `reenterable` tool whose executor resolves its own effect from
+   * `effectIntentId` needs none of this — `run_command` reattaches to the
+   * durable task that identity names, and re-entering it is already the
+   * question and the answer. A tool whose executor resolves its effect by
+   * *subject* rather than by receipt does need one: `publish_resource` finds
+   * the document at `(work stream, path)`, which answers "what is published
+   * there now" and not "did my attempt publish it", and re-entering it blind
+   * would write the subject again whenever the two differ.
+   *
+   * Consulted before re-entry. `landed` returns this result and the tool is not
+   * run; `not_landed` lets it run, as a first execution; `unknown` refuses.
+   */
+  reconcileEffect?(
+    input: unknown,
+    context: HarnessToolReconcileContext,
+  ): Promise<HarnessToolEffectReconciliation>;
 }
 
 /** Frozen run identity passed to a deferred plugin while it becomes active. */
