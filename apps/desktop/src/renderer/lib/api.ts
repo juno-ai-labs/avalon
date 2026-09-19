@@ -54,13 +54,17 @@ import {
   type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
-  ProjectDirectorySchema as WireProjectDirectorySchema,
-  ProjectSummarySchema as WireProjectSummarySchema,
-  type CreateProjectRequest,
-  type ProjectDirectory,
-  type ProjectSummary,
-  type UpdateProjectPresentationRequest,
-  type UpdateProjectAudienceRequest,
+  ChannelAccessSchema as WireChannelAccessSchema,
+  SpaceChannelPageSchema as WireSpaceChannelPageSchema,
+  SpaceDirectorySchema as WireSpaceDirectorySchema,
+  SpaceSummarySchema as WireSpaceSummarySchema,
+  type ChannelAccess,
+  type CreateSpaceRequest,
+  type SpaceChannelPage,
+  type SpaceDirectory,
+  type SpaceSummary,
+  type UpdateSpacePresentationRequest,
+  type SpaceScope,
   type WorkstreamAppearancePatch,
   ConnectionTestResponseSchema,
   ConnectorInstallationMutationResponseSchema,
@@ -110,6 +114,7 @@ import type {
   Participant,
   Region,
   SocketTicket,
+  SpaceDefaultKind,
   ToolEventData,
   Workspace,
   WorkspaceInvitation,
@@ -366,6 +371,9 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
+    // Every Space this Channel sits in. The sidebar renders one placement per
+    // id, all of them opening this same row.
+    spaceIds: [...workstream.spaceIds],
     preview: workstream.objective,
   };
 }
@@ -1196,80 +1204,129 @@ export class RallyApi {
     };
   }
 
-  createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
-    return this.request('/projects', {
+  createSpace(input: CreateSpaceRequest): Promise<SpaceSummary> {
+    return this.request('/spaces', {
       method: 'POST',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  updateProject(id: string, input: UpdateProjectPresentationRequest): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}`, {
+  updateSpacePresentation(id: string, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  updateProjectAudience(id: string, input: UpdateProjectAudienceRequest): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/audience`, {
+  /**
+   * The Space's whole audience: its scope and its whole participant set.
+   *
+   * `participantUserIds` is a plain `string[]` rather than the contract's
+   * branded `UserId[]`. The ids a screen holds come from the member directory
+   * as strings, and branding them at every call site would be a cast that
+   * proves nothing — the server parses this body against the branded schema,
+   * which is the check that counts.
+   */
+  updateSpaceAudience(
+    id: string,
+    input: { scope: SpaceScope; participantUserIds: string[] },
+  ): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  archiveProject(id: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/archive`, {
+  archiveSpace(id: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  restoreProject(id: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/restore`, {
+  restoreSpace(id: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  reorderProjects(projectIds: string[]): Promise<ProjectDirectory> {
-    return this.request('/projects/order', {
+  reorderSpaces(spaceIds: string[]): Promise<SpaceDirectory> {
+    return this.request('/spaces/order', {
       method: 'PUT',
-      body: { projectIds },
-      schema: WireProjectDirectorySchema,
+      body: { spaceIds },
+      schema: WireSpaceDirectorySchema,
     });
   }
 
-  addWorkstreamToProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(projectId)}/workstreams`, {
+  /**
+   * One page of the Channels in a Space.
+   *
+   * The one Space read that is not on the socket: General holds every Channel
+   * in the Organization, so the membership is paginated and the opening sidebar
+   * payload carries a count instead. The cursor is opaque — the ordering is the
+   * authority's.
+   */
+  listSpaceChannels(spaceId: string, cursor: string | null, signal?: AbortSignal): Promise<SpaceChannelPage> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
+      schema: WireSpaceChannelPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+  }
+
+  addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/channels`, {
       method: 'POST',
       body: { workstreamId },
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  removeWorkstreamFromProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
+  removeChannelFromSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
     return this.request(
-      `/projects/${encodeURIComponent(projectId)}/workstreams/${encodeURIComponent(workstreamId)}`,
-      { method: 'DELETE', schema: WireProjectSummarySchema },
+      `/spaces/${encodeURIComponent(spaceId)}/channels/${encodeURIComponent(workstreamId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
     );
   }
 
-  addProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(projectId)}/default-resources`, {
+  /**
+   * A resource or a Sidekick recommendation every member Channel inherits.
+   *
+   * One pair of methods rather than two, keyed by `kind` the way the server's
+   * registry, delivery target and Queue message are. A second pair would be the
+   * same request with a different literal in it.
+   */
+  addSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/defaults`, {
       method: 'POST',
-      body: { resourceId },
-      schema: WireProjectSummarySchema,
+      body: { kind, targetId },
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  removeProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
+  removeSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     return this.request(
-      `/projects/${encodeURIComponent(projectId)}/default-resources/${encodeURIComponent(resourceId)}`,
-      { method: 'DELETE', schema: WireProjectSummarySchema },
+      `/spaces/${encodeURIComponent(spaceId)}/defaults/${kind}/${encodeURIComponent(targetId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
     );
+  }
+
+  /**
+   * Every source that currently grants a reader access to one Channel.
+   *
+   * What **Manage access** renders. Listed rather than merged, because removing
+   * one source is only legal when the others still cover the readers it
+   * supplied.
+   */
+  channelAccess(workstreamId: string, signal?: AbortSignal): Promise<ChannelAccess> {
+    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/access`, {
+      schema: WireChannelAccessSchema,
+      ...(signal ? { signal } : {}),
+    });
   }
 
   /**

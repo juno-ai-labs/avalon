@@ -1,23 +1,29 @@
-import { ProjectDirectorySchema, type ProjectDirectory } from '@rally/contracts';
+import { SpaceDirectorySchema, type SpaceDirectory } from '@rally/contracts';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
-import { SIDEBAR_LIST_QUERY_KEYS, PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY } from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY } from './sidebar-list-store';
 import type { AutomationSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 /**
- * What the sidebar and the project space paint from before the workspace
- * socket answers: the last first page of the work-stream directory, the
- * automation list, and both project directories. One row per
+ * What the sidebar and the Space dashboard paint from before the workspace
+ * socket answers: the last first page of the Channel directory, the
+ * automation list, and both Space directories. One row per
  * workspace scope, written from the query cache after every live payload and
  * read back only into caches that are still empty.
+ *
+ * `spacesReady` is deliberately not on the row. It is the Organization's
+ * current cutover state, and a remembered `true` would paint a hierarchy that
+ * a reconnect may immediately contradict; the surfaces read a missing answer as
+ * ready, which is the same thing this row would have said and one fewer place
+ * for it to go stale.
  */
 export interface CachedWorkspaceDirectory {
   workstreams: WorkstreamSummary[];
   automations: AutomationSummary[];
-  projects: ProjectDirectory | null;
-  inactiveProjects: ProjectDirectory | null;
+  spaces: SpaceDirectory | null;
+  inactiveSpaces: SpaceDirectory | null;
 }
 
 export const DIRECTORY_CACHE_KEY = 'directory';
@@ -43,6 +49,7 @@ function isWorkstreamSummaryLike(value: unknown): value is WorkstreamSummary {
     && typeof candidate['manualUnreadGeneration'] === 'number'
     && typeof candidate['hasUnread'] === 'boolean'
     && Array.isArray(candidate['participantUserIds'])
+    && Array.isArray(candidate['spaceIds'])
     && typeof candidate['participantExtraCount'] === 'number'
     && (candidate['pinPosition'] === null || typeof candidate['pinPosition'] === 'number');
 }
@@ -72,9 +79,9 @@ function parseList<T>(value: unknown, accept: (item: unknown) => item is T): T[]
   return items;
 }
 
-function parseProjects(value: unknown): ProjectDirectory | null | undefined {
+function parseSpaces(value: unknown): SpaceDirectory | null | undefined {
   if (value === null || value === undefined) return null;
-  const parsed = ProjectDirectorySchema.safeParse(value);
+  const parsed = SpaceDirectorySchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 }
 
@@ -83,21 +90,30 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const candidate = value as Record<string, unknown>;
   const workstreams = parseList(candidate['workstreams'], isWorkstreamSummaryLike);
   const automations = parseList(candidate['automations'], isAutomationSummaryLike);
-  const projects = parseProjects(candidate['projects']);
-  const inactiveProjects = parseProjects(candidate['inactiveProjects']);
-  if (!workstreams || !automations || projects === undefined || inactiveProjects === undefined) return null;
-  return { workstreams, automations, projects, inactiveProjects };
+  const spaces = parseSpaces(candidate['spaces']);
+  const inactiveSpaces = parseSpaces(candidate['inactiveSpaces']);
+  if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
+  return { workstreams, automations, spaces, inactiveSpaces };
 }
 
+/**
+ * Version 3 is the Spaces cutover.
+ *
+ * A version 2 row holds Project directories and Channel rows written before
+ * `spaceIds` existed, and a Channel with no Space is a state the hierarchy does
+ * not allow any surface to render. Bumping drops those rows rather than
+ * painting a sidebar in which every Channel is in no Space at all; the cost is
+ * one cold launch per person after the cutover.
+ */
 export const workspaceDirectorySlice = defineLocalCacheSlice<CachedWorkspaceDirectory>({
   kind: 'directory',
-  version: 2,
+  version: 3,
   parse: parseCachedDirectory,
 });
 
 /**
  * Put the cached directory into the query caches the sidebar, the landing, and
- * the project space read, if none of them has been written yet. The lists go
+ * the Space dashboard read, if none of them has been written yet. The lists go
  * in directly rather than through the versioned receivers: a seed has no
  * waterline, and leaving the ledgers untouched is what lets the socket's first
  * payload apply over it whatever version it carries.
@@ -122,11 +138,11 @@ export async function hydrateWorkspaceDirectory(
     if (queryClient.getQueryData(SIDEBAR_LIST_QUERY_KEYS.automations) === undefined) {
       queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, cached.automations);
     }
-    if (cached.projects && queryClient.getQueryData(PROJECTS_QUERY_KEY) === undefined) {
-      queryClient.setQueryData(PROJECTS_QUERY_KEY, cached.projects);
+    if (cached.spaces && queryClient.getQueryData(SPACES_QUERY_KEY) === undefined) {
+      queryClient.setQueryData(SPACES_QUERY_KEY, cached.spaces);
     }
-    if (cached.inactiveProjects && queryClient.getQueryData(INACTIVE_PROJECTS_QUERY_KEY) === undefined) {
-      queryClient.setQueryData(INACTIVE_PROJECTS_QUERY_KEY, cached.inactiveProjects);
+    if (cached.inactiveSpaces && queryClient.getQueryData(INACTIVE_SPACES_QUERY_KEY) === undefined) {
+      queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, cached.inactiveSpaces);
     }
   });
   return true;
@@ -147,8 +163,8 @@ export function mirrorWorkspaceDirectory(
     matches: queryKeyIsOneOf([
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
-      PROJECTS_QUERY_KEY,
-      INACTIVE_PROJECTS_QUERY_KEY,
+      SPACES_QUERY_KEY,
+      INACTIVE_SPACES_QUERY_KEY,
     ]),
     snapshot: () => {
       if (!options.live()) return null;
@@ -160,8 +176,8 @@ export function mirrorWorkspaceDirectory(
         // page one and the live answer replaces it without a visible collapse.
         workstreams: workstreams.slice(0, WORKSTREAM_PAGE_SIZE),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
-        projects: queryClient.getQueryData<ProjectDirectory>(PROJECTS_QUERY_KEY) ?? null,
-        inactiveProjects: queryClient.getQueryData<ProjectDirectory>(INACTIVE_PROJECTS_QUERY_KEY) ?? null,
+        spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
+        inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,
       };
     },
     write: (value, atEpoch) => workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, value, DIRECTORY_CACHE_KEY, atEpoch),

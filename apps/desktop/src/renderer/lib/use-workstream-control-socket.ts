@@ -111,6 +111,12 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       nextPendingWakeup: metadata.nextPendingWakeup,
       pinPosition: null,
       participantUserIds: [],
+      // Empty, because WorkstreamDO does not know them: a Channel's Space
+      // placements are WorkspaceDO's, and this seed exists only for a Channel
+      // the directory has not delivered a row for yet. The sidebar lists
+      // placements from the directory, so the empty list is never what puts a
+      // Channel under a Space — the directory's row is.
+      spaceIds: [],
       participantExtraCount: 0,
       preview: metadata.description,
     },
