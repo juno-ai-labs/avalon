@@ -200,6 +200,12 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   // restore each walk every member Channel, so without it a resume restarted
   // the whole walk from the top and a Space larger than one invocation's
   // budget had an operation that could never finish.
+  //
+  // `last_error_code` is the column `space_default_targets` beside it already
+  // carries, for the reason it carries it: a resume that keeps failing
+  // otherwise leaves its reason in a log line alone, and whoever finds the
+  // unsettled row afterwards has the fact without the reason
+  // (`docs/naming-a-schema-failure.md`).
   `CREATE TABLE space_intents (
     operation_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN (
@@ -212,6 +218,7 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
     delivery_generation INTEGER CHECK (delivery_generation IS NULL OR delivery_generation > 0),
     state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'settled', 'cancelled')),
     cursor TEXT,
+    last_error_code TEXT,
     receipts_json TEXT NOT NULL CHECK (json_valid(receipts_json)),
     requested_by_user_id TEXT NOT NULL,
     not_before INTEGER NOT NULL,
@@ -1735,6 +1742,32 @@ export class WorkspaceSpaceStorage {
       settled ? 1 : 0,
       cursor === undefined ? 0 : 1,
       cursor ?? null,
+      now,
+      operationId,
+    );
+  }
+
+  /**
+   * Record why a resume did not finish, on the row rather than only in a log.
+   *
+   * The sibling `space_default_targets.last_error_code`, applied to the other
+   * half of the same machinery. The alarm republishes an unsettled intent
+   * forever, so without this the only account of *why* one is still unsettled
+   * is a log line — and the row that outlives it says the operation did not
+   * finish without saying what stopped it.
+   *
+   * It does not settle anything and does not touch the retry gate. A resume
+   * that fails is still a resume to retry; the one condition that ends an
+   * intent without success is the requester no longer being an active member,
+   * which the consumer settles by name — the same shape as the default
+   * target's one named non-retryable condition, and the only one either has.
+   */
+  recordIntentFailure(operationId: string, errorCode: string, now = Date.now()): void {
+    if (!this.ready()) return;
+    this.storage.sql.exec(
+      `UPDATE space_intents SET last_error_code = ?, updated_at = ?
+        WHERE operation_id = ? AND state IN ('pending', 'applied')`,
+      errorCode,
       now,
       operationId,
     );

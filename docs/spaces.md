@@ -576,9 +576,11 @@ route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
 `spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler
 that fails for a reason outside that union records `diagnosticErrorCode` rather
-than a fixed literal: `last_error_code` on a default target and the
-`space_intent_resume` log are the only durable record of *why* a delivery or a
-resume has not finished.
+than a fixed literal, and writes it on the row it is about: `last_error_code` on
+a default target and on an intent is the durable record of *why* a delivery or a
+resume has not finished, and the `space_default_delivery_failed` and
+`space_intent_resume_failed` log lines carry the same word for whoever is
+watching at the time.
 
 A transaction is local to one WorkspaceDO, so a failed write leaves no partial
 Space, membership or ordering row. A cross-object operation is not a
@@ -592,6 +594,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | `SPACE_CHANNEL_PAGE_SIZE` | 250 | Rows in one `GET /spaces/:id/channels` answer, and therefore one RPC result and one HTTP body. | Round trips against bytes per answer, weighed against the Organization sizes nobody here has. |
 | `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
+| *(none)* — attempts before an unsettleable intent stops being republished | no ceiling | How long a staged operation that can never succeed keeps costing an alarm wake and a dead-letter message. | What an operator is expected to do about a `last_error_code` that never changes, weighed against a ceiling abandoning work nobody agreed to abandon. |
 
 Each is a lower bound rather than a budget, and each is a transcription rather
 than a measurement — the sections below say what each was transcribed from.
@@ -633,6 +636,20 @@ with the Channel's own authority. That is the same several-hops-per-Channel
 shape the cutover has, so it takes the same page — one number to move rather
 than two that have to be kept in step.
 
+**There is no attempt ceiling on an intent resume, and the number is the team's
+to set.** An intent that can never settle is claimed by the alarm forever: the
+retry gate backs off to `SCHEDULED_ALARM_RETRY_MAX_MS` — thirty minutes — and
+stays there, so the standing cost is one Queue message and one dead-letter
+message every half hour, indefinitely, with `last_error_code` on the row saying
+why each time. That is deliberate rather than unfinished: the sibling
+`space_default_targets` has no ceiling either, and the one condition that ends
+either of them without success is a *named* one — no active person left to act
+as — which the consumer settles by name rather than counting up to. A ceiling
+here would be a decision to abandon a half-applied audience change, which is a
+product decision and is not invented here. What deciding it needs: what an
+operator is expected to do about an intent whose `last_error_code` never
+changes, against what abandoning one costs.
+
 There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
 hand down. Those are product decisions and are not invented here.
@@ -652,7 +669,7 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
-| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone. |
+| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
@@ -741,8 +758,8 @@ per-person half of the same projection and is where a Space's participants live.
 uniqueness on the Channel, because a Channel belongs to as many Spaces as it was
 added to. `space_intents` is one row per staged cross-object operation, keyed by
 the caller's operation id, carrying its kind, its three nullable fences, its
-receipts, the `cursor` its member walk reached, and the retry gate the alarm
-claims on. The cursor is the same shape `space_bootstrap` carries for the
+receipts, the `cursor` its member walk reached, the `last_error_code` of its
+most recent failed resume, and the retry gate the alarm claims on. The cursor is the same shape `space_bootstrap` carries for the
 cutover's walk — the Channel id the last finished page stopped at — and it is
 what a resume reads; the receipts are one per page rather than one per Channel,
 because `receipts_json` is rewritten whole by `json_insert` and a receipt per
@@ -902,8 +919,9 @@ row under the Space id.
 A non-empty regional activity dead-letter queue remains the terminal failure
 signal for default delivery and intent resumption, and is no longer the only
 one: `space_default_delivery_failed` and `space_intent_resume_failed` carry the
-Space id and `diagnosticErrorCode`, and a default target's `last_error_code`
-holds the same word for whoever reads the row afterwards.
+Space id and `diagnosticErrorCode`, and `last_error_code` on the default target
+or on the `space_intents` row holds the same word for whoever reads it
+afterwards.
 
 ## Changelog
 
