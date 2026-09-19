@@ -32,7 +32,7 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's three arguments to it: default targets, unsettled intent resumes, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
 | `apps/api/src/services/channel-access-service.ts` | The one seam a Space reaches a Channel's audience through. `docs/spaces.md` never writes an audience itself. |
-| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the one connector creation path that places its own Channel. |
+| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the placement the two creation paths outside the coordinator take for themselves. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
@@ -285,15 +285,28 @@ trip, but the first session inside that window would be shown the
 Organization-opening card for an Organization that has nothing to open. It is
 best effort on purpose — a Space failure must not cost somebody the Organization
 they just created, and the alarm is the backstop running the same code.
-`placeConnectorChannelInGeneral` covers the one creation path that does not go
-through the creation coordinator: the Slack agent opens a Channel for a Slack
-member with no Rally identity and provisions the conversation itself. **A
-refusal there reopens the cutover** rather than only logging: a `complete`
-Organization is never walked again, so a Channel this step could not place
-would stay homeless for good. The walk reaches it with the Organization's own
-directory projection — which knows participants the connector's record may
-not — and the Organization is not `spacesReady` while that runs, which is the
-honest answer for an Organization holding a Channel in no Space.
+`placeConnectorChannelInGeneral` covers the two creation paths that do not go
+through the creation coordinator: the Slack agent, which opens a Channel for a
+Slack member with no Rally identity and provisions the conversation itself, and
+the local development seed route, which restores a captured fixture into objects
+it provisions under the ids the fixture chose. **A refusal there reopens the
+cutover** rather than only logging: a `complete` Organization is never walked
+again, so a Channel this step could not place would stay homeless for good. The
+walk reaches it with the Organization's own directory projection — which knows
+participants the connector's record may not — and the Organization is not
+`spacesReady` while that runs, which is the honest answer for an Organization
+holding a Channel in no Space.
+
+The seed route waits for that projection before it places anything, which the
+coordinator gets for free. Reserving a Channel's main conversation writes the
+parent authority's identity row and delivers a provisional directory row
+synchronously; seeding writes through the conversation instead, so the parent
+learns of the Channel from an effect that drifts up on its outbox, and a
+placement issued first is refused `conversation_parent_missing`. Waiting for the
+Channel to appear on one page of the cutover's own view is what makes both
+halves work: the placement addresses an authority that exists, and — because the
+close asks whether any Channel *in the directory* is outside every Space — the
+walk a refusal reopens cannot find an empty directory and close over it.
 
 ### A Channel's first Space
 
@@ -600,7 +613,7 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
-| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
+| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
@@ -859,8 +872,8 @@ handler and `SpaceBootstrapService` — walks every existing Organization's
 Channel directory in pages of 50: once read-only in `preflight`, asking whether
 each Channel may be widened, and again in `memberships`, placing each one in
 General as one of that Channel's own participants. A new Organization opens
-General inline, and the one connector path that provisions its own Channel
-places it the same way. `GET /spaces/:id/channels` answers Channel rows instead
+General inline, and the two paths that provision their own Channel — the Slack
+agent and the local development seed route — place it the same way. `GET /spaces/:id/channels` answers Channel rows instead
 of bare ids, and the archive refusal now carries the Channels that blocked it.
 WorkspaceDO migration 62 deletes the eight Project tables after settling every
 undelivered Project effect, and `ProjectService`, the Project storage, protocol
@@ -892,9 +905,19 @@ rollout step 3 asks the preflight to find every blocker before promotion. A
 `finalize` that refuses now sends the Organization *back* to that walk rather
 than leaving the phase where it was: nothing else takes a Channel off
 `blocked_json`, so a blocked Organization was permanent whatever anybody did to
-the Channel. And a refused connector placement reopens a finished cutover,
-because that is the one placement path with no page behind it and a `complete`
-Organization is never walked again.
+the Channel. And a refused placement outside a page reopens a finished cutover,
+because those paths have no page behind them and a `complete` Organization is
+never walked again.
+
+The development seed route is the second such path and was found by walking the
+acceptance flows: it restores a captured fixture through the object ports, so
+its Channels reached the sidebar in no Space at all while the Organization
+reported itself ready — the one state the PRD forbids rendering. It now takes
+the same placement step, after waiting for the Channel to appear in the
+Organization's directory. That wait is not politeness: the parent authority a
+placement addresses is what publishes that row, and the cutover's close asks
+its question about the Channels the directory holds, so without it neither the
+placement nor the reopened walk behind it has anything to work from.
 
 A pending cutover is also what makes every WorkspaceDO wake immediately: the
 `space_bootstrap` row is a derived alarm candidate due at the epoch until the
