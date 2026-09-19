@@ -65,6 +65,8 @@ import {
   asWorkspaceId,
   automationTriggersAdmitResourceType,
   IdSchema,
+  SpaceConversationSchema,
+  type SpaceConversation,
   UserIdSchema,
   SubstreamIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -638,8 +640,15 @@ import {
 } from "./workspace-space-protocol";
 import {
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
+  SPACE_CONVERSATION_WATERLINE_STATEMENTS,
   WorkspaceSpaceStorage,
 } from "./workspace-space-storage";
+import {
+  SELECT_WORKSPACE_BREAKOUT,
+  WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
+  WorkspaceBreakoutStorage,
+  type WorkspaceBreakoutRow,
+} from "./workspace-breakout-storage";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -3423,6 +3432,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 62,
   description: "retire projects behind the space cutover",
   statements: [...PROJECT_RETIREMENT_STATEMENTS],
+}, {
+  version: 63,
+  description: "breakout directory projections and the space conversation waterline",
+  statements: [
+    ...WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
+    ...SPACE_CONVERSATION_WATERLINE_STATEMENTS,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3747,6 +3763,76 @@ function directoryWorkstream(
     lastAccessedAt: iso(row.last_accessed_at),
     spaceIds,
     ...participantPreview,
+  });
+}
+
+/**
+ * One breakout, in the same shape a Channel takes on a Space dashboard.
+ *
+ * The derivations are `directoryWorkstream`'s, against the breakout tables:
+ * the unread waterline falls back to the conversation's own
+ * `unread_tracking_start_ordinal` when this person has no viewer row, and a
+ * mention counts only above that waterline. They are written out rather than
+ * shared with that function because the two read different tables and the
+ * columns a Channel row has that a breakout does not — a pin, a visit, an
+ * email address, a facepile, a wake-up — are exactly the fields a breakout
+ * answers with their empty value. What *is* shared is the decision that
+ * matters: which of these rows appears at all, which the page query makes with
+ * one predicate rendered against both tables.
+ *
+ * `id` is the substream id, because that is this conversation's identity. The
+ * parent's id, the substream id again and the parent's title travel in
+ * `breakoutOf`, which is what the row's link and its second line are built
+ * from.
+ */
+function breakoutConversation(
+  row: WorkspaceBreakoutRow,
+  workspaceId: string,
+  spaceIds: readonly string[],
+): SpaceConversation {
+  const latest = Number(row.latest_attention_ordinal);
+  const seen = row.seen_attention_ordinal === null
+    ? Number(row.unread_tracking_start_ordinal)
+    : Number(row.seen_attention_ordinal);
+  const manual = row.manual_unread_from_ordinal === null
+    ? null
+    : Number(row.manual_unread_from_ordinal);
+  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  return SpaceConversationSchema.parse({
+    id: row.substream_id,
+    workspaceId,
+    title: truncateUtf16Safe(row.title, 180),
+    titleStatus: row.title_status,
+    objective: truncateUtf16Safe(row.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
+    emailAddress: null,
+    createdByUserId: row.created_by_user_id,
+    harnessStatus: workstreamHarnessStatus(row.exact_state),
+    latestAttentionSequenceNumber: latest,
+    readThroughSequenceNumber: seen,
+    manualUnreadFromSequenceNumber: manual,
+    manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
+    hasUnread: firstUnread !== null,
+    youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
+    unseen: row.unseen === 1,
+    firstUnreadSequenceNumber: firstUnread,
+    lastActivityAt: iso(row.last_activity_at),
+    createdAt: iso(row.source_created_at),
+    updatedAt: iso(row.source_updated_at),
+    archivedAt: iso(row.archived_at),
+    scope: row.scope,
+    systemKind: null,
+    nextPendingWakeup: null,
+    pinPosition: null,
+    lastAccessedAt: null,
+    spaceIds: [...spaceIds],
+    participantUserIds: [],
+    participantExtraCount: 0,
+    kind: "breakout",
+    breakoutOf: {
+      workstreamId: row.workstream_id,
+      substreamId: row.substream_id,
+      title: truncateUtf16Safe(row.parent_title, 180),
+    },
   });
 }
 
@@ -5757,15 +5843,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * One page of the Channels this viewer can list in a Space.
+   * One page of the conversations in a Space that currently need this viewer.
    *
-   * The Space authority decides which memberships the page is about; the
-   * Channel directory decides what each of them looks like, through the same
-   * projection `listDirectory` answers a sidebar page with. A membership whose
-   * Channel this viewer may not read is dropped here rather than in the
-   * membership query, because visibility is the *directory's* fact — so a page
-   * can come back shorter than its cursor suggests, and the cursor still
-   * continues from the membership it was taken at.
+   * The route is still `/spaces/:id/channels` and the RPC still carries that
+   * word, but what it answers is the Space's member Channels *and their
+   * breakouts* in one activity-ordered list, with everything that is stale for
+   * this viewer left out. The Space authority decides which conversations the
+   * page is about and in what order; this method decides what each of them
+   * looks like to this viewer, through the same projection `listDirectory`
+   * answers a sidebar page with for a Channel and its breakout equivalent for
+   * a breakout.
+   *
+   * Two reads rather than one join, because the two kinds live in two tables
+   * on purpose (`workspace-breakout-storage.ts` says why) and the page's order
+   * has already been decided. The rows come back keyed and are put back into
+   * the page's order here; a row whose key the second read cannot find — a
+   * Channel this viewer may not read after all, which is the directory's fact
+   * rather than the membership's — is dropped, so a page can come back shorter
+   * than its cursor suggests and the cursor still continues from the
+   * conversation it was taken at.
    */
   async listSpaceChannels(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceSpaceChannelPageResult> {
     await this.initialized;
@@ -5773,11 +5869,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
     if (refusal) return { ok: false, code: refusal };
-    const page = this.spaceStorage().channelIdPage(request.userId, request.spaceId, request.cursor);
+    const page = this.spaceStorage().conversationPage(request.userId, request.spaceId, request.cursor);
     if (page === false) return { ok: false, code: "space_not_found" };
+    const channelIds = page.items.flatMap((item) => (
+      item.kind === "channel" ? [item.workstreamId] : []
+    ));
+    const breakoutIds = page.items.flatMap((item) => (
+      item.kind === "breakout" && item.substreamId !== null ? [item.substreamId] : []
+    ));
     // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
     // statement binds at most a hundred parameters.
-    const rows = boundParameterChunks(page.workstreamIds).flatMap((chunk) =>
+    const channelRows = boundParameterChunks(channelIds).flatMap((chunk) =>
       this.state.storage.sql.exec<WorkspaceDirectoryRow>(
         `${SELECT_WORKSPACE_DIRECTORY}
          WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
@@ -5787,14 +5889,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         request.userId,
         ...chunk,
       ).toArray());
+    const breakoutRows = boundParameterChunks(breakoutIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceBreakoutRow>(
+        `${SELECT_WORKSPACE_BREAKOUT}
+         WHERE breakout.substream_id IN (${chunk.map(() => "?").join(", ")})
+         ORDER BY breakout.substream_id`,
+        request.userId,
+        ...chunk,
+      ).toArray());
+    const spaceStorage = this.spaceStorage();
+    const channels = new Map(mapDirectoryWorkstreams(
+      this.state.storage.sql, channelRows, request.workspaceId, spaceStorage, request.userId,
+    ).map((workstream) => [workstream.id as string, workstream]));
+    // A breakout's Spaces are its parent Channel's: a breakout has no
+    // membership of its own, and the field is what a client uses to decide
+    // which Space a row belongs under.
+    const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
+      request.userId, [...new Set(breakoutRows.map((row) => row.workstream_id))],
+    );
+    const breakouts = new Map(breakoutRows.map((row) => [
+      row.substream_id,
+      breakoutConversation(row, request.workspaceId, spaceIdsByChannel.get(row.workstream_id) ?? []),
+    ]));
+    const items = page.items.flatMap((item) => {
+      if (item.kind === "channel") {
+        const channel = channels.get(item.workstreamId);
+        return channel ? [{ ...channel, kind: "channel" as const, breakoutOf: null }] : [];
+      }
+      const breakout = item.substreamId === null ? undefined : breakouts.get(item.substreamId);
+      return breakout ? [breakout] : [];
+    });
     return WorkspaceSpaceChannelPageResultSchema.parse({
       ok: true,
-      page: {
-        items: mapDirectoryWorkstreams(
-          this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
-        ),
-        nextCursor: page.nextCursor,
-      },
+      page: { items, nextCursor: page.nextCursor },
     });
   }
 
@@ -7457,12 +7584,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.assertWorkspace(request.workspaceId);
     const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
-    const channelEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind !== "space");
+    // A breakout's own projection is a third destination. It names itself on
+    // the envelope; a Channel's aggregate names nothing, so the absence of the
+    // id is what keeps every existing envelope on the Channel path unchanged.
+    const breakoutEnvelopes = request.envelopes.filter((envelope) => (
+      envelope.parentKind !== "space" && envelope.substreamId !== undefined
+    ));
+    const channelEnvelopes = request.envelopes.filter((envelope) => (
+      envelope.parentKind !== "space" && envelope.substreamId === undefined
+    ));
     // Read before the loop commits anything, because which of these Channels
     // the Organization was *already* holding is the question the unplaced
     // guard at the foot of this method turns on, and by then every one of them
     // has a row. Skipped entirely on an Organization whose cutover has not
     // closed, which is the only state the guard has nothing to say about.
+    // A breakout is deliberately not asked: it has no membership of its own,
+    // and the Channel it belongs to is what the hierarchy invariant is about.
     const commonChannelIds = [...new Set(channelEnvelopes.flatMap((envelope) => (
       envelope.effect.kind === "directory_common" ? [envelope.parentId] : []
     )))];
@@ -7489,9 +7626,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     let spaceDirectoryChanged = false;
+    let conversationWaterlineMoved = false;
     for (const envelope of spaceEnvelopes) {
       spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
         || spaceDirectoryChanged;
+      accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
+    }
+    for (const envelope of breakoutEnvelopes) {
+      conversationWaterlineMoved = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)
+        || conversationWaterlineMoved;
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of channelEnvelopes) {
@@ -7561,9 +7704,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // so the count would stay wrong until the next Space write or reconnect.
     // Sending to a socket cannot throw — it is caught per socket — so nothing
     // here can fail the batch.
+    //
+    // The dashboard's list is the second reason to republish here, and a much
+    // more frequent one. It is ordered by activity and filtered by each
+    // conversation's state for the reader, so a member conversation's shared
+    // row moving *is* the page moving — every message in every member Channel.
+    // That is the cost the list buys: the alternative is pushing the page
+    // itself down the socket, which would put one member Channel's traffic on
+    // every reader of every Space that holds it.
+    const spaceStorage = this.spaceStorage();
+    if (commonChanges.size > 0) {
+      conversationWaterlineMoved = spaceStorage.noteConversationChange([...commonChanges])
+        || conversationWaterlineMoved;
+    }
+    for (const [workstreamId, users] of viewerChanges) {
+      for (const userId of users) {
+        conversationWaterlineMoved = spaceStorage
+          .noteConversationViewerChange([workstreamId], userId) || conversationWaterlineMoved;
+      }
+    }
     if (spaceDirectoryChanged
+      || conversationWaterlineMoved
       || (archivalChanges.size > 0
-        && this.spaceStorage().noteMemberArchivalChange([...archivalChanges]))) {
+        && spaceStorage.noteMemberArchivalChange([...archivalChanges]))) {
       this.publishSpaceSnapshot();
     }
     // The backstop for the hierarchy invariant, on the one event that can break
@@ -10484,6 +10647,69 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * Apply one directory effect a Channel published *about one of its
+   * breakouts*.
+   *
+   * The Channel branch's structure against the breakout tables, and
+   * deliberately none of the rest of it: a breakout has no resource links, no
+   * attachment reservations, no watch registrations, no Terminal schedule of
+   * its own (the Channel's row already carries the earliest of them) and no
+   * sidebar row. What it has is a title, an activity time, a state and a
+   * per-person read state, which is exactly what one line of a Space dashboard
+   * is made of.
+   *
+   * The receipt is the Channel's existing one, keyed by the envelope's message
+   * id, so a redelivery is a no-op through the same table that makes a
+   * redelivered Channel projection one. A second receipt table would have been
+   * a second thing to expire and a second way for the two to disagree about
+   * whether a message had been seen.
+   *
+   * Returns whether this viewer's page could have changed, which is what
+   * decides whether the Space snapshot is republished.
+   */
+  private applyBreakoutDirectoryEnvelope(
+    envelope: ParentEffectEnvelope,
+    activeUsers: ReadonlySet<string>,
+  ): boolean {
+    return this.state.storage.transactionSync(() => {
+      const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
+        `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()[0];
+      if (receipt) {
+        if (receipt.payload_hash !== envelope.payloadHash) {
+          throw new Error("workspace_directory_effect_idempotency_conflict");
+        }
+        return false;
+      }
+      const now = Date.now();
+      const breakouts = this.breakoutStorage();
+      const spaces = this.spaceStorage();
+      let moved = false;
+      if (envelope.effect.kind === "directory_common") {
+        // Shared: a breakout's title, state and activity reorder or remove the
+        // row on every reader's page at once.
+        moved = breakouts.applyCommon(envelope, now)
+          && spaces.noteConversationChange([envelope.parentId], now);
+      } else if (envelope.effect.kind === "directory_user") {
+        // Personal: one person's unread, mention or first open, which is the
+        // half of the signal only they refetch on.
+        const userId = envelope.effect.userId;
+        moved = breakouts.applyViewer(envelope, activeUsers.has(userId), now)
+          && spaces.noteConversationViewerChange([envelope.parentId], userId, now);
+      }
+      insertWorkstreamEffectReceipt(
+        this.state.storage,
+        envelope.messageId,
+        envelope.parentId,
+        envelope.payloadHash,
+        now,
+      );
+      return moved;
+    });
+  }
+
   private applyDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,
@@ -11148,6 +11374,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private spaceStorage(): WorkspaceSpaceStorage {
     return new WorkspaceSpaceStorage(this.state.storage);
+  }
+
+  private breakoutStorage(): WorkspaceBreakoutStorage {
+    return new WorkspaceBreakoutStorage(this.state.storage);
   }
 
   private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
