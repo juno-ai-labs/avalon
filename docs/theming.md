@@ -91,6 +91,14 @@ serves it through `rally-font://`.
   would otherwise make a missing dark value silently render with the light one.
 - **Every token has a reader.** `themes.css.node.test.ts` fails a declared token
   that no source file names, no token file aliases, and no prefix reader covers.
+- **A scrim that shows the backdrop takes its chrome's contrast with it.**
+  `sys.color.scrim.veil` is `scrim.solid`'s colour at half strength and the two
+  move together; re-fitting one without the other stops them reading as one
+  material. The consequence is the part that gets missed: anything drawn on a
+  half-strength wash — the lightbox's media controls, its gallery arrows and
+  caption — can no longer take its contrast from the wash, so each carries its
+  own opaque chip. A control added to that surface later needs one too.
+  `app.css.node.test.ts` holds both ends.
 - **Spacing is one number.** Every feed spacing token is a multiple of
   `ref.space.unit`, and `app.css` derives its `--space-N` steps from the same
   unit. The sidebar's `sys.space.group.gap` is the one spacing token off it,
@@ -208,6 +216,71 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-19 — The lightbox stops hiding the window it covers
+
+**What changed:** `sys.color.scrim.veil` is new — `scrim.solid`'s colour at half
+opacity — and `.attachment-lightbox-overlay` takes it, with its blur raised from
+1px to 6px. Both lightboxes read that rule: the attachment preview and the
+inspector's resource lightbox. Everything the media viewer draws on that overlay
+— the close, download, details and expand controls, the gallery arrows and the
+caption — now carries an opaque chip, a preview image gets the surface colour
+under it, and `prefers-reduced-transparency` restores the old opaque wash.
+
+**Why:** asked for. The overlay took `scrim.solid`, which is `0.98` in both
+appearances and opaque in practice, so opening a preview replaced the window
+rather than covering it — a person lost where they were, and nothing behind the
+dialog said what it belonged to. The 1px blur beside it had never drawn
+anything, because there was nothing visible left to blur; raising the radius
+without thinning the wash would have been the same no-op.
+
+**What thinning the wash cost, and what it taught:** a wash that is opaque in
+practice is load-bearing for everything drawn on it, and none of those rules say
+so. The media viewer paints no surface of its own: its controls were
+`background: transparent` with muted ink, legible only because the wash behind
+them was effectively `surface.default`. At half strength their contrast follows
+whatever the window shows — review measured 4.84:1 to 1.48:1 in light, 7.84:1 to
+1.55:1 in dark, worst case, with the close button, the only way out of a
+full-window viewer, the most exposed. A blur does not save them: it
+redistributes detail and preserves local mean luminance. The same held for an
+image with an alpha channel, which had been compositing against that wash and
+would otherwise have shown the live window through its transparent parts. The
+rule to carry forward is in **Invariants**: a control added to this surface
+brings its own chip.
+
+**Considered and rejected:** `color-mix()` on `scrim.solid` in the rule. It reads
+the same on screen and puts a number that decides an appearance back into
+`app.css`, where a theme cannot reach it — the thing the registry exists to
+prevent. Also rejected: reusing `scrim.default`, which is a *darkening* scrim in
+both appearances (`0.34`/`0.72`) and would tint the light appearance grey rather
+than wash it with the surface colour. For the chrome, rejected: the translucent
+`scrim.default` chip the gallery arrows already had. Review offered it as the
+existing pattern, and it is the wrong one — it is translucent too, so its
+composite tracks the backdrop just as the bare control did, which is why the
+arrows are in the list being fixed rather than the example being followed.
+
+**The two preferences are not interchangeable.** The blur was cancelled under
+`prefers-reduced-motion`, which never made sense — a static blur does not
+move — and never mattered either, because cancelling a blur behind an opaque
+wash changes nothing. Against this wash it would have mattered in the worst
+direction: the reader who asked for calm would have been the only one looking at
+a sharp, legible window through a half-transparent veil, with unbacked chrome
+floating over sharp content rather than smeared content. That block is gone.
+`prefers-reduced-transparency` is the preference that describes this surface,
+and it now restores the full-strength wash and drops the blur together — the
+pair is the invariant, since sharp *and* see-through is the one state neither
+preference asks for. Rejected: pairing the old reduced-motion block with
+`scrim.solid` instead, which would have left reduced motion as a second design
+of this surface rather than the same one.
+
+**Consequences:** `veil` and `solid` are the same colour at two strengths and
+have to move together. The media chrome hovers on the product's one hover wash
+layered over its chip; the gallery arrow used to hover to `scrim.solid`, which
+was the overlay's own colour, so hovering dissolved the chip into the backdrop —
+that pairing broke the moment the two tokens diverged and is now gone.
+`app.css.node.test.ts` fails on a rule that cancels the blur without also
+restoring the wash, on a media control that gives up its chip, and on an image
+that loses its surface.
 
 ### 2026-09-19 — One hover wash for the whole product
 
