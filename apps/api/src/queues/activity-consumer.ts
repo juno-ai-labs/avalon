@@ -532,8 +532,20 @@ async function consumeOne(message: Message<unknown>, env: Env,
       else await workstreams.setSidekickRecommendation(target.workstreamId, target.targetId, true);
       await workspace.completeSpaceDefaultTarget(target);
       message.ack();
-    } catch {
-      await workspace.recordSpaceDefaultTargetFailure(target).catch(() => undefined);
+    } catch (error) {
+      // The reason, not the fact. `last_error_code` is the only durable record
+      // of why a default has not reached a Channel, and the fixed
+      // `space_default_apply_failed` it used to carry said only that it had
+      // not — which the row's existence already said.
+      const errorCode = diagnosticErrorCode(error, "space_default_apply_failed");
+      await workspace.recordSpaceDefaultTargetFailure({ ...target, errorCode }).catch(() => undefined);
+      logWarn(env, "space_default_delivery_failed", {
+        workspace_id: target.workspaceId,
+        space_id: target.spaceId,
+        workstream_id: target.workstreamId,
+        kind: target.kind,
+        reason: errorCode,
+      });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
@@ -600,6 +612,19 @@ async function consumeOne(message: Message<unknown>, env: Env,
         message.ack();
         return;
       }
+      // Said out loud. A resume that keeps failing is republished by the alarm
+      // every `SPACE_INTENT_RESUME_DELAY_MS` and retried here as well, so a
+      // silent catch makes a half-applied audience or a half-finished archive
+      // a thing that shows up only as a dead-letter message with no reason on
+      // it — which is the diagnosis this costs on the way in.
+      logWarn(env, "space_intent_resume_failed", {
+        workspace_id: intent.workspaceId,
+        space_id: intent.spaceId,
+        operation_id: intent.operationId,
+        kind: intent.kind,
+        attempts: message.attempts,
+        reason: diagnosticErrorCode(error, "space_intent_resume_failed"),
+      });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
