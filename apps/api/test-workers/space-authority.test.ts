@@ -1324,6 +1324,92 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([BREAKOUT_B, BREAKOUT_A, BREAKOUT_C]);
   });
 
+  /**
+   * What a cancelled reservation takes with it, both directions.
+   *
+   * A Space whose object never opened is a Space that never existed, so it
+   * leaves the Organization's list and the list of *its* Channels goes with the
+   * container it was about. The delete names no user: the reservation was
+   * cancelled for everybody.
+   */
+  it("given an arranged reservation, when it is cancelled, then no order still names it", async () => {
+    const keep = await reserve("Company");
+    const doomed = await reserve("Half-made");
+    await publishChannel(CHANNEL_A, null);
+    await place(doomed, CHANNEL_A);
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [doomed, keep] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: doomed }, itemIds: [CHANNEL_A] },
+    });
+
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: doomed,
+    })).resolves.toEqual({ cancelled: true });
+
+    const ordering = await personalOrder(OWNER);
+    expect(storedItemIds(ordering, "organization")).toEqual([keep]);
+    expect(storedItemIds(ordering, "space", doomed)).toBeNull();
+  });
+
+  /**
+   * Archive takes nothing, and that is the decision rather than an omission.
+   *
+   * `directory()` filters `archived_at IS NULL`, so an archived Space is
+   * already out of every sidebar; deleting the rows would mean a restore put
+   * the Channels back in recency order under somebody who had arranged them by
+   * hand. The `space` filter is what makes the same true of an archived
+   * Channel: neither read it goes through looks at `archived_at`.
+   */
+  it("given an arranged Space, when it is archived and restored, then the arrangement comes back with it", async () => {
+    const first = await reserve("Company");
+    const second = await reserve("Recruiting");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    for (const channelId of [CHANNEL_A, CHANNEL_B]) {
+      await place(second, channelId);
+      await place(first, channelId);
+    }
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [second, first] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: second }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    });
+
+    await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    });
+    await workspace().finalizeSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    });
+
+    // Untouched while it is archived, although nothing is drawing either list.
+    const archived = await personalOrder(OWNER);
+    expect(storedItemIds(archived, "organization")).toEqual([second, first]);
+    expect(storedItemIds(archived, "space", second)).toEqual([CHANNEL_B, CHANNEL_A]);
+
+    await expect(workspace().restoreSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    })).resolves.toMatchObject({ ok: true });
+
+    // And the directory comes back in the order this person put it in, rather
+    // than in whatever order the restore happened to write.
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id))
+      .toEqual([second, first]);
+    expect(storedItemIds(await personalOrder(OWNER), "space", second))
+      .toEqual([CHANNEL_B, CHANNEL_A]);
+  });
+
   it("given two sessions of one person, when one arranges a list, then the other is told without asking", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
