@@ -1426,6 +1426,21 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * A Channel leaves a Space, and its place in that Space's list leaves with
+   * it.
+   *
+   * Everybody's place, not the remover's: the placement is the Organization's
+   * fact, so once it is gone nobody's sidebar is drawing that row under this
+   * Space and the position is about nothing. A write to the container would
+   * filter it out — `spaceIdsByChannel` only answers with active memberships —
+   * but only for the next person who happens to arrange that Space, so without
+   * this the row outlives the thing it describes for everybody who does not.
+   *
+   * Archive is deliberately not this. An archived Channel keeps its membership
+   * and its position, because `directory()` is what hides it and a restore is
+   * meant to bring the arrangement back with the row.
+   */
   finalizeMembershipRemoval(request: WorkspaceSpaceMembershipSettleRequest, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
       const removed = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
@@ -1448,6 +1463,12 @@ export class WorkspaceSpaceStorage {
              last_error_code = 'space_membership_removed'
            WHERE space_id = ? AND workstream_id = ? AND state = 'pending'`,
         now,
+        request.spaceId,
+        request.workstreamId,
+      );
+      this.storage.sql.exec(
+        `DELETE FROM workspace_container_order
+          WHERE container_kind = 'space' AND container_id = ? AND item_id = ?`,
         request.spaceId,
         request.workstreamId,
       );
