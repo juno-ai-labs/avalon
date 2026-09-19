@@ -31,6 +31,7 @@ import {
   WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
+  type SpaceIntentKind,
   type SpaceMember,
   type SpaceMembershipReach,
   type WorkspaceSpaceMembershipPlanResult,
@@ -651,7 +652,7 @@ export class SpaceService {
    */
   async resumeIntent(intent: {
     operationId: string;
-    kind: "add" | "remove" | "audience" | "archive" | "restore" | "default" | "bootstrap";
+    kind: SpaceIntentKind;
     spaceId: SpaceId;
     workstreamId: WorkstreamId | null;
     spaceRevision: number;
@@ -665,7 +666,15 @@ export class SpaceService {
       this.recordReceipt(intent.operationId, reason, true);
     const space = await this.summary(intent.spaceId);
     const access = new ChannelAccessService(this.env, this.auth);
-    if (intent.kind === "add" && intent.workstreamId && intent.membershipGeneration) {
+    if (intent.kind === "add") {
+      // Both fences are written by the staging and neither is nullable for
+      // this kind, so a row without them is a malformed one rather than an
+      // operation to re-run. Named rather than re-run, and named for what is
+      // missing rather than for the kind.
+      if (!intent.workstreamId || !intent.membershipGeneration) {
+        await abandon("add_fences_missing");
+        return;
+      }
       if (space.revision !== intent.spaceRevision) {
         await workspace.cancelSpaceMembership({
           workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -696,7 +705,11 @@ export class SpaceService {
       });
       return;
     }
-    if (intent.kind === "remove" && intent.workstreamId && intent.membershipGeneration) {
+    if (intent.kind === "remove") {
+      if (!intent.workstreamId || !intent.membershipGeneration) {
+        await abandon("remove_fences_missing");
+        return;
+      }
       await access.retractSpaceSource(intent.workstreamId, intent.spaceId, uuidV7());
       await workspace.finalizeSpaceMembershipRemoval({
         workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -803,10 +816,12 @@ export class SpaceService {
       await this.recordReceipt(intent.operationId, "restored", true);
       return;
     }
-    // `default` and `bootstrap` stage no intent in this phase. An intent of one
-    // of those kinds is a message from a release that does, so it is abandoned
-    // by name rather than silently acknowledged.
-    await abandon(`unsupported_${intent.kind}`);
+    // Every kind that stages an intent has a branch above, and
+    // `SpaceIntentKindSchema` admits no others — so this is unreachable rather
+    // than a fallback, and a kind added without a branch fails to compile here
+    // rather than being abandoned by name at three in the morning.
+    const exhaustiveKind: never = intent.kind;
+    throw new Error(`unsupported_space_intent_kind:${String(exhaustiveKind)}`);
   }
 
   private async recordReceipt(
