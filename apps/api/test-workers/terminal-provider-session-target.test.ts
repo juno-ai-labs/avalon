@@ -93,7 +93,7 @@ describe("Terminal provider session target", () => {
 
     const calls: Array<[string, () => Promise<unknown>]> = [
       ["createSandbox", () => target.createSandbox({
-        stableName: "s", workspaceId: "w", workstreamId: "ws",
+        stableName: "s", workspaceId: "w", workstreamId: "ws", substreamId: "0",
         generation: 1, domainAllowList: [], environment: {},
       }, callbacks("createSandbox"))],
       ["prepareSandbox", () => target.prepareSandbox("s", [], callbacks("prepareSandbox"))],
