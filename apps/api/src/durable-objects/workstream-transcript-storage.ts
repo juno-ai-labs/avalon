@@ -3812,15 +3812,19 @@ export class WorkstreamTranscriptStorage {
   private openQuestionToolCallIds(projection: BindLoopProjectionState): Set<string> {
     const withheld = pendingBindToolBatch(projection);
     if (!withheld) return new Set();
-    const open = new Set<string>();
-    for (const call of withheld.calls) {
-      const asked = this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT elicitation_id FROM elicitation_requests
-          WHERE tool_call_id = ? AND status IN ('pending', 'answered')`,
-        call.receiptToolCallId,
-      ).toArray()[0];
-      if (asked) open.add(call.receiptToolCallId);
-    }
+    // One statement per chunk rather than one per call. This selector answers
+    // for both release paths *and* every activation check, so a parallel batch
+    // of N questions used to cost N round trips on each of them; the release
+    // guard this replaced had always read them in a single `IN (…)`.
+    const open = new Set(boundParameterChunks(
+      withheld.calls.map((call) => call.receiptToolCallId),
+    ).flatMap((receiptToolCallIds) =>
+      this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT tool_call_id FROM elicitation_requests
+          WHERE status IN ('pending', 'answered')
+            AND tool_call_id IN (${receiptToolCallIds.map(() => "?").join(", ")})`,
+        ...receiptToolCallIds,
+      ).toArray().map((row) => String(row.tool_call_id))));
     return open.size === withheld.calls.length ? open : new Set();
   }
 
