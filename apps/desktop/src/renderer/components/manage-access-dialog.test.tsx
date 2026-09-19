@@ -65,7 +65,7 @@ describe('Manage access', () => {
   it('given the access read failed, then it says so once, with a retry and no spinner', async () => {
     renderDialog(new Error('The access read did not answer'));
 
-    expect(await screen.findByText('Who can see this channel couldn\u2019t be loaded.')).toBeVisible();
+    expect(await screen.findByText('Who can see this channel couldn’t be loaded.')).toBeVisible();
     expect(screen.queryByText('Loading access\u2026')).not.toBeInTheDocument();
 
     api.channelAccess.mockResolvedValue({
@@ -76,7 +76,7 @@ describe('Manage access', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     expect(await screen.findByText('Only the 1 person in the channel.')).toBeVisible();
-    expect(screen.queryByText('Who can see this channel couldn\u2019t be loaded.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Who can see this channel couldn’t be loaded.')).not.toBeInTheDocument();
   });
 
   it('lists the channel\'s own source and one entry per space that reaches it', async () => {
@@ -125,7 +125,7 @@ describe('Manage access', () => {
       spaceIds: [unseen],
     });
 
-    expect(await screen.findByText('A space you can\u2019t see')).toBeVisible();
+    expect(await screen.findByText('A space you can’t see')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 
@@ -203,7 +203,7 @@ describe('Manage access', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove from space' }));
 
-    expect(await screen.findByText('This is the channel’s only space, and every channel needs one. Add it to another space first.'))
+    expect(await screen.findByText('Every channel needs a space, and this would leave one with none. Add it to another space first.'))
       .toBeVisible();
   });
 
@@ -223,7 +223,7 @@ describe('Manage access', () => {
 
     fireEvent.click((await screen.findAllByRole('button', { name: 'Remove from space' }))[0]!);
 
-    expect(await screen.findByText('Some people who can read this channel would be left with no space to find it in. Add it to a space they can see first.'))
+    expect(await screen.findByText('Some people who can read the channel would be left with no space to find it in. Add it to a space they can see first.'))
       .toBeVisible();
   });
 
