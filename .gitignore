@@ -16,6 +16,10 @@ output/
 apps/ace/wrangler.generated.json
 apps/engineering-mcp/wrangler.generated.json
 apps/api/.wrangler.lakehouses.*.json
+# The Docker-free scratch copy of wrangler.global.jsonc that
+# docs/dev-environment.md tells a sandboxed session to make. Two name segments
+# so region discovery never mistakes it for a region.
+apps/api/wrangler.global.scratch.jsonc
 .vite/
 coverage/
 *.log
