@@ -1,7 +1,7 @@
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import {
   type TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
+import { TERMINAL_PYDANTIC_REQUIREMENT, TERMINAL_SNAPSHOT_PYLIB } from "../src/services/terminal/snapshot-manifest";
 import {
   createDaytonaTerminalRuntime,
   TERMINAL_READ_TEXT_PAGE_PYTHON,
@@ -646,7 +647,7 @@ describe("Daytona Terminal runtime", () => {
     const { provider, runtime, files } = fixture();
     const original = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
     const commands: string[] = [];
-    let outcome = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    let outcome: { exitCode: number; stdout: string; stderr: string; timedOut?: boolean } = { exitCode: 0, stdout: "Done!\n", stderr: "" };
     vi.mocked(provider.runUtilityCommand).mockImplementation(async (id, input) => {
       if (input.operation === "file.apply_patch" && input.command.includes(".apply_patch.py")) {
         commands.push(input.command);
@@ -684,6 +685,11 @@ describe("Daytona Terminal runtime", () => {
     expect(commands[0]).toContain(`python3 '${script}' < '${written}'`);
     expect(commands[0]).toContain("import pydantic");
     expect(commands[0]).not.toContain("git apply");
+    // The install is the snapshot's pin, staged and moved into place as one
+    // step, and the snapshot's own copy is searched first.
+    expect(commands[0]).toContain(`--target "$staging" '${TERMINAL_PYDANTIC_REQUIREMENT}'`);
+    expect(commands[0]).toContain(`mv -T -- "$staging" "$lib"`);
+    expect(commands[0]).toContain(`pythonpath='${TERMINAL_SNAPSHOT_PYLIB}':"$lib"`);
     // Every path the patch names is contained before the applier runs.
     expect(commands[0]).toContain("target='/workspace/src/file.txt'");
     expect(commands[0]).toContain("target='/workspace/docs/new.txt'");
@@ -709,15 +715,52 @@ describe("Daytona Terminal runtime", () => {
       code: "patch_does_not_apply",
       message: "The patch could not be applied: `docs/new.txt` already exists, and `*** Add File:` would replace it. Read it and change it in place, or choose another path.",
     });
-    // The applier reports a rejected hunk on stdout and still exits 0, so
-    // `Done!` is the only success; the reason's first line names the class.
-    outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\n", stderr: "" };
+    // Containment runs in that same shell, before the applier: a path that
+    // resolves outside the root through a symlink exits 43.
+    outcome = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    await expect(runtime.applyPatch(context, [
+      "*** Begin Patch", "*** Update File: src/escape/passwd", "@@", "-root", "+toor", "*** End Patch",
+    ].join("\n"))).resolves.toBeDefined();
+    const escapeRoot = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands.at(-1)!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${escapeRoot}`);
+      mkdirSync(join(escapeRoot, "src/escape"), { recursive: true });
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0 });
+      rmSync(join(escapeRoot, "src/escape"), { recursive: true });
+      symlinkSync("/etc", join(escapeRoot, "src/escape"));
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 43 });
+    } finally {
+      rmSync(escapeRoot, { recursive: true, force: true });
+    }
+    // A rejected patch's classification comes first and the patch's own
+    // context lines follow, still at exit 0, so a file that ends in `Done!`
+    // cannot forge success; a crash's last line is the exception; a timeout,
+    // an empty output and a failed install each say what they are.
+    outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\nDone!\n", stderr: "" };
     await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
       code: "patch_does_not_apply",
       message: "The patch could not be applied: Invalid Context 0. Re-read the affected files, regenerate the patch from their current contents, and retry.",
     });
-    outcome = { exitCode: 53, stdout: "", stderr: "" };
-    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "patch_tooling_unavailable" });
+    outcome = { exitCode: 1, stdout: "Traceback (most recent call last):\n  File \"apply_patch.py\", line 1\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("The patch could not be applied: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff."),
+    });
+    outcome = { exitCode: 0, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("the applier printed nothing"),
+    });
+    outcome = { exitCode: 124, stdout: "", stderr: "", timedOut: true };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("did not finish in time"),
+    });
+    outcome = { exitCode: 53, stdout: "ERROR: No matching distribution found for pydantic==2.13.5\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("(ERROR: No matching distribution found for pydantic==2.13.5)"),
+    });
     outcome = { exitCode: 43, stdout: "", stderr: "" };
     await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "path_outside_root" });
   });

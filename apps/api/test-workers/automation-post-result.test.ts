@@ -673,6 +673,31 @@ describe("post_result", () => {
     expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
       `Agent Replying teammate finished without replying`,
     ))).toBe(false);
+    // A worker that delegated and ended its turn is waiting on its delegate,
+    // not finished: starting an agent is a hand-off, and the reply wakes it.
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const delegating = await service.start({ name: "Delegating teammate", description: "Split the work",
+        message: "DELEGATE_FROM_MODEL: split this work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      expect((await settledRun(conversation(delegating.agentId)))[0]).toMatchObject({ status: "completed" });
+      expect(await notices()).toBe(2);
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        "Agent Delegating teammate finished without replying",
+      ))).toBe(false);
+      // Its delegate replies and it wakes; ending that turn without a word is
+      // the silence its owner is told about.
+      release();
+      expect((await settledRun(conversation(delegating.agentId), 2))[1]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation(), 3))[2]).toMatchObject({ status: "completed" });
+      expect(await notices()).toBe(3);
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        "Agent Delegating teammate finished without replying",
+      ))).toBe(true);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
   });
 
   it("keeps a recursively stopped owner stopped when its child reports failure", async () => {

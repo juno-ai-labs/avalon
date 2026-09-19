@@ -17,7 +17,7 @@ mechanism. The product requirements are in
 | `apps/api/src/durable-objects/workstream-resident-context-storage.ts` | The ledger over the conversation object's SQLite: record a load, invalidate a kind, drain pending deliveries, render the committed or proposed prompt sections, apply a compaction once per event. |
 | `apps/api/src/durable-objects/workstream-resident-context-protocol.ts`, `apps/api/src/runtime/resident-context-port.ts` | The `residentContext` object-port authority a producer of blocks uses: what is resident, record a load, invalidate. Resolves in-object under the persistent loop. |
 | `apps/api/src/services/terminal/instruction-files.ts` | The Terminal kind's discovery primitives: the candidate chain from a set of touched paths, and the probe script a sandbox command carries. |
-| `apps/api/src/services/terminal/instructions.ts` | The Terminal plugin's glue over the port: build a probe fragment from the known-resident set, split and sanitize the trailer, record, refuse a mutation. |
+| `apps/api/src/services/terminal/instructions.ts` | The Terminal plugin's glue over the port: build a probe fragment from the known-resident set, split and sanitize the trailer, record. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` (`settlePendingSteersAtStep`, `commitBindCompaction`, `bindMessagePositionsBySourceKind`) | Derived inputs appended at the settled step in the same commit that closes them; the compaction commit that carries the ledger's transitions; the positions the summariser must not see. |
 | `apps/api/src/durable-objects/substream-agent.ts` (`persistentLoopRuntime`, `settlePersistentLoopStep`) | Drains pending deliveries into the settled step, serves `renderResidentContext` and `prepareResidentContextCompaction`, applies the compaction transitions inside the checkpoint's transaction. |
 | `packages/agent-harness/src/index.ts` (`HarnessResidentContext`), `bind-runtime.ts` | The host port: `render()` placed last in the stable system prompt; `prepareCompaction()` before the summary turn, whose answer shapes the compacted system message and the summariser's input. |
@@ -177,8 +177,9 @@ prompt blocks, the lifetime count, replayed compaction events, and invalidation.
 appended at the settled step, closed in the same commit, and not appended twice
 on replay. `apps/api/test/terminal-runtime.test.ts` runs the real probe and
 ledger through the runtime's simulated sandbox: the read that delivers the
-root, the refused first mutation and its retry, the probe before a command's
-durable task, and the checkout that retires everything.
+root, the write beneath an unread file that proceeds and the read after it
+that records the chain, the command that carries no probe, and the checkout
+that retires everything.
 `apps/api/test/terminal-repository.test.ts` proves the bootstrap carries the
 probe after the checkout and records the root.
 `packages/agent-harness/src/index.test.ts` proves the compacted system message
@@ -220,6 +221,26 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 `realpath` containment are what keep a repository from planting
 `AGENTS.md -> .git/config` and having the probe deliver the checkout's Git
 credential header.
+
+## Changelog
+
+### 2026-09-19 — The Terminal gate is gone; the ledger decides only what a read delivers
+
+**What changed:** The Terminal mutation gate the entry below describes no
+longer exists. A whole-file write, patch, command or import beneath an unread
+instruction file proceeds; the probe rides only the two reads and reports what
+it finds, and `residentBlocks` decides what that read delivers, not whether
+anything is refused. The probe's `pending` flag, which only the gate read, is
+gone with it.
+
+**Why:** Recorded under the same date in
+[`terminal-workspaces.md`](terminal-workspaces.md#changelog): the gate taxed
+every fresh agent's first mutation with a refused call, and the read an edit
+starts with already delivers the same files.
+
+**What a future change must respect:** Nothing here refuses a tool. A change
+that needs a file's instructions in context before an edit has to put them
+there through a read.
 
 ### 2026-09-09 — The gate counts delivered blocks, the render reads prompt rows, unknown kinds are skipped
 

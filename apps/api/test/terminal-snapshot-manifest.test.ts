@@ -15,6 +15,8 @@ import {
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
+  TERMINAL_PYDANTIC_REQUIREMENT,
+  TERMINAL_SNAPSHOT_PYLIB,
 } from "../src/services/terminal/snapshot-manifest";
 
 describe("Terminal snapshot manifest", () => {
@@ -77,6 +79,17 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("AVALON_BOOTSTRAP_INSTALLED=");
     expect(command).not.toContain("python3 -c");
     expect(command).not.toContain("gh --version");
+  });
+
+  it("bakes the patch applier's pinned pydantic into the snapshot behind a directory check", () => {
+    // `runtime.ts` installs the same pin into a sandbox whose snapshot lacks
+    // it, so the two cannot drift; the check is a directory, not an
+    // interpreter, because the bootstrap carries no probes.
+    const command = terminalManagedSnapshotBootstrapCommand();
+    expect(TERMINAL_PYDANTIC_REQUIREMENT).toMatch(/^pydantic==\d+\.\d+\.\d+$/u);
+    expect(command).toContain(`--target ${TERMINAL_SNAPSHOT_PYLIB} '${TERMINAL_PYDANTIC_REQUIREMENT}'`);
+    expect(command).toContain(`if [ ! -d ${TERMINAL_SNAPSHOT_PYLIB}/pydantic ]`);
+    expect(command).toContain(`install -d -o "$(id -u)" -g "$(id -g)" -m 755 ${TERMINAL_SNAPSHOT_PYLIB}`);
   });
 
   it("installs both Node capabilities in a single npm invocation", () => {

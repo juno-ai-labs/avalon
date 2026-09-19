@@ -104,7 +104,8 @@ response as a message. The host sends an owning parent two notices on a run's
 behalf, and no other message. A failed background run emits
 `Agent failed due to <reason>. Id: <id>`, where the reason is the terminal
 diagnostic code (or `unknown reason` when unavailable). A background run that
-completes without one completed send to any agent emits
+completes without one completed or ambiguous send to, or start of,
+another agent emits
 `Agent <name> finished without replying. Id: <id>. Message it if you still
 need its result.`; a run that sent at least
 one message, asked for input, or was stopped emits nothing. Each notice takes
@@ -242,7 +243,10 @@ before finishing. The host emits
 `Agent <name> finished without replying. Id: <id>. Message it if you still
 need its result.` to the owner of a background run that completes without one
 completed send to any agent, with the same per-run delivery identity and
-stopped-owner handling as the failure notice.
+stopped-owner handling as the failure notice. `start_agent` counts as a
+hand-off, because a worker that delegated and ended its turn is waiting, not
+finished; an ambiguous send counts too, because reporting a message that most
+likely landed as silence would invite a resend.
 
 **Why:** In the "Avalon scroll gradients" substream of 2026-09-18 the
 foreground agent delegated, then stayed in its run: four `list_agents` calls,

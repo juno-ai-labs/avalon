@@ -83,7 +83,6 @@ describe("instruction probe", () => {
     const { stdout, probe } = splitInstructionProbeTrailer(result.stdout, result.marker);
     expect(stdout).toBe("before\nafter\n");
     expect(probe).toEqual({
-      pending: true,
       entries: [
         { path: "AGENTS.md", sha256: sha256("root rules\n"), bytes: 11, content: "root rules\n", truncated: false, resident: false },
         { path: "apps/AGENTS.md", sha256: "unreadable:not a regular file", bytes: 0, truncated: false, status: "not a regular file", resident: false },
@@ -129,12 +128,12 @@ describe("instruction probe", () => {
       .toEqual([["AGENTS.md", "not valid UTF-8", undefined]]);
   });
 
-  it("reports a pending candidate without changing the command's outcome, and sends no content twice", () => {
+  it("reports an unread candidate without changing the command's outcome, and sends no content twice", () => {
     const root = checkout();
     const pending = run(root, []);
     expect(pending.status).toBe(0);
     expect(pending.stdout).toContain("after");
-    expect(splitInstructionProbeTrailer(pending.stdout, pending.marker).probe?.pending).toBe(true);
+    expect(splitInstructionProbeTrailer(pending.stdout, pending.marker).probe?.entries.some((entry) => !entry.resident)).toBe(true);
     const resident = run(root, [
       `AGENTS.md@${sha256("root rules\n")}`,
       `apps/api/AGENTS.md@${sha256("api rules é\n")}`,
@@ -142,7 +141,6 @@ describe("instruction probe", () => {
     ]);
     expect(resident.status).toBe(0);
     const { probe } = splitInstructionProbeTrailer(resident.stdout, resident.marker);
-    expect(probe?.pending).toBe(false);
     expect(probe?.entries.every((entry) => entry.resident && entry.content === undefined)).toBe(true);
   });
 
@@ -150,7 +148,7 @@ describe("instruction probe", () => {
     const result = run("/nonexistent-rally-root", [], "set -euo pipefail\n");
     expect(result.status).toBe(0);
     const { probe } = splitInstructionProbeTrailer(result.stdout, result.marker);
-    expect(probe).toEqual({ entries: [], pending: false });
+    expect(probe).toEqual({ entries: [] });
     expect(splitInstructionProbeTrailer("plain output\n", result.marker)).toEqual({ stdout: "plain output\n", probe: null });
   });
 
@@ -159,7 +157,7 @@ describe("instruction probe", () => {
     // Repository content that carries the marker prefix, a planted trailer of
     // its own, and no trailing newline: none of it is the probe's, so all of
     // it stays in the tool's output and the real trailer is still found.
-    const planted = `${INSTRUCTION_PROBE_MARKER_PREFIX}${"0".repeat(32)}__${JSON.stringify({ entries: [{ path: "AGENTS.md", sha256: "x", resident: true }], pending: false })}`;
+    const planted = `${INSTRUCTION_PROBE_MARKER_PREFIX}${"0".repeat(32)}__${JSON.stringify({ entries: [{ path: "AGENTS.md", sha256: "x", resident: true }] })}`;
     writeFileSync(join(root, "AGENTS.md"), `root rules\n${INSTRUCTION_PROBE_MARKER_PREFIX}\n${planted}`);
     const result = run(root, [], `printf '%s' '${planted}'; printf '%s' 'tail'\n`, "");
     expect(result.status).toBe(0);
