@@ -677,6 +677,17 @@ function ruleWithin(source: string, selector: string): string | null {
  * encloses it. Comments go first so that prose naming a selector — this
  * stylesheet's comments name several — is not mistaken for the rule itself.
  */
+function rules(): { selector: string; body: string }[] {
+  return stylesheet
+    .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+    .split('}')
+    .flatMap((block) => {
+      if (!block.includes('{')) return [];
+      const selector = (block.split('{').at(-2) ?? '').trim().replace(/\s+/gu, ' ');
+      return selector ? [{ selector, body: block.split('{').at(-1) ?? '' }] : [];
+    });
+}
+
 function preludes(): string[] {
   return stylesheet
     .replace(/\/\*[\s\S]*?\*\//gu, ' ')
@@ -1045,7 +1056,7 @@ describe('raised popover interaction states', () => {
     expect(highlighted).not.toBeNull();
     expect(danger).not.toBeNull();
     expect(content).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(highlighted).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(highlighted).toContain('background: var(--av-sys-color-state-hover);');
     expect(danger).toContain('background: var(--av-sys-color-danger-tint);');
   });
 
@@ -1060,38 +1071,66 @@ describe('raised popover interaction states', () => {
     expect(popover).not.toBeNull();
     expect(rows).not.toBeNull();
     expect(popover).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(rows).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(rows).toContain('background: var(--av-sys-color-state-hover);');
   });
 });
 
-describe('work-stream header control hover', () => {
+describe('the one hover wash', () => {
   /**
-   * The three controls in the stream's top bar hover as one family, and the
-   * family's fill is the hover wash rather than the raised surface. `raised`
-   * is a step above the canvas only in dark; light sets `surface.canvas` and
-   * `surface.raised` to the same #fcfcfc, so hovering any of these painted the
-   * canvas back onto the canvas and nothing moved. The title button beside
-   * them was already on the wash, which is what made the gap visible: the name
-   * lit up and every icon next to it stayed blank.
+   * Hover used to be spelled seven different ways — `surface.raised`,
+   * `surface.raised-hover`, `surface.elevated-hover`, `surface.subtle`, three
+   * steps of the neutral ramp and the sidebar's own row token — and which one a
+   * control got was an accident of when it was written. `surface.raised` was
+   * the worst of them: it is a step above the canvas only in dark, and light
+   * sets it to the canvas's own #fcfcfc, so the stream header's icons had no
+   * visible hover at all while the title button beside them lit up.
    */
-  it('fills the header controls with the hover wash rather than the raised surface', () => {
+  it('paints the controls a pointer crosses in one sweep from the same token', () => {
     const icon = rule(
       '.icon-button:hover:not(:disabled),\n'
       + ".icon-button[data-state='open']:not(:disabled),\n"
       + '.icon-button:focus-visible',
     );
-    const participants = rule('.participant-header-button:hover');
-    const socket = rule('.header-socket-state:hover,\n.header-socket-state:focus-visible');
+    const family = [
+      icon,
+      rule('.participant-header-button:hover'),
+      rule('.header-socket-state:hover,\n.header-socket-state:focus-visible'),
+      rule('.workstream-title-button:hover'),
+      rule('.menu-item[data-highlighted]'),
+      rule('.appearance-picker-trigger:hover'),
+    ];
 
-    for (const declarations of [icon, participants, socket]) {
+    for (const declarations of family) {
       expect(declarations).not.toBeNull();
-      expect(declarations).toContain('background: var(--av-sys-color-surface-raised-hover);');
+      expect(declarations).toContain('background: var(--av-sys-color-state-hover);');
     }
   });
 
-  it('keeps the title button on the same wash the icons beside it now use', () => {
-    expect(rule('.workstream-title-button:hover'))
-      .toContain('background: var(--av-sys-color-surface-raised-hover);');
+  /**
+   * The guard, rather than one assertion per control: a hover added later takes
+   * the wash, and a neutral surface fill can no longer reach a hover rule by
+   * being copied off the one next to it. A hover that carries a hue is exempt
+   * because the hue is the point, and a rule shared with a selected or pressed
+   * state is exempt because that state is not a hover.
+   */
+  it('lets no hover paint a neutral surface fill instead', () => {
+    const neutralSurface = /var\(--av-(?:sys-color-surface-(?:raised|raised-hover|elevated-hover|subtle)|ref-color-neutral-\d+)\)/u;
+    const hue = /danger|success|brand|accent|scrim|bubble/u;
+    const settled = /\.is-selected|\.is-active|\.is-current|aria-pressed/u;
+    // The capsule composer's round tools rest on the wash already, so their
+    // hover has to be a further step or there is no feedback at all.
+    const restsOnTheWash = '.is-message-capsule .composer-tools > .icon-button:hover:not(:disabled)';
+
+    const offenders = rules()
+      .filter(({ selector }) => /:hover|\[data-highlighted\]/u.test(selector))
+      .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
+      .filter(({ body }) => {
+        const background = /(?:^|[;{\s])background(?:-color)?:\s*([^;]+);/u.exec(body)?.[1] ?? '';
+        return neutralSurface.test(background) && !hue.test(background);
+      })
+      .map(({ selector }) => selector);
+
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -1123,7 +1162,7 @@ describe('sidebar project rows', () => {
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
     expect(stylesheet).toContain(
-      '.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }',
+      '.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }',
     );
     expect(stylesheet).toContain(
       '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
