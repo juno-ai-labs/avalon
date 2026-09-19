@@ -1119,6 +1119,49 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 
+  it('gives every connector card one paragraph, and Ashby its opt-in prerequisite on the button', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue([
+      'ashby', 'custom_mcp', 'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+    ]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    // A card's height is the height of its content, and the grid stretches a
+    // row to its tallest card — so a card carrying more than the one
+    // description paragraph pads its neighbours with empty space.
+    // Ashby and Fireflies each used to carry a connection-status line the
+    // installed-connections list above already shows, and Ashby a third
+    // paragraph for its MCP opt-in.
+    const cards = await screen.findAllByRole('article');
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      const paragraphs = [...card.children].filter((child) => child.tagName === 'P');
+      expect(paragraphs).toHaveLength(1);
+      expect(paragraphs[0]?.className).toBe('');
+    }
+
+    // The opt-in is a prerequisite Rally cannot check and the OAuth redirect
+    // cannot explain, so it rides the button it qualifies rather than a second
+    // paragraph. Losing it entirely leaves a non-opted-in org with a
+    // provider-side failure and nothing naming the cause.
+    const ashbyCard = (await screen.findByText('Ashby')).closest('article');
+    expect(ashbyCard).not.toBeNull();
+    const ashbyPersonal = await enabledConnectAction(ashbyCard!, 'Connect for me');
+    fireEvent.focus(ashbyPersonal);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account.",
+    );
+    fireEvent.blur(ashbyPersonal);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+
+    // Every other provider's tooltip says only what the scope means.
+    const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
+    const drivePersonal = await enabledConnectAction(driveCard!, 'Connect for me');
+    fireEvent.focus(drivePersonal);
+    expect(await screen.findByRole('tooltip')).not.toHaveTextContent('Ashby MCP opt-in');
+    fireEvent.blur(drivePersonal);
+  }, 30_000);
+
   it('gives disabled connector tooltip triggers a name and disabled semantics', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',

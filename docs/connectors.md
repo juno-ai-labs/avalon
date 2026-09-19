@@ -685,8 +685,15 @@ region — see [`notion-ingress.md`](notion-ingress.md).
 
 Ashby has independent personal and workspace modes. **Connect for me** uses
 Ashby's hosted MCP service, with the personal `ashby.personal.mcp` grant and
-owner authorization. Tool names and schemas come from live discovery; all retain
-conservative write execution and receipts without individual tool confirmations.
+owner authorization. It has a prerequisite Rally cannot check and the OAuth
+redirect cannot explain: **the Ashby organization must have opted into Ashby
+MCP, and the account signing in must be eligible for it.** Without that, the
+authorization fails provider-side with nothing naming the cause. The personal
+**Connect for me** tooltip says so, and
+<https://rallywith.ai/support/connectors/ashby/> is the setup walkthrough.
+
+Tool names and schemas come from live discovery; all retain conservative write
+execution and receipts without individual tool confirmations.
 **Connect for workspace** requires a Rally administrator and an Ashby API key
 with webhook management access. Its model-visible workspace catalogue explicitly describes an event-only
 connection and directs recruiting queries or updates to a personal connection;
@@ -1339,33 +1346,49 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ### 2026-09-19 — Every connector card is one sentence, and nothing else
 
-**What changed:** The Connections grid renders exactly one paragraph per card:
-the sentence that says what the connector gives you. The three conditional
+**What changed:** The Connections grid renders one paragraph per card: the
+sentence that says what the connector gives you. The three conditional
 paragraphs under the Ashby and Fireflies cards are gone — the "Personal account
 / Workspace events" status line, the Ashby MCP opt-in sentence, and the Ashby
-setup guide link. Granola, Linear, Notion, Custom MCP, the inbound webhook, X
-and both Google cards had descriptions that ran to two sentences or two clauses;
-each is now a single sentence in the same shape as GitHub's and Slack's.
+setup guide link. Granola, Linear, Notion, Custom MCP, the inbound webhook, X,
+Slack and both Google cards had descriptions that ran to two sentences, two
+clauses, or a different grammatical shape than their neighbours; each is now a
+single noun phrase in the shape GitHub's already had. Ashby's opt-in
+prerequisite moved to the personal **Connect for me** tooltip and to the Ashby
+section above.
 
 **Why:** The 2026-09-18 entry below shortened the Ashby and Fireflies
-descriptions and the rows still came out uneven, because the description was
-never what made those cards tall: `.provider-card > p` sets `flex: 1` on *every*
-paragraph, so each extra conditional paragraph grew the card and the grid
-stretched its whole row to match. Trimming the words while leaving the
-paragraphs in place could not have worked. The status line also duplicated what
-the installed-connections list above the grid already shows, and the setup guide
-link sent a person out of the app before they had tried the button underneath
-it.
+descriptions and the rows still came out uneven, because a card's height is the
+height of its content: those two cards each carried a second paragraph, and one
+of them a third, and the grid stretches a row to its tallest card. Fewer words
+in one paragraph could not offset a whole extra paragraph. The status line also
+duplicated what the installed-connections list above the grid already shows,
+and the setup guide link sent a person out of the app before they had tried the
+button underneath it.
 
-**Considered and rejected:** Scoping `flex: 1` to the first paragraph so extra
-paragraphs stop inflating the card. That keeps the layout honest while leaving
-the duplicate status text in place, and the ask was for one sentence per card,
-not for taller cards that tolerate more of them.
+**Considered and rejected:** Blaming `flex: 1` on `.provider-card > p` and
+scoping it to the first paragraph. This entry said that in its first draft and
+it is wrong — `flex` distributes a card's *slack* space among its paragraphs
+and does not set the card's height. Measured in a real window with a deep-link
+guidance paragraph rendered: the card is 286px with that paragraph at `flex: 1`
+and 286px at `flex: none`, and 208px — the row's height — with it hidden. Only
+removing content shortens a card. Also rejected: giving Ashby's personal scope
+a setup modal of its own, the way the workspace scope has one. The prerequisite
+is one sentence and the button it qualifies already composes tooltip text, so a
+modal would be a screen built to hold a sentence.
 
 **Consequences:** A card is a mark, a name, a status word, one sentence and its
-buttons. Anything a provider needs to explain — an opt-in, an eligibility rule,
-a setup walkthrough — belongs in that provider's setup modal, which has room
-for it, not in the grid. Adding a paragraph back to a card re-breaks the row.
+buttons. One paragraph may still join them: the `settings-search-guidance`
+`<p>` a settings deep-link renders into the targeted card, which does make that
+row taller for as long as the target is selected. That is a deliberate,
+transient status message, and no `flex` rule can make it free — a paragraph
+costs its own height. Anything a provider needs to explain — an opt-in, an
+eligibility rule, a setup walkthrough — belongs in that provider's connect
+tooltip, its setup modal, or this document, not in the grid; a prerequisite
+that lives only in the card is one deletion away from existing nowhere, which
+is what nearly happened to Ashby's. Adding a paragraph back to a card re-breaks
+the row.
+
 
 ### 2026-09-19 — The GitHub single reads are declared too
 
