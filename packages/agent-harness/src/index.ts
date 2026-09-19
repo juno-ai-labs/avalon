@@ -377,6 +377,8 @@ export interface OpenRouterInferencePayload {
   messages: ModelMessage[];
   stream: true;
   stream_options: { include_usage: true };
+  /** Usage accounting. Absent on providers Rally prices itself. */
+  usage?: { include: true };
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
   parallel_tool_calls?: true;
@@ -491,6 +493,8 @@ export type StructuredModelDiagnostic = {
   outputTokens?: number;
   reasoningTokens?: number;
   cachedInputTokens?: number | null;
+  /** Provider-reported spend for this one call, in cents. */
+  costCents?: number;
   success?: boolean;
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
@@ -796,6 +800,7 @@ export class OpenRouterClient {
           | "outputTokens"
           | "reasoningTokens"
           | "cachedInputTokens"
+          | "costCents"
         >> | undefined;
         try {
           const builtTracePayload = this.config.traceContext
@@ -882,6 +887,7 @@ export class OpenRouterClient {
           const outputTokens = providerUsageNumber(normalizedUsage, "completion_tokens");
           const reasoningTokens = providerUsageNumber(normalizedUsage, "reasoning_tokens");
           const cachedInputTokens = providerCachedTokens(normalizedUsage);
+          const costCents = providerCostCents(normalizedUsage);
           responseMetrics = {
             latencyMs: Date.now() - startedAt,
             responseBytes: new TextEncoder().encode(content).byteLength,
@@ -889,6 +895,7 @@ export class OpenRouterClient {
             ...(outputTokens === undefined ? {} : { outputTokens }),
             ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
             ...(cachedInputTokens === null ? {} : { cachedInputTokens }),
+            ...(costCents === undefined ? {} : { costCents }),
           };
           await emitDiagnostic({
             stage: "model_response",
@@ -1479,7 +1486,17 @@ function serializeOpenRouterChatRequest(input: {
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.trace ? { trace: input.trace } : {}),
     };
-    return JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>;
+    return {
+      ...JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>,
+      // OpenRouter reports `usage.cost` only when the request opts into usage
+      // accounting; without this the usage object arrives complete in every
+      // respect except the one Rally bills on, and `cost_cents` is a
+      // structurally sound zero all the way into the lakehouse. It is set
+      // after the SDK serializer rather than through it because this SDK
+      // release has no typed field for it and drops unknown keys. Azure is
+      // priced from Rally's own rate card and never reaches this function.
+      usage: { include: true },
+    };
   } catch (error) {
     if (error instanceof OpenRouterRequestError) throw error;
     throw new OpenRouterRequestError("Invalid OpenRouter chat request");
@@ -1949,6 +1966,17 @@ async function readJsonResponse<T>(response: Response): Promise<{ value: T | nul
 function providerUsageNumber(usage: Record<string, number> | null, key: string): number | undefined {
   const value = usage?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * OpenRouter reports `cost` in dollars. Kept beside the token readers so a
+ * structured call accounts for its spend the same way a streamed one does;
+ * structured calls carried no cost field at all, which hid every classifier,
+ * extraction, and repair call from spend reporting.
+ */
+function providerCostCents(usage: Record<string, number> | null): number | undefined {
+  const dollars = usage?.cost;
+  return typeof dollars === "number" && Number.isFinite(dollars) ? dollars * 100 : undefined;
 }
 
 function providerCachedTokens(usage: Record<string, number> | null): number | null {

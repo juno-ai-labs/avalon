@@ -1,12 +1,13 @@
 import type { Env as AvalonEnv } from "../src/env";
 import type { MigrationProbeDO } from "../src/durable-objects/migration-probe-do";
 import type {
+  TerminalProviderRpcBinding,
   TerminalProviderRpcCallbackResult,
   TerminalProviderRpcResult,
 } from "../src/services/terminal/provider-rpc-contract";
 import type { TelemetryDeliveryRpcBinding } from "../src/telemetry/telemetry-delivery-contract";
 
-interface TerminalRpcTestBinding {
+interface TerminalRpcTestBinding extends TerminalProviderRpcBinding {
   throwNotFound(): Promise<never>;
   returnNotFound(): Promise<TerminalProviderRpcResult<never>>;
   invokeCallback(

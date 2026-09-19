@@ -257,7 +257,7 @@ export function createDaytonaTerminalProvider(
       throw error;
     } finally {
       try {
-        instrumentation.observeRequest?.({
+        await instrumentation.observeRequest?.({
           operation,
           detail: options.detail ?? null,
           outcome,

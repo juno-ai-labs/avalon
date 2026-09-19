@@ -27,18 +27,52 @@ class CallbackSession extends RpcTarget {
 }
 
 /**
- * Mirrors the real session's start/recover arity so the deadline's argument
- * position is proved against the real Worker boundary rather than an
- * in-process double. A wrong position on either side returns `undefined`
- * rather than failing, which is silent everywhere else.
+ * Stands in for the Terminal provider Worker, and deliberately not for the
+ * Daytona provider: what is under test is the Worker boundary itself, and the
+ * only way to have a real one is to have a real second Worker.
+ *
+ * `startSandbox` and `recoverSandbox` mirror the real session's arity and echo
+ * what they were handed, so an argument-position skew is visible instead of
+ * arriving as `undefined` and falling back to a default. `getSandbox` reports
+ * its provider requests the way `terminalProviderRpcCall` and `measureRequest`
+ * do — through the callbacks handed to that one call, awaited before the
+ * call's own result is allowed to return.
  */
-class EchoSession extends RpcTarget {
+class ProviderSession extends RpcTarget {
+  #sessionObserve;
+
+  constructor(instrumentation) {
+    super();
+    this.#sessionObserve = instrumentation?.observeRequest?.dup();
+  }
+
+  [Symbol.dispose]() {
+    this.#sessionObserve?.[Symbol.dispose]();
+  }
+
   startSandbox(idOrName, options) {
     return { ok: true, value: { idOrName, options: options ?? null } };
   }
 
   recoverSandbox(idOrName, options) {
     return { ok: true, value: { idOrName, options: options ?? null } };
+  }
+
+  async getSandbox(idOrName, callbacks) {
+    for (const durationMs of [11, 13]) {
+      const measurement = {
+        operation: "sandbox.get",
+        detail: null,
+        outcome: "completed",
+        durationMs,
+        requestCount: 1,
+        pollCount: 0,
+        bytes: 0,
+      };
+      await callbacks?.observeRequest?.(measurement);
+      await this.#sessionObserve?.(measurement);
+    }
+    return { ok: true, value: { id: idOrName, name: idOrName, state: "started" } };
   }
 }
 
@@ -66,7 +100,7 @@ export default class TerminalRpcTestService extends WorkerEntrypoint {
     return new CallbackSession(callback);
   }
 
-  createSession() {
-    return new EchoSession();
+  createSession(_configuration, instrumentation) {
+    return new ProviderSession(instrumentation);
   }
 }
