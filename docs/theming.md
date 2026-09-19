@@ -130,6 +130,18 @@ serves it through `rally-font://`.
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
   never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
   at equal specificity further down the file.
+- **The hover wash is layered over a control, never substituted for what it
+  paints.** `app.css` spells it `--hover-layer`, a `background-image` derived
+  from the token, and a hover rule sets that rather than `background`. A
+  control with no surface of its own could take the wash as a
+  `background-color` and composite correctly against its ancestor; one that
+  paints its own surface cannot, because `background-color` replaces that
+  surface. `.button` on `surface.raised` lost it and composited against the
+  canvas, turning `#2f2f2f` into roughly `#1a1a1a` — the control went *darker*
+  under the pointer. Layering makes the hover delta identical for every
+  control, which is what one wash is for. It costs the fill's fade:
+  `background-image` is discrete, so only border and text colour still
+  transition.
 - **There is one hover wash, and it is `sys.color.state.hover`.** Every neutral
   control a pointer can cross — a navigation row, a menu item, a header icon, a
   chip, a settings button — paints hover from that one token, and
@@ -222,8 +234,16 @@ rejected: pointing everything at `cmp.row.background-hover`, which has the right
 value but names a row, so an icon button reading it is the component tier
 leaking into the system tier.
 
-**Consequences:** the wash is translucent in both appearances, so one value
-works on the canvas, in a menu and inside a dialog; an opaque fill cannot, and
+**Consequences:** the wash is applied as a layer (`--hover-layer`), not as a
+fill, so a control keeps whatever surface it already paints and the hover delta
+is the same everywhere. The first revision of this change substituted it, which
+made every control with its own opaque surface go darker under the pointer in
+dark; Codex caught it on review. The cost of the layer is that
+`background-image` is discrete, so the fill no longer fades over the 120-140ms
+the transitions declare — border and text colour still do, and a hover that
+lands instantly was judged better than one that lands on the wrong colour. The
+wash is translucent in both appearances, so one value works on the canvas, in a
+menu and inside a dialog; an opaque fill cannot, and
 that is the property to preserve if either number is re-fitted. Light hovers at
 `0.09` and dark at `0.17` — the sidebar's existing weights, unchanged, so the
 sidebar is the reference anything else should be compared against. Controls that

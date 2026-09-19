@@ -1056,7 +1056,7 @@ describe('raised popover interaction states', () => {
     expect(highlighted).not.toBeNull();
     expect(danger).not.toBeNull();
     expect(content).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(highlighted).toContain('background: var(--av-sys-color-state-hover);');
+    expect(highlighted).toContain('background-image: var(--hover-layer);');
     expect(danger).toContain('background: var(--av-sys-color-danger-tint);');
   });
 
@@ -1071,7 +1071,7 @@ describe('raised popover interaction states', () => {
     expect(popover).not.toBeNull();
     expect(rows).not.toBeNull();
     expect(popover).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(rows).toContain('background: var(--av-sys-color-state-hover);');
+    expect(rows).toContain('background-image: var(--hover-layer);');
   });
 });
 
@@ -1102,7 +1102,28 @@ describe('the one hover wash', () => {
 
     for (const declarations of family) {
       expect(declarations).not.toBeNull();
-      expect(declarations).toContain('background: var(--av-sys-color-state-hover);');
+      expect(declarations).toContain('background-image: var(--hover-layer);');
+    }
+  });
+
+  /**
+   * The wash is layered, not substituted. A control that paints its own
+   * surface — `.button` on `surface.raised`, a provider card, a citation chip
+   * — keeps that surface in `background-color`; taking the wash as the
+   * background instead composited it against the ancestor, which in dark
+   * turned #2f2f2f into roughly #1a1a1a and made the control go *darker*
+   * under the pointer.
+   */
+  it('layers the wash over the control rather than replacing what it paints', () => {
+    expect(rule(':root')).toContain('--hover-layer: linear-gradient(var(--av-sys-color-state-hover) 0 100%);');
+
+    const layered = rules().filter(({ body }) => body.includes('var(--hover-layer)'));
+    expect(layered.length).toBeGreaterThan(40);
+    for (const { selector, body } of layered) {
+      expect(body, selector).toContain('background-image: var(--hover-layer);');
+      // `background:` would reset `background-color` to transparent and undo
+      // the layering the property name is there to provide.
+      expect(body, selector).not.toMatch(/(?:^|[;{\s])background:/u);
     }
   });
 
@@ -1124,6 +1145,7 @@ describe('the one hover wash', () => {
     const offenders = rules()
       .filter(({ selector }) => /:hover|\[data-highlighted\]/u.test(selector))
       .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
+      .filter(({ body }) => !body.includes('var(--hover-layer)'))
       .filter(({ body }) => {
         const background = /(?:^|[;{\s])background(?:-color)?:\s*([^;]+);/u.exec(body)?.[1] ?? '';
         return neutralSurface.test(background) && !hue.test(background);
