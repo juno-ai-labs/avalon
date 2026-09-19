@@ -7,6 +7,7 @@ import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
   patchCachedWorkstreamViewerState,
+  workstreamSummaryState,
 } from './workstream-state-store';
 
 const id = '00000000-0000-7000-8000-000000000001';
@@ -315,6 +316,25 @@ describe('patchCachedWorkstreamViewerState', () => {
     const row = queryClient.getQueryData<WorkstreamSummary>(['workstream', id]);
     expect(row?.hasUnread).toBe(true);
     expect(row?.firstUnreadSequenceNumber).toBe(9);
+  });
+
+  // WorkspaceDO republishes the Channel's row after it finalizes a membership,
+  // and that row is the only thing that tells the sidebar the Channel now sits
+  // under another Space. Left out of the common patch, **Add to space** and a
+  // drop both appear to do nothing until the whole directory is read again.
+  it('carries a channel\'s space placements on a common state push', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, 1),
+      visible: true,
+      ...workstreamSummaryState(summary({ spaceIds: ['space-a', 'space-b'] })),
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['space-a', 'space-b']);
   });
 
   it('writes the addressed child entry without changing Main in the list', () => {

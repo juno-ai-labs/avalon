@@ -37,6 +37,11 @@ const manageAccessFailureCopy: Record<ManageAccessFailure, string> = {
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
 };
 
+/** "1 person", "2 people" — a count a sentence can be built around. */
+function people(count: number): string {
+  return count === 1 ? '1 person' : `${count} people`;
+}
+
 function failureOf(cause: unknown): ManageAccessFailure {
   const code = cause instanceof ApiError ? cause.code : undefined;
   // A code outside the closed union is a transport or session failure rather
@@ -164,8 +169,8 @@ export function ManageAccessDialog({
               // Never "private": an Organization-wide Space below may still be
               // granting access, and saying private here would be false.
               : publicThrough.length > 0
-                ? `The ${sources.direct.participantUserIds.length} people in the channel — and public through ${publicThrough.join(', ')}.`
-                : `Only the ${sources.direct.participantUserIds.length} people in the channel.`}
+                ? `The ${people(sources.direct.participantUserIds.length)} in the channel — and public through ${publicThrough.join(', ')}.`
+                : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
           />
           {spaceIds.map((spaceId) => {
             const source = bySpace.get(spaceId);
@@ -188,7 +193,7 @@ export function ManageAccessDialog({
                     ? 'Access from this space is still being applied.'
                     : source.scope === 'workspace'
                       ? 'Everyone in the organization, through this space.'
-                      : `The ${source.participantUserIds.length} people in this space.`}
+                      : `The ${people(source.participantUserIds.length)} in this space.`}
               />
             );
           })}
