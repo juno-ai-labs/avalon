@@ -1337,6 +1337,36 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
+### 2026-09-19 — Every connector card is one sentence, and nothing else
+
+**What changed:** The Connections grid renders exactly one paragraph per card:
+the sentence that says what the connector gives you. The three conditional
+paragraphs under the Ashby and Fireflies cards are gone — the "Personal account
+/ Workspace events" status line, the Ashby MCP opt-in sentence, and the Ashby
+setup guide link. Granola, Linear, Notion, Custom MCP, the inbound webhook, X
+and both Google cards had descriptions that ran to two sentences or two clauses;
+each is now a single sentence in the same shape as GitHub's and Slack's.
+
+**Why:** The 2026-09-18 entry below shortened the Ashby and Fireflies
+descriptions and the rows still came out uneven, because the description was
+never what made those cards tall: `.provider-card > p` sets `flex: 1` on *every*
+paragraph, so each extra conditional paragraph grew the card and the grid
+stretched its whole row to match. Trimming the words while leaving the
+paragraphs in place could not have worked. The status line also duplicated what
+the installed-connections list above the grid already shows, and the setup guide
+link sent a person out of the app before they had tried the button underneath
+it.
+
+**Considered and rejected:** Scoping `flex: 1` to the first paragraph so extra
+paragraphs stop inflating the card. That keeps the layout honest while leaving
+the duplicate status text in place, and the ask was for one sentence per card,
+not for taller cards that tolerate more of them.
+
+**Consequences:** A card is a mark, a name, a status word, one sentence and its
+buttons. Anything a provider needs to explain — an opt-in, an eligibility rule,
+a setup walkthrough — belongs in that provider's setup modal, which has room
+for it, not in the grid. Adding a paragraph back to a card re-breaks the row.
+
 ### 2026-09-19 — The GitHub single reads are declared too
 
 **What changed:** `repository.get`, `issues.get`, `pull_requests.get`,
