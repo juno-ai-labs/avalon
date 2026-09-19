@@ -319,9 +319,7 @@ export class SpaceService {
       userId: asUserId(this.auth.userId),
       spaceId,
       workstreamId,
-      remainingAudience: remaining.scope === "workspace"
-        ? { scope: "workspace", participantUserIds: [] }
-        : { scope: "personal", participantUserIds: remaining.userIds },
+      remainingAudience: { scope: remaining.scope, participantUserIds: [...remaining.participantUserIds] },
     }), "");
     await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
     return this.settled(await workspace.finalizeSpaceMembershipRemoval({
