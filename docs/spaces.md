@@ -766,6 +766,19 @@ The name is the plainest one the product's own language offers. "Unplaced" and
 and both are wrong about what is actually going on — the Channel *is* placed,
 in a Space this person cannot see.
 
+**An expanded Space is what pages the Channel list for a member.** The
+sidebar's own trigger is the nav's scroll approaching the bottom, which used to
+reach the end of the time-grouped list of every Channel; with that list gone a
+member's nav is short and rarely scrolls at all, so a Space holding 60 Channels
+would list whichever of them page one happened to carry and offer no way to ask
+for the rest. An expanded Space listing fewer placements than its `channelCount`
+asks the existing loader for the next page, and keeps asking until the pages run
+out. `channelCount` is the Organization's count rather than this viewer's, so
+being short is not proof anything is missing — a Space can hold Channels this
+person may not read, and would then be short forever. Running out of pages is
+what stops it; the count being reached is not. There is no second endpoint:
+this is the same `['workstreams']` page the scroll was asking for.
+
 **A guest keeps the flat list.** A guest is handed no Space directory at all, so
 there is no hierarchy to say where anything lives; their sidebar is the
 time-grouped list exactly as it was, with its group headings and their bulk
@@ -1007,7 +1020,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
-| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
@@ -1385,6 +1398,13 @@ deliberate: without it the Spaces are the one list whose arrangement comes from
 the order the server happened to serialize, which a drag cannot move
 optimistically or roll back, and the client would have two rules where it now
 has one.
+
+Removing the time-grouped list took the sidebar's only page trigger with it: the
+nav's scroll reached the bottom of a list of every Channel, and a member's nav
+is now short. An expanded Space that lists fewer placements than its
+`channelCount` asks the existing loader for the next page instead, until the
+pages run out — the count is the Organization's rather than the viewer's, so it
+is the pages running out that has to stop it and not the count being reached.
 
 A write merges rather than replaces, for every kind. The `organization` list
 always did; the other two did not, and the justification — "an item nobody
