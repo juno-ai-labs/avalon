@@ -23,6 +23,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
+| `apps/desktop/src/renderer/lib/host-favicon.tsx` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, mount-scoped lifetime and object-URL revocation behind one. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
@@ -322,11 +323,25 @@ initial load, reconnect, and while an agent response streams.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
-inline asterisk pill with a hover popover, and its entry is dropped from the
+inline marker with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
 footnote rendering, and the section renders only what was left. In the common
 all-citations case nothing renders at the bottom at all, which is the vertical
 space the feature exists to reclaim.
+
+**A web source's marker is the site's own favicon; everything else keeps the
+asterisk pill.** The icon is the same one drawn in front of a link to that host,
+requested the same way, so the two readings of one destination agree — and at
+one character it is the only marker that can say *which* source before the
+popover is open. It is decoration in the accessibility tree: the pill's own
+`aria-label` still carries `Source <n>: <label>`, and the popover still names
+the source and where it opens. Everything a favicon cannot answer for degrades
+to the asterisk, in one direction: a resource or a person has no host, a host
+has no icon, the request has not landed yet, or the surface has no API to ask.
+The pill's tinted plate goes with the asterisk rather than following the icon —
+it exists to make a glyph findable, and an icon that brings its own colour and
+edges reads as two objects behind one. The hover tint stays, because the click
+has to remain discoverable.
 
 **While a turn streams, a reference whose definition has not arrived wears the
 pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
@@ -365,7 +380,10 @@ see. Label text says less and says nothing false. The wider lookup returns with
 the rail's fetch-by-id detail, and the two have to land together.
 
 A citation rendered into a **still** — the saved card — keeps numbered pills
-instead of asterisks, so they identify entries in its trailing source list. Lifting a definition trades the list for a popover,
+instead of asterisks or icons, so they identify entries in its trailing source
+list. A still is rendered synchronously and photographed, so it asks for no
+icon at all: one arriving after the shutter is an empty box in the file somebody
+keeps. Lifting a definition trades the list for a popover,
 which is the right trade on a surface that can be hovered and the wrong one in a
 picture: the export stylesheet hides the popover, so a lifted card showed bare
 numbers over nothing and the sources were gone from the file somebody kept.
@@ -786,6 +804,41 @@ The traps, both of which have bitten:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it), with
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
+
+### 2026-09-19 — A web source's footnote marker is the site's favicon
+
+**What changed:** A lifted footnote whose target is an HTTP(S) URL draws that
+host's favicon as its inline marker instead of the asterisk, through the same
+authenticated endpoint and cache the link decoration already uses. The fetch,
+the mount-scoped lifetime and the object-URL revocation moved out of
+`workstream-blocks.tsx` into `lib/host-favicon.tsx`, which both callers now
+share; `favicon-api.tsx` stays what it was, the context that narrows the session
+to one capability. Everything without a host, without an icon, or without an API
+to ask keeps the asterisk, and a still keeps its numbers and asks for nothing.
+
+**Why:** The asterisk is the same character for every source, so a grounded
+paragraph with several of them says only *that* it is grounded; the reader has
+to hover each one to learn which is the pricing page and which is the deck. The
+mark for that already existed one position away — the icon in front of a link to
+the same host — so the marker could carry it without a new request path, a new
+cache, or any renderer egress. Two positions drawing one host's icon two ways
+was the thing to avoid, which is what the shared hook now prevents.
+
+**Considered and rejected:** Keeping the asterisk's tinted plate behind the
+icon, which read as a second object at this size; sharing a decorated `<img>`
+component rather than the hook, which cannot serve both positions because the
+absent case is empty space in front of a link and a glyph in a marker; and
+letting a still fetch icons, which would print whatever had arrived by the
+moment the card was photographed.
+
+**Consequences:** The icon is decoration only — the source still reaches
+assistive technology through the pill's `aria-label` and its popover, both
+unchanged. The marker's box is sized in `line-height: 0` and qualified as
+`.markdown-body .citation-pill-favicon img`: the block-image rule further down
+that stylesheet carries `margin: var(--space-4) 0`, which on an icon inside a
+sentence grows the line box of every line in the paragraph, and an unqualified
+rule loses to it on source order. A future surface that wants a host's icon
+takes the hook rather than reimplementing the lifetime.
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 
