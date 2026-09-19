@@ -140,6 +140,20 @@ export class SpaceBootstrapService {
     });
   }
 
+  /**
+   * Place one Channel in General on its own, outside a page.
+   *
+   * For a creation path that cannot reach the coordinator: the Slack agent
+   * opens a Channel for a Slack member who is not a Rally user at all, and
+   * provisions the object itself rather than through
+   * `WorkstreamObjectCreationService`. Every non-deleted Channel still has to
+   * have a home, so it takes the same step a page would take for it.
+   */
+  async placeChannel(channel: SpaceBootstrapChannel): Promise<string | null> {
+    const general = await new SpaceService(this.env, this.driver).ensureGeneral();
+    return this.place(channel, general.id, await this.activeActors([channel]));
+  }
+
   /** Place one Channel in General, or name the refusal that stopped it. */
   private async place(
     channel: SpaceBootstrapChannel,
@@ -322,3 +336,73 @@ export async function spaceBootstrapDriver(
   };
 }
 
+
+/**
+ * Open a new Organization's General Space before its first usable session.
+ *
+ * The alarm would get there on its own — a freshly initialized WorkspaceDO
+ * claims its `general` page within a tick — but "within a tick" is a Queue
+ * round trip, and the first session in that window is shown the
+ * Organization-opening card for an Organization that has nothing to open. So
+ * the path that initializes the object does the same two steps inline: make
+ * General, then close a cutover that has an empty directory to walk.
+ *
+ * Best effort, deliberately. This is on the onboarding path, and a Space
+ * failure must not cost somebody the Organization they just created; the alarm
+ * is the backstop and it is the same code. An Organization whose object already
+ * holds Channels — a restore, or an import — is left to the alarm's walk, which
+ * is what `runFinalize` answers with when anything is still unplaced.
+ */
+export async function openGeneralSpaceForNewWorkspace(
+  env: Env,
+  workspaceId: string,
+): Promise<void> {
+  try {
+    const driver = await spaceBootstrapDriver(env, workspaceId, env.AVALON_REGION);
+    // No active member yet: the creation path writes the membership after the
+    // object is initialized on some routes, and the alarm follows either way.
+    if (!driver) return;
+    await new SpaceService(env, driver).ensureGeneral();
+    await new SpaceBootstrapService(env, driver).runFinalize();
+  } catch (error) {
+    logWarn(env, "space_bootstrap_open_failed", {
+      workspace_id: workspaceId,
+      reason: diagnosticErrorCode(error, "space_bootstrap_open_failed"),
+    });
+  }
+}
+
+/**
+ * Give a connector-created Channel its home.
+ *
+ * The Slack agent opens a Channel for a Slack member with no Rally identity,
+ * and provisions the conversation itself rather than through the creation
+ * coordinator — so it is the one creation path the coordinator's placement does
+ * not cover, and PRD goal 4 covers connectors explicitly. Best effort and
+ * never throws: the person's Slack message has already produced a Channel and
+ * a run, and a placement that could not be made must not turn that into an
+ * error they see. What it costs when it fails is named here.
+ */
+export async function placeConnectorChannelInGeneral(
+  env: Env,
+  workspaceId: string,
+  channel: SpaceBootstrapChannel,
+): Promise<void> {
+  try {
+    const driver = await spaceBootstrapDriver(env, workspaceId, env.AVALON_REGION);
+    if (!driver) return;
+    const refusal = await new SpaceBootstrapService(env, driver).placeChannel(channel);
+    if (refusal === null) return;
+    logWarn(env, "space_connector_channel_unplaced", {
+      workspace_id: workspaceId,
+      workstream_id: channel.workstreamId,
+      reason: refusal,
+    });
+  } catch (error) {
+    logWarn(env, "space_connector_channel_unplaced", {
+      workspace_id: workspaceId,
+      workstream_id: channel.workstreamId,
+      reason: diagnosticErrorCode(error, "space_connector_channel_unplaced"),
+    });
+  }
+}
