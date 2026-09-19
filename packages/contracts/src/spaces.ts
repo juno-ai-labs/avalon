@@ -111,7 +111,6 @@ export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
  * commits at the WorkspaceDO authority or never starts.
  */
 export const SpaceStatusSchema = z.enum(["active", "archived"]);
-export type SpaceStatus = z.infer<typeof SpaceStatusSchema>;
 
 /**
  * A role the Organization itself depends on, rather than a label a person
@@ -123,7 +122,6 @@ export type SpaceStatus = z.infer<typeof SpaceStatusSchema>;
  * arrive as a second column with its own backfill.
  */
 export const SpaceSystemRoleSchema = z.enum(["general"]);
-export type SpaceSystemRole = z.infer<typeof SpaceSystemRoleSchema>;
 
 export const SpaceParticipantSchema = z.strictObject({
   userId: UserIdSchema,
