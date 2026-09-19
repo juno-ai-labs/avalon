@@ -417,6 +417,25 @@ describe('resource citations', () => {
 });
 
 describe('footnote citations', () => {
+  // Installed in a hook rather than in a body, per
+  // docs/testing.md#installing-and-restoring-state: the desktop config's
+  // `restoreMocks` takes both spies back off afterwards, which a restore at the
+  // end of a body cannot promise once an assertion throws past it. Each blob a
+  // test mints is named in order, so a test can say which URL it expects to see
+  // in the DOM and which one it expects to have been revoked.
+  let minted: string[];
+  let revoked: string[];
+  beforeEach(() => {
+    minted = [];
+    revoked = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+      const url = `blob:favicon-${minted.length + 1}`;
+      minted.push(url);
+      return url;
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => { revoked.push(url); });
+  });
+
   const grounded = [
     'Revenue grew 40%.[^rev] Margin held.[^mar]',
     '',
@@ -464,7 +483,6 @@ describe('footnote citations', () => {
     // host to ask, and keeps the glyph.
     const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
     faviconApi.getFavicon.mockResolvedValue(new Blob([png], { type: 'image/png' }));
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:memo-favicon');
 
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
 
@@ -477,7 +495,7 @@ describe('footnote citations', () => {
       'Source 1: Q3 board deck', 'Source 2: Margin memo',
     ]);
     expect(pills.map((pill) => pill.querySelector('img')?.getAttribute('src') ?? pill.textContent)).toEqual([
-      '*', 'blob:memo-favicon',
+      '*', minted[0],
     ]);
     expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
   });
@@ -490,17 +508,15 @@ describe('footnote citations', () => {
     // image where the asterisk belongs.
     const marker = (url: string) => `Margin held.[^mar]\n\n[^mar]: [Margin memo](${url})\n`;
     faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:first-host');
-    const revoke = vi.spyOn(URL, 'revokeObjectURL');
 
     const { rerender } = render(<MarkdownBody citations={context()}>{marker('https://first.example/memo')}</MarkdownBody>);
-    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', 'blob:first-host'));
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', minted[0]!));
 
     faviconApi.getFavicon.mockResolvedValue(null);
     rerender(<MarkdownBody citations={context()}>{marker('https://second.example/memo')}</MarkdownBody>);
 
     await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledWith('second.example'));
-    expect(revoke).toHaveBeenCalledWith('blob:first-host');
+    expect(revoked).toContain(minted[0]);
     const pill = document.querySelector('.citation-pill');
     expect(pill?.querySelector('img')).toBeNull();
     expect(pill).toHaveTextContent('*');
