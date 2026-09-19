@@ -103,6 +103,9 @@ export function spaceRefusal(
     case "channel_scope_locked_by_space":
       return new ApiError(409, code,
         `A Channel in ${subject} is public through an Organization-wide Space, so its own audience cannot narrow`);
+    case "space_conversation_unreachable":
+      return new ApiError(409, code,
+        `A Channel in ${subject} could not be asked whether this audience may read it`);
   }
 }
 
@@ -849,12 +852,23 @@ export class SpaceService {
     do {
       const page = await this.memberPage(spaceId, "active", cursor);
       for (const { workstreamId } of page.members) {
+        // Tri-state: `true` admits, `false` is the content fence, and `null` is
+        // the object saying it is not that Channel's main conversation — so the
+        // question was never asked. Only `true` may pass, which is the reading
+        // `SpaceBootstrapService.admit` has always taken; treating `null` as
+        // consent let a Channel nobody could ask be widened on the strength of
+        // a non-answer.
         const contains = await (await this.conversationStub(workstreamId)).previewAudienceContainment({
           workspaceId: asWorkspaceId(this.auth.workspaceId),
           workstreamId,
           audience: proposed,
         });
-        if (contains === false) throw spaceRefusal("space_membership_content_fence", "");
+        if (contains !== true) {
+          throw spaceRefusal(
+            contains === false ? "space_membership_content_fence" : "space_conversation_unreachable",
+            "",
+          );
+        }
       }
       cursor = page.nextCursor;
     } while (cursor !== null);
