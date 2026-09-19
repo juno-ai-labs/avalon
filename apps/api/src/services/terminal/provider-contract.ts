@@ -71,12 +71,41 @@ export interface CreateTerminalSandboxInput {
   environment: Record<string, string>;
 }
 
+/**
+ * How long a caller that is itself on a deadline will wait for a sandbox to
+ * report running.
+ *
+ * Starting an archived sandbox is a filesystem restore, and the provider call
+ * that asks for it also waits for it. The two are separable: the request is
+ * what makes Daytona restore, and the wait is only how long this caller stays
+ * to watch. A wait that runs out therefore never means the sandbox is lost —
+ * `resumeProviderSandbox` re-reads provider state precisely because the
+ * restore is still on its way — so the bound belongs to whoever holds the
+ * deadline, not to the adapter.
+ */
+export interface TerminalSandboxWaitOptions {
+  /**
+   * Milliseconds the provider may wait for `running`. Omitted leaves the
+   * Daytona SDK's own default in place, which is what the lifecycle alarm and
+   * repository checkout want: they are bounded by their own budgets, not by a
+   * tool deadline.
+   */
+  waitMs?: number;
+}
+
+/**
+ * A caller's remaining wait, read afresh for each provider call rather than
+ * fixed once, because several provider round trips can precede the one that
+ * finally waits.
+ */
+export type TerminalSandboxWaitBudget = () => TerminalSandboxWaitOptions;
+
 export interface TerminalSandboxProvider {
   createSandbox(input: CreateTerminalSandboxInput): Promise<TerminalSandboxSnapshot>;
   prepareSandbox?(idOrName: string, expectedDomainAllowList: string[]): Promise<TerminalSandboxSnapshot>;
   getSandbox(idOrName: string): Promise<TerminalSandboxSnapshot>;
-  startSandbox(idOrName: string): Promise<void>;
-  recoverSandbox(idOrName: string): Promise<void>;
+  startSandbox(idOrName: string, options?: TerminalSandboxWaitOptions): Promise<void>;
+  recoverSandbox(idOrName: string, options?: TerminalSandboxWaitOptions): Promise<void>;
   stopSandbox(idOrName: string): Promise<void>;
   archiveSandbox(idOrName: string): Promise<void>;
   deleteSandbox(idOrName: string): Promise<void>;

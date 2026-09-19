@@ -4,7 +4,10 @@ import {
   createDaytonaTerminalProvider,
   type DaytonaTerminalProvider,
 } from "./services/terminal/daytona-provider";
-import type { TerminalSandboxProvider } from "./services/terminal/provider-contract";
+import type {
+  TerminalSandboxProvider,
+  TerminalSandboxWaitOptions,
+} from "./services/terminal/provider-contract";
 import { withTerminalProviderRpcAbort } from "./services/terminal/provider-rpc-cancellation";
 import {
   requireTerminalProviderRpcCallback,
@@ -79,12 +82,12 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
     return terminalProviderRpcCall(() => this.provider.getSandbox(idOrName));
   }
 
-  recoverSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.recoverSandbox(idOrName));
+  recoverSandbox(idOrName: string, options?: TerminalSandboxWaitOptions) {
+    return terminalProviderRpcCall(() => this.provider.recoverSandbox(idOrName, options));
   }
 
-  startSandbox(idOrName: string) {
-    return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName));
+  startSandbox(idOrName: string, options?: TerminalSandboxWaitOptions) {
+    return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName, options));
   }
 
   stopSandbox(idOrName: string) {

@@ -22,6 +22,7 @@ import {
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
+  type TerminalSandboxWaitOptions,
 } from "./provider-contract";
 
 export * from "./provider-contract";
@@ -303,6 +304,23 @@ export function createDaytonaTerminalProvider(
     verifyMs: 0,
   } as const;
 
+  /**
+   * A caller's wait budget in the units `Sandbox.start`/`Sandbox.recover` take.
+   *
+   * Three properties of the SDK decide this conversion. It reads seconds;
+   * it reads `0` as "wait forever", so a budget that rounds down to nothing
+   * must never arrive as `0`; and it spends the same number on the start
+   * request itself (`{ timeout: seconds * 1000 }`) before giving the remainder
+   * to its poll loop. That last one is why a caller whose budget is nearly
+   * spent gets a short request timeout rather than a generous one: the result
+   * of a request nobody is still waiting for is not worth a minute, and
+   * Daytona begins restoring whether or not this client stays to see it.
+   * `undefined` leaves the SDK's own default (60 seconds) in place.
+   */
+  const waitSeconds = (options?: TerminalSandboxWaitOptions): number | undefined => (
+    options?.waitMs === undefined ? undefined : Math.max(1, Math.ceil(options.waitMs / 1_000))
+  );
+
   const secretPrefix = (idOrName: string) => `AVALON_READ_${idOrName.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60)}_`;
   /**
    * Best effort, including the listing.
@@ -503,14 +521,14 @@ export function createDaytonaTerminalProvider(
       if (sandbox.refreshData) await measureRequest("sandbox.refresh", () => sandbox.refreshData!());
       return snapshot(sandbox);
     },
-    async startSandbox(idOrName) {
+    async startSandbox(idOrName, options) {
       const startedAt = now();
       let sourceState: TerminalSandboxState = "failed";
       try {
         const sandbox = await load(idOrName);
         sourceState = sandboxState(sandbox.state);
         if (!sandbox.start) throw new Error("Daytona sandbox does not support start");
-        await measureRequest("sandbox.start", () => sandbox.start!(60));
+        await measureRequest("sandbox.start", () => sandbox.start!(waitSeconds(options)));
         const finishedAt = now();
         observe({
           operation: "sandbox_start", outcome: "completed", snapshot: configuration.snapshot,
@@ -527,10 +545,10 @@ export function createDaytonaTerminalProvider(
         throw error;
       }
     },
-    async recoverSandbox(idOrName) {
+    async recoverSandbox(idOrName, options) {
       const sandbox = await load(idOrName);
       if (!sandbox.recover) throw new Error("Daytona sandbox does not support recovery");
-      await measureRequest("sandbox.recover", () => sandbox.recover!(60));
+      await measureRequest("sandbox.recover", () => sandbox.recover!(waitSeconds(options)));
     },
     async stopSandbox(idOrName) {
       const sandbox = await load(idOrName);
