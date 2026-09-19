@@ -208,16 +208,27 @@ async function generalCount(): Promise<number> {
 }
 
 /**
- * Wake this Organization's object and read the alarm it armed for itself.
+ * Wake this Organization's object and read the alarm it armed for itself,
+ * beside the cutover row that alarm is about.
  *
- * Inside `runInDurableObject`, so the object's input gate is held for both
- * steps: an alarm parked at `now + 1` would otherwise fire between them and the
- * read would race the handler that consumed it.
+ * Both in one `runInDurableObject`, but the `await` in the middle of it opens
+ * the object's input gate — so an alarm parked at `now + 1` may already have
+ * fired, claimed the page and moved the cutover's gate before the read. That is
+ * the object doing exactly what the alarm was armed for, so the row comes back
+ * with the alarm and the caller compares the two rather than racing a stopwatch.
  */
-async function alarmArmedOnWake(): Promise<number | null> {
+async function alarmArmedOnWake(): Promise<{
+  armed: number | null;
+  cutover: { not_before: number; attempts: number };
+}> {
   return runInDurableObject(workspace(), async (instance, state) => {
     await instance.spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
-    return state.storage.getAlarm();
+    return {
+      armed: await state.storage.getAlarm(),
+      cutover: state.storage.sql.exec<{ not_before: number; attempts: number }>(
+        "SELECT not_before, attempts FROM space_bootstrap WHERE id = 1",
+      ).one(),
+    };
   });
 }
 
@@ -423,12 +434,16 @@ describe("the Space cutover", () => {
     // has to finish without relying on user access, so the tracker's forced
     // pass wakes every WorkspaceDO and the alarm it arms for itself is what
     // claims the first page — there is no request behind any of this.
-    const armed = await alarmArmedOnWake();
-    expect(armed).not.toBeNull();
-    // Due now, not eventually. An unstarted cutover's `not_before` is zero, and
-    // an overdue candidate is parked one millisecond out — which is how this
-    // tells the cutover's own candidate from the month-away retention sweep.
-    expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+    const woke = await alarmArmedOnWake();
+    expect(woke.armed).not.toBeNull();
+    // The cutover's own candidate, not the month-away retention sweep. An
+    // unstarted cutover's `not_before` is zero and an overdue candidate is
+    // parked one millisecond out, so the alarm is due now — unless the wake has
+    // already run it, in which case the claim advanced the cutover's gate and
+    // the alarm stands on that instant instead. Both readings are this row and
+    // nothing else, which is what makes the assertion exact rather than a race
+    // against the clock.
+    expect(woke.armed! <= Date.now() + 1 || woke.armed === woke.cutover.not_before).toBe(true);
 
     await runWholeCutover();
     await evictDurableObject(workspace());
@@ -436,7 +451,7 @@ describe("the Space cutover", () => {
     // A finished cutover contributes no candidate, so the object wakes only for
     // whatever else it owes — none of which is owed now.
     const after = await alarmArmedOnWake();
-    expect(after === null || after > Date.now() + 1).toBe(true);
+    expect(after.armed === null || after.armed > Date.now() + 1).toBe(true);
   });
 
   it("refuses to close while a Channel is still outside every Space", async () => {
