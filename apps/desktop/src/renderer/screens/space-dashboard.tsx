@@ -179,13 +179,22 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     ?? inactiveSpaces.data.items.find((item) => item.id === spaceId);
   if (!space) return <EmptyState title="Space not found" description="It may have been archived or you may no longer have access." />;
   const isGeneral = space.systemRole === 'general';
+  // This reader reaches the Space only because they can read a Channel placed
+  // in it. They are told its mark and name so that Channel has somewhere to be
+  // drawn, and that is the whole of what this screen may say: the sections
+  // below are the Space's participants, its audience, its lifecycle and what it
+  // hands down, none of which is theirs to see and every one of which the
+  // server refuses them by name. What is left is the header and the list of
+  // conversations — and that list is already filtered to the Channels they can
+  // read, by the same predicate that let them see the Space at all.
+  const reachedThroughChannel = space.reach === 'through_channel';
   // Owner and administrator are one gate everywhere a Space is edited, and the
   // role only decides which control is drawn: the server reauthorizes it.
   const isAdministrator = ['owner', 'admin'].includes(workspace.currentUser.role ?? '');
   // Every Space edit sends the whole record back, so an edit made against the
   // seed would carry fields another client may have changed since the row was
   // written. A remembered Space is read-only until the directory is live.
-  const editable = space.status === 'active' && !directoryFromLocalCache;
+  const editable = space.status === 'active' && !directoryFromLocalCache && !reachedThroughChannel;
   const report = (slot: FailureSlot, sentence: string | null): void => setFailures((current) => {
     const next = { ...current };
     if (sentence === null) delete next[slot];
@@ -272,7 +281,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       <div className="space-dashboard-screen">
         <div className="screen-drag-strip window-drag" />
         <SpaceDashboardHeader
-          actions={space.status === 'active'
+          actions={reachedThroughChannel ? undefined : space.status === 'active'
             // General is the Organization's fallback home. Its identity,
             // lifecycle and audience are immutable; its name and mark are not.
             ? (!isGeneral && <IconButton
@@ -289,7 +298,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               'The space could not be restored.',
             )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
           appearance={space}
-          {...(isGeneral ? {} : {
+          {...(isGeneral || reachedThroughChannel ? {} : {
             audience: {
               scope: space.scope,
               onChange: (scope: 'personal' | 'workspace') => {
@@ -314,7 +323,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
             () => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }),
             'The space name could not be saved.',
           )}
-          {...(isGeneral ? {} : {
+          {...(isGeneral || reachedThroughChannel ? {} : {
             participants: {
               members: spaceMembers,
               onManage: () => {
@@ -327,16 +336,18 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         />
 
         <SpaceDashboardSection
-          action={<div className="space-dashboard-header-actions">
-            <Button disabled={!editable} onClick={() => { report('addChannels', null); setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
-            <IconButton
-              disabled={space.status !== 'active'}
-              label={`New channel in ${space.name}`}
-              onClick={() => void navigate(`/spaces/${space.id}/workstreams/new`)}
-            >
-              <Plus aria-hidden="true" size={15} />
-            </IconButton>
-          </div>}
+          {...(reachedThroughChannel ? {} : {
+            action: <div className="space-dashboard-header-actions">
+              <Button disabled={!editable} onClick={() => { report('addChannels', null); setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
+              <IconButton
+                disabled={space.status !== 'active'}
+                label={`New channel in ${space.name}`}
+                onClick={() => void navigate(`/spaces/${space.id}/workstreams/new`)}
+              >
+                <Plus aria-hidden="true" size={15} />
+              </IconButton>
+            </div>,
+          })}
           heading="Channels"
           headingId="space-channels-heading"
         >
@@ -382,7 +393,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                     // and a control that looked like there was would be
                     // offering an operation the Space authority has no word
                     // for.
-                    {...(conversation.breakoutOf ? {} : {
+                    // A breakout follows its Channel, and a reader who reaches
+                    // this Space through a Channel in it has no membership of
+                    // the Space to end. Both are drawn as the row's reserved,
+                    // hidden control column rather than as a second row shape.
+                    {...(conversation.breakoutOf || reachedThroughChannel ? {} : {
                       onRemove: () => void save(
                         'channels',
                         () => api!.removeChannelFromSpace(space.id, conversation.id),
@@ -401,7 +416,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           {failures.channels && <InlineError>{failures.channels}</InlineError>}
         </SpaceDashboardSection>
 
-        {(['resource', 'sidekick'] as const).map((kind) => (
+        {/* What the Space hands down is the Space's, and a reader who reaches
+            it through one Channel is told nothing about it — the summary they
+            are handed carries no defaults at all, so drawing the sections
+            would be drawing two empty lists and two controls that can only
+            fail. */}
+        {!reachedThroughChannel && (['resource', 'sidekick'] as const).map((kind) => (
           <SpaceDashboardSection
             action={<Button disabled={!editable || saving} onClick={() => { report('addDefault', null); setSelectedIds(new Set()); setDefaultPicker(kind); }}>
               <FolderPlus aria-hidden="true" size={15} /> Add {kind === 'resource' ? 'resource' : 'Sidekick'}

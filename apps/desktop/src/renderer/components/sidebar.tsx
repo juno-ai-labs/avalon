@@ -673,11 +673,15 @@ function WorkstreamRow({
   // otherwise is raised on one: a system Channel is not a product Channel. The
   // API refuses either change; the menu simply does not ask the question.
   const isProductChannel = !workstream.systemKind;
-  // Every active Space the viewer can see that does not already hold this
-  // Channel. Adding never removes another placement, so the ones it is already
-  // in are simply not offered again.
+  // Every active Space the viewer can see *and may place a Channel into* that
+  // does not already hold this one. Adding never removes another placement, so
+  // the ones it is already in are simply not offered again — and a Space this
+  // reader reaches only through a Channel placed in it is not offered at all:
+  // the server refuses that membership by name, and a menu entry that can only
+  // fail teaches a reader that Rally's controls are suggestions.
   const addableSpaces = isProductChannel
-    ? spaces.filter((space) => !workstream.spaceIds.includes(space.id))
+    ? spaces.filter((space) => space.reach !== 'through_channel'
+      && !workstream.spaceIds.includes(space.id))
     : [];
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
@@ -1293,17 +1297,19 @@ export function Sidebar({
   /**
    * Channels this reader can open that none of their visible Spaces holds.
    *
-   * Every Channel is in at least one Space, but not every Space is one this
-   * reader can see: a Channel whose only placements are in somebody else's
-   * personal Space is readable and, without this, would be in the sidebar
-   * nowhere at all. **Manage access** already draws such a placement as a Space
-   * the viewer cannot see; this is the same fact in the navigation.
+   * Two states produce one now, and both are transient. **While the
+   * Organization is still opening** this is *every* Channel, which is the
+   * point: the Spaces above are showing an opening card rather than rows, and
+   * a member with the desktop open through their Organization's cutover would
+   * otherwise watch each page of Channels leave the sidebar as the walk placed
+   * it in General. And a Channel whose every Space is **archived** has no row
+   * to sit under either, because the Spaces section draws active Spaces only.
    *
-   * While the Organization is still opening this is *every* Channel, which is
-   * the point: the Spaces above are showing an opening card rather than rows,
-   * and a member with the desktop open through their Organization's cutover
-   * would otherwise watch each page of Channels leave the sidebar as the walk
-   * placed it in General.
+   * What used to be the ordinary case is not one any more: a Channel placed
+   * only in somebody else's personal Space is now drawn under that Space, whose
+   * mark and name this reader is told precisely so it has somewhere to go. The
+   * section stays because those two states are real, and because it is absent
+   * when empty — which is almost always.
    *
    * Pinned Channels are left out, exactly as the list this replaces left them
    * out: the section above already has them, and a row in both would take its

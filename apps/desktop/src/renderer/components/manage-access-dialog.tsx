@@ -164,7 +164,13 @@ export function ManageAccessDialog({
                   // access — but carries no control: the row cannot name what
                   // leaving it would change, and the server refuses an edit to
                   // a Space the caller may not read anyway.
-                  action={member && space !== undefined
+                  //
+                  // A Space they reach *through this Channel* is the other one
+                  // without a control, and the reason is the opposite: the row
+                  // can name it, because this reader is told its mark and name
+                  // so the Channel has somewhere to be drawn — and taking the
+                  // Channel out of it is still refused by name.
+                  action={member && space !== undefined && space.reach !== 'through_channel'
                     ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
                     : undefined}
                   failure={failures[spaceId]}
