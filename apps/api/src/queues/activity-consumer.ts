@@ -1,4 +1,5 @@
 import { publishAccessRevocation } from "../services/access-revocation";
+
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
@@ -28,7 +29,6 @@ import {
 import { z } from "zod";
 
 import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
-import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
 import {
   SpaceBootstrapQueueMessageSchema,
   SpaceDefaultQueueMessageSchema,
@@ -69,6 +69,22 @@ import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-updat
 import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
+
+/**
+ * The shape of a Project default delivery, kept only to recognize one.
+ *
+ * Projects are retired and their protocol module is gone; what survives is the
+ * platform's retry window, during which a message published before the cutover
+ * can still arrive. Matching on the discriminator and the two fields a log line
+ * needs is the whole contract — there is nothing left to act on, so parsing the
+ * rest would be describing a payload in order to throw it away.
+ */
+const RetiredProjectDefaultMessageSchema = z.object({
+  type: z.literal("project_default_resource"),
+  workspaceId: z.string(),
+  workstreamId: z.string(),
+});
+
 
 interface ActivityRow {
   id: string;
@@ -410,67 +426,23 @@ async function consumeOne(message: Message<unknown>, env: Env,
     }
     return;
   }
-  const projectDefault = ProjectDefaultResourceQueueMessageSchema.safeParse(message.body);
+  const projectDefault = RetiredProjectDefaultMessageSchema.safeParse(message.body);
   if (projectDefault.success) {
-    const target = projectDefault.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    let current: boolean;
-    try {
-      current = await workspace.projectDefaultTargetCurrent(target);
-    } catch (error) {
-      // A retired workspace's default target is never current again.
-      if (!isRetirementRefusal(error)) throw error;
-      message.ack();
-      return;
-    }
-    if (!current) {
-      message.ack();
-      return;
-    }
-    const actorIds = await workspace.projectDefaultTargetActors(target);
-    if (actorIds.length === 0) {
-      message.ack();
-      return;
-    }
-    const member = await env.DB.prepare(
-      `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active'
-          AND user_id IN (${actorIds.map(() => "?").join(",")})
-        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
-    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
-      .first<{ user_id: string; role: AuthContext["role"] }>();
-    if (!member) {
-      await workspace.failProjectDefaultTarget(target);
-      message.ack();
-      return;
-    }
-    const auth: AuthContext = {
-      sessionId: `project-default:${target.projectId}:${target.defaultGeneration}`,
-      userId: asUserId(member.user_id),
-      workspaceId: target.workspaceId,
-      region: env.AVALON_REGION,
-      role: member.role,
-      analyticsWorkspaceId: null,
-      principal: "connector",
-    };
-    try {
-      await new WorkstreamService(env, auth).attachResource(target.workstreamId, target.resourceId);
-      await workspace.completeProjectDefaultTarget(target);
-      message.ack();
-    } catch {
-      await workspace.recordProjectDefaultTargetFailure(target).catch(() => undefined);
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
+    // A tombstone, kept for the platform's retry window and no longer.
+    //
+    // Projects are retired: the migration that retires them invalidates every
+    // pending target and drops the tables underneath it, so a target this
+    // message names can never be current again. Acknowledging is therefore the
+    // whole handler — a retry would reach the same answer on every redelivery
+    // until the message dead-lettered, which is a non-empty dead-letter queue
+    // saying something that is not a failure.
+    logInfo(env, "project_default_delivery_terminal", {
+      workspace_id: projectDefault.data.workspaceId,
+      workstream_id: projectDefault.data.workstreamId,
+      outcome: "skipped",
+      reason: "projects_retired",
+    });
+    message.ack();
     return;
   }
   const spaceDefault = SpaceDefaultQueueMessageSchema.safeParse(message.body);

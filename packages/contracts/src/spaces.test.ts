@@ -4,7 +4,6 @@ import {
   PROJECT_COLOR_KEYS,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_ICON_KEYS,
-  ProjectColorKeySchema,
 } from "./projects";
 import {
   ChannelAccessSourcesSchema,
@@ -46,12 +45,27 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 describe("space contracts", () => {
   it("given the appearance registry, when the Project aliases are read, then they are the same arrays", () => {
-    // Nothing recolours while Projects are being removed: the alias is the
-    // value, not a copy that could drift from it.
+    // The stored appearance vocabulary kept its old names deliberately, so the
+    // alias has to be the *value* rather than a copy that could drift from it.
     expect(PROJECT_ICON_KEYS).toBe(SPACE_ICON_KEYS);
     expect(PROJECT_COLOR_KEYS).toBe(SPACE_COLOR_KEYS);
     expect(PROJECT_COLOR_KEYS_STORABLE).toBe(SPACE_COLOR_KEYS_STORABLE);
-    expect(ProjectColorKeySchema).toBe(SpaceColorKeySchema);
+  });
+
+  it("given the V1 picker, when its registries are read, then it offers exactly 25 icons and 14 colours", () => {
+    // The stored vocabulary, pinned. A key that leaves this list is a value
+    // somebody's Space already holds and a read that starts throwing on it.
+    expect(SPACE_ICON_KEYS).toEqual([
+      "briefcase", "target", "calendar-days", "list-checks", "clipboard-list",
+      "file-text", "folder", "lightbulb", "star", "flag", "rocket",
+      "chart-no-axes-combined", "calculator", "coins", "users", "user-search",
+      "handshake", "megaphone", "palette", "image", "pen-tool", "package",
+      "building-2", "globe-2", "heart",
+    ]);
+    expect(SPACE_COLOR_KEYS).toEqual([
+      "rose", "red", "orange", "amber", "lime", "green", "emerald", "cyan",
+      "blue", "indigo", "violet", "purple", "fuchsia", "pink",
+    ]);
   });
 
   it("given a colour retired from the picker, when a stored appearance is parsed, then it still reads", () => {

@@ -21,7 +21,6 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ProjectSnapshotSchema } from "./projects";
 import { SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
@@ -2319,14 +2318,11 @@ export const WorkspaceSidebarSchema = z.strictObject({
      */
     nextCursor: NoteCursorSchema.nullable().optional(),
   }),
-  /** Optional during the rolling deployment; current servers always send it. */
-  projects: ProjectSnapshotSchema.optional(),
   /**
    * Both Space directories at one waterline, for this viewer.
    *
-   * Optional for the same reason `projects` is: a client reading a payload
-   * from a server that predates it treats the hierarchy as absent rather than
-   * failing the connect.
+   * Optional so a client reading a payload from a server that predates it
+   * treats the hierarchy as absent rather than failing the connect.
    */
   spaces: SpaceSnapshotSchema.optional(),
   /**
@@ -2462,25 +2458,12 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
 ]);
 
 /**
- * The viewer's complete active and inactive project state after a project write.
- *
- * WorkspaceDO owns both lists and their shared waterline. The payload is read
- * per subscribed socket because personal-project visibility and ordering are
- * viewer-specific. Absence is the tombstone when a participant is removed.
- */
-export const WorkspaceProjectSnapshotEventSchema = z.strictObject({
-  type: z.literal("workspace_project_snapshot"),
-  occurredAt: TimestampSchema,
-  projects: ProjectSnapshotSchema,
-});
-
-/**
  * The viewer's complete active and inactive Space state after a Space write.
  *
- * The Project snapshot's shape, and for the same reasons: WorkspaceDO owns both
- * lists and their shared waterline, personal-Space visibility and ordering are
- * per viewer, and absence is the tombstone when somebody stops being a
- * participant. `spacesReady` travels with it because a write can be the write
+ * The shape the Project snapshot used, and for the same reasons: WorkspaceDO
+ * owns both lists and their shared waterline, personal-Space visibility and
+ * ordering are per viewer, and absence is the tombstone when somebody stops
+ * being a participant. `spacesReady` travels with it because a write can be the write
  * that finishes the cutover, and a client holding `false` would otherwise keep
  * showing the opening state until it reconnected.
  */
@@ -2586,7 +2569,6 @@ export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEve
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
-export type WorkspaceProjectSnapshotEvent = z.infer<typeof WorkspaceProjectSnapshotEventSchema>;
 export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
