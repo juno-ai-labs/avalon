@@ -158,11 +158,7 @@ describe("project audience changes", () => {
       participantUserIds: [ownerId],
     });
 
-    expect(WorkstreamService.prototype.removeParticipant).toHaveBeenCalledWith(
-      workstreamId,
-      memberId,
-      { projectEffect: true },
-    );
+    expect(WorkstreamService.prototype.removeParticipant).toHaveBeenCalledWith(workstreamId, memberId);
     expect(calls).toEqual(["workstream:remove-participant", "project:update-audience"]);
   });
 
@@ -188,11 +184,7 @@ describe("project audience changes", () => {
       participantUserIds: [ownerId],
     });
 
-    expect(WorkstreamService.prototype.removeParticipant).toHaveBeenCalledWith(
-      workstreamId,
-      memberId,
-      { projectEffect: true },
-    );
+    expect(WorkstreamService.prototype.removeParticipant).toHaveBeenCalledWith(workstreamId, memberId);
   });
 });
 
