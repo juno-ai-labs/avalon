@@ -202,6 +202,13 @@ typed batch, because a retry needs both. If sharing later needs a confirmation
 that means delivery rather than acceptance of the form, it belongs in an
 app-level notice this tree does not have yet, not back inside the panel.
 
+The outcome is handled on the `mutate` call rather than on the mutation hook,
+which is what makes the dismissal safe. A hook-level `onSuccess` runs even after
+its component is gone, so a share the user dismissed mid-flight would close
+whichever dialog had been opened in its place and take the addresses typed into
+it. React Query skips the per-call callbacks once the observer has no listeners,
+so a dismissal belongs to the panel that submitted the share.
+
 ### 2026-09-17 — Order invitations with the grants they activate
 
 External sharing needs retries to resume without restoring revoked access. The
