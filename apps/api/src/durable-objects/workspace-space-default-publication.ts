@@ -123,6 +123,24 @@ export async function publishSpaceIntentResumes(input: {
  * the alarm is the only thing that wakes without a request. One claim per
  * alarm, because the phases are ordered and a page's cursor is only known once
  * the page before it has been reported.
+ *
+ * **The arithmetic for the fleet-wide pass, on the shared queue.** The
+ * migration tracker's forced pass wakes every WorkspaceDO in a region at once,
+ * and this is the only thing each of them sends. `claimBootstrap` takes one
+ * page at a time and will not take another until the consumer has reported
+ * that one, so in-flight cutover messages are bounded by the number of
+ * *Organizations* rather than by Channels: one Organization is one message,
+ * whatever its size. Against the published Queues limit of **5,000 messages
+ * per second per queue** (`docs/choosing-queues-or-rpc.md`), a fleet at Rally's
+ * size is three to four orders of magnitude under the ceiling, and being wrong
+ * about the fleet by a hundredfold still leaves it under.
+ *
+ * That matters because this shares `ACTIVITY_QUEUE` with the Slack unfurl leg,
+ * whose `max_batch_timeout: 1` was tuned after a real latency complaint. The
+ * burst it sees from a cutover is a per-Organization trickle paced by round
+ * trips, not a per-Channel flood — which is why no second queue is declared
+ * here, and what a future change has to keep true if it ever claims more than
+ * one page per alarm.
  */
 export async function publishSpaceBootstrapWork(input: {
   storage: SpaceDefaultPublicationStorage;
