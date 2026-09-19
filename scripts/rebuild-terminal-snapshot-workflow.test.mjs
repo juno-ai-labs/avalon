@@ -38,24 +38,20 @@ test('the snapshot name is validated before it names anything', async () => {
   assert.match(workflow, /grep -Eq '\^\[a-z0-9\]\[a-z0-9\._-\]\{0,62\}\$'/u);
 });
 
-test('the adoption pull request can run CI and commits only the configured regional config', async () => {
+test('adoption commits only the configured regional config and pushes it to main', async () => {
   const workflow = await readWorkflow();
-  // A PR opened with GITHUB_TOKEN starts no workflows; the fallback is explicit
-  // so a missing token degrades to a warning in the step summary, not silence.
-  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.TERMINAL_SNAPSHOT_PR_TOKEN \|\| secrets\.GITHUB_TOKEN \}\}/u);
   assert.match(workflow, /git add apps\/api\/wrangler\.global\.jsonc\n\s+git commit -qm/u);
   assert.doesNotMatch(workflow, /git commit -a/u);
+  assert.match(workflow, /git fetch origin main\n\s+git rebase origin\/main\n\s+git push origin HEAD:main/u);
+  assert.doesNotMatch(workflow, /git push --force/u);
 });
 
-test('a verified snapshot lands on main without a human when the PR token is configured', async () => {
+test('the push authenticates with the PAT so deploy-api.yml starts', async () => {
   const workflow = await readWorkflow();
-  // Auto-merge is behind the token check: a GITHUB_TOKEN merge would not start
-  // deploy-api.yml on the resulting push to main, which is a silent skip of
-  // the only thing adoption is for.
-  assert.match(workflow, /--body-file - <<BODY/u);
-  assert.match(
-    workflow,
-    /if \[ "\$PR_TOKEN_CONFIGURED" != "true" \]; then[\s\S]*?exit 0\n {10}fi\n(?: {10}#[^\n]*\n)* {10}gh pr merge --auto --merge "\$pr_url"/u,
-  );
-  assert.doesNotMatch(workflow, /gh pr merge --(?:squash|rebase)/u);
+  // A GITHUB_TOKEN push starts no workflows. The checkout token is the PAT
+  // with no fallback, and a missing token fails before the build.
+  assert.match(workflow, /^ {10}token: \$\{\{ secrets\.TERMINAL_SNAPSHOT_PR_TOKEN \}\}$/mu);
+  assert.match(workflow, /if \[ "\$PR_TOKEN_CONFIGURED" != "true" \]; then[\s\S]*?exit 1/u);
+  assert.doesNotMatch(workflow, /secrets\.GITHUB_TOKEN/u);
+  assert.doesNotMatch(workflow, /gh pr /u);
 });
