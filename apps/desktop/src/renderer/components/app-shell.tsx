@@ -23,9 +23,9 @@ import {
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
+import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
@@ -282,6 +282,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
   const spacesReady = useSpacesReady();
+  const ordering = usePersonalOrder();
   const spacesEnabled = spacesEnabledForSession(session);
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -656,10 +657,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           } : current);
           await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         }}
-        onReorderSpaces={async (spaceIds) => {
+        ordering={ordering}
+        // One write for all three hand-arranged lists. The authority answers
+        // with what it actually stored — a request may name an item the
+        // container does not hold — and that answer goes straight into the
+        // cache, so the arrangement does not flash back to its old order in
+        // the frame between the response and the socket's republication.
+        onReorderContainer={async (order) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const directory = await api.reorderSpaces(spaceIds);
-          queryClient.setQueryData(SPACES_QUERY_KEY, directory);
+          applyContainerOrder(queryClient, await api.reorderContainer(order));
         }}
         onRestoreSpace={async (spaceId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');

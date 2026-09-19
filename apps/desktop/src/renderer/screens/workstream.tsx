@@ -19,6 +19,9 @@ import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal } from '../components/primitives';
 
+import { moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
+import { applyContainerOrder } from '../lib/sidebar-list-store';
+import { usePersonalOrder } from '../lib/use-space-directories';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
@@ -60,7 +63,8 @@ type WorkstreamSidebarFailure =
   | 'rename_workstream'
   | 'rename_substream'
   | 'archive_workstream'
-  | 'archive_substream';
+  | 'archive_substream'
+  | 'reorder_substreams';
 
 const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: string; copy: string }> = {
   copy_link: { title: 'The link couldn’t be copied', copy: 'The link couldn’t be copied. Try again.' },
@@ -69,6 +73,10 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: st
   rename_substream: { title: 'The breakout couldn’t be renamed', copy: 'The breakout couldn’t be renamed. Try again.' },
   archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
+  // Names the row that snapped back, the way the sidebar's reorder copy does:
+  // the rail is back in the order the Organization holds, which is the order
+  // this person's other windows are showing.
+  reorder_substreams: { title: 'The breakouts couldn’t be reordered', copy: 'The breakouts are back in the order they were in. Try again in a moment.' },
 };
 
 export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
@@ -136,7 +144,7 @@ export function WorkstreamScreen(): React.JSX.Element {
    * open child. `docs/substream-creation.md` holds why each of those is so, and
    * what writing it back cost when it was tried.
    */
-  const railChildren = children.data?.privateChildren?.map((child) =>
+  const namedChildren = children.data?.privateChildren?.map((child) =>
     child.substreamId === selectedSubstreamId && openChild.data?.title
       ? { ...child, title: openChild.data.title }
       : child);
@@ -148,6 +156,53 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuFailure, setSubstreamMenuFailure] = useState<WorkstreamSidebarFailure | null>(null);
+  const ordering = usePersonalOrder();
+  const [breakoutOrder, setBreakoutOrder] = useState<string[] | null>(null);
+  const draggingBreakoutId = useRef<string | null>(null);
+
+  /**
+   * The rail's rows, in the order this person put them in.
+   *
+   * Oldest first is the directory's order and stays the natural one: a
+   * Breakout nobody has dragged keeps arriving at the bottom, where the
+   * **New breakout** row leaves it. The stored arrangement goes in front of
+   * that, through the same helper the sidebar's Spaces and placements use, and
+   * an id it names that this rail is not drawing is dropped — WorkspaceDO
+   * cannot see a Channel's children, so it stores what it is given and this is
+   * where an id that names nothing stops.
+   */
+  const railChildren = namedChildren === undefined ? undefined : orderByStoredIds(
+    namedChildren,
+    breakoutOrder ?? storedOrderFor(ordering, { kind: 'channel', id }),
+    (child) => child.substreamId,
+  );
+  const railChildIds: string[] = railChildren?.map((child) => child.substreamId) ?? [];
+  /**
+   * Send the arrangement whole, and drop it if the server refuses.
+   *
+   * The rail then shows what the Organization actually holds, which is what
+   * this person's other windows are showing — the same rollback the pinned
+   * list and the Spaces section make, because a local order the server never
+   * took would survive until the next reload and then vanish.
+   */
+  const commitBreakoutOrder = async (substreamIds: string[]): Promise<void> => {
+    if (!api) return;
+    setBreakoutOrder(substreamIds);
+    setSubstreamMenuFailure(null);
+    try {
+      applyContainerOrder(queryClient, await api.reorderContainer({
+        container: { kind: 'channel', id },
+        itemIds: substreamIds,
+      }));
+    } catch {
+      setSubstreamMenuFailure('reorder_substreams');
+    } finally {
+      // Only while this call's arrangement is the one on screen: two moves in
+      // quick succession overlap, and clearing unconditionally would snap the
+      // rail back to an order the second has already moved past.
+      setBreakoutOrder((current) => current === substreamIds ? null : current);
+    }
+  };
   /**
    * The substream being written, if any. Nothing has been reserved on the
    * server while this is set: preparation and confirmation both happen on the
@@ -485,6 +540,47 @@ export function WorkstreamScreen(): React.JSX.Element {
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
             onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
           } : undefined}
+          // A guest is handed none: every ordering write is refused for a
+          // guest by the same gate every Space write is, so the rail offers
+          // them a gesture that could only fail. The host decides it, the way
+          // the sidebar's shell decides whether a session has Spaces at all.
+          {...(guest || !api ? {} : { substreamDrag: {
+            draggingSubstreamId: breakoutOrder === null ? null : draggingBreakoutId.current,
+            onDragStart: (substreamId: string) => {
+              draggingBreakoutId.current = substreamId;
+              setBreakoutOrder(railChildIds);
+            },
+            onDragOver: (targetId: string) => {
+              const dragged = draggingBreakoutId.current;
+              if (dragged === null || dragged === targetId) return;
+              setBreakoutOrder((current) => {
+                const ids = current ?? railChildIds;
+                const target = ids.indexOf(targetId);
+                if (target < 0 || ids.indexOf(dragged) === target) return ids;
+                return moveWithin(ids, dragged, target);
+              });
+            },
+            onDragEnd: (cancelled: boolean) => {
+              const arranged = breakoutOrder;
+              draggingBreakoutId.current = null;
+              if (arranged === null) return;
+              // Escape, or a release outside the rail, leaves `dropEffect` at
+              // `none` — and the arrangement built while the pointer crossed
+              // the other rows must be abandoned rather than saved, or backing
+              // out of a drag becomes the same thing as finishing it.
+              if (cancelled || arranged.join() === railChildIds.join()) {
+                setBreakoutOrder(null);
+                return;
+              }
+              void commitBreakoutOrder(arranged);
+            },
+            onMove: (substreamId: string, direction: -1 | 1) => {
+              const from = railChildIds.indexOf(substreamId);
+              const to = from + direction;
+              if (from < 0 || to < 0 || to >= railChildIds.length) return;
+              void commitBreakoutOrder(moveWithin(railChildIds, substreamId, to));
+            },
+          } })}
           substreamActions={{
             onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,

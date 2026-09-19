@@ -1,8 +1,8 @@
-import { SpaceDirectorySchema, type SpaceDirectory } from '@rally/contracts';
+import { PersonalOrderSchema, SpaceDirectorySchema, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
-import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY } from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY } from './sidebar-list-store';
 import type { AutomationSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
@@ -24,6 +24,20 @@ export interface CachedWorkspaceDirectory {
   automations: AutomationSummary[];
   spaces: SpaceDirectory | null;
   inactiveSpaces: SpaceDirectory | null;
+  /**
+   * The arrangement this person last committed for each list they ordered.
+   *
+   * On the row rather than derived, because without it a cold launch paints
+   * every Space's Channels and every Channel's Breakouts in the order the
+   * directory happens to hold them and then reshuffles them a moment later,
+   * under somebody whose whole reason for dragging them was that the order
+   * mattered.
+   *
+   * Absent on a row written before this existed, which `parse` absorbs as an
+   * empty ordering — one launch painted in the natural order, rather than
+   * dropping every cached row to avoid it.
+   */
+  ordering: PersonalOrder;
 }
 
 export const DIRECTORY_CACHE_KEY = 'directory';
@@ -85,6 +99,18 @@ function parseSpaces(value: unknown): SpaceDirectory | null | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/**
+ * A row written before the ordering existed is read as having none, which is
+ * the whole reason the slice is not at version 4: absorbing the absence costs
+ * one launch drawn in the natural order, and bumping would cost every person a
+ * cold, empty sidebar to avoid it.
+ */
+function parseOrdering(value: unknown): PersonalOrder | undefined {
+  if (value === undefined) return [];
+  const parsed = PersonalOrderSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
@@ -92,8 +118,10 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const automations = parseList(candidate['automations'], isAutomationSummaryLike);
   const spaces = parseSpaces(candidate['spaces']);
   const inactiveSpaces = parseSpaces(candidate['inactiveSpaces']);
+  const ordering = parseOrdering(candidate['ordering']);
   if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
-  return { workstreams, automations, spaces, inactiveSpaces };
+  if (ordering === undefined) return null;
+  return { workstreams, automations, spaces, inactiveSpaces, ordering };
 }
 
 /**
@@ -144,6 +172,9 @@ export async function hydrateWorkspaceDirectory(
     if (cached.inactiveSpaces && queryClient.getQueryData(INACTIVE_SPACES_QUERY_KEY) === undefined) {
       queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, cached.inactiveSpaces);
     }
+    if (queryClient.getQueryData(PERSONAL_ORDER_QUERY_KEY) === undefined) {
+      queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, cached.ordering);
+    }
   });
   return true;
 }
@@ -165,6 +196,7 @@ export function mirrorWorkspaceDirectory(
       SIDEBAR_LIST_QUERY_KEYS.automations,
       SPACES_QUERY_KEY,
       INACTIVE_SPACES_QUERY_KEY,
+      PERSONAL_ORDER_QUERY_KEY,
     ]),
     snapshot: () => {
       if (!options.live()) return null;
@@ -178,6 +210,7 @@ export function mirrorWorkspaceDirectory(
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
         spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
         inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,
+        ordering: queryClient.getQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY) ?? [],
       };
     },
     write: (value, atEpoch) => workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, value, DIRECTORY_CACHE_KEY, atEpoch),
