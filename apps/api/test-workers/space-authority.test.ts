@@ -27,11 +27,13 @@ import {
   conversationEffectHash,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
+  WorkspaceWorkstreamStateEventSchema,
   type ParentEffect,
   type SpaceId,
   type UserId,
   type WorkspaceSidebar,
   type WorkspaceSpaceSnapshotEvent,
+  type WorkspaceWorkstreamStateEvent,
   type WorkstreamId,
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
@@ -353,6 +355,19 @@ function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
 }
 
+/** The next Channel row this socket is pushed, skipping everything else. */
+function nextWorkstreamState(socket: WebSocket): Promise<WorkspaceWorkstreamStateEvent> {
+  return new Promise((resolve) => {
+    const listen = (event: MessageEvent): void => {
+      const decoded = WorkspaceWorkstreamStateEventSchema.safeParse(JSON.parse(String(event.data)));
+      if (!decoded.success) return;
+      socket.removeEventListener("message", listen);
+      resolve(decoded.data);
+    };
+    socket.addEventListener("message", listen);
+  });
+}
+
 /** The next Space snapshot, skipping whatever else the socket is carrying. */
 function nextSpaceSnapshot(socket: WebSocket): Promise<WorkspaceSpaceSnapshotEvent> {
   return new Promise((resolve) => {
@@ -627,6 +642,23 @@ describe("WorkspaceDO space authority", () => {
     expect(sidebar.workstreams.items).toMatchObject([
       { id: CHANNEL_A, spaceIds: [organization] },
     ]);
+    socket.close();
+  });
+
+  it("given an open socket, when a Channel is placed, then its row is pushed with the placement", async () => {
+    const spaceId = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    const { socket } = await connectViewer(MEMBER, "cf15");
+
+    // The placement has to reach an *open* client. Everything else here reads
+    // the connect payload, which a reload produces — and a placement that only
+    // appears after one is a placement the person who made it does not see.
+    const pushed = nextWorkstreamState(socket);
+    await place(spaceId, CHANNEL_A);
+    const event = await pushed;
+
+    expect(event.workstreamId).toBe(CHANNEL_A);
+    expect(event.workstream?.spaceIds).toEqual([spaceId]);
     socket.close();
   });
 
