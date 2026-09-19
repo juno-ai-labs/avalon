@@ -3,6 +3,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   WorkstreamWorkflowInputSchema,
   asUserId,
@@ -516,8 +517,32 @@ describe("work-stream transcript on workerd SQLite", () => {
 
       // Repaired, not abandoned: the batch has its result, so the loop can
       // carry the ambiguity to the model instead of the run dying on it.
-      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!).at(-1))
-        .toMatchObject({ role: "tool", tool_call_id: "provider-call" });
+      const recovered = bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!).at(-1);
+      expect(recovered).toMatchObject({ role: "tool", tool_call_id: "provider-call" });
+
+      // And the model is told what the member is told. Continuing past an
+      // ambiguity is only defensible if the one reader able to repeat the
+      // write knows not to; a bare `ambiguous_external_write` code left it
+      // free to reissue the call on a fresh receipt coordinate.
+      const modelResult = JSON.parse(
+        z.object({ content: z.string() }).parse(recovered).content,
+      ) as { success: boolean; kind: string; data: Record<string, unknown> };
+      expect(modelResult).toMatchObject({ success: false, kind: "ambiguous_external_write" });
+      expect(modelResult.data).toMatchObject({
+        code: "ambiguous_external_write",
+        recovery: "ambiguous",
+        toolName: "publish_resource",
+      });
+      expect(String(modelResult.data.instruction)).toContain("publish_resource");
+      expect(String(modelResult.data.instruction)).toContain("Do not repeat it");
+      // Authority is revalidated before the tool is reached, so this run —
+      // which has no seeded membership — never gets as far as building the
+      // plugin, let alone re-entering the write. The live path proves the same
+      // thing in `beforeToolCall`; crash repair bypasses that hook entirely, so
+      // without this the interrupted write of a principal who lost access
+      // between the interruption and the repair would still execute. The value
+      // is the ordering: any later refusal would report its own code here.
+      expect(modelResult.data.reason).toBe("run_authority_lost");
     });
   });
 
