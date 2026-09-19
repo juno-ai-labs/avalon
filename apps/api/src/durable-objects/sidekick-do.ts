@@ -1914,6 +1914,9 @@ export class SidekickDO extends ConversationParentDurableObject {
     for (const evaluator of rules.evaluators) {
       const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", "An evaluator names a plugin with no connection");
+      if (connection.connector_type === "canva" && !evaluator.source.resourceId) {
+        throw new ApiError(422, "canva_trigger_requires_design", "Choose a Canva design for this trigger.");
+      }
       const descriptors = connectorActivityTriggerDescriptors(
         registry.get(connection.connector_type),
         connection.config_json,

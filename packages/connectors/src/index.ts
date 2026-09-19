@@ -1,3 +1,7 @@
+export { CANVA_POLL_SECONDS } from "./canva-polling";
+export { parseCanvaDesignReference } from "./canva-resource";
+import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
+export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -53,6 +57,8 @@ export {
   createHostedMcpPassthrough,
   hostedMcpBearerAuth,
   HOSTED_MCP_DEFAULT_RESPONSE_BYTES,
+  HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS,
+  listHostedMcpTools,
   type AuthorizedHostedMcpPassthrough,
   type HostedMcpAuthorization,
   type HostedMcpOAuthConfig,
@@ -5193,6 +5199,7 @@ export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
   customMcp?: CustomMcpConnectorConfig;
   ashby?: AshbyConnectorConfig;
+  canva?: CanvaConnectorConfig;
   fireflies?: FirefliesConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
@@ -5215,6 +5222,7 @@ export function createConnectorRegistry(input: {
     ...input.ashby,
     fetch: instrumentConnectorFetch("ashby", input.ashby.fetch ?? globalThis.fetch, input.observer),
   }));
+  if (input.canva) adapters.push(createCanvaConnector(input.canva));
   if (input.fireflies) adapters.push(createFirefliesConnector({
     ...input.fireflies,
     fetch: instrumentConnectorFetch(

@@ -280,6 +280,27 @@ credential failure from an MCP protocol/surface failure. Inspect the provider's
 current `tools/list` response when a formerly working prompt loses a tool—do not
 patch a historical snapshot into Rally.
 
+## Changelog
+
+### 2026-09-19 — Preserve Workers fetch invocation and provider OAuth metadata
+
+Live Canva discovery failed before reaching the network because the transport
+called native `fetch` as a method of its request object. A plain function call
+preserves the Workers receiver contract; a workerd regression exercises native
+fetch through a local data-URL provider response and fails with the old call.
+Explicit OAuth resource configuration now also selects that resource's discovery
+URL, since Canva's root and `/mcp` metadata advertise different resource strings.
+Optional revocation endpoints are origin-validated and retained with credentials;
+RFC 7009 revocation accepts empty success bodies instead of parsing them as JSON.
+
+### 2026-09-19 — Preserve OAuth resource identity and narrowly support native redirects
+
+The OAuth helper preserves the advertised resource string instead of adding a
+trailing slash. Canva's resource is its origin, distinct from the MCP endpoint.
+An explicit native option permits only HTTP 127.0.0.1 with a port and exact
+`/callback` path; ordinary connector redirects still require HTTPS. This keeps
+the temporary desktop flow from becoming an arbitrary redirect exception.
+
 ### 2026-09-03 — A hosted server can be named by a connection rather than by source
 
 **What changed:** `createHostedMcpPassthrough` accepts a `serverUrl` resolver as

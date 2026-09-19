@@ -1,3 +1,4 @@
+import { readCanvaReference } from "./canva-resource-access";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
@@ -5354,6 +5355,8 @@ async function loadHarnessTools(
           toolInput,
           context.signal,
           context.providerIdempotencyKey,
+          undefined,
+          context.effectIntentId,
         ),
       };
       const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
@@ -5956,6 +5959,7 @@ async function executeAuthorizedConnectorTool(
   signal: AbortSignal,
   providerIdempotencyKey?: string,
   ownershipGuard?: () => Promise<void>,
+  effectIntentId?: string,
 ) {
   await ownershipGuard?.();
   const { connection, adapter } = await loadAuthorizedConnectionContext(
@@ -5975,6 +5979,15 @@ async function executeAuthorizedConnectorTool(
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : input.executionPrincipal;
+    if (frozen.connectorType === "canva") {
+      const transaction = z.object({ transaction_id: z.string().optional() }).parse(toolInput);
+      if (transaction.transaction_id && !await createToolReceiptObjectPort(
+        env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0",
+      ).canvaTransactionOwned({ runId: input.harnessRunId, connectionId: frozen.connectionId,
+        transactionId: transaction.transaction_id, ...(effectIntentId ? { effectIntentId } : {}) })) {
+        throw new ConnectorError("unauthorized", "This Canva editing transaction is not open for this run. Inspect the design and start a new editing transaction.");
+      }
+    }
     const result = await adapter.executeTool(
       toolName,
       toolInput,
@@ -7625,7 +7638,7 @@ function rethrowFirecrawlToolError(
 
 export async function pollConnectorConnection(
   env: Env,
-  input: { workspaceId: string; connectionId: string },
+  input: { workspaceId: string; connectionId: string; pollScheduleId?: string },
 ): Promise<{
   activityIds: string[];
   cursor: unknown;
@@ -7656,6 +7669,30 @@ export async function pollConnectorConnection(
     cursor: parseJson(row.cursor_json, {}),
     config: { ...parseJson<Record<string, unknown>>(row.config_json, {}), region: env.AVALON_REGION },
   };
+  if (row.connector_type === "canva") {
+    // Resolve only this explicitly enabled watch; no account-wide scan on connect.
+    let watch = input.pollScheduleId ? await env.DB.prepare(
+      `SELECT rw.id AS watchId, r.provider_resource_id AS designId, r.protected_access_json AS protectedAccessJson
+       FROM resource_watches rw JOIN resources r ON r.id = rw.resource_id AND r.workspace_id = rw.workspace_id
+       WHERE rw.id = ? AND rw.workspace_id = ? AND rw.connection_id = ? AND rw.enabled = 1
+         AND r.resource_type = 'canva_design'`,
+    ).bind(input.pollScheduleId, input.workspaceId, input.connectionId).first<{ watchId: string; designId: string; protectedAccessJson: string | null }>() : null;
+    if (!watch && input.pollScheduleId) {
+      watch = await env.DB.prepare(
+        `SELECT registration.registration_id AS watchId, r.provider_resource_id AS designId,
+                r.protected_access_json AS protectedAccessJson
+         FROM workspace_external_event_registrations registration
+         JOIN resources r ON r.id = registration.resource_id AND r.connection_id = registration.connection_id
+         JOIN schedules s ON s.id = registration.registration_id AND s.enabled = 1
+         WHERE registration.registration_id = ? AND registration.workspace_id = ?
+           AND registration.connection_id = ? AND registration.connector_type = 'canva'
+           AND registration.state = 'active' AND r.resource_type = 'canva_design'`,
+      ).bind(input.pollScheduleId, input.workspaceId, input.connectionId)
+        .first<{ watchId: string; designId: string; protectedAccessJson: string | null }>();
+    }
+    context.config.canvaWatch = watch ? { watchId: watch.watchId, designId: watch.designId,
+      accessReference: await readCanvaReference(env, input.workspaceId, input.connectionId, watch.designId, watch.protectedAccessJson) } : null;
+  }
   const registry = connectorRegistryForEnv(env);
   const adapter = registry.get(String(row.connector_type));
   const baseCursorJson = typeof row.cursor_json === "string" ? row.cursor_json : "{}";

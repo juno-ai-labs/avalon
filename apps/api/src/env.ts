@@ -231,6 +231,8 @@ export interface Env {
    * state, not a misconfiguration, and a region that has never heard of
    * Fireflies must still start.
    */
+  CANVA_CONNECTOR_ENABLED?: string;
+  CANVA_LOOPBACK_ENABLED?: string;
   FIREFLIES_CONNECTOR_ENABLED?: string;
   POSTHOG_PROJECT_TOKEN?: string;
   /** Global-only signer for onboarding telemetry capabilities. regional validates

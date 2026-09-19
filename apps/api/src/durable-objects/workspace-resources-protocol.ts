@@ -110,6 +110,7 @@ export const WorkspaceConnectorResourceResolveRequestSchema = deferredZodSchema(
   resourceType: z.string(),
   title: z.string(),
   canonicalUrl: z.string().nullable(),
+  protectedAccessJson: z.string().nullable().optional(),
   at: TimestampSchema,
 }));
 

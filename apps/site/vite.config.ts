@@ -78,6 +78,7 @@ export default defineConfig(async () => {
           supportGitHub: `${projectRoot}support/connectors/github/index.html`,
           supportAshby: `${projectRoot}support/connectors/ashby/index.html`,
           supportFireflies: `${projectRoot}support/connectors/fireflies/index.html`,
+          supportCanva: `${projectRoot}support/connectors/canva/index.html`,
           supportGranola: `${projectRoot}support/connectors/granola/index.html`,
           supportLinear: `${projectRoot}support/connectors/linear/index.html`,
           supportNotion: `${projectRoot}support/connectors/notion/index.html`,

@@ -2,6 +2,7 @@ import { ConnectorConnectionCardCatalog, type OnboardingConnectorId } from '@ral
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { ServerCog, Webhook } from 'lucide-react';
+export const CANVA_CONNECTION_DISCLOSURE = 'Connecting lets Rally read and change your Canva designs, folders, assets and brand kit. Canva receives a brief description of each requested operation. Watches are off until you enable them.';
 export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
 export const connectorProviders = [
@@ -41,6 +42,12 @@ export const connectorProviders = [
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['ashby.personal.mcp'],
     capabilities: ['ashby.workspace.events'],
+  },
+  {
+    id: 'canva' as const, provider: ConnectorConnectionCardCatalog.canva.providerType,
+    name: 'Canva', description: 'Designs, presentations, graphics, comments, and exports.',
+    mark: ConnectorConnectionCardCatalog.canva.iconName, scopes: ['you'] as const,
+    capabilities: ['canva.personal.mcp'],
   },
   {
     id: 'fireflies' as const,

@@ -997,6 +997,14 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 
 ## Changelog
 
+### 2026-09-19 — Bind Canva loopback redemption to the initiating session
+
+Canva's interim native callback runs in Electron main and forwards only an
+OAuth code. The API checks the member and workspace before consuming the sealed
+attempt; the public callback cannot redeem a desktop attempt. Provider credentials
+remain server-side. Design share URLs are encrypted separately from navigation
+metadata because the URL may itself grant access. See [Canva](canva-integration.md).
+
 ### 2026-09-16 — Bind sessions to membership instances
 
 Guest promotion should retain a person's session, but removing and inviting the

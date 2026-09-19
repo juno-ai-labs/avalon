@@ -250,6 +250,21 @@ connectionRoutes.get("/:id/installation", zValidator("param", idParam), async (c
 connectionRoutes.post("/:id/installation", zValidator("param", idParam), zValidator("json", z.strictObject({
   action: z.enum(["repair", "disconnect", "forget_cleanup", "reconcile", "rotate"]), key: z.string().optional(), providerId: z.string().optional(),
 })), async (c) => c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).changeInstallation(c.req.valid("param").id, c.req.valid("json")))));
+connectionRoutes.post("/canva/start", zValidator("json", z.strictObject({
+  scope: z.literal("personal"), capabilities: z.array(z.literal("canva.personal.mcp")).length(1),
+  loopbackRedirectUri: z.string().optional(),
+})), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(c, service,
+    await service.beginProvider("canva", { ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c) }))));
+});
+connectionRoutes.post("/canva/complete", zValidator("json", z.strictObject({
+  code: z.string().min(1).optional(), error: z.literal("access_denied").optional(), state: z.string().min(1),
+}).refine((value) => Boolean(value.code) !== Boolean(value.error), "Supply a code or a denial")), async (c) => {
+  const input = c.req.valid("json");
+  await new ConnectionService(c.env, getAuth(c)).completeCanvaLoopback(input.code ?? null, input.state);
+  return c.json({ ok: true });
+});
 connectionRoutes.post("/fireflies/start", zValidator("json", firefliesStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -500,6 +515,9 @@ connectionCallbackRoutes.get("/custom-mcp/callback", zValidator("query", googleC
 connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "ashby", query, (service, code, state) => service.completeProvider("ashby", code, state));
+});
+connectionCallbackRoutes.get("/canva/callback", zValidator("query", googleCallback), async (c) => {
+  return connectorCallback(c, "canva", c.req.valid("query"), (service, code, state) => service.completeProvider("canva", code, state));
 });
 connectionCallbackRoutes.get("/fireflies/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");

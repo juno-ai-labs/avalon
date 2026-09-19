@@ -29,6 +29,7 @@ export const TELEMETRY_CONNECTOR_TYPES = [
   "generic_webhook",
   "github",
   "ashby",
+  "canva",
   "fireflies",
   "granola",
   "linear",

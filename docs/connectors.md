@@ -1295,6 +1295,16 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
+### 2026-09-19 — Personal Canva and explicit design observation
+
+The gated Canva adapter discovers the live MCP catalog and uses backend-held
+OAuth credentials. Only explicit named-design watches poll; connecting is not
+consent to account-wide monitoring. Design revisions and new discussion IDs are
+newsworthy in the manifest, while polling marks them non-digestible until the
+provider recipient policy permits delivery. Complete comment and reply scans
+replace a sorted top-ID watermark because a reply does not advance its parent's
+timestamp. [Canva integration](canva-integration.md) owns the lifecycle details.
+
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
 
 **What changed:** The Ashby and Fireflies cards keep only the sentence that says

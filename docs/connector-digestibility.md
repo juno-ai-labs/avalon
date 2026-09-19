@@ -32,6 +32,16 @@ case rather than a failure.
 | `applicationSubmit` | No | Recruiting trigger evidence for explicitly bound automations; not general workspace digest news. |
 | `candidateStageChange` | No | Application progression is operational recruiting data, not a workspace-wide announcement. |
 
+## Canva
+
+These are newsworthy types, but the gated implementation withholds their polling
+streams from digest delivery until Canva's recipient policy is settled.
+
+| Activity type | Digestible? | Why |
+| --- | --- | --- |
+| `design.revised` | Yes | An explicitly watched design changed since the previous observation. |
+| `design.commented` | Yes | A new thread or reply appeared on an explicitly watched design. |
+
 ## GitHub
 
 Thirty of ninety-one. The loudest connector Rally has: continuous integration

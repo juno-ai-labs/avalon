@@ -429,6 +429,7 @@ export interface RallyDesktopBridge {
    * rejects when the card could not be rendered or written.
    */
   exportMessage: (request: MessageExportRequest) => Promise<MessageExportResult>;
+  connectCanva?: (operationId?: string) => Promise<{ url: string; attemptId: string }>;
   openExternal: (url: string) => Promise<void>;
   /**
    * Show a live artifact in the rail's preview region.

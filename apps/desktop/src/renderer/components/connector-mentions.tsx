@@ -1,3 +1,4 @@
+import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
@@ -8,6 +9,7 @@ import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
 import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import {
+  CANVA_CONNECTION_DISCLOSURE,
   connectorProviderById,
   isOAuthConnectorProvider,
   type OAuthConnectorProviderCatalogEntry,
@@ -174,7 +176,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   const connect = useMutation({
     mutationFn: async () => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
-      if (reconnect) {
+      if (reconnect && provider.provider !== 'canva') {
         const authorization = await api.reconnectConnection(
           reconnect.id,
           provider.provider === 'granola' ? undefined : provider.provider,
@@ -185,8 +187,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
         await openExternal(authorization.url);
         return { authorization, provider: attempt.provider };
       }
-      const authorization = await api.startProviderConnection(provider.provider, scope, capabilities);
-      await openExternal(authorization.url);
+      const authorization = await startConnectorAuthorization(api, provider.provider, scope, capabilities);
       return { authorization, provider: provider.provider };
     },
     onSuccess: ({ authorization, provider: oauthProvider }) => {
@@ -267,6 +268,7 @@ export function ConnectorConnectionCardView({
         <div className="connector-connection-card-body">
           <strong>{provider.name}</strong>
           <p>{provider.description}</p>
+          {provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}
           <small>{request.scope === 'personal' ? 'Personal connection' : 'Workspace connection'}</small>
         </div>
         {connected ? (
