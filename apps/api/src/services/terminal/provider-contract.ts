@@ -85,20 +85,20 @@ export interface CreateTerminalSandboxInput {
  */
 export interface TerminalSandboxWaitOptions {
   /**
-   * Milliseconds the provider may wait for `running`. Omitted leaves the
-   * Daytona SDK's own default in place, which is what the lifecycle alarm and
-   * repository checkout want: they are bounded by their own budgets, not by a
-   * tool deadline.
+   * The wall-clock instant, in epoch milliseconds, the wait must not outlive.
+   *
+   * An instant rather than a duration because this crosses the provider RPC
+   * hop and then waits on the adapter's own sandbox lookup before it reaches
+   * the SDK: a duration would already be stale by then, and the wait would
+   * outrun the deadline by however long those took. Whoever spends it
+   * subtracts `Date.now()` at the point of use.
+   *
+   * Omitted leaves the Daytona SDK's own default in place, which is what the
+   * lifecycle alarm and repository checkout want: they are bounded by their
+   * own budgets, not by a tool deadline.
    */
-  waitMs?: number;
+  deadlineAtMs?: number;
 }
-
-/**
- * A caller's remaining wait, read afresh for each provider call rather than
- * fixed once, because several provider round trips can precede the one that
- * finally waits.
- */
-export type TerminalSandboxWaitBudget = () => TerminalSandboxWaitOptions;
 
 export interface TerminalSandboxProvider {
   createSandbox(input: CreateTerminalSandboxInput): Promise<TerminalSandboxSnapshot>;

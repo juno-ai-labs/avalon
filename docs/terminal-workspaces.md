@@ -273,16 +273,29 @@ preserving the sandbox ID, generation, and filesystem.
 **How long a restore may take is the acquisition budget's to say.** Starting an
 archived sandbox restores its filesystem, and the Daytona call that asks for
 that also waits for it — but the two are separable, and only the request is
-what makes the restore happen. So acquisition hands the provider what is left
-of `TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS`, the same number every Terminal
-tool's `timeoutMs` is sized from, read at the moment each wait begins rather
-than once per acquisition: the policy read, authority replacement, and network
-reconciliation all run first and all spend it. `startSandbox` and
-`recoverSandbox` take that budget as `waitMs` and the adapter converts it to
-the seconds Daytona's SDK expects; a caller with no budget of its own — the
-lifecycle alarm, repository checkout — passes none and gets the SDK's own
-default. A budget already exhausted still issues the start and simply does not
-wait for it, so the next tool call finds a restore under way.
+what makes the restore happen. So acquisition hands the provider the instant
+its work must not outlive: `acquisitionStartedAt` plus
+`TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS`, the same number every Terminal tool's
+`timeoutMs` is sized from. `startSandbox` and `recoverSandbox` carry it as
+`deadlineAtMs`, and the adapter subtracts `Date.now()` from it immediately
+before the SDK call.
+
+**An instant, not a remaining duration.** A duration is only true when it is
+computed, and three things sit between the coordinator and the wait: the policy
+read, authority replacement and network reconciliation before the call; the
+provider RPC session; and the adapter's own sandbox lookup. A duration
+snapshotted at the coordinator would let the wait outlive the budget by however
+long those took — with a 120s budget and 20s of session and lookup, Daytona
+would still be asked to wait a further 120s. An instant survives every hop
+unchanged, so each of those is charged against it wherever it is spent.
+
+Rounding to the SDK's seconds is **down**, so a wait can never outrun the
+instant it was given. A deadline already reached still issues the start and
+waits one second, the smallest finite value the SDK accepts — `0` means "wait
+forever" there — so the next tool call finds a restore under way. That
+sub-second overshoot is the floor's unavoidable cost, not a grace. A caller
+with no deadline of its own — the lifecycle alarm, repository checkout — passes
+none and gets the SDK's own default.
 
 A start or recovery timeout does not establish loss. Acquisition reads metadata
 again and accepts a completed start, waits out a transition, or replaces only
@@ -869,13 +882,15 @@ update lag before changing the default.
 ### 2026-09-19 — A sandbox restore is bounded by the acquisition budget, not the SDK's default
 
 **What changed:** `startSandbox` and `recoverSandbox` take a
-`TerminalSandboxWaitOptions` across the provider contract and its RPC hop, and
-the coordinator fills it from `remainingTerminalAcquisitionBudgetMs` at each
-call site on the acquisition path. The Daytona adapter converts that budget to
-the SDK's seconds, floors it at one so an exhausted budget never arrives as the
-SDK's "wait forever" zero, and passes nothing when a caller has no budget —
-which is how the lifecycle alarm and repository checkout keep the behavior they
-had. No number moved: `TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS` is still 120s.
+`TerminalSandboxWaitOptions` across the provider contract and its RPC hop,
+carrying the acquisition deadline as an absolute `deadlineAtMs` that the
+coordinator computes once from `terminalAcquisitionDeadlineAt`. The Daytona
+adapter subtracts `Date.now()` from it immediately before the SDK call, rounds
+the remainder down to the SDK's seconds, floors it at one so a reached deadline
+never arrives as the SDK's "wait forever" zero, and passes nothing when a
+caller has no deadline — which is how the lifecycle alarm and repository
+checkout keep the behavior they had. No number moved:
+`TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS` is still 120s.
 
 **Why:** Archived-restore latency was bimodal — p50 4.7s, p90 59.6s — with
 observations landing on exactly 60s. That 60 was not a bound anyone chose: the
@@ -895,12 +910,16 @@ provider silently gave up at half the advertised deadline. Deleting the second
 deadline rather than raising it leaves one number, owned where it is
 advertised, and lets `pnpm terminal:analytics` show the real restore tail.
 
-**What a future change has to respect:** the budget is read when each wait
-begins, not once per acquisition, because several provider round trips precede
-the first start. If a restore ceiling ever does need to be its own number, it
-is the acquisition budget that moves; do not reintroduce a second bound inside
-the adapter. And the wait is not a durability decision: a timeout must keep
-re-observing rather than treating the sandbox as lost.
+**What a future change has to respect:** the deadline crosses the RPC hop as an
+instant and is subtracted at the point of use, never carried as a remaining
+duration. Review of the first draft caught exactly that: it passed a `waitMs`
+computed in the coordinator, which the RPC session handshake and the adapter's
+sandbox lookup then spent without deducting, so a 120s budget could authorize a
+wait ending at 140s. Rounding is down for the same reason. If a restore ceiling
+ever does need to be its own number, it is the acquisition budget that moves;
+do not reintroduce a second bound inside the adapter. And the wait is not a
+durability decision: a timeout must keep re-observing rather than treating the
+sandbox as lost.
 
 ### 2026-09-19 — A mutation no longer waits for its instructions, and `apply_patch` takes the model's own format
 
