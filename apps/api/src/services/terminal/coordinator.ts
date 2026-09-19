@@ -83,9 +83,53 @@ export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 
 
 export interface TerminalClock {
   now(): Date;
+  /**
+   * Sleep, returning early if the caller is cancelled.
+   *
+   * On the clock rather than beside it so a test can run the contended claim
+   * below without spending its wall clock on it, the same reason `now` is
+   * here. It never rejects: a cancelled caller is a condition its own code
+   * reports, with its own message, at the point it checks the signal.
+   */
+  wait(milliseconds: number, signal: AbortSignal): Promise<void>;
 }
 
-const systemClock: TerminalClock = { now: () => new Date() };
+const systemClock: TerminalClock = {
+  now: () => new Date(),
+  wait: (milliseconds, signal) => new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    function onAbort(): void {
+      clearTimeout(timer);
+      resolve();
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  }),
+};
+
+/**
+ * How a contended workspace lease is waited out inside the tool call.
+ *
+ * One sandbox is shared by a conversation and every background agent it
+ * starts, so two runs wanting it at the same instant is the ordinary case, not
+ * the exceptional one. The claim used to fail on the first miss and hand the
+ * model the scheduling problem: "retry in a few seconds" costs a whole model
+ * turn — an inference, its tokens, and the latency — to answer a question the
+ * tool could have waited out in two seconds, and a model with other tools
+ * available often just does something else instead, as both loops that hit
+ * this in production did.
+ *
+ * So the claim waits and tries again before it gives up, and only a workspace
+ * held for the whole of that is worth a turn. The two numbers are the team's,
+ * named when this change was asked for; they are small on purpose, because
+ * every tool call that ends up waiting the full span spends it inside a
+ * deadline sized for the work, not for the queue.
+ */
+export const TERMINAL_LEASE_CONTENTION_WAIT_MS = 2_000;
+export const TERMINAL_LEASE_CONTENTION_RETRIES = 3;
 
 interface RepositoryAuthorityRow {
   connection_id: string;
@@ -273,6 +317,19 @@ export class TerminalSandboxCoordinator {
     return this.scope.runSubstreamId === this.scope.authoritySubstreamId
       ? null
       : this.scope.runSubstreamId;
+  }
+
+  /**
+   * Whether this run executes in the conversation that owns the sandbox.
+   *
+   * The same fact `holderSubstreamId` encodes, asked the way a caller that is
+   * about to destroy the workspace needs to ask it. A background agent shares
+   * its starter's sandbox rather than having one of its own, so "may I write
+   * here" and "may I delete this and start again" are different questions,
+   * and only the second one needs this.
+   */
+  ownsTerminalWorkspace(): boolean {
+    return this.scope.runSubstreamId === this.scope.authoritySubstreamId;
   }
 
   /**
@@ -632,11 +689,79 @@ export class TerminalSandboxCoordinator {
     return this.terminalPort(context.workspaceId, context.workstreamId);
   }
 
+  /**
+   * Take the lease, waiting out a sibling that is only holding it for a call.
+   *
+   * The lease is claimed at the start of each write tool call and released
+   * when that call ends, so a holder is almost always about to let go. This
+   * retries on that contention rather than returning it, and gives up only
+   * after `TERMINAL_LEASE_CONTENTION_RETRIES` further attempts spaced
+   * `TERMINAL_LEASE_CONTENTION_WAIT_MS` apart.
+   *
+   * Only on that contention. A claim also comes back empty when a yielded
+   * holder's recovery could not finish — a provider stop unconfirmed, a
+   * sandbox the provider no longer has — and none of those are a workspace
+   * about to be handed over. Recovery is designed around the call that finds
+   * the state it left behind: it retires or stops the provider sandbox, fences
+   * the durable task, and hands the lease on when the *next* call finds that
+   * work done. Waiting two seconds and asking again would neither help nor be
+   * neutral, because the second ask runs the recovery again from inside a call
+   * whose failure the first ask already recorded. So a recovery that ran and
+   * did not produce a lease is returned, exactly as before.
+   *
+   * Every retry re-reads the row. A claim is fenced on the generation it
+   * names, and the holder we lost to may have been the run that moved the
+   * generation on — replaced a lost sandbox, applied a policy, finished a
+   * checkout — so retrying against the row we first read would fail for the
+   * rest of the wait no matter who holds the lease. A row that has gone is not
+   * re-read over the top of a good one: the claim then fails on its own terms.
+   */
   private async claimOperation(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
     now: number,
   ): Promise<TerminalSandboxRecord> {
+    let waited = 0;
+    for (let remaining = TERMINAL_LEASE_CONTENTION_RETRIES; ; remaining -= 1) {
+      const attempt = await this.attemptClaimOperation(context, row, now);
+      if (attempt.record) return attempt.record;
+      if (remaining === 0 || attempt.recoveryRan) break;
+      await this.clock.wait(TERMINAL_LEASE_CONTENTION_WAIT_MS, context.signal);
+      waited += TERMINAL_LEASE_CONTENTION_WAIT_MS;
+      if (context.signal.aborted) {
+        throw new TerminalToolError("cancelled", "The Terminal operation was cancelled while it waited for the workspace lease.");
+      }
+      row = await this.terminal(context).sandbox() ?? row;
+      now = this.clock.now().getTime();
+    }
+    throw new TerminalToolError(
+      "sandbox_busy",
+      waited > 0
+        ? `Another agent run held this Terminal workspace for the ${Math.round(waited / 1_000)} seconds this tool waited for it. Wait about 5 seconds before retrying the tool; do not repeat any earlier command, and do not retry immediately.`
+        : "Another agent run is using this Terminal workspace right now. Wait about 5 seconds before retrying the tool; do not repeat any earlier command, and do not retry immediately.",
+      {
+        retryAfterMs: 5_000,
+        waitedMs: waited,
+        reason: waited > 0
+          ? "The tool already waited; wait about five more seconds before retrying."
+          : "Wait about five seconds; the workspace is released after each tool call.",
+      },
+    );
+  }
+
+  /**
+   * One claim, through every takeover the holder's state allows.
+   *
+   * `record` is the lease, or `null`. `recoveryRan` says which kind of `null`
+   * it is: a yielded holder's recovery that ran and did not hand the lease
+   * over is not a workspace that is about to be free, and the caller above
+   * does not wait on it.
+   */
+  private async attemptClaimOperation(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+  ): Promise<{ record: TerminalSandboxRecord | null; recoveryRan: boolean }> {
     const terminal = this.terminal(context);
     const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
     const runSubstreamId = this.holderSubstreamId();
@@ -664,22 +789,14 @@ export class TerminalSandboxCoordinator {
         });
       }
     }
-    if (!claimed) {
-      claimed = await this.recoverYieldedOperation(
-        context,
-        row,
-        now,
-        yieldedForeignHolder,
-      );
-    }
-    if (!claimed) {
-      throw new TerminalToolError(
-        "sandbox_busy",
-        "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
-        { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
-      );
-    }
-    return claimed;
+    if (claimed) return { record: claimed, recoveryRan: false };
+    const recovery = await this.recoverYieldedOperation(
+      context,
+      row,
+      now,
+      yieldedForeignHolder,
+    );
+    return { record: recovery.record, recoveryRan: recovery.started };
   }
 
   /**
@@ -722,9 +839,9 @@ export class TerminalSandboxCoordinator {
     row: TerminalSandboxRecord,
     now: number,
     yieldedForeignHolder: { runId: string; substreamId: string } | null = null,
-  ): Promise<TerminalSandboxRecord | null> {
+  ): Promise<{ record: TerminalSandboxRecord | null; started: boolean }> {
     const sandboxId = row.sandboxId;
-    if (!sandboxId) return null;
+    if (!sandboxId) return { record: null, started: false };
     const terminal = this.terminal(context);
     const runSubstreamId = this.holderSubstreamId();
     const claimId = newId(now);
@@ -749,7 +866,7 @@ export class TerminalSandboxCoordinator {
       now,
       yieldedForeignHolder,
     });
-    if (!recoveryClaimed) return null;
+    if (!recoveryClaimed) return { record: null, started: false };
 
     let sandboxStopped = false;
     let sandboxRetired = false;
@@ -782,7 +899,7 @@ export class TerminalSandboxCoordinator {
     try {
       while (true) {
         const task = await terminal.unsettledTask(row.generation);
-        if (!task) return finishRecovery();
+        if (!task) return { record: await finishRecovery(), started: true };
 
         if (!sandboxRetired && task.state !== "running") {
           // Pre-acceptance work can outlive removal of an observation handle
@@ -831,7 +948,7 @@ export class TerminalSandboxCoordinator {
         claimId,
         now: this.clock.now().getTime(),
       });
-      return null;
+      return { record: null, started: true };
     }
   }
 

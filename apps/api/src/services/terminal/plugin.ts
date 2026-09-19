@@ -207,7 +207,10 @@ export async function createAvalonTerminalPlugin(
   };
   const repositoryPreparationDeferredCodes = new Set([
     "connection_revoked",
-    "github_unavailable",
+    // Bootstrap runs the *read* gateway, so a GitHub refusal here is a
+    // repository one; `github_unavailable` was this set's entry until the two
+    // gateways stopped sharing one code, and no path throws it any more.
+    "github_repository_unavailable",
     "repository_access_revoked",
     "repository_base_changed",
     "repository_bootstrap_failed",

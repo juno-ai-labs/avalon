@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
+  TERMINAL_LEASE_CONTENTION_RETRIES,
+  TERMINAL_LEASE_CONTENTION_WAIT_MS,
   TerminalSandboxCoordinator,
   terminalSandboxStableName,
   type TerminalClock,
@@ -75,7 +77,13 @@ function fixture() {
     createdAt: Date.parse("2026-08-13"),
   });
   let now = new Date("2026-08-13T12:00:00.000Z");
-  const clock: TerminalClock = { now: () => new Date(now) };
+  // Recorded rather than slept: a contended claim waits, and a suite that
+  // spent that wall clock would pay it on every contention case.
+  const waits: number[] = [];
+  const clock: TerminalClock = {
+    now: () => new Date(now),
+    wait: async (milliseconds) => { waits.push(milliseconds); },
+  };
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(async (input) => ({
       id: `sandbox-${input.generation}`,
@@ -120,6 +128,7 @@ function fixture() {
     }),
     provider,
     clock,
+    waits,
     advance(minutes: number) { now = new Date(now.getTime() + minutes * 60_000); },
   };
 }
@@ -582,7 +591,7 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("serializes mutating runs with the durable operation lease", async () => {
-    const { objectStore, env,  provider, clock } = fixture();
+    const { objectStore, env,  provider, clock, waits } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
     // Scheduled, not running: the object admits at most one mutating run per
     // substream (`runs_mutating_substream_uq`), so the contender waits in the
@@ -597,9 +606,16 @@ describe("Terminal sandbox coordinator", () => {
         code: "sandbox_busy",
         details: {
           retryAfterMs: 5_000,
-          reason: "Retry in a few seconds; the workspace is released after each tool call.",
+          waitedMs: TERMINAL_LEASE_CONTENTION_RETRIES * TERMINAL_LEASE_CONTENTION_WAIT_MS,
+          reason: "The tool already waited; wait about five more seconds before retrying.",
         },
       });
+    // The holder is live for the whole call, so every retry the claim is
+    // allowed was spent before it gave up.
+    expect(waits).toEqual(Array.from(
+      { length: TERMINAL_LEASE_CONTENTION_RETRIES },
+      () => TERMINAL_LEASE_CONTENTION_WAIT_MS,
+    ));
     expect(provider.createSandbox).toHaveBeenCalledOnce();
 
     workstreamObjectRun(objectStore, "UPDATE runs SET status = 'completed' WHERE run_id = ?", RUN_ID);
@@ -802,7 +818,7 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("releases a transient recovery claim without publishing a stale failure", async () => {
-    const { objectStore, env, provider, clock } = fixture();
+    const { objectStore, env, provider, clock, waits } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000099";
     const effectId = "transient-recovery-effect";
     const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID);
@@ -845,6 +861,11 @@ describe("Terminal sandbox coordinator", () => {
     const linked = { ...context(), harnessRunId: linkedRun, toolCallId: "transient-recovery-linked" };
 
     await expect(coordinator.acquire(linked)).rejects.toMatchObject({ code: "sandbox_busy" });
+    // A recovery that ran and handed nothing over is not a workspace about to
+    // be free: the second call is what finds the state this one left, so the
+    // claim returns rather than waiting. Waiting here would run the recovery
+    // again from inside the call whose failure it has already recorded.
+    expect(waits).toEqual([]);
     await expect(terminal.sandbox()).resolves.toMatchObject({
       lifecycleState: "running",
       failureCode: null,

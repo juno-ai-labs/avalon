@@ -45,6 +45,18 @@ None of the four was careless. Each is a sensible-looking default:
   logged; an adapter that returns `{ ok: false, message }` got nothing. Granola
   returns.
 
+A schema rejection is the case this document is named for, but the shape is
+wider than Zod. On 2026-09-19 a Terminal `write_file` that only wanted to write
+a local file reported "GitHub rejected the publication request", because one
+`githubResponse` helper served both the gateway that opens pull requests and the
+gateway that prepares a checkout, and the operation — known at every call site —
+was never passed. The reader was sent to pull-request permissions for a checkout
+that could not start, and the model repeated the wording to the participant.
+Same pattern, same cost, no `ZodError` anywhere:
+[`terminal-workspaces.md`](terminal-workspaces.md#changelog) records it. A
+helper shared by two callers with different purposes is worth the same look as a
+`catch` that drops an error's fields.
+
 ## What is safe to carry
 
 **Issue codes and *declared* field names are schema shape. Everything else is

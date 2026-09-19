@@ -31,6 +31,7 @@ import {
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
+  testHarnessRunPortFactory,
   testResourcePortFactory,
   testTerminalPortFactory,
   seedWorkstreamObjectParticipant,
@@ -58,6 +59,11 @@ async function fixture(input?: {
   baseSha?: string;
   emailAddress?: string | null;
   residentResourceAttacher?: boolean;
+  /**
+   * The conversation this run executes in, when it is not the one that owns
+   * the sandbox: what a background agent's selector is composed with.
+   */
+  runSubstreamId?: string;
 }) {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
@@ -251,6 +257,18 @@ async function fixture(input?: {
         testTerminalPortFactory(objectStore),
         testResourcePortFactory(objectStore),
         provider,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        input?.runSubstreamId
+          ? {
+              parentKind: "workstream",
+              runSubstreamId: input.runSubstreamId,
+              authoritySubstreamId: "0",
+              runsPort: testHarnessRunPortFactory(objectStore),
+            }
+          : undefined,
       ),
       testTerminalPortFactory(objectStore),
       input?.residentResourceAttacher ? residentResourceAttacher : undefined,
@@ -566,6 +584,53 @@ describe("Terminal model repository selection", () => {
       requiredRemoteAccess: "read_only",
     })).rejects.toMatchObject({ code: "sandbox_busy" });
     expect(provider.startSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete the shared sandbox for a background agent's checkout", async () => {
+    const { objectStore, provider, context, selector } = await fixture({
+      runSubstreamId: "01a0b7e9-2e7c-7762-9cc5-f203257dabae",
+    });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, last_command_at,
+        created_at, updated_at)
+       VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+      Date.parse("2026-08-13T00:00:00.000Z"),
+    );
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).rejects.toMatchObject({ code: "repository_checkout_not_owned" });
+    // The starter's workspace, and everything its clones and working tree hold,
+    // is still there: the refusal is the whole point, and a backup taken on the
+    // way out would mean the delete had been reached.
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT sandbox_id, generation FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ sandbox_id: "provider-1", generation: 1 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM terminal_repository",
+    )).toEqual({ count: 0 });
+  });
+
+  it("lets a background agent select into a workspace that has no sandbox to destroy", async () => {
+    const { provider, context, selector } = await fixture({
+      runSubstreamId: "01a0b7e9-2e7c-7762-9cc5-f203257dabae",
+    });
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).resolves.toMatchObject({ repository: "acme/widget", outcome: "selected" });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
   });
 

@@ -15,6 +15,7 @@ import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-p
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
+  createGitHubRestPublicationGateway,
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher,
   type TerminalGitHubPublicationGateway,
@@ -756,6 +757,67 @@ describe("Terminal repository publication", () => {
       removed.provider,
     )).rejects.toMatchObject({ code: "publication_not_authorized", message: expect.stringContaining("no longer belongs") });
     expect(removed.gateway.mintWriteToken).not.toHaveBeenCalled();
+  });
+
+  it("names the repository read, not a publication, when GitHub refuses a checkout's identity call", async () => {
+    const { env } = fixture();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "Not Found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    })));
+    const selection = {
+      workspaceId: W,
+      workstreamId: S,
+      connectionId: CONNECTION,
+      repositoryId: 42,
+      repositoryFullName: "owner/repo",
+      baseRef: "main",
+      baseSha: BASE,
+      headRef: HEAD_REF,
+      remoteAccess: "full_access" as const,
+    };
+
+    // This is the call `bootstrapTerminalRepository` makes before every
+    // Terminal tool, so its failure is what a `run_command` or a `write_file`
+    // reports. It used to report a rejected publication, and GitHub's own body
+    // — which may carry a repository name, member content or a token-shaped
+    // string — still never crosses.
+    await expect(createGitHubRestReadGateway(env)
+      .verifyRepositoryIdentity(selection, "read-token", new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "github_repository_unavailable",
+        message: expect.not.stringMatching(/publi|Not Found/iu),
+        details: {
+          operation: "verify_repository_identity",
+          status: 404,
+          reason: expect.not.stringMatching(/publi|Not Found/iu),
+        },
+      });
+  });
+
+  it("names the publication when GitHub refuses a pull-request call", async () => {
+    const { env } = fixture();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "Validation Failed" }), {
+      status: 422,
+      headers: { "content-type": "application/json" },
+    })));
+
+    await expect(createGitHubRestPublicationGateway(env).createPullRequest({
+      workspaceId: W,
+      workstreamId: S,
+      connectionId: CONNECTION,
+      repositoryId: 42,
+      repositoryFullName: "owner/repo",
+      baseRef: "main",
+      baseSha: BASE,
+      headRef: HEAD_REF,
+      remoteAccess: "full_access",
+    }, "write-token", { title: "t", body: "b" }, new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "github_publication_unavailable",
+        message: expect.stringContaining("pull request"),
+        details: { operation: "create_pull_request", status: 422 },
+      });
   });
 
   it("rejects a replacement repository that reuses the selected owner/name", async () => {

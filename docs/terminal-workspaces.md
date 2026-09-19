@@ -77,8 +77,14 @@ the run yields, or the lease deadline passes. A claim that finds the row no long
 describing the cached sandbox (the generation replaced, the sandbox stopped by
 the sweep or a policy change) runs readiness again under the lease. So a
 conversation and the agents it starts interleave at call granularity: a
-sibling's `sandbox_busy` is a wait of seconds, for the length of one call or
-one command, and the model is told to retry rather than to wait for a run.
+sibling holds the lease for the length of one call or one command, so a
+contended claim waits it out inside the tool rather than returning — three
+further attempts, two seconds apart — and only a workspace still held after
+that is worth `sandbox_busy` and a model turn. A claim that comes back empty
+because a yielded holder's *recovery* could not finish is not that, and does
+not wait: recovery is resolved by the next call finding the state it left, so
+asking again two seconds later would re-run it from inside the call whose
+failure it has already recorded.
 `read_file` takes no lease at all: it needs the sandbox running and the
 authority fingerprint to be this caller's, both read from the row, and it
 neither waits on another run's call nor blocks one. The bargain is that a read
@@ -283,11 +289,26 @@ the prepared branch, push only it, and target the prepared base branch. GitHub
 does not provide branch-scoped installation tokens, and Rally deliberately does
 not emulate one with a smart-HTTP proxy.
 
+A background agent shares its starter's sandbox, so it does not get to throw it
+away. Checkout deletes the provider sandbox before it records a new selection,
+and a run whose conversation is not the one that owns the workspace is refused
+with `repository_checkout_not_owned` when a sandbox exists to delete. Selecting
+into a workspace that has none destroys nothing and stays allowed: what the
+guard refuses is the delete, not the choice.
+
 Connector policy is revalidated before every bootstrap. Saving a policy clears
 the cached credential expiry for affected work streams, so the next tool rotates
 the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
+
+A GitHub refusal names the call it refused. The read gateway that bootstrap runs
+before every Terminal tool reports `github_repository_unavailable`; the
+publication gateway reports `github_publication_unavailable`; each message and
+remedy names its own operation, which also travels as `operation` and `status`
+in the error's details. GitHub's own response body never crosses: it may hold a
+repository name, member content, or a token-shaped string, so the status class
+alone chooses between "retry after GitHub recovers" and "restore access".
 
 ### Network policy and lifecycle
 
@@ -670,6 +691,16 @@ network proxy, or a general GitHub administration surface.
   or whose owner's sandbox holds a revoked import, is refused with
   `sandbox_authority_mismatch` until the owning conversation's next Terminal
   call reprovisions the sandbox.
+- A background agent that calls `checkout_repository` against a workspace that
+  already has a sandbox is refused with `repository_checkout_not_owned`, and
+  the refusal is permanent rather than a retry: only the conversation that owns
+  the workspace can change its repository. An agent that needs a different
+  repository has to ask for one, or work in the checkout it was given.
+- A contended lease costs up to six seconds inside the tool call before
+  `sandbox_busy` is returned. That is spent from the calling tool's own
+  deadline, which is sized for the work and not for the queue; a workspace
+  contended by more siblings than the wait can absorb still reaches the model,
+  now with `waitedMs` saying what the tool already spent.
 - An `edit_file` whose target changed since it was read answers `file_changed`
   and writes nothing; the model reads the file again.
 - A republish that loses the content compare-and-swap to a concurrent one
@@ -1098,6 +1129,85 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-19 — An agent cannot delete the workspace it shares, a GitHub failure names its own call, and a contended lease waits
+
+**What changed:** Three repairs to one production failure, in the order it
+caused them.
+
+`checkout_repository` refuses with `repository_checkout_not_owned` when the run
+does not execute in the conversation that owns the sandbox and a sandbox exists
+to delete. `TerminalSandboxCoordinator.ownsTerminalWorkspace()` is the
+predicate, the same scope comparison `holderSubstreamId` already encodes, and
+the check sits under the mutation lease before the backup and the provider
+delete. Selecting into a workspace with no sandbox is untouched.
+
+`githubResponse` takes the operation it is reading a response for.
+`GITHUB_OPERATIONS` maps each of the eight calls to a code, a message and a
+remedy: the read gateway's report `github_repository_unavailable` and the
+publication gateway's `github_publication_unavailable`, with `operation` and
+`status` in the details. `github_unavailable` no longer exists; the deferred
+activation set in `plugin.ts` carries the repository code, which is the only one
+bootstrap can raise. GitHub's response body still never crosses.
+
+A contended lease claim retries inside the tool call —
+`TERMINAL_LEASE_CONTENTION_RETRIES` (3) further attempts
+`TERMINAL_LEASE_CONTENTION_WAIT_MS` (2,000) apart, re-reading the row each time
+because the holder may have been the run that moved the generation on — and
+`sandbox_busy` carries `waitedMs` and asks for a five-second wait rather than an
+immediate retry. `TerminalClock` gained `wait` so the suite does not spend that
+wall clock. Only true contention waits: `recoverYieldedOperation` now reports
+whether it ran, and a claim that came back empty because a recovery could not
+finish returns as it always did.
+
+**Why:** A work stream fanned out to five agent loops, and one of the
+background agents called `checkout_repository` on the sandbox it shared with the
+conversation that started it. That deleted the running workspace, and the four
+repository clones the coordinating conversation had put in it, while that
+conversation was still working — `acquire` has refused this since sandboxes
+became per-conversation, but checkout reaches the same provider delete down a
+different path, taking the mutation lease instead of acquiring, and that path
+never asked. The lease does not catch it, because the two runs never overlap
+inside it: the agent takes the lease, deletes the sandbox, and gives it back
+before its starter's next call arrives to find the workspace gone.
+
+Every Terminal tool in every loop then failed, for thirteen minutes and across a
+later run, with "GitHub rejected the publication request" — including
+`write_file` calls that only wanted to write a local Markdown file. Bootstrap
+runs before every Terminal tool and it runs the *read* gateway, which shared one
+message with the publication gateway, so a checkout that could not start
+reported a pull request that had never been attempted, with a remedy pointing at
+pull-request permissions. The model repeated that wording to the participant,
+which is how a boundary's own confusion becomes the user's. This is the pattern
+[`naming-a-schema-failure.md`](naming-a-schema-failure.md) exists to stop: the
+operation was known at every call site and was simply never passed.
+
+Two of the five loops also hit `sandbox_busy` and were handed the scheduling
+problem. One sandbox shared by a conversation and its agents makes simultaneous
+want the ordinary case; the lease is held for one call, so the wait is almost
+always shorter than the model turn the refusal costs. A model with other tools
+available does not usually spend that turn retrying, and neither loop did.
+
+**Considered and rejected:** Barring a background agent from
+`checkout_repository` outright — a first selection into an empty workspace
+destroys nothing, and refusing it would take away the only way an agent sent to
+work on a repository can get one. A mutex or queue around checkout: the lease
+already serializes the two calls, and serializing them was never the problem;
+destroying another conversation's workspace between them was. Keeping
+`github_unavailable` and fixing only the message: the code is what an operator
+greps, and one code cannot say whether a checkout could not start or a
+publication was refused. Waiting on every empty claim, recovery included: that
+re-runs a recovery from inside the call whose failure it has already recorded,
+and the recovery fences are built around the *next* call finding the state left
+behind.
+
+**What a future change has to respect:** the guard is on the delete, not on the
+choice, so a checkout path that stops deleting the sandbox should drop it rather
+than keep it; a new GitHub call adds an entry to `GITHUB_OPERATIONS` rather than
+reusing a neighbour's; and the contention wait is spent from the calling tool's
+deadline, so raising either number is a claim about that budget too. The two
+numbers were named by the team when this change was asked for — they are not a
+measurement and not a platform limit.
 
 ### 2026-09-19 — A sandbox restore is bounded by the acquisition budget, not the SDK's default
 

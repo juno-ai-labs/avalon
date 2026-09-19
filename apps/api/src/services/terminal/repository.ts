@@ -222,7 +222,7 @@ export async function bootstrapTerminalRepository(
     if (!token) throw new Error("Repository bootstrap requires a fresh GitHub credential");
     const currentBaseSha = await gateway.resolveBaseRef(selection, token.accessToken, context.signal);
     if (!/^[0-9a-f]{40}$/u.test(currentBaseSha)) {
-      throw new TerminalToolError("github_unavailable", "GitHub returned an invalid base commit. Retry repository startup.", { reason: "Retry repository startup after GitHub returns a valid base commit." });
+      throw new TerminalToolError("github_repository_unavailable", "GitHub returned an invalid base commit. Retry repository startup.", { reason: "Retry repository startup after GitHub returns a valid base commit." });
     }
     if (currentBaseSha !== selection.baseSha) {
       throw new TerminalToolError(
@@ -664,10 +664,97 @@ function githubHeaders(token: string): HeadersInit {
   };
 }
 
-async function githubResponse(response: Response): Promise<Record<string, unknown>> {
+/**
+ * What one GitHub call was for, so its failure can say so.
+ *
+ * Every call below goes through `githubResponse`, and the two gateways that
+ * share it do not share a purpose: the publication gateway opens and updates
+ * pull requests, while the read gateway is what `bootstrapTerminalRepository`
+ * runs *before every Terminal tool* — `run_command`, `write_file`, the lot.
+ * One message served both, and it named publication. A GitHub failure while
+ * preparing a checkout therefore reached the model, the transcript, and the
+ * participant as "GitHub rejected the publication request", for a call that
+ * had nothing to do with a pull request and had usually been made by a tool
+ * that only wanted to write a local file. The remedy it offered pointed at
+ * pull-request permissions, so whoever read it went looking in the wrong
+ * place; in the session that found this, the model repeated the wording back
+ * to the participant, which is how a boundary's own confusion becomes the
+ * user's. The operation is known at every call site and was simply never
+ * passed, which is the pattern `docs/naming-a-schema-failure.md` catalogues.
+ *
+ * `code` splits on the same line, because an operator grepping logs needs to
+ * tell a checkout that could not start from a publication that was refused,
+ * and one code cannot say which. `remedy` differs per operation for the same
+ * reason: what a caller should do about a refused pull-request token is not
+ * what it should do about a repository it can no longer read.
+ */
+const GITHUB_OPERATIONS = {
+  mint_publication_token: {
+    code: "github_publication_unavailable",
+    message: "GitHub would not issue a token to publish this branch.",
+    denied: "Restore write access to the selected repository before retrying publication.",
+  },
+  find_pull_request: {
+    code: "github_publication_unavailable",
+    message: "GitHub would not report whether this branch already has a pull request.",
+    denied: "Restore pull-request access to the selected repository before retrying publication.",
+  },
+  create_pull_request: {
+    code: "github_publication_unavailable",
+    message: "GitHub rejected the request to open a pull request.",
+    denied: "Restore pull-request access to the selected repository before retrying publication.",
+  },
+  update_pull_request: {
+    code: "github_publication_unavailable",
+    message: "GitHub rejected the request to update the existing pull request.",
+    denied: "Restore pull-request access to the selected repository before retrying publication.",
+  },
+  read_publication_ref: {
+    code: "github_publication_unavailable",
+    message: "GitHub would not report the branch head this publication needs.",
+    denied: "Restore read access to the selected repository before retrying publication.",
+  },
+  mint_repository_token: {
+    code: "github_repository_unavailable",
+    message: "GitHub would not issue a token for the selected repository, so the Terminal checkout could not be prepared.",
+    denied: "Restore access to the selected repository, or choose another with checkout_repository, before retrying.",
+  },
+  verify_repository_identity: {
+    code: "github_repository_unavailable",
+    message: "GitHub would not confirm the selected repository's identity, so the Terminal checkout could not be prepared.",
+    denied: "Restore access to the selected repository, or choose another with checkout_repository, before retrying.",
+  },
+  read_base_ref: {
+    code: "github_repository_unavailable",
+    message: "GitHub would not report the base branch head, so the Terminal checkout could not be prepared.",
+    denied: "Restore access to the selected repository, or choose another with checkout_repository, before retrying.",
+  },
+} as const satisfies Record<string, { code: string; message: string; denied: string }>;
+
+type GitHubOperation = keyof typeof GITHUB_OPERATIONS;
+
+/**
+ * Read one GitHub response, or fail naming the call that was made.
+ *
+ * The status decides the remedy and nothing else crosses: GitHub's own body
+ * may carry repository names, member content, or a token-shaped string, and
+ * none of that belongs in a message the model and the participant both read.
+ * The status *class* is not data — it is the difference between "wait" and
+ * "fix the access" — so it chooses between the two remedies and is recorded
+ * as a number for the operator.
+ */
+async function githubResponse(
+  response: Response,
+  operation: GitHubOperation,
+): Promise<Record<string, unknown>> {
   const value = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
-    throw new TerminalToolError("github_unavailable", "GitHub rejected the publication request.", { reason: response.status >= 500 ? "Retry after GitHub recovers." : "Restore repository access before retrying." });
+    const failure = GITHUB_OPERATIONS[operation];
+    throw new TerminalToolError(failure.code, failure.message, {
+      operation,
+      status: response.status,
+      reason: response.status >= 500 ? "Retry after GitHub recovers." : failure.denied,
+    });
   }
   return value;
 }
@@ -680,7 +767,7 @@ function prValue(value: Record<string, unknown>): TerminalPullRequest {
   const headSha = String(head.sha ?? "");
   const title = String(value.title ?? "");
   if (!Number.isInteger(number) || number <= 0 || !url.startsWith("https://github.com/") || !/^[0-9a-f]{40}$/u.test(headSha) || !title) {
-    throw new TerminalToolError("github_unavailable", "GitHub returned an invalid pull request identity. Retry publication.", { reason: "Retry after GitHub returns a valid pull request identity." });
+    throw new TerminalToolError("github_publication_unavailable", "GitHub returned an invalid pull request identity. Retry publication.", { reason: "Retry after GitHub returns a valid pull request identity." });
   }
   return { number, url, state, headSha, title };
 }
@@ -693,7 +780,7 @@ async function verifyGitHubRepositoryIdentity(
   const value = await githubResponse(await fetch(`https://api.github.com/repositories/${selection.repositoryId}`, {
     headers: githubHeaders(accessToken),
     signal,
-  }));
+  }), "verify_repository_identity");
   if (Number(value.id) !== selection.repositoryId || String(value.full_name ?? "") !== selection.repositoryFullName) {
     throw new TerminalToolError(
       "connection_revoked",
@@ -718,7 +805,7 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_publication_unavailable", "The regional Rally GitHub App is not configured.");
       const installationId = await installation(selection);
       const jwt = await createGitHubAppJwt({ clientId: config.clientId, privateKey: config.privateKey });
       const repositoryName = selection.repositoryFullName.split("/")[1]!;
@@ -737,9 +824,9 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
         }),
         signal,
       });
-      const value = await githubResponse(response);
+      const value = await githubResponse(response, "mint_publication_token");
       if (typeof value.token !== "string" || !value.token || typeof value.expires_at !== "string") {
-        throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped installation token and expiry.");
+        throw new TerminalToolError("github_publication_unavailable", "GitHub did not return a scoped installation token and expiry.");
       }
       return { accessToken: value.token, expiresAt: value.expires_at };
     },
@@ -749,10 +836,10 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
         headers: githubHeaders(accessToken), signal,
       });
       if (response.status === 404) return null;
-      const value = await githubResponse(response);
+      const value = await githubResponse(response, "read_publication_ref");
       const object = value.object && typeof value.object === "object" ? value.object as Record<string, unknown> : {};
       const sha = String(object.sha ?? "");
-      if (!/^[0-9a-f]{40}$/u.test(sha)) throw new TerminalToolError("github_unavailable", "GitHub returned an invalid branch SHA.");
+      if (!/^[0-9a-f]{40}$/u.test(sha)) throw new TerminalToolError("github_publication_unavailable", "GitHub returned an invalid branch SHA.");
       return sha;
     },
     async findPullRequest(selection, accessToken, signal) {
@@ -760,7 +847,7 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
       const query = new URLSearchParams({ state: "all", head: `${owner}:${selection.headRef}`, base: selection.baseRef, per_page: "2" });
       const response = await fetch(`${api}/repos/${selection.repositoryFullName}/pulls?${query}`, { headers: githubHeaders(accessToken), signal });
       const value = await response.json().catch(() => []) as unknown;
-      if (!response.ok) await githubResponse(new Response(JSON.stringify(value), { status: response.status, headers: response.headers }));
+      if (!response.ok) await githubResponse(new Response(JSON.stringify(value), { status: response.status, headers: response.headers }), "find_pull_request");
       if (!Array.isArray(value) || value.length === 0) return null;
       return prValue(value[0] as Record<string, unknown>);
     },
@@ -769,14 +856,14 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
         method: "POST", headers: githubHeaders(accessToken),
         body: JSON.stringify({ title: input.title, body: input.body, head: selection.headRef, base: selection.baseRef }), signal,
       });
-      return prValue(await githubResponse(response));
+      return prValue(await githubResponse(response, "create_pull_request"));
     },
     async updatePullRequest(selection, accessToken, pullRequestNumber, input, signal) {
       const response = await fetch(`${api}/repos/${selection.repositoryFullName}/pulls/${pullRequestNumber}`, {
         method: "PATCH", headers: githubHeaders(accessToken),
         body: JSON.stringify({ title: input.title, body: input.body }), signal,
       });
-      return prValue(await githubResponse(response));
+      return prValue(await githubResponse(response, "update_pull_request"));
     },
   };
 }
@@ -787,7 +874,7 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
     async mintRepositoryToken(selection, access, signal) {
       const config = githubConnectorConfig(env);
-      if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
+      if (!config) throw new TerminalToolError("github_repository_unavailable", "The regional Rally GitHub App is not configured.");
       const row = await env.DB.prepare(
         `SELECT provider_account_id FROM connector_connections
           WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status = 'healthy'`,
@@ -812,9 +899,9 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
         }),
         signal,
       });
-      const value = await githubResponse(response);
+      const value = await githubResponse(response, "mint_repository_token");
       if (typeof value.token !== "string" || !value.token || typeof value.expires_at !== "string") {
-        throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped read token and expiry.");
+        throw new TerminalToolError("github_repository_unavailable", "GitHub did not return a scoped read token and expiry.");
       }
       return { accessToken: value.token, expiresAt: value.expires_at };
     },
@@ -823,10 +910,10 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
       const value = await githubResponse(await fetch(
         `${api}/repos/${selection.repositoryFullName}/git/ref/heads/${encodedRef}`,
         { headers: githubHeaders(accessToken), signal },
-      ));
+      ), "read_base_ref");
       const object = value.object && typeof value.object === "object" ? value.object as Record<string, unknown> : {};
       const sha = String(object.sha ?? "");
-      if (!/^[0-9a-f]{40}$/u.test(sha)) throw new TerminalToolError("github_unavailable", "GitHub returned an invalid base branch SHA.");
+      if (!/^[0-9a-f]{40}$/u.test(sha)) throw new TerminalToolError("github_repository_unavailable", "GitHub returned an invalid base branch SHA.");
       return sha;
     },
   };

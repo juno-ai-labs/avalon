@@ -309,7 +309,10 @@ function fixture(
     testTerminalPortFactory(objectStore),
     testResourcePortFactory(objectStore),
     provider,
-    clock,
+    // The fixture's callers name an instant; a contended claim's wait is not
+    // what any of them is about, so it passes without spending the suite's
+    // wall clock on it.
+    { now: () => clock.now(), wait: async () => undefined },
     undefined,
     false,
     acquisitionObserved,

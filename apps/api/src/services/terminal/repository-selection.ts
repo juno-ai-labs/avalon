@@ -223,6 +223,32 @@ export function createTerminalRepositorySelector(
       const preparationStartedAt = Date.now();
       const sandbox = await coordinator.claimMutation(context);
 
+      // Past this point checkout deletes the sandbox and everything in it.
+      //
+      // A background agent shares the sandbox of the conversation that started
+      // it, and `acquire` already refuses to let one replace that conversation's
+      // sandbox for an authority change (`sandbox_authority_mismatch`). Checkout
+      // reaches the same provider delete down a different path — it takes the
+      // mutation lease instead of acquiring — and that path never asked the
+      // question. So a background agent selecting a repository deleted its
+      // starter's running workspace, and the clones, working tree and untracked
+      // output in it, while the starter was still using them; every later tool
+      // in every loop then had to bootstrap a checkout nobody in those
+      // conversations had chosen. The lease does not catch this, because the
+      // two runs never overlap in it: the agent takes the lease, deletes the
+      // sandbox, and gives it back before its starter's next call arrives to
+      // find the workspace gone.
+      //
+      // Selecting into an empty workspace destroys nothing, so it stays
+      // allowed: what is refused is the delete, not the choice.
+      if (sandbox.providerSandboxId && !coordinator.ownsTerminalWorkspace()) {
+        throw new TerminalToolError(
+          "repository_checkout_not_owned",
+          "This agent shares a Terminal workspace with the conversation that started it, and that workspace already has files in it. Changing the repository would delete them. Work in the existing checkout, or ask the conversation that started this agent to run checkout_repository itself.",
+          { reason: "Do not retry; ask the conversation that started this agent to change the repository." },
+        );
+      }
+
       if (await terminal.unsettledTaskCount() > 0) {
         throw new TerminalToolError(
           "workspace_busy",
