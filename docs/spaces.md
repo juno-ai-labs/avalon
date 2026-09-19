@@ -288,7 +288,13 @@ best effort on purpose — a Space failure must not cost somebody the Organizati
 they just created, and the alarm is the backstop running the same code.
 `placeConnectorChannelInGeneral` covers the one creation path that does not go
 through the creation coordinator: the Slack agent opens a Channel for a Slack
-member with no Rally identity and provisions the conversation itself.
+member with no Rally identity and provisions the conversation itself. **A
+refusal there reopens the cutover** rather than only logging: a `complete`
+Organization is never walked again, so a Channel this step could not place
+would stay homeless for good. The walk reaches it with the Organization's own
+directory projection — which knows participants the connector's record may
+not — and the Organization is not `spacesReady` while that runs, which is the
+honest answer for an Organization holding a Channel in no Space.
 
 ### A Channel's first Space
 
