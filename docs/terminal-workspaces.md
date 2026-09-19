@@ -94,10 +94,16 @@ before any provider I/O, and is contained in its own right before the applier
 runs, because the applier follows symlinks. A path an `*** Add File:` or
 `*** Move to:` section would create is refused if it already exists, because
 the applier would truncate it and report success; `git apply` refuses the same
-collision in a unified diff. The applier needs `pydantic`; the
-first such call in a sandbox installs it from PyPI into `/workspace/.rally/pylib`,
-which the trusted-only baseline permits, and a sandbox that cannot refuses with
-`patch_tooling_unavailable` rather than failing later.
+collision in a unified diff. The applier needs `pydantic`, pinned as
+`TERMINAL_PYDANTIC_REQUIREMENT` in `snapshot-manifest.ts` and baked into the
+Rally-owned snapshot under `/opt/rally/pylib` by the same bootstrap that
+installs `pnpm` and `tsx`. A sandbox whose snapshot predates that installs the
+same pin from PyPI, which the trusted-only baseline permits, into
+`/workspace/.rally/pylib`, staged and moved into place so a killed install never
+leaves a directory that imports and then fails; a sandbox that cannot refuses
+with `patch_tooling_unavailable` carrying pip's last line. On success the
+applier's whole output is `Done!`; anything else, a non-zero exit, or a timeout
+is reported with the applier's own line rather than a blank.
 
 Participant-authored `run_command` calls are non-interactive foreground Bash.
 The provider runs each such command in a named process session under GNU
@@ -415,6 +421,14 @@ personless; it is not duplicated into these product events.
   repository controls what `AGENTS.md` points at. The trailer the probe prints
   starts with a marker minted for that invocation, so output the repository
   controls cannot end a tool's result early or pass itself off as the probe's.
+- **Every path a `*** Begin Patch` names is contained by `realpath -m`, and
+  every path it would create is absent, in the same sandbox command and before
+  the vendored applier runs.** The applier follows symlinks and opens a new
+  file for writing without looking, and `git apply` is not there to refuse
+  either; the runtime test executes that preflight in a real shell.
+- **`vendor/apply_patch.py` is never edited.** A test pins its SHA-256, so a
+  behavior Rally needs goes in the wrapper around it, and a re-vendoring
+  updates the hash and the README's provenance together.
 
 ## Boundary
 
@@ -847,9 +861,13 @@ by a test) and written into the sandbox beside the patch. Both parsers hold
 every path to the shared Terminal path rules, and the envelope command refuses
 to create a file that already exists before the applier runs, because the
 applier opens a new file for writing without looking. The applier's one
-dependency, `pydantic`, is installed from PyPI into `/workspace/.rally/pylib`
-on the first such call in a sandbox. The Worker bundles gained a Text-module
-rule for `.py` imports and the Node test run a matching Vite plugin.
+dependency, `pydantic`, is pinned in `snapshot-manifest.ts`, baked into the
+snapshot by its bootstrap, and installed from PyPI into `/workspace/.rally/pylib`
+only by a sandbox whose snapshot lacks it, staged and moved into place. Success
+is the applier's whole output being `Done!`, which a patch's own context cannot
+forge; a timeout, a crash and a failed install each report their own reason.
+The Worker bundles gained a Text-module rule for `.py` imports and the Node
+test run a matching Vite plugin.
 
 The instruction-file probe rides only the two reads: the
 `read_file` page read and the read an `edit_file` starts with. It reports what

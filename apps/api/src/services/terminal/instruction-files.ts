@@ -95,8 +95,6 @@ export interface InstructionProbeEntry {
 
 export interface InstructionProbeResult {
   entries: InstructionProbeEntry[];
-  /** Whether any entry is not resident, so has content the ledger has not seen. */
-  pending: boolean;
 }
 
 /**
@@ -114,7 +112,7 @@ export interface InstructionProbeResult {
 export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "import hashlib, json, os, sys",
   "root, max_bytes, known, marker, candidates = os.path.realpath(sys.argv[1]), int(sys.argv[2]), set(json.loads(sys.argv[3])), sys.argv[4], sys.argv[5:]",
-  "entries, pending = [], False",
+  "entries = []",
   "def cut(data, limit):",
   "    text = data.decode('utf-8')",
   "    if limit <= 0 or len(data) <= limit: return text, False",
@@ -138,9 +136,8 @@ export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "    key = rel + '@' + entry['sha256']",
   "    if key in known: entry['resident'] = True",
   "    elif 'status' not in entry: entry['content'] = text; entry['truncated'] = truncated",
-  "    if not entry['resident']: pending = True",
   "    entries.append(entry)",
-  "print(marker + json.dumps({'entries': entries, 'pending': pending}, ensure_ascii=False, separators=(',', ':')))",
+  "print(marker + json.dumps({'entries': entries}, ensure_ascii=False, separators=(',', ':')))",
 ].join("\n");
 
 function shellQuote(value: string): string {
@@ -226,6 +223,6 @@ export function splitInstructionProbeTrailer(stdout: string, marker: string): { 
   }
   return {
     stdout: rest,
-    probe: { entries, pending: entries.some((entry) => !entry.resident) },
+    probe: { entries },
   };
 }

@@ -4,7 +4,7 @@ import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, Parti
   type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
-import { AGENT_MESSAGE_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
+import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -4845,11 +4845,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Whether a run completed at least one send to another agent. A refused send is not a reply. */
-  private runSentAgentMessage(runId: string): boolean {
+  /**
+   * Whether a run handed work or findings to another agent. An `ambiguous`
+   * effect is a write whose admission may have committed while its
+   * confirmation was lost, so a message that most likely landed counts;
+   * reporting it as silence would invite the owner to resend it.
+   */
+  private runHandedOffToAgent(runId: string): boolean {
     return this.state.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM tool_effects
-       WHERE run_id = ? AND status = 'completed' AND tool_name IN (SELECT value FROM json_each(?))`,
-      runId, JSON.stringify(AGENT_MESSAGE_TOOL_NAMES),
+       WHERE run_id = ? AND status IN ('completed', 'ambiguous') AND tool_name IN (SELECT value FROM json_each(?))`,
+      runId, JSON.stringify(AGENT_HANDOFF_TOOL_NAMES),
     ).one().count > 0;
   }
 
@@ -4878,7 +4884,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (input.backgroundAgent && outcome.status === "failed") {
       await new AgentCommunicationService(this.env, input).notifyFailure(outcome.error?.code ?? "unknown reason");
     }
-    if (input.backgroundAgent && outcome.status === "completed" && !this.runSentAgentMessage(input.harnessRunId)) {
+    if (input.backgroundAgent && outcome.status === "completed" && !this.runHandedOffToAgent(input.harnessRunId)) {
       // A worker that finished without a word to anyone has left its owner
       // waiting on a reply that will never come. Say so once, as a failure is
       // said, and let the owner decide.
