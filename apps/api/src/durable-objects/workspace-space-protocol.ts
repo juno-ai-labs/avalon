@@ -284,6 +284,21 @@ export const SpaceDefaultQueueMessageSchema = WorkspaceSpaceDefaultTargetSchema.
 export type SpaceDefaultQueueMessage = z.infer<typeof SpaceDefaultQueueMessageSchema>;
 
 /**
+ * A delivery attempt that failed, with the reason it failed.
+ *
+ * `errorCode` is the consumer's `diagnosticErrorCode`, not a literal this
+ * object writes. `last_error_code` is the only durable record of *why* a
+ * default has not reached a Channel, and the fixed
+ * `space_default_apply_failed` it used to carry said only that it had not —
+ * which is what the row's existence already said
+ * (`docs/naming-a-schema-failure.md`).
+ */
+export const SpaceDefaultTargetFailureRequestSchema = SpaceDefaultQueueMessageSchema.extend({
+  errorCode: z.string().min(1).max(200),
+}).strict();
+export type SpaceDefaultTargetFailureRequest = z.infer<typeof SpaceDefaultTargetFailureRequestSchema>;
+
+/**
  * One unsettled Space intent, republished so an interrupted operation finishes.
  *
  * The alarm publishes these; the activity consumer re-runs the service step the
