@@ -212,6 +212,22 @@ export const WorkspaceSpaceMembersRequestSchema = SpaceActorSchema.extend({
 export type WorkspaceSpaceMembersRequest = z.input<typeof WorkspaceSpaceMembersRequestSchema>;
 
 /**
+ * One membership a fan-out is about: the Channel, and the generation its row
+ * is at.
+ *
+ * The generation travels with the id because every fan-out that re-applies
+ * this Space's source has to fence on it, and the alternative was the literal
+ * `1` at three call sites — a constant fed into a fence the module document
+ * calls load-bearing, which reads as "generation one" and means "we did not
+ * look".
+ */
+export const SpaceMemberSchema = z.strictObject({
+  workstreamId: WorkstreamIdSchema,
+  membershipGeneration: z.number().int().positive(),
+});
+export type SpaceMember = z.infer<typeof SpaceMemberSchema>;
+
+/**
  * Every Channel a Space holds, archived ones included.
  *
  * Separate from {@link WorkspaceSpaceChannelPageResultSchema} for the reason
@@ -221,7 +237,7 @@ export type WorkspaceSpaceMembersRequest = z.input<typeof WorkspaceSpaceMembersR
  * because every caller is a fan-out that needs the whole set to be correct.
  */
 export const WorkspaceSpaceMembersResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), workstreamIds: z.array(WorkstreamIdSchema) }),
+  z.strictObject({ ok: z.literal(true), members: z.array(SpaceMemberSchema) }),
   SpaceFailureSchema,
 ]);
 export type WorkspaceSpaceMembersResult = z.infer<typeof WorkspaceSpaceMembersResultSchema>;

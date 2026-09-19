@@ -494,7 +494,13 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, cursor: null,
     })).resolves.toMatchObject({ ok: true, page: { items: [CHANNEL_A], nextCursor: null } });
     await expect(workspace().listSpaceMembers({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
-      .resolves.toMatchObject({ ok: true, workstreamIds: [CHANNEL_A, CHANNEL_B] });
+      .resolves.toMatchObject({
+        ok: true,
+        members: [
+          { workstreamId: CHANNEL_A, membershipGeneration: 1 },
+          { workstreamId: CHANNEL_B, membershipGeneration: 1 },
+        ],
+      });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [spaceId] });
@@ -644,7 +650,7 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, reach: "reaching",
     });
     if (!members.ok) throw new Error(members.code);
-    for (const workstreamId of members.workstreamIds) {
+    for (const { workstreamId } of members.members) {
       const retracted = await memberChannel(workstreamId).retractSpaceAccessSource({
         workspaceId: WORKSPACE_ID,
         parentId: workstreamId,
