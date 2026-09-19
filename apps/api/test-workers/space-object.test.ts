@@ -18,6 +18,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   asSpaceId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -33,7 +34,7 @@ import type { ScopeGrantMutation, ScopeGrantMutationResult } from "@rally/contra
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
 import { latestMigrationVersion } from "../src/durable-objects/migration-reporting";
-import { spaceDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, spaceDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import { consumeEffectBodies } from "./helpers/conversation-effects";
@@ -61,6 +62,27 @@ interface ParentInternals {
 
 function internals(instance: object): ParentInternals {
   return instance as unknown as ParentInternals;
+}
+
+/**
+ * The conversation object's identity store.
+ *
+ * Reached the same way, and for the same reason: what a conversation's
+ * `parent_kind` says is the whole subject of the product-request case below,
+ * and there is no public RPC that sets it without also provisioning a
+ * work stream.
+ */
+interface ConversationInternals {
+  objectStore: {
+    ensureIdentity(
+      identity: { workspaceId: string; parentKind: "workstream" | "automation" | "space"; parentId: string },
+      region: string,
+    ): void;
+  };
+}
+
+function conversationInternals(instance: object): ConversationInternals {
+  return instance as unknown as ConversationInternals;
 }
 
 /** The identity row every effect and projection path reads its address from. */
@@ -336,6 +358,75 @@ describe("a Space's Durable Object", () => {
       sql: "SELECT space_id, title, scope FROM workspace_space_directory",
       bindings: [],
     })).toMatchObject({ rows: [{ space_id: SPACE_ID, title: "Hiring", scope: "workspace" }] });
+  });
+
+  it("refuses a Channel product request addressed at its hidden main conversation", async () => {
+    const conversation = env.SUBSTREAM_AGENTS.getByName(
+      conversationObjectName("global", WORKSPACE_ID, SPACE_ID, asSubstreamId("0")),
+    );
+    await runInDurableObject(conversation, (instance) => {
+      // The identity a provisioned Space's conversation carries. Written
+      // through the object's own store rather than as SQL, because `parent_kind`
+      // is the whole subject of this case.
+      conversationInternals(instance).objectStore.ensureIdentity({
+        workspaceId: WORKSPACE_ID, parentKind: "space", parentId: SPACE_ID,
+      }, "global");
+    });
+    const auth = {
+      sessionId: `space-conversation-${USER_ID}`,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+    // A member with a live session, so the refusal below is the parent kind
+    // and not a caller the object would have turned away anyway.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT,
+        revoked_at TEXT, expires_at TEXT, workspace_incarnation TEXT DEFAULT 'existing-member'
+      )`),
+      env.DB.prepare(`CREATE TABLE workspace_members (
+        workspace_id TEXT, user_id TEXT, status TEXT, role TEXT,
+        access_class TEXT, incarnation TEXT DEFAULT 'existing-member'
+      )`),
+      env.DB.prepare("CREATE TABLE workspaces(id TEXT PRIMARY KEY, region TEXT, analytics_workspace_id TEXT, abandoned_at TEXT)"),
+      env.DB.prepare(`CREATE TABLE workstream_authority_control (
+        id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+        required_serving_contract_version INTEGER NOT NULL,
+        serving_contract_version INTEGER NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workstream_authority_control
+        (id, phase, generation, required_serving_contract_version, serving_contract_version)
+        VALUES (1, 'durable_object_open', 1, 1, 1)`),
+      env.DB.prepare("INSERT INTO workspaces(id, region) VALUES (?, 'global')").bind(WORKSPACE_ID),
+      env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role, access_class)
+        VALUES (?, ?, 'active', 'member', 'member')`).bind(WORKSPACE_ID, USER_ID),
+      env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(auth.sessionId, USER_ID, WORKSPACE_ID),
+    ]);
+
+    // What `PATCH /workstreams/<spaceId> { archived: true }` becomes: the route
+    // addresses a conversation by id, and every member is handed every Space id
+    // on the workspace socket. Without the parent-kind gate this archives
+    // General without `prepareSpaceArchive` and without `space_protected`.
+    const refused = await conversation.handleProductRequest({
+      operation: "update", auth, input: { archived: true },
+    });
+    expect(refused.status).toBe(404);
+    expect(JSON.parse(refused.bodyJson)).toMatchObject({
+      error: "conversation_parent_kind_mismatch",
+    });
+    // And the same request from the Space authority, which says what this
+    // object is, gets past the gate — so what is refused above is the address
+    // rather than a caller or an object that answers nothing.
+    const asSpace = await conversation.handleProductRequest({
+      operation: "update", parentKind: "space", auth, input: { archived: true },
+    });
+    expect(JSON.parse(asSpace.bodyJson)).not.toMatchObject({
+      error: "conversation_parent_kind_mismatch",
+    });
   });
 
   it("answers as retired once its workspace is closed, through the inherited gate", async () => {

@@ -18,6 +18,7 @@ import {
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
+  type WorkstreamAppearancePatch,
   type WorkstreamMessageAdmissionReceipt,
 } from "@rally/contracts";
 import type {
@@ -27,10 +28,12 @@ import type {
 } from "@rally/contracts";
 import { z } from "zod";
 
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+
 import { conversationObjectName } from "../durable-objects/names";
 import type {
   SubstreamAgent,
-  SubstreamProductRequest,
+  SubstreamProductRequestInput,
 } from "../durable-objects/substream-agent";
 import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type {
@@ -139,6 +142,17 @@ function apiStatus(status: number): 400 | 401 | 403 | 404 | 409 | 413 | 422 | 42
   }
 }
 
+/**
+ * One product operation minus the two fields the client itself supplies.
+ *
+ * Distributed over the union so each operation keeps its own shape: an `Omit`
+ * applied to the union as a whole would collapse it and let any operation carry
+ * any other's fields.
+ */
+type ProductOperationPayload = SubstreamProductRequestInput extends infer Operation
+  ? Operation extends object ? Omit<Operation, "auth" | "parentKind"> : never
+  : never;
+
 /** Typed Worker-side access to the product authority for one work stream. */
 export class WorkstreamObjectClient {
   constructor(
@@ -154,9 +168,31 @@ export class WorkstreamObjectClient {
      * background path does not pay for spans nobody will read.
      */
     private readonly traced = false,
+    /**
+     * Which authority owns the parent this conversation belongs to.
+     *
+     * Sent on every product request and checked against the object's own
+     * identity before it runs anything. A conversation is addressed by id, so
+     * this is what keeps a Space id from reaching a Channel operation — see
+     * `productOperation` in `substream-agent.ts`. Every caller but
+     * {@link WorkstreamObjectClient.forSpace} means a Channel.
+     */
+    private readonly parentKind: ConversationParentKind = "workstream",
   ) {}
 
-  private async request(body: Record<string, unknown>): Promise<unknown> {
+  /**
+   * A Space's hidden main conversation, addressed as a Space.
+   *
+   * The Space authority reaches this object for the Space's participants,
+   * appearance and attachments, which is the only legitimate traffic it has;
+   * nothing in the product opens it. Saying so here is what makes every *other*
+   * caller's request refuse when the id turns out to name a Space.
+   */
+  static forSpace(env: Env, auth: AuthContext, spaceId: string): WorkstreamObjectClient {
+    return new WorkstreamObjectClient(env, auth, spaceId, "0", false, "space");
+  }
+
+  private async request(body: ProductOperationPayload): Promise<unknown> {
     const response = await (await objectStub(
       this.env,
       this.auth.workspaceId,
@@ -170,6 +206,7 @@ export class WorkstreamObjectClient {
       // value it already has.
       {
         ...body,
+        parentKind: this.parentKind,
         auth: {
           sessionId: this.auth.sessionId,
           userId: this.auth.userId,
@@ -183,7 +220,7 @@ export class WorkstreamObjectClient {
           // drop an `undefined` anyway; the point is the contract.)
           ...(this.auth.principal ? { principal: this.auth.principal } : {}),
         },
-      } as SubstreamProductRequest,
+      },
       this.traced,
     );
     return decode(response);
@@ -277,7 +314,7 @@ export class WorkstreamObjectClient {
    * The Channel path for this is a socket command, which a Space has no socket
    * for. Same write, same effect, reached over the product request instead.
    */
-  async setAppearance(patch: { icon?: string | null; color?: string | null }): Promise<void> {
+  async setAppearance(patch: WorkstreamAppearancePatch): Promise<void> {
     await this.request({ operation: "set_appearance", operationId: uuidV7(), patch });
   }
 
