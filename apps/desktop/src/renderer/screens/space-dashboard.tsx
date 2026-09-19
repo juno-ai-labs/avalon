@@ -34,7 +34,7 @@ import { useAppSession } from '../lib/app-session';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
-import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, SpaceDefaultKind, Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
@@ -129,7 +129,10 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(api) && Boolean(spaceId),
   });
-  const sidekicks = queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [];
+  // Subscribed rather than read: a `getQueryData` read of the same entry does
+  // not re-render when the socket replaces the list, so a Sidekick default
+  // rendered as "Sidekick" until something unrelated on this screen changed.
+  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data ?? [];
   if (spaces.data === undefined || inactiveSpaces.data === undefined) {
     return <LoadingState label="Opening space…" />;
   }
@@ -205,6 +208,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       .filter((resource) => !space.defaultResourceIds.includes(resource.id))
       .map((resource) => ({ id: resource.id, title: resource.title, subtitle: `${resource.provider ?? 'Rally'} · ${resource.resourceType}` }))
     : sidekicks
+      // The PRD's "Sidekick recommendations inherited by current and future
+      // member Channels": a Space default is offered in every Channel the
+      // Space holds, now and later. A `workstream`-scoped Sidekick belongs to
+      // one Channel and cannot be that, and a draft or paused one would be
+      // recommended everywhere while being unable to run.
       .filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active')
       .filter((sidekick) => !space.defaultSidekickIds.includes(sidekick.id))
       .map((sidekick) => ({ id: sidekick.id, title: sidekick.name, subtitle: sidekick.description }));
