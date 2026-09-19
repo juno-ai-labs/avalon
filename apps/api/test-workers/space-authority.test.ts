@@ -60,6 +60,7 @@ const RESOURCE_ID = "00000000-0000-7000-8000-00000000cf0c";
  */
 const BREAKOUT_A = "00000000-0000-7000-8000-00000000cf0d";
 const BREAKOUT_B = "00000000-0000-7000-8000-00000000cf0e";
+const BREAKOUT_C = "00000000-0000-7000-8000-00000000cf0f";
 
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
@@ -1223,6 +1224,51 @@ describe("WorkspaceDO space authority", () => {
       userId: MEMBER,
       order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_A] },
     })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_C, CHANNEL_A] } });
+  });
+
+  /**
+   * A drag says where the rows it moved go. It does not say that the rows it
+   * never mentioned should be forgotten — and the only client there is can only
+   * ever mention what it is drawing, which is what is left after an archived
+   * Channel, an unfetched page or a search has taken the rest off the screen.
+   */
+  it("given a list the client can only half see, when part of it is arranged, then the rest keeps its places", async () => {
+    const spaceId = await reserve("Company");
+    for (const channelId of [CHANNEL_A, CHANNEL_B, CHANNEL_C]) {
+      await publishChannel(channelId, null);
+      await place(spaceId, channelId);
+    }
+    // The whole list, from a session that has every row on screen.
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_B, CHANNEL_A] },
+    });
+
+    // And then one nudge from a session drawing two of the three.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_B, CHANNEL_A, CHANNEL_C] } });
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId))
+      .toEqual([CHANNEL_B, CHANNEL_A, CHANNEL_C]);
+
+    // The same for a Channel's Breakouts, where it matters most: this
+    // authority has never seen one, so the rule is the only thing standing
+    // between an id it was not sent and its deletion.
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "channel", id: CHANNEL_A }, itemIds: [BREAKOUT_A, BREAKOUT_B, BREAKOUT_C] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "channel", id: CHANNEL_A }, itemIds: [BREAKOUT_B, BREAKOUT_A] },
+    });
+    expect(storedItemIds(await personalOrder(OWNER), "channel", CHANNEL_A))
+      .toEqual([BREAKOUT_B, BREAKOUT_A, BREAKOUT_C]);
   });
 
   it("given two sessions of one person, when one arranges a list, then the other is told without asking", async () => {
