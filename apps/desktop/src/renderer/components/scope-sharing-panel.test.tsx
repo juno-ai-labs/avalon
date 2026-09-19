@@ -65,7 +65,7 @@ it('dismisses the share dialog once the invitation is created, and not before', 
   const api = new RallyApi('https://api.test', null);
   const create = vi.spyOn(api, 'createScopeInvitations')
     .mockRejectedValueOnce(new Error('router invitation failure'))
-    .mockResolvedValue({ status: 'created', invitations: [{ email: 'ada@example.test' }] } as never);
+    .mockResolvedValue({ status: 'created', invitations: [] });
   const client = new QueryClient();
   function Host(): React.JSX.Element {
     const [open, setOpen] = useState(true);
@@ -90,9 +90,10 @@ it('dismisses the share dialog once the invitation is created, and not before', 
 
 it('leaves a reopened dialog alone when the share it was closed during settles', async () => {
   const api = new RallyApi('https://api.test', null);
-  let settle: ((result: unknown) => void) | undefined;
+  type ScopeInvitationResult = Awaited<ReturnType<RallyApi['createScopeInvitations']>>;
+  let settle: ((result: ScopeInvitationResult) => void) | undefined;
   const create = vi.spyOn(api, 'createScopeInvitations')
-    .mockImplementation(() => new Promise((resolve) => { settle = resolve; }) as never);
+    .mockImplementation(() => new Promise<ScopeInvitationResult>((resolve) => { settle = resolve; }));
   const client = new QueryClient();
   function Host(): React.JSX.Element {
     const [open, setOpen] = useState(true);
@@ -114,7 +115,7 @@ it('leaves a reopened dialog alone when the share it was closed during settles',
   await screen.findByRole('dialog', { name: 'Share conversation' });
   fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'bob@example.test' } });
 
-  await act(async () => { settle?.({ status: 'created', invitations: [{ email: 'ada@example.test' }] }); });
+  await act(async () => { settle?.({ status: 'created', invitations: [] }); });
   await act(async () => { await Promise.resolve(); });
 
   expect(screen.getByRole('dialog', { name: 'Share conversation' })).toBeVisible();

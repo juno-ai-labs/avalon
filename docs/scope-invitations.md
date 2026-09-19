@@ -192,8 +192,8 @@ panel now reports success to whoever rendered it rather than deciding for itself
 because the participant dialog embeds the same panel beside its member list and
 must stay open.
 
-The `Invited <addresses>.` line went with it, everywhere rather than only in the
-dialog that no longer outlives it. Keeping it for the embedded panel alone would
+The `Invited <addresses>.` line went with it, on every surface this panel
+appears on rather than only in the dialog that no longer outlives it. Keeping it for the embedded panel alone would
 have left the same action confirmed on one surface and silent on the other, and
 the pending invitation is not a delivered one: the line restated addresses the
 user had just typed while the send itself is still an alarm away. The emptied
