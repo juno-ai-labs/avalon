@@ -166,16 +166,26 @@ export class SpaceBootstrapService {
   }
 
   /**
-   * Close the Organization's cutover, or leave it open and say why.
+   * Close the Organization's cutover, or send it back to the walk and say why.
    *
-   * The refusals are not failures to retry immediately: an unplaced Channel
-   * means a page is still owed, and a blocker means a person has to act. Both
-   * leave the phase at `finalize`, where the alarm's retry gate republishes it
-   * on the ordinary interval.
+   * **Both refusals re-walk**, and the difference between them is only how
+   * soon. An unplaced Channel is new work — the walk passed its id before it
+   * existed — so the pass starts again with its gate cleared. A blocker means a
+   * person has to act, and the pass that takes a Channel off `blocked_json` is
+   * the same walk: the preflight reports the Channels it now finds clear and a
+   * still-fenced one is simply re-recorded. Leaving the phase at `finalize`
+   * instead, which is what this used to do, made a blocked Organization
+   * permanent — nothing else clears a blocker, so `spacesReady` stayed false
+   * and the opening card stayed up however the Channel was remediated.
+   *
+   * The blocked re-walk keeps the claim's retry gate rather than zeroing it, so
+   * an Organization nobody remediates re-walks on
+   * `scheduledAlarmRetryDelay`'s interval instead of spinning the alarm.
    */
   async runFinalize(): Promise<void> {
+    const workspace = await this.workspace();
     const result = WorkspaceSpaceBootstrapFinalizeResultSchema.parse(
-      await (await this.workspace()).finalizeSpaceBootstrap({ workspaceId: this.driver.workspaceId }),
+      await workspace.finalizeSpaceBootstrap({ workspaceId: this.driver.workspaceId }),
     );
     if (result.outcome === "complete") {
       logInfo(this.env, "space_bootstrap_complete", { workspace_id: this.driver.workspaceId });
@@ -192,6 +202,7 @@ export class SpaceBootstrapService {
       workspace_id: this.driver.workspaceId,
       reason: result.outcome,
     });
+    await workspace.reopenSpaceBootstrap({ workspaceId: this.driver.workspaceId });
   }
 
   /**
