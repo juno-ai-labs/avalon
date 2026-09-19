@@ -7,7 +7,7 @@ struct MainShell: View {
     var body: some View {
         @Bindable var model = model
         TabView(selection: $model.selectedTab) {
-            Tab("Work streams", systemImage: "bubble.left.and.bubble.right", value: AppModel.MainTab.chats) {
+            Tab("Channels", systemImage: "bubble.left.and.bubble.right", value: AppModel.MainTab.chats) {
                 ConversationScreen()
             }
             Tab("Sidekicks", systemImage: "hexagon.fill", value: AppModel.MainTab.sidekicks) {

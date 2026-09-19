@@ -20,7 +20,7 @@ struct SignInView: View {
                     .font(RallyType.screenTitle())
                     .foregroundStyle(colors.textPrimary)
                     .accessibilityAddTraits(.isHeader)
-                Text("Work streams, not inboxes.")
+                Text("Channels, not inboxes.")
                     .font(RallyType.body())
                     .foregroundStyle(colors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -77,7 +77,7 @@ struct IntroScreens: View {
         VStack(spacing: 0) {
             TabView(selection: $page) {
                 introPage(
-                    title: "A work stream for every piece of work",
+                    title: "A channel for every piece of work",
                     body: "Rally is the home for a task, not a channel. Ask, and a stream starts.",
                     tag: 0
                 )
