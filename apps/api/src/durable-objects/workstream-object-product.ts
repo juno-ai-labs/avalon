@@ -5388,6 +5388,23 @@ export class WorkstreamObjectProductService {
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         const now = Date.now();
+        // A failing run does not get to abandon the provider protocol. Only a
+        // live execution can settle an interrupted tool batch — the repair
+        // reads the durable receipts and writes under this lease — so
+        // releasing the loop here with one open strands it permanently: Bind
+        // then refuses every queued input, and the only path back to an
+        // execution is the admission it refuses. Terminal receipt publication
+        // has always refused this; this path did not, and that is the whole of
+        // the 2026-09-19 wedge.
+        //
+        // Refusing leaves the run `running` and the loop `executing`, which is
+        // the honest state: its protocol work is unfinished. The lease then
+        // expires and `claimPersistentLoopExecution` hands it to
+        // `recoverInterruptedToolBatch`, the path written for exactly this and
+        // reachable only while the run has not terminalized.
+        if (this.transcript.unsettledToolBatchBlockingRelease(execution.loopId)) {
+          throw new Error("substream_loop_has_unsettled_tool_batch");
+        }
         const changed = sql.exec<{ run_id: string }>(
           `UPDATE runs SET status = 'failed', terminal_reason = 'failed', error_json = ?,
                   completed_at = ?, terminalized_at = ?, updated_at = ?

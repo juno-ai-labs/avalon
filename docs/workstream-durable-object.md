@@ -1266,6 +1266,8 @@ misrouted product statement now fails because the table or column is absent.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
 - **No synchronous product transaction callback may return a Promise.** This includes `transactionSync`, `commitRuntimeMutation`, and `commitWithRegionalEffects`, whether the Promise is visible as `async` or hidden behind a helper. Prepare asynchronous transcript material first, then commit only synchronous SQLite work and revalidate its fences inside the transaction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
+- **A persistent loop goes back to `idle` only with its provider protocol settled.** An accepted assistant tool batch whose results are still missing is settled by `recoverInterruptedToolBatch`, which reads the durable receipts and can only run under a live execution lease — so a failing run settles the batch before it releases, and a loop released while one is open can never be repaired, and every queued message behind it is refused by `applyBindLoopTransition` for ever. Both release paths ask `unsettledToolBatchBlockingRelease`, and a third one has to as well. The single exception is a batch whose every withheld call is an unanswered question: its answer is a pending input, so the room releases itself.
+- **`inputsBindCanAccept` offers only what Bind will accept.** `nextLoopWorkAt` reads a non-empty answer as work that is due now and arms the object's alarm at `now`, so an input offered here and then refused is not one wasted pass — it is a wake per pass, indefinitely. A loop that can offer nothing reports `substream_loop_parked_with_queued_input` and derives no alarm of its own.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** Queue ordering and delivery uniqueness are not trusted; the parent numbers its own projections so the workspace compares one clock per key.
@@ -1327,6 +1329,9 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | A socket command throws something that is not an `ApiError` | The person gets one flat `substream_command_failed`, so `substream_socket_command_failed` is the only account of the cause. A validation failure is logged as `reason: "schema_validation_failed"` with `validation_issues` (`path`/`code` pairs only) rather than as the `ZodError`'s multi-line JSON message, a non-validation `reason` is a `diagnosticErrorCode` rather than a runtime message, and every entry carries `stack` — the same key this file's other `harnessErrorFrames` sites use — naming the call site when the throw was an `Error` with frames, and `null` when it was not. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
+| A run fails holding an accepted tool batch whose results never landed | The failure settles the batch first, through `recoverInterruptedToolBatch` under the fence and attempt lease it still holds, and then terminalizes normally. A call with no receipt settles as `not_run`, which is the shape a run refused before its tool ran leaves behind. |
+| That settlement cannot run — the loop lease lapsed, or the attempt was taken over | `recordWorkflowFailed` refuses, logging `substream_loop_failure_awaiting_tool_batch_repair`. The run stays `running` and the loop stays `executing`, so `LOOP_EXECUTION_LEASE_MS` later the recovery branch of `claimPersistentLoopExecution` adopts it and repairs the batch there. Slow, and the only state in which the repair can run at all — the receipt fence requires a run that has not terminalized. |
+| A loop is already `idle` holding an unsettled tool batch | Unreachable since 2026-09-19, and unrecoverable if it is ever reached again: the repair needs an execution and the only route to one is an admission Bind refuses. The loop parks rather than spinning — `inputsBindCanAccept` offers nothing, so no alarm is derived — and reports `substream_loop_parked_with_queued_input` on each wake. Objects wedged before the guard shipped stay parked until repaired by hand. |
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
 | Object approaches SQLite storage limit | Alert and archive/export; do not split one ordered child implicitly. Cloudflare's per-object limit is 10 GB. |
 
@@ -1352,7 +1357,17 @@ scenario now has a named implementation; exact-head CI and the repository's
 deliberate-break practice remain the acceptance proof.
 `test-workers/workstream-transcript-runtime.test.ts` also forces object eviction
 with a streaming assistant reservation and proves takeover keeps the loop
-executing while settling the lost turn as retryable.
+executing while settling the lost turn as retryable. Its
+`a run that fails holding an unsettled tool batch` cases cover the 2026-09-19
+wedge from every side: that the failure settles the batch and then terminalizes
+normally, that `recordWorkflowFailed` refuses the release when it has not and
+leaves both run and loop where the repair can still reach them, that the queue
+behind it is not offered to Bind, and that a failed run's open tool receipts are
+settled rather than left to spin. They are faithful about two things the first
+drafts got wrong and the tests caught — a real run holds an attempt id, which the
+residual sweep selects on, and a receipt's mode is read from
+`execution_plan_json`, not the column, so one without a plan settles `ambiguous`
+rather than `failed`.
 
 Run:
 
@@ -1656,6 +1671,89 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-19 — A failing run may not release the loop out from under the repair
+
+**What changed:** a failing run settles its interrupted tool batch before it
+releases the persistent loop, and may not release the loop if it has not.
+`drainPersistentLoop` calls `recoverInterruptedToolBatch` on the way into the
+failure — the last moment the loop fence, the attempt lease and the run's own
+receipts are all still valid — and `recordWorkflowFailed` then refuses the
+release if a batch is somehow still open, which is what the sibling release in
+`WorkstreamHarnessRunStorage` has always done. The predicate is no longer
+written twice: both call
+`WorkstreamTranscriptStorage.unsettledToolBatchBlockingRelease`, which reads the
+withheld batch out of the live projection and treats a batch of open questions —
+and only that — as releasable. A refusal leaves the run `running` and the loop
+`executing` and reports `substream_loop_failure_awaiting_tool_batch_repair`
+rather than a drain failure, so the lease expires into
+`claimPersistentLoopExecution`'s recovery branch. `inputsBindCanAccept` returns
+nothing at all while such a batch is withheld, instead of handing Bind a queue it
+must refuse. And because this path terminalizes with its own SQL rather than
+through `terminalizeHarnessAttempt`, it now runs
+`repairTerminalResidualReceipts` afterwards, which that function otherwise does
+as part of terminalizing.
+
+**Why:** on 2026-09-19 one substream logged 397,359 `substream_loop_drain_failed`
+warnings in a day, all `bind_loop_protocol_user_invalid`, at about six a second,
+and was found only because somebody was reading the logs for something else. A
+run had failed between accepting a four-call assistant tool batch and accepting
+its results. `recordWorkflowFailed` checked for an unmaterialized assistant turn
+and not for the batch, so it released the loop to `idle` with four calls and no
+results in the projection. From `idle` that cannot be undone: only a live
+execution can settle the batch, and the only route back to one is admitting a
+pending input, which `applyBindLoopTransition` refuses while the last assistant
+step is unsettled. Eight messages sat behind it. Every drain threw, wrote a
+warning, changed nothing, and re-armed at `now`, because the queue still looked
+to `nextLoopWorkAt` like work it could do.
+
+The repair was never missing. `recoverInterruptedToolBatch` was written for
+exactly this shape, its four tool receipts were durable and readable the whole
+time — three `completed`, one `executing` — and it would have settled the batch
+in one pass. It just needs an execution, and the release had taken it away. That
+is why the fix is a guard on the release rather than a new repair: the state has
+one cause, and the cause is releasing a loop whose protocol work is unfinished.
+
+**Considered and rejected:** the refusal on its own, with the lease expiry as
+the only repair. It is correct and much too slow, and the automation suite said
+so immediately: a run refused before its tool ran — an authorization revoked
+mid-turn — has an unsettled batch with no receipts at all, and that room would
+have waited `LOOP_EXECUTION_LEASE_MS` with every queued message behind it, to
+append "did not run" results nobody was waiting for. Settling on the way into
+the failure costs nothing the run does not already hold, so the refusal is the
+backstop rather than the mechanism. Letting the idle loop repair itself, fenced
+on the loop revision instead of an execution lease. It is the more general shape and it
+would have healed the object already wedged, but with the release guarded the
+state cannot form, and it would have added a second fenced write path into the
+projection to defend against a case the invariant now prevents — and it still
+could not re-settle the stranded tool receipt, because that fence requires a run
+that has not terminalized. The live object is repaired by hand instead. Backing
+the derived wake off behind a delay was rejected for the reason
+[`durable-object-alarms.md`](durable-object-alarms.md) gives for rejecting a
+minimum re-arm: the loop here was our own code asking to be woken for work it
+could not do, so the wake is removed rather than slowed, and no number has to be
+invented. Reporting the refusal as a drain failure was rejected because that is
+precisely how this state stayed invisible for a day: a deferral with a known
+resolution needs its own name, or it reads as noise.
+
+This also settles a disagreement the two copies of the predicate had been
+carrying. The release guard filtered elicitations to `status IN ('pending',
+'answered')`; `openQuestionToolCallIds` did not, so a `cancelled` question
+counted as open and parked the queue on an answer that was never coming. One
+definition, and the release guard's reading, because it is the correct one.
+
+**What a future change has to respect:** a loop may only go back to `idle` with
+its provider protocol settled, and both release paths have to keep asking the
+same question — a third path that releases the loop inherits this wedge unless it
+asks too. The 2026-09-14 entry's rule still holds and is now load-bearing in both
+directions: anything that appends a user message to the projection goes through
+`inputsBindCanAccept`, and `inputsBindCanAccept` may only offer what Bind will
+accept, because `nextLoopWorkAt` reads its answer as "there is work now". A
+stalled loop that offers nothing is reported once per wake through
+`substream_loop_parked_with_queued_input` and derives no alarm of its own; that
+is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
+over a silent stall does not survive here, because the refusal was never one
+signal. It was one per alarm, for ever.
 
 ### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
 
