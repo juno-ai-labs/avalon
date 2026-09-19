@@ -369,7 +369,9 @@ reaches the dead-letter queue with nothing on it.
 
 ### Reads
 
-Space state comes down the workspace socket, not over HTTP. The connect payload
+Space state comes down the workspace socket, not over HTTP, and there is no
+second read path for a test to use either — the directory is asserted through
+the same payload a client is handed. The connect payload
 carries `spaces` — both directories at one waterline, shaped for the viewer —
 and `spacesReady`, and every Space write republishes the same pair to every
 subscribed socket. There is deliberately no `GET /spaces`: a client that fetched
@@ -676,7 +678,7 @@ readers keep their open sockets until they reconnect.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
