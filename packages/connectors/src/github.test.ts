@@ -1847,6 +1847,231 @@ describe("GitHub connector", () => {
     });
   });
 
+  it("declares the repository read and every write echo, not just the reads with bodies", async () => {
+    // The other half of the nine changed output routes. Without this,
+    // `repository.get` and the four write echoes could stay pass-through, or be
+    // handed the wrong row, and nothing would fail — which is exactly how the
+    // list rows shipped under-covered the first time.
+    const author = { login: "octocat", id: 1, avatar_url: "https://avatars.github.com/u/1" };
+    const issue = {
+      number: 413,
+      title: "Declare the single reads",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-19T01:00:00Z",
+      updated_at: "2026-09-19T01:00:00Z",
+      closed_at: null,
+      user: author,
+      labels: [{ id: 2, name: "chore", color: "ededed" }],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      html_url: "https://github.com/acme/widget/issues/413",
+      body: "The gets still carry two repository records.",
+      node_id: "I_kwDOTpw9aM",
+      reactions: { url: "https://api.github.com/x", total_count: 0 },
+      timeline_url: "https://api.github.com/repos/acme/widget/issues/413/timeline",
+      author_association: "MEMBER",
+    };
+    const expectedIssue = {
+      number: 413,
+      title: "Declare the single reads",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-19T01:00:00Z",
+      updated_at: "2026-09-19T01:00:00Z",
+      closed_at: null,
+      user: { login: "octocat" },
+      labels: [{ name: "chore" }],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      html_url: "https://github.com/acme/widget/issues/413",
+      body: "The gets still carry two repository records.",
+    };
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/repos/acme/widget" && method === "GET") {
+        return jsonResponse({
+          id: 41,
+          node_id: "R_kgDOTpw9aA",
+          name: "widget",
+          full_name: "acme/widget",
+          owner: { login: "acme", id: 7, type: "Organization", avatar_url: "https://avatars.github.com/u/7" },
+          description: "The widget service",
+          homepage: "https://widget.acme.test",
+          topics: ["typescript", "workers"],
+          default_branch: "main",
+          private: true,
+          visibility: "internal",
+          fork: false,
+          archived: false,
+          language: "TypeScript",
+          license: { key: "mit", name: "MIT License", spdx_id: "MIT", url: "https://api.github.com/licenses/mit" },
+          open_issues_count: 12,
+          stargazers_count: 340,
+          forks_count: 21,
+          watchers_count: 340,
+          size: 88_120,
+          created_at: "2026-01-04T10:00:00Z",
+          updated_at: "2026-09-18T20:05:00Z",
+          pushed_at: "2026-09-18T20:00:00Z",
+          html_url: "https://github.com/acme/widget",
+          archive_url: "https://api.github.com/repos/acme/widget/{archive_format}{/ref}",
+          permissions: { admin: false, push: true, pull: true },
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/issues" && method === "POST") return jsonResponse(issue);
+      if (url.pathname === "/repos/acme/widget/issues/413") return jsonResponse(issue);
+      if (url.pathname === "/repos/acme/widget/pulls" && method === "POST") {
+        return jsonResponse({
+          number: 671,
+          node_id: "PR_kwDOTpw9aM",
+          title: "Declare the single reads",
+          state: "open",
+          draft: false,
+          created_at: "2026-09-19T01:05:00Z",
+          updated_at: "2026-09-19T01:05:00Z",
+          closed_at: null,
+          merged_at: null,
+          user: author,
+          head: { ref: "reads", sha: "0c55943", repo: { id: 41, archive_url: "https://api.github.com/x{/ref}" } },
+          base: { ref: "main", sha: "fedecf6", repo: { id: 41, archive_url: "https://api.github.com/x{/ref}" } },
+          labels: [],
+          assignees: [],
+          requested_reviewers: [],
+          requested_teams: [],
+          milestone: null,
+          html_url: "https://github.com/acme/widget/pull/671",
+          body: "Follow-up to #842.",
+          merged: false,
+          mergeable: null,
+          mergeable_state: "unknown",
+          merge_commit_sha: null,
+          merged_by: null,
+          comments: 0,
+          review_comments: 0,
+          commits: 1,
+          additions: 371,
+          deletions: 19,
+          changed_files: 4,
+          _links: { self: { href: "https://api.github.com/y" } },
+          diff_url: "https://github.com/acme/widget/pull/671.diff",
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/pulls/671/reviews" && method === "POST") {
+        return jsonResponse({
+          id: 5_254_029_412,
+          node_id: "PRR_kwDOTpw9aM",
+          user: author,
+          state: "COMMENTED",
+          submitted_at: "2026-09-19T01:10:00Z",
+          commit_id: "0c55943",
+          body: "One note.",
+          html_url: "https://github.com/acme/widget/pull/671#pullrequestreview-5254029412",
+          pull_request_url: "https://api.github.com/repos/acme/widget/pulls/671",
+          _links: { html: { href: "https://github.com/z" } },
+          author_association: "MEMBER",
+        });
+      }
+      throw new Error(`Unexpected GitHub ${method} ${url.pathname}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([
+        GitHubCapabilities.metadataRead,
+        GitHubCapabilities.issuesWrite,
+        GitHubCapabilities.pullRequestsWrite,
+      ]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+
+    // `visibility` beside `private` is the point of the pair: this repository is
+    // `internal`, which the boolean alone cannot say.
+    expect((await adapter.executeTool("repository.get", { owner: "acme", repo: "widget" }, context)).output).toEqual({
+      full_name: "acme/widget",
+      name: "widget",
+      owner: { login: "acme" },
+      description: "The widget service",
+      homepage: "https://widget.acme.test",
+      topics: ["typescript", "workers"],
+      default_branch: "main",
+      private: true,
+      visibility: "internal",
+      fork: false,
+      archived: false,
+      language: "TypeScript",
+      license: { spdx_id: "MIT" },
+      open_issues_count: 12,
+      stargazers_count: 340,
+      forks_count: 21,
+      created_at: "2026-01-04T10:00:00Z",
+      updated_at: "2026-09-18T20:05:00Z",
+      pushed_at: "2026-09-18T20:00:00Z",
+      html_url: "https://github.com/acme/widget",
+    });
+
+    // A created issue and that issue read back a call later are one shape.
+    expect((await adapter.executeTool("issues.create", {
+      owner: "acme", repo: "widget", title: "Declare the single reads",
+    }, context)).output).toEqual(expectedIssue);
+
+    expect((await adapter.executeTool("issues.update", {
+      owner: "acme", repo: "widget", issueNumber: 413, title: "Declare the single reads",
+    }, context)).output).toEqual(expectedIssue);
+
+    expect((await adapter.executeTool("pull_requests.create", {
+      owner: "acme", repo: "widget", title: "Declare the single reads", head: "reads", base: "main",
+    }, context)).output).toEqual({
+      number: 671,
+      title: "Declare the single reads",
+      state: "open",
+      draft: false,
+      created_at: "2026-09-19T01:05:00Z",
+      updated_at: "2026-09-19T01:05:00Z",
+      closed_at: null,
+      merged_at: null,
+      user: { login: "octocat" },
+      head: { ref: "reads", sha: "0c55943" },
+      base: { ref: "main", sha: "fedecf6" },
+      labels: [],
+      assignees: [],
+      requested_reviewers: [],
+      requested_teams: [],
+      milestone: null,
+      html_url: "https://github.com/acme/widget/pull/671",
+      body: "Follow-up to #842.",
+      merged: false,
+      // GitHub has not computed mergeability yet on a fresh pull request, and
+      // `null` is the honest answer rather than an absent key.
+      mergeable: null,
+      mergeable_state: "unknown",
+      merge_commit_sha: null,
+      merged_by: null,
+      comments: 0,
+      review_comments: 0,
+      commits: 1,
+      additions: 371,
+      deletions: 19,
+      changed_files: 4,
+    });
+
+    // A submitted review matches a listed one, because it reuses that row.
+    expect((await adapter.executeTool("pull_requests.create_review", {
+      owner: "acme", repo: "widget", pullNumber: 671, event: "COMMENT", body: "One note.",
+    }, context)).output).toEqual({
+      id: 5_254_029_412,
+      user: { login: "octocat" },
+      state: "COMMENTED",
+      submitted_at: "2026-09-19T01:10:00Z",
+      commit_id: "0c55943",
+      body: "One note.",
+      html_url: "https://github.com/acme/widget/pull/671#pullrequestreview-5254029412",
+    });
+  });
+
   it("refuses a list item that is not an object rather than passing it through", async () => {
     // The envelope's contract is that every item has the declared shape. A
     // primitive forwarded unchanged would be an undeclared value sitting in a
