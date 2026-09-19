@@ -1,12 +1,12 @@
 # Local cache
 
-Opening a space, a stream, or a substream paints from what the device last saw
+Opening a Space, a Channel, or a Breakout paints from what the device last saw
 before the socket that owns it answers. The desktop keeps one IndexedDB
 database, `rally-local-cache`, holding the last first page of the workspace
 directory and the last canonical state of every conversation the reader opened
 or the socket pool warmed. On the next launch, or the next open of a room whose
-socket is still cold, the sidebar, the project space, and the transcript are on
-screen immediately; a small floating card says the live connection is on its
+socket is still cold, the sidebar, the Space dashboard, and the transcript are
+on screen immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
 
 Nothing in the cache is authoritative. A cached value is a *seed*: it paints,
@@ -26,7 +26,7 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/local-cache-mirror.ts` | `mirrorQueriesToLocalCache`: keep a slice equal to a family of query-cache entries, coalescing a burst of writes into one; `LOCAL_CACHE_WRITE_COALESCE_MS`. |
 | `apps/desktop/src/renderer/lib/local-cache-scope.tsx` | `LocalCacheScopeProvider` and `useLocalCacheScope`: the regional workspace every row below it belongs to. No provider, no cache. |
 | `apps/desktop/src/renderer/lib/conversation-cache.ts` | The `conversation` slice: one row per `(parent, substream)`, `hydrateConversation`, `mirrorConversation`, the seed marker, and the pruning and forgetting entry points. |
-| `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the work-stream list, the automation and note lists, and both project directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
+| `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Prunes cached children that left the parent's private-child roster. |
@@ -37,7 +37,7 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card, connecting, waiting for a connection, or failed with a retry, and the always-mounted slot that is its live region. |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
-| `apps/desktop/src/renderer/screens/project-space.tsx` | Shows the card over a project painted from the seeded directory. |
+| `apps/desktop/src/renderer/screens/space-dashboard.tsx` | Shows the card over a Space painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
 ## How it works
@@ -113,7 +113,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The work-stream list as the sidebar holds it, the automation list and the active and archived project directories. |
+| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list and the active and archived Space directories. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -125,9 +125,9 @@ before the cache existed, waiting for the socket.
 
 `WorkspaceSocketProvider` reads the `directory` row for its scope before it
 dials. If the work-stream list is still empty, the cached lists go straight
-into the query-cache entries the sidebar, the landing route, and the project
-space read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
-`['projects']`, and `['projects-inactive']`. They go in directly,
+into the query-cache entries the sidebar, the landing route, and the Space
+dashboard read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
+`['spaces']`, and `['spaces-inactive']`. They go in directly,
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it
@@ -136,8 +136,17 @@ payload writes every list at once, so one of them being present means all of
 them are newer than the row.
 
 With the lists present, the sidebar draws rows instead of skeletons, the
-landing route resolves to the first work stream without waiting, and a project
-space renders its header and members. The subscribe answer then arrives through
+landing route resolves to the first Channel without waiting, and a Space
+dashboard renders its header and its placements.
+
+`spacesReady` is deliberately **not** on the row. It is the Organization's
+current cutover state rather than something the device last saw, and a
+remembered `true` would paint a hierarchy the next connect may contradict; the
+surfaces read a missing answer as ready, which is the same thing a cached
+`true` would have said and one fewer place for it to go stale. The row's
+version went to **3** for the same reason in reverse: a version 2 row holds
+Project directories and Channel rows written before `spaceIds` existed, and a
+Channel in no Space is a state no surface is allowed to render. The subscribe answer then arrives through
 the ordinary path described in
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md): page one is
 merged over the resident rows, a whole-directory payload replaces them, and a
@@ -216,7 +225,7 @@ swap is invisible and in every case it is never a collapse.
 is where it floats. Over a conversation the slot is zero-height and sticky at
 the top of the transcript scroller, so the card floats over the first rows
 without pushing them down and leaves no layout jump when it goes; over a
-project space the slot is absolute, below the title bar's drag strip so the
+Space dashboard the slot is absolute, below the title bar's drag strip so the
 card never takes a window's drag handle. The slot is the `polite` live region
 and stays mounted whether or not a card is in it: a live region that mounts
 with its text already present is generally not announced, only a change inside
@@ -228,9 +237,9 @@ error and a **Retry** that restarts the opening sequence once the three
 attempts are spent; the line saying what waits for the connection stays on the
 failed card, since that is the moment someone tries to send. A work stream
 Rally is still naming is `this work stream` rather than its placeholder
-title. A project's card follows the workspace
+title. A Space's card follows the workspace
 socket instead: it shows until the first subscribe answer has replaced the
-seeded directory, since a project has no socket of its own.
+seeded directory, since a Space has no socket of its own.
 
 The composer over a seed is the ordinary composer with `sendBlocked`: typing,
 mentions, attachments, the slash commands, and the draft all work, and the
@@ -247,14 +256,14 @@ launch surface carries the parent's card and `sendBlocked`, because a branch
 persists the turn id it was taken from, which the room has not confirmed
 either.
 
-A project painted from the seed is read-only until the directory is live.
-Every project edit sends the whole record back, so a rename made against the
+A Space painted from the seed is read-only until the directory is live.
+Every Space edit sends the whole record back, so a rename made against the
 seed would carry an icon, a colour, or an audience another client changed
 since the row was written. The rename, the appearance picker, the audience,
-the participants, archive and restore, and the default resources are disabled
-while `directoryFromLocalCache` holds, the card's second line says editing is
-available once Rally connects, and the work stream links and the **New work
-stream** plus still navigate.
+the participants, archive and restore, and the resource and Sidekick defaults
+are disabled while `directoryFromLocalCache` holds, the card's second line says
+editing is available once Rally connects, and the Channel links and the **New
+channel** plus still navigate.
 
 ### What leaves the cache
 
@@ -310,7 +319,7 @@ Nothing else evicts, and nothing expires.
   never merged with it.** Break either fence bypass, the transcript's or the
   resume registry's, and a room rebuilt since the row was written is dropped as
   older than the seed for the rest of the session.
-- **A remembered project is read-only until the directory is live.** Break it
+- **A remembered Space is read-only until the directory is live.** Break it
   and a rename made under the card writes the seed's icon, colour, or audience
   over what another client changed while the device was away.
 - **Only socket-delivered state is persisted.** The conversation mirror writes
@@ -444,7 +453,7 @@ The suites are `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
 `lib/transcript.test.ts`, and the local-cache blocks appended to
 `lib/use-workstream-socket.test.tsx`, `lib/workspace-socket.test.tsx`,
 `lib/use-workstream-control-socket.test.tsx`, `screens/workstream-open.test.tsx`,
-`screens/project-space-screen.test.tsx`, and
+`screens/space-dashboard.test.tsx`, and
 `components/workstream-composer.test.tsx`. Run one with
 `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/conversation-cache.test.ts`.
 

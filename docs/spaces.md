@@ -32,6 +32,11 @@ authority, its service, and the routes over them; the product design is in
 | `apps/api/src/services/channel-access-service.ts` | The one seam a Space reaches a Channel's audience through. `docs/spaces.md` never writes an audience itself. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default` and `space_intent_resume` handlers. |
+| `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, **New space**, restore, and the Organization-opening card. |
+| `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
+| `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, and the local cache slice. |
 
 ## How it works
 
@@ -174,6 +179,41 @@ The two exceptions are paginated and therefore cannot ride the socket: a Space's
 member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 (`GET /workstreams/:id/access`).
 
+### The desktop surfaces
+
+The sidebar's **Spaces** section sits where Projects were and is drawn in every
+shell, the conversation-only one included: every Channel belongs to at least one
+Space, so a sidebar without it cannot say where anything lives. General is in the
+directory like any other Space and the section has no case for it.
+
+A placement is not a copy. The rows under an expanded Space are the Channel list
+the sections below already render, filtered by the Channel's own `spaceIds`, and
+they go through the same row — so a Channel in two Spaces is one record shown
+twice, with one unread state, one running state and one destination. That is why
+`spaceIds` travels on the *common* half of `workspace_workstream_state`: it is
+the Organization's fact about the Channel, not the reader's, and WorkspaceDO
+republishes the row after every membership settlement.
+
+A Space's own count, not this device's page of the directory, is the authority on
+how many Channels it holds. The sidebar holds one page of the Organization, so an
+expanded Space lists what it has and says how many more the dashboard would show.
+
+**Manage access** replaces **Make private**, because a row cannot say whether a
+Channel is private: its readers are the union of its own scope and every active
+Space that holds it. The dialog reads `GET /workstreams/:id/access` and renders
+the Channel's own provenance and the Organization's memberships as one union —
+they agree in the steady state and disagree exactly while an operation is in
+flight, which is the thing it exists to show. Its copy table is exhaustive over
+the closed `SpaceErrorCode`, so every refusal names what has to change first.
+
+While `spacesReady` is false the sidebar section and the dashboard show the
+Organization-opening card *instead of* the hierarchy, and the **New space**
+control is not drawn: a Space directory missing General, or a Channel with no
+Space, is not a state any surface may render, and creation is refused with
+`space_bootstrap_pending` anyway. The flag is optional on the wire and read as
+ready when absent, so a client talking to a server without the cutover is not
+permanently opening.
+
 ## Invariants
 
 - **WorkspaceDO is the sole Space relationship authority.** Copying membership
@@ -218,6 +258,11 @@ member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 - **Space attachments are monotonic.** Leaving a Space, removing a default, or
   archiving a Space stops future delivery and retracts the live access source;
   it never removes a resource or Sidekick a Channel already has.
+- **No surface says a Channel is private while an active Organization-wide Space
+  grants access to it.** The Channel's own scope is one source among several,
+  and a control that described it alone would contradict the Space beside it.
+- **No product surface opens a Space's conversation.** The dashboard carries no
+  composer, transcript, feed socket, Main link or Breakout list.
 
 ## Boundary
 
@@ -289,6 +334,9 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — and that a rejected send leaves its rows pending. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas and the appearance registry. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, and the Organization-opening state. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, and General's protections. |
+| `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, and each actionable refusal. |
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
@@ -394,6 +442,40 @@ A non-empty regional activity dead-letter queue remains the terminal failure
 signal for default delivery and intent resumption.
 
 ## Changelog
+
+### 2026-09-19 — The desktop draws the hierarchy, and a row stops claiming to know an audience
+
+**What changed:** The Projects sidebar section, screen, routes, API methods and
+cache slice are replaced by the **Spaces** section, the `/spaces/:spaceId`
+dashboard, **Add to space**, **Manage access**, and a local cache slice at
+version 3. `spaceIds` joins the common half of `workspace_workstream_state`.
+
+**Why:** A Channel's readers are now the union of its own scope and every active
+Space that holds it, so **Make private** could no longer describe what it did.
+The dialog that replaces it reads the sources and says — including the case the
+PRD names explicitly, where an Organization-wide Space keeps a Channel public
+that its own scope calls personal. `spaceIds` had to be common state for the
+same reason it is WorkspaceDO's to publish: a placement is the Organization's
+fact about a Channel, and on the viewer half it would have been re-read per
+socket for no gain and missed by every other reader.
+
+**Considered and rejected:** Keeping a direct **Make public to organization** on
+the row beside a new **Manage access**. It reads as the smaller change and it is
+the one that lies: on a Channel already public through a Space, a row-level
+scope toggle describes an audience change that has already happened. Also
+rejected: placing a Channel from the launcher by calling `POST /spaces/:id/channels`
+after the create. The PRD requires a named Space to be established with the
+Channel or the creation to fail without publishing one, and a follow-up call is
+neither — so the launcher plumbs `spaceIds` and sends no Space until the
+creation contract carries one.
+
+**Consequences:** `WorkstreamCreationFieldsSchema` still carries `projectId` and
+has no `spaceIds`, so a Channel started from a Space is not yet placed in it;
+that is Phase 4's. `GET /spaces/:id/channels` answers with bare ids, so the
+dashboard can name only the Channels already in this device's page of the
+directory and counts the rest. A version 2 local-cache row is dropped rather
+than migrated: it holds Channel rows written before `spaceIds` existed, and a
+Channel in no Space is a state no surface may render.
 
 ### 2026-09-19 — WorkspaceDO becomes the Space authority, and a Space reaches a Channel only through the Channel's own operations
 
