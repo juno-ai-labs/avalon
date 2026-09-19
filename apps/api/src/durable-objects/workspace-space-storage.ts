@@ -87,7 +87,6 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE workspace_space_directory (
     space_id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
     appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json)),
     archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
@@ -281,7 +280,6 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
 interface SpaceRow extends Record<string, SqlStorageValue> {
   space_id: string;
   title: string;
-  description: string;
   scope: "personal" | "workspace";
   appearance_json: string | null;
   archived_at: number | null;
@@ -320,7 +318,6 @@ export interface SpaceDirectoryProjection {
   sourceVersion: number;
   payloadHash: string;
   title: string;
-  description: string;
   scope: "personal" | "workspace";
   appearance: SpaceAppearanceProjection | null;
   archivedAt: number | null;
@@ -379,10 +376,10 @@ export class WorkspaceSpaceStorage {
       const createdAt = Math.max(now, (previousCreatedAt ?? -1) + 1);
       this.storage.sql.exec(
         `INSERT INTO workspace_space_directory (
-           space_id, title, description, scope, appearance_json, archived_at,
+           space_id, title, scope, appearance_json, archived_at,
            created_by_user_id, system_role, authority_generation, source_version,
            payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
-         ) VALUES (?, ?, '', ?, ?, NULL, ?, ?, 1, 0, '', 1, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, NULL, ?, ?, 1, 0, '', 1, ?, ?, ?, ?)`,
         spaceId,
         request.space.name.trim(),
         request.space.scope,
@@ -600,13 +597,12 @@ export class WorkspaceSpaceStorage {
       || current.archived_at !== projection.archivedAt;
     this.storage.sql.exec(
       `INSERT INTO workspace_space_directory (
-         space_id, title, description, scope, appearance_json, archived_at,
+         space_id, title, scope, appearance_json, archived_at,
          created_by_user_id, system_role, authority_generation, source_version,
          payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
        ON CONFLICT(space_id) DO UPDATE SET
          title = excluded.title,
-         description = excluded.description,
          scope = excluded.scope,
          appearance_json = excluded.appearance_json,
          archived_at = excluded.archived_at,
@@ -622,7 +618,6 @@ export class WorkspaceSpaceStorage {
          source_updated_at = excluded.source_updated_at`,
       projection.spaceId,
       projection.title,
-      projection.description,
       projection.scope,
       appearanceJson,
       projection.archivedAt,
@@ -752,22 +747,6 @@ export class WorkspaceSpaceStorage {
         ORDER BY membership.space_id`,
       workstreamId,
     ).toArray().map((row) => row.space_id);
-  }
-
-  /** Which of these Channels hold at least one active Space membership. */
-  channelsWithActiveMembership(workstreamIds: readonly string[]): Set<string> {
-    const held = new Set<string>();
-    for (const chunk of boundParameterChunks(workstreamIds)) {
-      for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT DISTINCT membership.workstream_id
-           FROM space_channel_memberships membership
-           JOIN workspace_space_directory space ON space.space_id = membership.space_id
-          WHERE membership.state = 'active' AND space.archived_at IS NULL
-            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})`,
-        ...chunk,
-      ).toArray()) held.add(row.workstream_id);
-    }
-    return held;
   }
 
   prepareMembership(
@@ -1289,7 +1268,24 @@ export class WorkspaceSpaceStorage {
     ).toArray().length === 1;
   }
 
+  /**
+   * Whether this object has reached the migration that created these tables.
+   *
+   * Not paranoia about the ledger. The meeting-notes retirement holds an object
+   * at version 57 until its cleanup finishes, so an Organization mid-cleanup
+   * runs every alarm against a schema that has no Space tables — and the alarm
+   * re-arm below reads them on every wake, before anything product-shaped has a
+   * chance to refuse. One `sqlite_schema` lookup per re-arm is the price of
+   * that object's alarms continuing to work.
+   */
+  private tablesApplied(): boolean {
+    return this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'space_default_publications'`,
+    ).toArray().length === 1;
+  }
+
   nextDefaultPublicationDueAt(): number | null {
+    if (!this.tablesApplied()) return null;
     return this.storage.sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MIN(publication.next_attempt_at) AS due_at
          FROM space_default_publications publication
@@ -1455,6 +1451,7 @@ export class WorkspaceSpaceStorage {
   }
 
   nextIntentResumeDueAt(): number | null {
+    if (!this.tablesApplied()) return null;
     return this.storage.sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MIN(not_before) AS due_at FROM space_intents
         WHERE state IN ('pending', 'applied')`,

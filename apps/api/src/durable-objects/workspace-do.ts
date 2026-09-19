@@ -6236,17 +6236,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { recorded: true };
   }
 
-  /** Give up on a staged Space operation nothing can finish. */
-  async abandonSpaceIntent(input: WorkspaceSpaceIntentReceiptRequest): Promise<{ abandoned: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceIntentReceiptRequestSchema, input, "abandon_space_intent",
-    );
-    this.assertWorkspace(request.workspaceId);
-    this.spaceStorage().settleIntent(request.operationId, request.receipt, true);
-    this.spaceStorage().cancelIntent(request.operationId);
-    return { abandoned: true };
-  }
 
   async prepareSpaceMembership(input: WorkspaceSpaceMembershipRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
     await this.initialized;
@@ -10533,7 +10522,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           sourceVersion: envelope.sourceVersion,
           payloadHash: envelope.payloadHash,
           title: effect.title,
-          description: effect.description,
           scope: effect.scope,
           appearance: effect.appearance
             ? { iconKey: effect.appearance.icon, colorKey: effect.appearance.color }
