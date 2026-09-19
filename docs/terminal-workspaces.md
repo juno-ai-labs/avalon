@@ -63,6 +63,24 @@ created under; any other conversation folds its substream in. A background
 agent's port reaches the owning conversation's object over the wire, and the
 lease it takes there records which conversation its run executes in, because
 the owner's object cannot read that run's liveness from its own tables.
+
+The lease is held for one tool call, not one run. Readiness — creating,
+starting or restoring the sandbox under the run's authority and policy, and
+preparing its repository — is paid once per run and cached; each write tool
+then claims the lease, does its provider work, and releases it when the call
+ends, whether it returned or threw. A claim that finds the row no longer
+describing the cached sandbox (the generation replaced, the sandbox stopped by
+the sweep or a policy change) runs readiness again under the lease. So a
+conversation and the agents it starts interleave at call granularity: a
+sibling's `sandbox_busy` is a wait of seconds, for the length of one call or
+one command, and the model is told to retry rather than to wait for a run.
+`read_file` takes no lease at all: it needs the sandbox running and the
+authority fingerprint to be this caller's, both read from the row, and it
+neither waits on another run's call nor blocks one. The bargain is that a read
+can observe a file another run is mid-way through writing. A run whose command
+lost observation keeps its lease past the release, because the retained task is
+resolved either by that run reattaching on its retry or by a successor's
+recovery, and both are keyed to the holder.
 Repository checkout explicitly invalidates the run-local acquisition because it
 can replace the sandbox generation; a later tool then acquires and prepares the
 replacement once. A new harness run performs its own acquisition.
@@ -267,7 +285,11 @@ affected sandbox, applies and reads back the provider policy, and does not
 auto-restart it.
 
 The workspace's alarm stops an idle running sandbox after five minutes,
-archives it after sixty minutes, and deletes it after thirty days. Daytona's
+archives it after sixty minutes, and deletes it after thirty days. Idle means
+no tool call in the window: every lease claim stamps `last_command_at`, and
+the sweep holds a running sandbox whose stamp is inside the warm window
+whether or not anyone holds the lease at that instant, since a busy run holds
+nothing between two of its calls. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
 observed provider state after ambiguous calls. The workspace directory carries
@@ -466,7 +488,14 @@ personless; it is not duplicated into these product events.
   it resolves never reaches that waiter.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
-  an ambiguous write could corrupt the sandbox or repeat a side effect.
+  an ambiguous write could corrupt the sandbox or repeat a side effect. The
+  unit of exclusion is the tool call: the lease is claimed and released per
+  call, so two runs never mutate at once but do interleave between calls.
+  Reads are outside it by design and may see a write in progress.
+- **A run with an unsettled command keeps its lease.** Release is fenced on
+  the holder having no unsettled task on the generation; a lease nobody held
+  over a retained command would be one no successor could recover from, and
+  the holder itself reattaches past its own unsettled task.
 - **A stopped parent does not strand its in-flight tool receipt.** The live
   lease owner settles that receipt before terminalizing the run, retaining
   ambiguity for an interrupted command rather than guessing whether it ran.
@@ -624,7 +653,14 @@ its owner's lease from another conversation until it yields, are in
 that ran elsewhere and that a factory bound to the owner's conversation leaves
 the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
 `WorkstreamDO` forwards the earliest conversation deadline and lists the
-conversations that own one.
+conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
+one run's writes release between calls and re-run readiness when the row moved,
+and a read proceeds while another run's write holds the lease where a write
+waits; every recovery case there drives the successor through a write, since
+a read recovers nothing. `terminal-lifecycle.test.ts` holds a running sandbox
+whose last call is inside the warm window, and the workerd suite proves a
+release keeps the lease over the holder's own unsettled command, frees it once
+settled, and that the owner of an unsettled command reattaches past it.
 Run the API set with:
 
 ```text
@@ -1140,6 +1176,55 @@ request merges, and sandboxes already created stay at the size they were made
 with. A future change to these numbers has to stay in this manifest: the weekly
 job builds from the repository, and a size configured anywhere else is reverted
 by the next adoption pull request without anyone noticing.
+
+### 2026-09-19 — The lease is held per tool call, and reads take none
+
+**What changed:** The operation lease is claimed at the start of each write
+tool call and released when the call ends; the per-run cache now holds the
+readiness handle only, and a claim that finds the row moved on re-runs
+readiness. `read_file` takes no lease: `peekRunning` hands it the sandbox when
+the row is running and the authority fingerprint is the caller's, and falls
+back to readiness otherwise. `releaseOperation` is new and fenced on the exact
+holder, and it keeps the lease while the holder has an unsettled command on
+the generation; the claim's takeover fence now ignores the claimant's own
+unsettled tasks, and every claim stamps `last_command_at`, which the lifecycle
+sweep reads as activity inside the warm window. Both lease operations are
+non-directory. The `sandbox_busy` guidance tells the model to retry in
+seconds.
+
+**Why:** With one sandbox per conversation shared by the agents it starts, the
+run-long lease meant a sibling background agent could do nothing at all —
+reads included — until the holder's whole run yielded, and the first sibling
+to load Terminal took the lease at activation for the length of its run. The
+lease's three jobs were separated: exclusivity for file mutation is a
+per-call need, exclusivity for whole-sandbox transitions is unchanged and
+still taken by readiness, checkout, policy application and the sweep, and the
+durable command receipt is keyed to the holder by the retained-task rule
+above rather than by the run never releasing.
+
+**Considered and rejected:** Releasing unconditionally and letting a successor
+recover a holderless retained task. Recovery is keyed to a yielded holder, so
+a lease nobody held over an unsettled command would be one no linked run could
+ever recover; the sweep would eventually quiesce it, but only at a deadline.
+Refreshing `idle_expires_at` on every claim instead of stamping
+`last_command_at`: the deadline is projected to the workspace directory, so
+that would have been a projection envelope and a workspace write per tool
+call. Concurrent commands, so a sibling can edit while another's tests run:
+not taken; a command holds the lease for its duration, which is also what
+keeps a sibling from editing the files a running test is reading. Per-agent
+git worktrees inside the shared sandbox, which would remove file conflicts
+rather than serialize them: the runtime assumes one root for path
+containment, publish paths and the instruction probe, so that is a separate
+piece of work.
+
+**Consequences:** Siblings interleave at call granularity and `sandbox_busy`
+lasts one call or one command. A read can observe another run's write in
+progress. A run between two calls holds nothing, so the sweep's idle decision
+now rests on `last_command_at` rather than on a live holder; a sandbox whose
+run died mid-call is freed by the sixteen-minute deadline as before. The
+activation pre-warm still starts the sandbox in the background but releases
+the lease when its readiness settles, so a sibling is no longer blocked by an
+activation that happened to come first.
 
 ### 2026-09-18 — A sandbox belongs to a conversation and is shared with the agents it starts
 
