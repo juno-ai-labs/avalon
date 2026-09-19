@@ -2,7 +2,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { Preparation } from "./harness-preparation";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId,
-  asUserId, asWorkstreamId, type AgentId, type AgentMessageResult, type StartAgentInput,
+  asUserId, asWorkstreamId, type AgentExchangeNotice, type AgentId, type AgentMessageResult, type StartAgentInput,
   type StartAgentResult, type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
@@ -14,19 +14,12 @@ import { createResourceObjectPort } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 
-/**
- * The wire names of the two tools that send a message to another agent. A run
- * that completes without one completed call to either has left its owner
- * waiting, and the host says so (see `notifySilentCompletion`).
- */
-export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as const;
-/**
- * The tools whose completed use means a run handed work or findings to
- * another agent, so its owner is not told it finished without replying: a
- * message, or a delegation the run then ends its turn to wait on, which is
- * what the guidance tells it to do.
- */
-export const AGENT_HANDOFF_TOOL_NAMES = [...AGENT_MESSAGE_TOOL_NAMES, "start_agent"] as const;
+// The wire names this service asks about — a message, and the delegation that
+// also counts as handing work on — are in `@rally/contracts` beside the schemas
+// they belong to, because the client reads the same list to decide which row a
+// call gets. `AGENT_HANDOFF_TOOL_NAMES` is re-exported so the callers that
+// already import it from here keep working.
+export { AGENT_HANDOFF_TOOL_NAMES, AGENT_MESSAGE_TOOL_NAMES } from "@rally/contracts";
 
 /**
  * What a delegating or messaging result tells the model about what happens
@@ -162,7 +155,7 @@ export class AgentCommunicationService {
    * messages it ever synthesizes: a failure, and a completion that sent nothing.
    */
   async notifyFailure(reason: string) {
-    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`);
+    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`, "failed");
   }
 
   /**
@@ -171,17 +164,17 @@ export class AgentCommunicationService {
    * exactly as a failure does; a run that sent even one message needs no notice.
    */
   async notifySilentCompletion(name: string | null) {
-    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`);
+    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`, "finished_without_reply");
   }
 
-  private async notifyOwner(message: string, effectKey: string) {
+  private async notifyOwner(message: string, effectKey: string, notice: AgentExchangeNotice) {
     const owner = await (await this.workspace()).agentOwner({ workspaceId: this.input.workspaceId, agentId: this.senderId });
     if (!owner.agentId) return;
     try {
       // The run supplies the delivery identity, so a settlement retry cannot
       // deliver the same notice twice.
       await this.deliver({ agentId: owner.agentId, message, attachmentIds: [] },
-        await this.messageId({ effectIntentId: effectKey }), false);
+        await this.messageId({ effectIntentId: effectKey }), false, undefined, notice);
     } catch (error) {
       // Archival closes admission; it must not prevent the run settling.
       if (error instanceof AgentCommunicationError && error.code === "workstream_archived") return;
@@ -189,7 +182,15 @@ export class AgentCommunicationService {
     }
   }
 
-  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string, resumeStopped = true, teamId?: AgentId) {
+  private async deliver(
+    args: SendAgentMessageInput | ReplyToAgentMessageInput,
+    messageId: string,
+    resumeStopped = true,
+    teamId?: AgentId,
+    // Set only by `notifyOwner`. A model-authored message has no notice, which
+    // is what lets the recipient tell the two apart.
+    notice?: AgentExchangeNotice,
+  ) {
     const route = await (await this.workspace()).resolveAgentMessage({
       workspaceId: this.input.workspaceId, messageId, senderAgentId: this.senderId,
       ...("agentId" in args ? { recipientAgentId: args.agentId, preferredTeamId: teamId ?? await this.team() }
@@ -204,7 +205,10 @@ export class AgentCommunicationService {
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
       recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
-      agentExchange: { teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId },
+      agentExchange: {
+        teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId,
+        ...(notice ? { notice } : {}),
+      },
       executionPrincipal: this.input.executionPrincipal,
       origin: "agent_message", now: Date.now() });
     if (!result.accepted) throw new AgentCommunicationError(result.code);

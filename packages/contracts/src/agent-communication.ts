@@ -23,11 +23,26 @@ export const AgentIdSchema = z.string().refine((value) => parseAddress(value) !=
 }).brand<"AgentId">();
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
+/**
+ * The two messages the host writes on a run's behalf, rather than a model
+ * deciding to send one.
+ *
+ * They travel the ordinary delivery path, so without this the recipient cannot
+ * tell them from a teammate's own message: both arrive as an agent exchange
+ * carrying the worker's id. That difference is the whole content of the
+ * notice — "this worker is done and said nothing" is not a message, it is an
+ * outcome the owner may need to act on — and the feed draws it as one.
+ */
+export const AgentExchangeNoticeSchema = z.enum(["failed", "finished_without_reply"]);
+export type AgentExchangeNotice = z.infer<typeof AgentExchangeNoticeSchema>;
+
 /** Host routing context for the message that activated an execution. */
 export const AgentExchangeSchema = z.strictObject({
   teamId: AgentIdSchema,
   messageId: IdSchema,
   senderAgentId: AgentIdSchema,
+  /** Absent on a model-authored message, which is every message but two. */
+  notice: AgentExchangeNoticeSchema.optional(),
 });
 export type AgentExchange = z.infer<typeof AgentExchangeSchema>;
 
@@ -92,26 +107,48 @@ export type ReplyToAgentMessageInput = z.infer<typeof ReplyToAgentMessageInputSc
 export const AGENT_MESSAGE_CONTENT_KIND = "agent_message";
 
 /**
- * The tools that send one, by the name the transcript stores.
+ * The tools whose subject is something other than the plugin carrying them, by
+ * the name the transcript stores.
  *
  * `createAgentCommunicationPlugin` declares `shortWireName: ""`, so these are
- * its tool names unprefixed. They are the two of that plugin's seven whose
- * subject is a message rather than an agent — `start_agent`, `list_agents` and
- * `stop_agent` are still the reader using the plugin, and stay on its own row.
+ * its tool names unprefixed. Three of that plugin's seven are about a message
+ * or a worker rather than about Rally reaching for a tool; `list_agents`,
+ * `stop_agent`, `sidekicks_list` and `create_sidekick` are the reader using
+ * the plugin and stay on its own row.
  *
- * Named here for the reason `isConnectorConnectionCardWireName` is, and with
- * the same one-directional caveat: a client older than a rename reads the new
- * spelling as ordinary Background agents activity. It loses the message row,
- * not the work.
+ * They are named here rather than beside either consumer because both need
+ * them: the API asks whether a run handed off before telling its owner the run
+ * said nothing, and the client asks which row a call belongs to. The API held
+ * the only copy until the client needed it, and briefly there were two; this
+ * is the one. The caveat is the one `isConnectorConnectionCardWireName`
+ * carries: a client older than a rename reads the new spelling as ordinary
+ * Background agents activity, losing the row rather than the work.
  */
-const AGENT_MESSAGE_SEND_WIRE_NAMES: ReadonlySet<string> = new Set([
-  "send_message",
-  "reply_to_message",
-]);
+export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as const;
+
+/** The tool that starts a worker. Its own row, for the same reason. */
+export const AGENT_START_TOOL_NAME = "start_agent";
+
+/**
+ * The tools whose completed use means a run handed work or findings to another
+ * agent, so its owner is not told it finished without replying: a message, or
+ * a delegation the run then ends its turn to wait on.
+ */
+export const AGENT_HANDOFF_TOOL_NAMES = [
+  ...AGENT_MESSAGE_TOOL_NAMES,
+  AGENT_START_TOOL_NAME,
+] as const;
+
+const AGENT_MESSAGE_TOOL_NAME_SET: ReadonlySet<string> = new Set(AGENT_MESSAGE_TOOL_NAMES);
 
 /** True for a tool call whose subject is a message to a teammate. */
 export function isAgentMessageSendWireName(name: string | undefined): boolean {
-  return name !== undefined && AGENT_MESSAGE_SEND_WIRE_NAMES.has(name);
+  return name !== undefined && AGENT_MESSAGE_TOOL_NAME_SET.has(name);
+}
+
+/** True for a tool call whose subject is a worker being started. */
+export function isAgentStartWireName(name: string | undefined): boolean {
+  return name === AGENT_START_TOOL_NAME;
 }
 
 /** True for the structured content an admitted agent-to-agent message carries. */
@@ -119,4 +156,21 @@ export function isAgentMessageContent(
   structuredContent: Readonly<Record<string, unknown>> | null | undefined,
 ): boolean {
   return structuredContent?.["kind"] === AGENT_MESSAGE_CONTENT_KIND;
+}
+
+/**
+ * Which host notice an admitted message is, or null for the model-authored
+ * majority.
+ *
+ * Read through here rather than off the key, so the one place that spells
+ * `notice` is the schema's own file. A message stored before the field existed
+ * reads as null, which is the right answer for it: nothing distinguished the
+ * two notices then, and that is what this closes.
+ */
+export function agentMessageNotice(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+): AgentExchangeNotice | null {
+  if (!isAgentMessageContent(structuredContent)) return null;
+  const parsed = AgentExchangeNoticeSchema.safeParse(structuredContent?.["notice"]);
+  return parsed.success ? parsed.data : null;
 }

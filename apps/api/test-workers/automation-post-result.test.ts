@@ -506,6 +506,16 @@ describe("post_result", () => {
       `Agent Detailed researcher finished without replying. Id: ${started.agentId}`,
     ))).toBe(true);
     expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(LARGE_RESULT_TEXT.slice(0, 80)))).toBe(false);
+    // The notice is tagged as one. Without it the stored turn is shaped exactly
+    // like a teammate's own message, and the only two ends of a worker's life
+    // the transcript records are indistinguishable from ordinary traffic.
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{
+      structured_content_json: string | null;
+    }>(
+      `SELECT structured_content_json FROM canonical_conversation_turn_details
+        WHERE substream_id = '0' AND client_message_id LIKE 'agent-message:%'`,
+    ).toArray().map((turn) => JSON.parse(turn.structured_content_json ?? "{}").notice)))
+      .toEqual(["finished_without_reply"]);
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM (
         SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'

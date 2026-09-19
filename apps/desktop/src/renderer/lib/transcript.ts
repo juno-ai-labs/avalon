@@ -5,6 +5,9 @@ import type { ElicitationData, Message, MessageMention, PluginActivityData, Thou
 import {
   AGENT_MESSAGES_INBOUND_GROUP,
   AGENT_MESSAGES_OUTBOUND_GROUP,
+  AGENT_WORKERS_FAILED_GROUP,
+  AGENT_WORKERS_FINISHED_GROUP,
+  AGENT_WORKERS_STARTED_GROUP,
   countedGroup,
   pluginGroup,
   type PluginGroup,
@@ -13,9 +16,11 @@ import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
+  agentMessageNotice,
   connectorConnectionCardInputFromToolEvent,
   isAgentMessageContent,
   isAgentMessageSendWireName,
+  isAgentStartWireName,
   isConnectorConnectionCardWireName,
   type TranscriptActivity,
   type PendingTranscriptInput,
@@ -393,6 +398,18 @@ export function orderedTranscriptMessages(
           // person read.
           if (isAgentMessageContent(structured)) {
             rememberOrder(block.blockId);
+            // The host writes two of these on a run's behalf, and they are not
+            // messages: one says a worker failed, the other that it finished
+            // with nothing to say. Counting them among a teammate's own
+            // messages would bury the only two ends of a worker's life the
+            // transcript records — and until `notice` existed, nothing here
+            // could tell them apart.
+            const notice = agentMessageNotice(structured);
+            const group = notice === 'failed'
+              ? AGENT_WORKERS_FAILED_GROUP
+              : notice === 'finished_without_reply'
+                ? AGENT_WORKERS_FINISHED_GROUP
+                : AGENT_MESSAGES_INBOUND_GROUP;
             return {
               ...base,
               id: block.blockId,
@@ -406,7 +423,7 @@ export function orderedTranscriptMessages(
               // is machinery, and a row scrolling into view must not
               // acknowledge an answer still below the fold.
               attentionSequenceNumber: null,
-              pluginActivity: countedActivity(AGENT_MESSAGES_INBOUND_GROUP, false),
+              pluginActivity: countedActivity(group, false),
             };
           }
           const imported = ImportedMessageProvenanceSchema.safeParse(structured);
@@ -1191,6 +1208,19 @@ function pluginGroupContribution(message: Message): {
     return {
       key: AGENT_MESSAGES_OUTBOUND_GROUP.key,
       activity: countedActivity(AGENT_MESSAGES_OUTBOUND_GROUP, tool.status === 'started'),
+      authoritativeDuration: false,
+    };
+  }
+  // A start that failed started nothing, so it is not one of the workers this
+  // row counts; it falls through to the Background agents plugin row, which
+  // says only that Rally used that plugin and is still true. `ambiguous` counts
+  // for the reason the host counts it as a handoff: a write whose confirmation
+  // was lost most likely landed, and reporting the worker as never started
+  // would invite the reader to conclude the work was dropped.
+  if (isAgentStartWireName(tool.name) && tool.status !== 'failed') {
+    return {
+      key: AGENT_WORKERS_STARTED_GROUP.key,
+      activity: countedActivity(AGENT_WORKERS_STARTED_GROUP, tool.status === 'started'),
       authoritativeDuration: false,
     };
   }
