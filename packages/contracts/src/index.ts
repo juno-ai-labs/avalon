@@ -57,6 +57,7 @@ import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
 export * from "./attachment-contracts";
+export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
