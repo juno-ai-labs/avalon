@@ -58,6 +58,25 @@ const defaultCopy: Record<SpaceDefaultKind, { heading: string; description: stri
 };
 
 /**
+ * Where a refusal is shown, one slot per surface that can produce one.
+ *
+ * Scoped rather than shared: a single `error` string was rendered in the body
+ * and in every open modal at once, so a failed rename appeared inside the
+ * participant picker, and closing one modal carried the sentence to the next.
+ */
+type FailureSlot =
+  | 'restore'
+  | 'name'
+  | 'archive'
+  | 'channels'
+  | 'addChannels'
+  | 'addDefault'
+  | 'participants'
+  | 'audience'
+  | 'appearance'
+  | `defaults:${SpaceDefaultKind}`;
+
+/**
  * A Space's own screen: what it is, who it is for, what is in it, and what it
  * hands down.
  *
@@ -74,11 +93,9 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const workstreams = useWorkstreamsQuery();
   const spacesReady = useSpacesReady();
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
-  const [error, setError] = useState<string | null>(null);
-  const [nameError, setNameError] = useState<string | null>(null);
+  const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
   const [saving, setSaving] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [editIconKey, setEditIconKey] = useState<SpaceIconKey>('briefcase');
   const [editColorKey, setEditColorKey] = useState<SpaceColorKey>(PROJECT_COLOR_DEFAULT);
@@ -130,6 +147,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // seed would carry fields another client may have changed since the row was
   // written. A remembered Space is read-only until the directory is live.
   const editable = space.status === 'active' && !directoryFromLocalCache;
+  const report = (slot: FailureSlot, sentence: string | null): void => setFailures((current) => {
+    const next = { ...current };
+    if (sentence === null) delete next[slot];
+    else next[slot] = sentence;
+    return next;
+  });
   const applySpace = (updated: SpaceSummary): void => {
     for (const queryKey of [SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY] as const) {
       queryClient.setQueryData<SpaceDirectory>(queryKey, (current) => current ? {
@@ -139,12 +162,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     }
   };
   const save = async (
+    slot: FailureSlot,
     change: () => Promise<SpaceSummary>,
     fallback: string,
-    report: (message: string | null) => void = setError,
   ): Promise<void> => {
     setSaving(true);
-    report(null);
+    report(slot, null);
     try {
       applySpace(await change());
     } catch (cause) {
@@ -152,7 +175,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       // a log, in the Organization's internal words, and it changes whenever
       // the server's wording does. `fallback` is this action's own sentence,
       // used when the refusal carried no Space code to name.
-      report(spaceFailureSentence(cause, fallback));
+      report(slot, spaceFailureSentence(cause, fallback));
     } finally {
       setSaving(false);
     }
@@ -209,11 +232,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               className="icon-button-danger"
               disabled={!editable}
               label="Archive space"
-              onClick={() => { setArchiveError(null); setArchiveConfirmOpen(true); }}
+              onClick={() => { report('archive', null); setArchiveConfirmOpen(true); }}
             >
               <Archive aria-hidden="true" size={15} />
             </IconButton>)
             : <Button disabled={directoryFromLocalCache || saving} onClick={() => void save(
+              'restore',
               () => api!.restoreSpace(space.id),
               'The space could not be restored.',
             )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
@@ -222,28 +246,32 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
             audience: {
               scope: space.scope,
               onChange: (scope: 'personal' | 'workspace') => {
-                if (scope !== space.scope) setPendingScope(scope);
+                if (scope === space.scope) return;
+                report('audience', null);
+                setPendingScope(scope);
               },
             },
           })}
           editable={editable}
           key={space.id}
           name={space.name}
-          nameError={nameError}
+          nameError={failures.name ?? null}
           onEditAppearance={() => {
+            report('appearance', null);
             setEditIconKey(space.iconKey);
             setEditColorKey(space.colorKey);
             setAppearanceOpen(true);
           }}
           onRename={(name) => void save(
+            'name',
             () => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }),
             'The space name could not be saved.',
-            setNameError,
           )}
           {...(isGeneral ? {} : {
             participants: {
               members: spaceMembers,
               onManage: () => {
+                report('participants', null);
                 setEditParticipants(new Set(participantIds));
                 setParticipantsOpen(true);
               },
@@ -253,7 +281,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
 
         <SpaceDashboardSection
           action={<div className="space-dashboard-header-actions">
-            <Button disabled={!editable} onClick={() => { setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
+            <Button disabled={!editable} onClick={() => { report('addChannels', null); setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
             <IconButton
               disabled={space.status !== 'active'}
               label={`New channel in ${space.name}`}
@@ -279,6 +307,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                       <RelativeTime value={workstream.lastActivityAt} />
                     </NavLink>}
                     onRemove={() => void save(
+                      'channels',
                       () => api!.removeChannelFromSpace(space.id, workstream.id),
                       'The channel could not be removed from this space.',
                     )}
@@ -291,11 +320,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               <Button disabled={channelPages.isFetchingNextPage} onClick={() => void channelPages.fetchNextPage()}>Load more</Button>
             </p>
           )}
+          {failures.channels && <InlineError>{failures.channels}</InlineError>}
         </SpaceDashboardSection>
 
         {(['resource', 'sidekick'] as const).map((kind) => (
           <SpaceDashboardSection
-            action={<Button disabled={!editable || saving} onClick={() => { setSelectedIds(new Set()); setDefaultPicker(kind); }}>
+            action={<Button disabled={!editable || saving} onClick={() => { report('addDefault', null); setSelectedIds(new Set()); setDefaultPicker(kind); }}>
               <FolderPlus aria-hidden="true" size={15} /> Add {kind === 'resource' ? 'resource' : 'Sidekick'}
             </Button>}
             description={defaultCopy[kind].description}
@@ -308,17 +338,19 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               emptyLabel={defaultCopy[kind].empty}
               items={defaultItems(kind)}
               onRemove={(id) => void save(
+                `defaults:${kind}`,
                 () => api!.removeSpaceDefault(space.id, kind, id),
                 'That could not be removed from this space.',
               )}
             />
+            {failures[`defaults:${kind}`] && <InlineError>{failures[`defaults:${kind}`]}</InlineError>}
           </SpaceDashboardSection>
         ))}
-        {error && <InlineError>{error}</InlineError>}
+        {failures.restore && <InlineError>{failures.restore}</InlineError>}
 
         <Modal
           footer={<><Button onClick={() => setArchiveConfirmOpen(false)}>Cancel</Button><Button className="button-danger" disabled={saving} onClick={() => {
-            setArchiveError(null);
+            report('archive', null);
             setSaving(true);
             void api!.archiveSpace(space.id).then((archived) => {
               setArchiveConfirmOpen(false);
@@ -333,7 +365,8 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                   : [archived, ...current.items],
               } : current);
               openFirstWorkstream();
-            }).catch((cause: unknown) => setArchiveError(
+            }).catch((cause: unknown) => report(
+              'archive',
               spaceFailureSentence(cause, 'The space could not be archived.'),
             )).finally(() => setSaving(false));
           }}>Archive space</Button></>}
@@ -346,7 +379,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               gaining a `channelIds` details field to carry one. Until it does,
               this says what has to be true rather than naming the Channel. */}
           <p>Its channels keep the resources and Sidekicks they already have, and stay in every other space they belong to. A channel whose only space is this one has to be moved first.</p>
-          {archiveError && <InlineError>{archiveError}</InlineError>}
+          {failures.archive && <InlineError>{failures.archive}</InlineError>}
         </Modal>
 
         <Modal
@@ -355,6 +388,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
             void (async () => {
               for (const workstreamId of selectedIds) {
                 await save(
+                  'addChannels',
                   () => api!.addChannelToSpace(space.id, workstreamId),
                   'The channel could not be added to this space.',
                 );
@@ -387,7 +421,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                 </label>
               ))}
             </div>}
-          {error && <InlineError>{error}</InlineError>}
+          {failures.addChannels && <InlineError>{failures.addChannels}</InlineError>}
         </Modal>
 
         <Modal
@@ -400,6 +434,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
             void (async () => {
               for (const targetId of selectedIds) {
                 await save(
+                  'addDefault',
                   () => api!.addSpaceDefault(space.id, kind, targetId),
                   'That could not be added to this space.',
                 );
@@ -432,13 +467,14 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                 </label>
               ))}
             </div>}
-          {error && <InlineError>{error}</InlineError>}
+          {failures.addDefault && <InlineError>{failures.addDefault}</InlineError>}
         </Modal>
 
         <Modal
           description="Choose the organization members who participate in this space."
           footer={<><Button disabled={saving} onClick={() => setParticipantsOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || editParticipants.size === 0} onClick={() => {
             void save(
+              'participants',
               () => api!.updateSpaceAudience(space.id, { scope: space.scope, participantUserIds: [...editParticipants] }),
               'Space participants could not be saved.',
             ).then(() => setParticipantsOpen(false));
@@ -474,13 +510,14 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               );
             })}
           </div>
-          {error && <InlineError>{error}</InlineError>}
+          {failures.participants && <InlineError>{failures.participants}</InlineError>}
         </Modal>
 
         <Modal
           footer={<><Button disabled={saving} onClick={() => setPendingScope(null)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
             if (pendingScope === null) return;
             void save(
+              'audience',
               () => api!.updateSpaceAudience(space.id, {
                 scope: pendingScope,
                 participantUserIds: [...participantIds],
@@ -495,12 +532,13 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           <p>{pendingScope === 'workspace'
             ? 'Everyone in the organization will be able to see this space and every channel in it. Current participants stay participants.'
             : 'Only this space’s participants will be able to see it. Channels stay public if another source still says so.'}</p>
-          {error && <InlineError>{error}</InlineError>}
+          {failures.audience && <InlineError>{failures.audience}</InlineError>}
         </Modal>
 
         <Modal
           footer={<><Button disabled={saving} onClick={() => setAppearanceOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
             void save(
+              'appearance',
               () => api!.updateSpacePresentation(space.id, { name: space.name, iconKey: editIconKey, colorKey: editColorKey }),
               'The icon and color could not be saved.',
             ).then(() => setAppearanceOpen(false));
@@ -510,7 +548,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           title="Space icon and color"
         >
           <SpaceAppearancePicker colorKey={editColorKey} iconKey={editIconKey} onColorChange={setEditColorKey} onIconChange={setEditIconKey} />
-          {error && <InlineError>{error}</InlineError>}
+          {failures.appearance && <InlineError>{failures.appearance}</InlineError>}
         </Modal>
       </div>
     </div>
