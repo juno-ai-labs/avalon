@@ -500,6 +500,25 @@ describe('footnote citations', () => {
     expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('falls back to the asterisk when the fetched icon will not paint', async () => {
+    // The endpoint validates that it is serving an image and serves SVG among
+    // others, so a blob can be a good response and still fail to decode here.
+    // Left alone the marker is a broken-image glyph, which is worse than the
+    // asterisk it replaced: in this position the icon is the whole signal.
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x3c])], { type: 'image/svg+xml' }));
+
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    const icon = await screen.findByRole('button', { name: 'Source 2: Margin memo' })
+      .then((pill) => waitFor(() => { const img = pill.querySelector('img'); expect(img).not.toBeNull(); return img!; }));
+    fireEvent.error(icon);
+
+    const pill = screen.getByRole('button', { name: 'Source 2: Margin memo' });
+    expect(pill.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+    expect(pill).not.toHaveClass('citation-pill-favicon');
+  });
+
   it('drops a resolved icon when the same marker is re-pointed at another host', async () => {
     // The pill holds its position across a re-parse, so a definition that
     // changes target hands the *same* component a new host. The object URL for
