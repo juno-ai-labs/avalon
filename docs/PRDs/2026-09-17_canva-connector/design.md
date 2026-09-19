@@ -353,7 +353,7 @@ not established by the catalog.
 ### What the adapter declares
 
 Two proposed triggers, both narrowing to one `canva_design`, and nothing else.
-Expose them only after their acceptance tests and audience policy pass:
+Expose them only after their acceptance tests pass:
 
 | Trigger | Digestibility | Filter fields | Resource relationship |
 | --- | --- | --- | --- |
@@ -379,7 +379,7 @@ started:
 
 - A Linear project reaching *shipped* triggers a run that calls
   `search-brand-templates`, `create-design-from-brand-template` and
-  `export-design`, and returns assets to an authorized audience, subject to the policy gate below.
+  `export-design`, and returns assets to the work stream under its ordinary access controls.
 - A weekly schedule exports the current state of a named deck as a dated
   snapshot.
 - A run that has just written copy calls `generate-design` to draft the graphic
@@ -388,15 +388,16 @@ started:
   `list-replies`, checks it against the messaging the work stream holds, and
   answers with `reply-to-comment`.
 
-## Provider policy and audience gate
+## Provider access and output sharing
 
-The [usage policy](https://www.canva.dev/docs/mcp/usage-policy/), reviewed
-2026-09-18, requires opt-in and controls for background access. Shared agents
-cannot run on someone else's token; users need their own Canva authentication
-to run them or access Canva-derived outputs. Clarify compatibility with shared
-Rally work streams and digests before exposing those outputs to other members;
-ordinary workspace membership is not evidence of permission. Never assume an
-exception from the policy's separate delegation provision.
+Background access requires explicit opt-in and controls. A run uses the Canva
+connection owned by its run-as principal; another member's token is not a
+substitute. Per the 2026-09-19 product decision, the member requesting content is
+responsible for sharing it with the work stream's participants. Rally does not
+check those recipients' Canva accounts or permissions. Existing Rally
+work-stream permissions and digest visibility rules apply, without a separate
+Canva audience gate. This records Rally's product behavior, not a new finding
+about Canva's published policy.
 
 Canva-sourced data must not enter external-model training or evaluation.
 Brand Kits stay within Canva design workflows. Preserve operational data

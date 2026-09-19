@@ -33,10 +33,16 @@ forwarding, migration preservation, native Workers fetch invocation, poll schedu
 removal, editing cleanup dispatch and uncertain commit classification. Mutations
 were restored before the passing verification runs.
 
+## Sharing decision — 2026-09-19
+
+The requester is responsible for sharing Canva-derived output in the work stream.
+No Canva-specific recipient authorization is required. Ordinary Rally permissions,
+personal credential ownership and digest visibility remain the access contract.
+The previously listed recipient-enforcement engineering gap is removed.
+
 ## Remaining launch acceptance
 
 - [ ] Obtain Canva's production approval and clarify the interim desktop-to-backend flow's production eligibility. Loopback remains the fallback while the application is pending.
-- [ ] Clarify Canva-derived output recipient eligibility, then implement that audience contract before enabling shared outputs. Digest delivery is withheld and the connector stays disabled by default; this is not a claim of completed shared-audience enforcement.
 - [ ] Verify access that depends solely on a collaboration link, including revoking that link, using a separate non-owner Canva account.
 - [ ] Exercise design generation, export and Sidekick output end to end through Rally's agent loop; verify real provider entitlement refusals and reported quotas there.
 - [ ] Complete the natural-expiry/concurrent-refresh acceptance run. Rejection-driven renewal and durable rotation are verified; a natural four-hour wait was not performed.
