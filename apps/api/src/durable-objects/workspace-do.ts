@@ -6455,6 +6455,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Which of these Channels the Organization's directory already holds.
+   *
+   * The other half of the guard above: it is a Channel the Organization was
+   * *already* holding that says the invariant is broken, so this has to be
+   * asked before the batch commits, when the answer is still available.
+   *
+   * `json_each` rather than a placeholder list for the reason
+   * `unplacedChannelExists` uses one: the statement stays a single text
+   * whatever a batch carries, and this one runs on the ordinary projection
+   * path.
+   */
+  private directoryChannelsPresent(workstreamIds: readonly string[]): string[] {
+    return this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT workstream_id FROM workspace_workstream_directory
+        WHERE workstream_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify([...workstreamIds]),
+    ).toArray().map((row) => row.workstream_id);
+  }
+
+  /**
    * Close the cutover, or say why it cannot close yet.
    *
    * Two gates: no Channel outside every Space, and no Channel the cutover is
@@ -7545,6 +7565,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
     const channelEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind !== "space");
+    // Read before the loop commits anything, because which of these Channels
+    // the Organization was *already* holding is the question the unplaced
+    // guard at the foot of this method turns on, and by then every one of them
+    // has a row. Skipped entirely on an Organization whose cutover has not
+    // closed, which is the only state the guard has nothing to say about.
+    const commonChannelIds = [...new Set(channelEnvelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_common" ? [envelope.parentId] : []
+    )))];
+    const settledChannelIds = commonChannelIds.length > 0
+      && this.spaceStorage().bootstrapStatus().ready
+      ? this.directoryChannelsPresent(commonChannelIds)
+      : [];
     const userIds = [...new Set(request.envelopes.flatMap((envelope) => (
       envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
     )))];
@@ -7650,16 +7682,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // saying the hierarchy is renderable. `reopenBootstrap` already names this
     // event as one of its two reasons to exist; nothing called it on one.
     //
-    // The question is the close's own predicate, narrowed to the Channels this
-    // batch committed, and it reads this object's SQLite and nothing else: no
-    // D1, no other object, so an ordinary projection pays one local query and a
-    // guard that fires pays a reopen it was going to need anyway.
-    const commonChannelIds = channelEnvelopes.flatMap((envelope) => (
-      envelope.effect.kind === "directory_common" ? [envelope.parentId] : []
-    ));
-    if (commonChannelIds.length > 0
-      && this.spaceStorage().bootstrapStatus().ready
-      && this.spaceStorage().unplacedChannelExists(commonChannelIds)) {
+    // The question is the close's own predicate, which reads this object's
+    // SQLite and nothing else: no D1, no other object, so an ordinary
+    // projection pays two local queries and a guard that fires pays a reopen it
+    // was going to need anyway.
+    //
+    // **It is asked only of Channels this batch did not introduce**, which is
+    // not a softening. A Channel's *arrival* in the directory is a creation in
+    // flight rather than a Channel nobody is going to place: `reserveChild`
+    // enqueues the provisional row before either creation path is finished, and
+    // the Channel authority's own recovery alarm delivers it straight here when
+    // it wins the race with the coordinator's flush. On a connector path the
+    // reservation comes before the placement and the conversation is
+    // provisioned in between, so that alarm has the whole window and takes it:
+    // firing on an arrival reopened the cutover on every run of
+    // `space-creation.test.ts`'s Slack creation, which is the cost that made
+    // the Slack ordering a bug rather than a slow path. A row the
+    // Organization was already holding that is *still* in no Space is a claim
+    // about a broken invariant rather than an unfinished creation, and it is
+    // the state nothing else is going to fix.
+    if (settledChannelIds.length > 0
+      && this.spaceStorage().unplacedChannelExists(settledChannelIds)) {
       await this.reopenSpaceBootstrapWalk();
     }
     await Promise.all([...watchReconciliations].map((workstreamId) => (
