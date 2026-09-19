@@ -296,9 +296,14 @@ export interface ToolEventData {
 }
 
 /**
- * One plugin's share of an agent loop, as the feed shows it: a name, a glyph,
- * and the time that plugin has been working. It replaces the tool rows it was
- * built from — the tools themselves are detail this audience does not read.
+ * One strand of an agent loop, as the feed shows it: a name, a glyph, and how
+ * much of it there was. It replaces the rows it was built from — the tool calls
+ * themselves are detail this audience does not read.
+ *
+ * Named for the plugin rows it was introduced for, and since widened: a strand
+ * is any run of adjacent rows a reader has one question about. Messages to and
+ * from a background agent are two more, and they answer that question with a
+ * count rather than a duration — see `count` and `PluginGroup.countPhrase`.
  */
 export interface PluginActivityData {
   /** Stable within one agent loop; two plugins that share it share a row. */
@@ -327,6 +332,17 @@ export interface PluginActivityData {
    */
   monotonicStartedAt?: readonly number[];
   timingAccuracy?: 'observed' | 'upper_bound';
+  /**
+   * How many contributions this row stands for, on a group that is counted
+   * rather than timed.
+   *
+   * Absent on a timed row, which is every plugin: a count of Slack calls is the
+   * mechanism the row exists to hide, and printing one would put the tool
+   * names' own detail back in the feed under a different spelling. Present only
+   * where the count *is* the fact — a message either happened or it did not —
+   * and there `durationMs` is null, so the row prints the phrase alone.
+   */
+  count?: number;
   /** How the row reads; see `PluginGroup` for why a group owns its phrasing. */
   activeVerb: string;
   completedVerb: string;

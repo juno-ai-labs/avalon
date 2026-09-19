@@ -5,12 +5,14 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  * The glyph a plugin row draws.
  *
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
- * no company owns: the two virtual groups, multimodal generation, automations,
- * the public web, an unbranded webhook, and the plug a connector with no mark
- * of its own falls back to.
+ * no company owns: the two virtual groups, the mail mark an agent-to-agent
+ * message wears, multimodal generation, automations, the public web, an
+ * unbranded webhook, and the plug a connector with no mark of its own falls
+ * back to.
  */
 export type PluginGroupIcon =
   | PluginBrandMark
+  | 'agent-messages'
   | 'automations'
   | 'background-agents'
   | 'computer'
@@ -60,6 +62,22 @@ export interface PluginGroup {
    */
   activeVerb: string;
   completedVerb: string;
+  /**
+   * How a settled row reads when the group is counted rather than timed.
+   *
+   * Most rows here answer "how long": a plugin is a place Rally worked and the
+   * time it spent there is the fact worth carrying. A message is not a place —
+   * it either happened or it did not — and "Used Background agents for 1s" told
+   * a reader nothing about the two messages that second contained. A group that
+   * supplies this phrases its own total instead, and its row prints no duration
+   * at all: `AgentWorkTiming` already renders the verb alone for a stretch whose
+   * time is unknown, and an unknown time and an irrelevant one want exactly the
+   * same row.
+   *
+   * Absent on every other group, which keeps "counted" a property one group
+   * opts into rather than a second row type the feed has to learn.
+   */
+  countPhrase?: (count: number) => string;
 }
 
 /** The default phrasing: Rally used this plugin. */
@@ -90,6 +108,59 @@ const MULTIMODAL_GENERATION_GROUP: PluginGroup = {
   icon: 'image-generation',
   ...usedGroupVerbs('Multimodal generation'),
 };
+/** "1 message", "2 messages" — the noun the two rows below both count. */
+function messageCount(count: number): string {
+  return `${count} message${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * A teammate's message arriving here, and this conversation's messages out to
+ * one.
+ *
+ * Two rows rather than one because the direction is the whole fact: a reader
+ * scanning a run wants to know whether Rally handed work out or got an answer
+ * back, and a single "3 messages with a background agent" row answers neither.
+ * They share a glyph for the same reason two Slack calls do — it is one
+ * mechanism — and the mail mark is that mechanism rather than the Background
+ * agents stack, which stands for the agents themselves and still owns
+ * `start_agent`, `list_agents` and `stop_agent`.
+ *
+ * Inbound is never active. A received message has already arrived, so there is
+ * no in-flight state for the row to report; the verb is there because every
+ * group carries one, not because it is reachable.
+ */
+export const AGENT_MESSAGES_INBOUND_GROUP: PluginGroup = {
+  key: 'agent-messages:inbound',
+  name: 'Background agents',
+  icon: 'agent-messages',
+  activeVerb: 'Receiving a message from a background agent',
+  completedVerb: '1 message from a background agent',
+  countPhrase: (count) => `${messageCount(count)} from a background agent`,
+};
+export const AGENT_MESSAGES_OUTBOUND_GROUP: PluginGroup = {
+  key: 'agent-messages:outbound',
+  name: 'Background agents',
+  icon: 'agent-messages',
+  activeVerb: 'Sending a message to a background agent',
+  completedVerb: '1 message sent to a background agent',
+  countPhrase: (count) => `${messageCount(count)} sent to a background agent`,
+};
+
+/**
+ * The counted groups by key, so a row rebuilt from a stored `groupKey` can find
+ * the phrasing its total needs without the projection carrying a function
+ * around on the message.
+ */
+const COUNTED_GROUPS: ReadonlyMap<string, PluginGroup> = new Map([
+  [AGENT_MESSAGES_INBOUND_GROUP.key, AGENT_MESSAGES_INBOUND_GROUP],
+  [AGENT_MESSAGES_OUTBOUND_GROUP.key, AGENT_MESSAGES_OUTBOUND_GROUP],
+]);
+
+/** The group a counted row belongs to, or nothing for the timed majority. */
+export function countedGroup(groupKey: string): PluginGroup | undefined {
+  return COUNTED_GROUPS.get(groupKey);
+}
+
 const AUTOMATIONS_GROUP: PluginGroup = {
   key: 'name:Automations',
   name: 'Automations',

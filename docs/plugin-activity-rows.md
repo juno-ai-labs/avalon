@@ -148,7 +148,22 @@ absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
 other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
-row and uses Tabler's **stack-backward** glyph.
+row and uses Tabler's **stack-backward** glyph for `start_agent`,
+`list_agents`, `stop_agent`, `sidekicks_list` and `create_sidekick`.
+
+Its other two tools are not on that row. `send_message` and `reply_to_message`
+have a subject of their own — a message to a teammate, not a plugin Rally
+reached for — and they group as **messages sent to a background agent**,
+keyed on the wire name through `isAgentMessageSendWireName` ahead of the plugin
+lookup. A teammate's message arriving here is the matching row in the other
+direction: a `system` block whose structured content is
+`AGENT_MESSAGE_CONTENT_KIND` becomes **messages from a background agent**
+rather than the clamped note it used to be. Both wear Tabler's **mail-ai**
+glyph, because the mechanism is the mail rather than the agents, and both are
+counted rather than timed — see [the row itself](#the-row-itself). The two
+constants live in `@rally/contracts` for the reason
+`isConnectorConnectionCardWireName` does: a rename that reached only one side
+would silently drop the row.
 
 Custom MCP activity carries its host-authored `connectorType` independently
 of the configured label. It groups by canonical connection id and always draws
@@ -234,6 +249,19 @@ name is a common noun rather than a proper one, so it is the one that takes an
 article: "Used a computer for 11s". A row whose duration is unknown drops the
 duration rather than printing `0ms`, running or settled: printing the active
 segment alone would read as the whole.
+
+**A group can be counted instead of timed.** Most rows answer "how long",
+because a plugin is a place Rally worked and the time it spent there is the
+fact worth carrying. A message is not a place: it either happened or it did
+not, and `Used Background agents for 1s` said nothing about the two messages
+that second contained. A group that supplies `PluginGroup.countPhrase` phrases
+its own settled total from the number of contributions it holds — "2 messages
+from a background agent" — and leaves `durationMs` null, so the row prints the
+phrase alone. That needs no second row component: `AgentWorkTiming` already
+draws the verb by itself for a stretch whose time is unknown, and an unknown
+time and an irrelevant one want exactly the same row. The count rides on
+`PluginActivityData.count`, which is also what marks the row as carrying no
+interval — see the invariant below.
 
 Every row's label opens with a capital, and `AgentWorkTiming` is what puts it
 there rather than each producer. A plugin group already names itself in
@@ -400,6 +428,14 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   timer is never part of that total — it is the whole response, not a step in
   it, and summing it into a turn's thinking would double-count it and put it out
   of reach of `foldSettledWorkIntoMessages`.
+- **A counted row reports no interval, and that is not the same as an unknown
+  one.** A message is an event rather than a stretch of work, and
+  `send_message` returns at once by contract, so a counted row carries no
+  `workSpans` and `foldedStretchTotal` skips it. Reading its absent spans the
+  way it reads a work row's — as time it cannot account for — would drop the
+  enclosing drawer to a bare "Worked" every time a teammate answered mid-run,
+  reporting less because the feed learned more. The test is
+  `pluginActivity.count`, which only a counted group sets.
 - **A group row's position is its plugin's first row in the run, never its
   last.** The feed's order is the order work started in; the alternative makes a
   row jump downward as the plugin is used again.
@@ -642,6 +678,51 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-09-19 — A message to or from a background agent is a counted row
+
+**What changed:** A message from a background agent no longer renders as a
+clamped system note in the feed. It joins this column as a `plugin_activity`
+row wearing Tabler's **mail-ai** glyph and reading "2 messages from a
+background agent", and the `send_message` and `reply_to_message` calls split
+out of the Background agents row as "2 messages sent to a background agent".
+Both fold into the work accordion behind the answer that reports on them, and
+both stop closing the plugin run around them, because a message arriving is not
+something a person read. `PluginGroup` gained `countPhrase` and
+`PluginActivityData` gained `count`; `AGENT_MESSAGE_CONTENT_KIND` and
+`isAgentMessageSendWireName` are in `@rally/contracts`.
+
+**Why:** Four background agents on one question put four walls of
+agent-to-agent prose into the feed. Every one of them was written for another
+agent — sender identity, a message id to reply to, findings taken mid-
+investigation — and the feed printed each as a bullet with a `more` behind it,
+in front of a reader who was never its audience and with no way to tell which
+of the four had written it. The row that stood for the outbound half said "Used
+Background agents for 1s": a duration in place of a count, over a second that
+carried two messages.
+
+**Considered and rejected:** A second row type for messages, parallel to the
+plugin rows. It would have cloned run grouping, the accordion's fold and
+`WorkAccordionRow` to say the same thing in the same 20px column. Widening one
+primitive from "how long" to "how much" was the smaller change, and leaves the
+next counted strand — files written, pages read — with nothing to build.
+
+Also rejected: keeping the prose behind a disclosure on the row. A plugin row
+shows none of the calls it stands for; a message row that reopened its body
+would put the same wall of text one click away rather than deciding it is
+machinery. If that body is worth reading, it belongs on a surface built to hold
+it, not folded into this column.
+
+Also rejected: pluralizing the agent when the senders differ, which
+`senderAgentId` would support for the inbound row. Nothing carries the
+recipient on the outbound one, and a row that said "agents" in one direction
+and "a background agent" in the other would read as a distinction the feed does
+not draw.
+
+**Consequences:** The message body is unreachable from the feed. Any group
+given a `countPhrase` must leave `durationMs` null, or the row will print a
+number its own phrase contradicts, and must accept that `foldedStretchTotal`
+attributes it no time at all.
 
 ### 2026-09-15 — Local official marks for brands the catalog does not ship
 
