@@ -63,6 +63,7 @@ const parent: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
+  spaceIds: [],
   createdAt: '2026-09-09T20:00:00.000Z',
   participants: [{ ...creator, role: 'creator' }],
   viewers: [],

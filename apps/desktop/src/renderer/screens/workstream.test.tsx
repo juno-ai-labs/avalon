@@ -129,6 +129,7 @@ const headerWorkstream: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
+  spaceIds: [],
   createdAt: '2026-08-07T12:00:00.000Z',
   participants: [],
   viewers: [],

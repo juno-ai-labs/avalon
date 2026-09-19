@@ -153,6 +153,7 @@ describe('SessionGate identity-first ordering', () => {
       firstUnreadSequenceNumber: null, lastActivityAt: '2025-01-01T12:00:00Z',
       lastAccessedAt: '2026-09-09T12:00:00Z',
       pinPosition: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
+      spaceIds: [],
     };
     // Recently viewed wins the landing even outside the five most active rows.
     const recent = Array.from({ length: 5 }, (_, index) => ({ ...first,

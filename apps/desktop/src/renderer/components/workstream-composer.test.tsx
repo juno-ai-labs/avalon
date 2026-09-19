@@ -52,6 +52,7 @@ const workstream: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
+  spaceIds: [],
   createdAt: '2026-07-31T20:00:00.000Z',
   participants: [creator],
   viewers: [],

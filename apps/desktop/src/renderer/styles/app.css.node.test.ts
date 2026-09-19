@@ -535,7 +535,7 @@ describe('clipped lines in both navigation rails', () => {
     '.account-copy span',
     '.account-copy strong',
     '.automation-tile-name',
-    '.project-row-link > span',
+    '.space-row-link > span',
     '.sidebar-row-hint-text',
     '.sidebar-row-title',
     '.sidebar-row-title-copy',
@@ -575,7 +575,7 @@ describe('clipped lines in both navigation rails', () => {
     ['.sidebar-row-title,\n.sidebar-row-hint'],
     ['.sidebar-row-title-copy'],
     ['.sidebar-row-hint-text'],
-    ['.project-row-link > span'],
+    ['.space-row-link > span'],
     ['.automation-tile-name'],
     ['.account-copy strong'],
     ['.account-copy span'],
@@ -905,7 +905,7 @@ describe('overscroll containment on the shared rail and sidebar scrollers', () =
  * shadows a `margin-top` that names the token.
  */
 describe('sidebar group breaks follow the group-gap token', () => {
-  const GROUPED = ['.pinned-section', '.workstreams-section', '.projects-section', '.sidebar-group'];
+  const GROUPED = ['.pinned-section', '.workstreams-section', '.spaces-section', '.sidebar-group'];
 
   it('gives no grouped sidebar section a margin-top literal of its own', () => {
     const offenders: string[] = [];
@@ -1006,10 +1006,10 @@ describe('dictation button recording state', () => {
 });
 
 // These rows were built for the home screen's Needs attention section and are
-// now the project space's, which renders three of the six tracks. The project
-// and source rules below are dead until something fills those tracks again; the
-// geometry is asserted whole because the template is what keeps the chevrons on
-// one right edge. See docs/workstream-markers.md.
+// now the Space dashboard's, which renders three of the six tracks. The
+// second-column and source rules below are dead until something fills those
+// tracks again; the geometry is asserted whole because the template is what
+// keeps the chevrons on one right edge. See docs/workstream-markers.md.
 describe('Channel row geometry', () => {
   it('keeps the marker dot at its size, and clips a label the track cannot hold', () => {
     // The dot is a flex item beside the label, so it is what gives way when a
@@ -1024,7 +1024,7 @@ describe('Channel row geometry', () => {
       .toContain('text-overflow: ellipsis;');
   });
 
-  it('reserves a project slot and pins time and chevron to stable columns', () => {
+  it('reserves the second slot and pins time and chevron to stable columns', () => {
     expect(rule('.waiting-workstream-row')).toContain(
       'grid-template-columns: 130px auto minmax(0, 1fr) auto auto 15px;',
     );
@@ -1064,30 +1064,37 @@ describe('raised popover interaction states', () => {
   });
 });
 
-describe('sidebar project rows', () => {
-  // Project rows wear `.sidebar-row` so they pick up the shared hover fill,
-  // radius, and padding. A private hover colour on `.project-sidebar-row`
+describe('sidebar space rows', () => {
+  // Space rows wear `.sidebar-row` so they pick up the shared hover fill,
+  // radius, and padding. A private hover colour on `.space-sidebar-row`
   // would win on specificity and split the two kinds again — which is how
   // they looked before this guard.
-  it('does not give project rows a private hover fill', () => {
-    expect(rule('.project-sidebar-row:hover')).toBeNull();
-    expect(rule('.project-sidebar-workstream')).toBeNull();
-    expect(rule('.project-sidebar-workstream:hover')).toBeNull();
+  it('does not give space rows a private hover fill', () => {
+    expect(rule('.space-sidebar-row:hover')).toBeNull();
+    expect(rule('.space-sidebar-workstream')).toBeNull();
+    expect(rule('.space-sidebar-workstream:hover')).toBeNull();
   });
 
-  it('hides the project-row plus until the row is hovered or focused', () => {
-    expect(rule('.project-sidebar-row .project-sidebar-row-action')).toContain('opacity: 0;');
+  it('hides the space-row plus until the row is hovered or focused', () => {
+    expect(rule('.space-sidebar-row .space-sidebar-row-action')).toContain('opacity: 0;');
     const reveal = rule(
-      '.project-sidebar-row:hover .project-sidebar-row-action,\n'
-      + '.project-sidebar-row:focus-within .project-sidebar-row-action',
+      '.space-sidebar-row:hover .space-sidebar-row-action,\n'
+      + '.space-sidebar-row:focus-within .space-sidebar-row-action',
     );
     expect(reveal).toContain('opacity: 1;');
   });
 
-  it('starts nested channel rows where the accordion control ends', () => {
-    expect(rule('.sidebar-row.project-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
-    expect(rule('.project-accordion-control')).toContain('width: 18px;');
-    expect(rule('.project-sidebar-workstreams')).toContain('padding-left: 18px;');
+  it('starts placement rows where the accordion control ends', () => {
+    expect(rule('.sidebar-row.space-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
+    expect(rule('.space-accordion-control')).toContain('width: 18px;');
+    expect(rule('.space-sidebar-workstreams')).toContain('padding-left: 18px;');
+  });
+
+  // The Projects section this replaced is gone in one cutover, not renamed
+  // alongside a surviving copy of itself: a `.project-*` rule left behind is a
+  // rule nothing draws and the next person has to work that out.
+  it('keeps no project rules behind', () => {
+    expect(stylesheet).not.toContain('.project-');
   });
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {

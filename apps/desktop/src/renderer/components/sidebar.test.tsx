@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
+import { SpaceSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -118,6 +118,7 @@ function workstream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt,
     ...viewerState,
   };
@@ -128,22 +129,41 @@ function pinned(workstream: WorkstreamSummary, position: number): WorkstreamSumm
   return { ...workstream, pinPosition: position };
 }
 
-function dropTargetProject(...workstreamIds: string[]) {
-  return ProjectSummarySchema.parse({
-    id: '00000000-0000-7000-8000-0000000000f2',
-    name: 'Hiring',
+function space(
+  id = '00000000-0000-7000-8000-0000000000f2',
+  name = 'Hiring',
+  overrides: Record<string, unknown> = {},
+) {
+  return SpaceSummarySchema.parse({
+    id,
+    name,
     iconKey: 'briefcase',
     colorKey: 'blue',
     scope: 'personal',
     status: 'active',
-    presentationRevision: 1,
-    audienceGeneration: 1,
-    lifecycleGeneration: 1,
-    participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+    systemRole: null,
+    revision: 1,
+    participants: [{ userId: '00000000-0000-7000-8000-0000000000f1' }],
+    channelCount: 0,
+    defaultResourceIds: [],
+    defaultSidekickIds: [],
     createdAt: '2026-08-27T00:00:00.000Z',
     updatedAt: '2026-08-27T00:00:00.000Z',
-    workstreamIds,
+    ...overrides,
   });
+}
+
+/** General: the Organization's protected fallback, present in every sidebar. */
+function general() {
+  return space('00000000-0000-7000-8000-0000000000f0', 'General', {
+    scope: 'workspace',
+    systemRole: 'general',
+  });
+}
+
+/** The same Channel, placed in each of the Spaces named. */
+function placedIn(target: WorkstreamSummary, ...spaceIds: string[]): WorkstreamSummary {
+  return { ...target, spaceIds };
 }
 
 describe('Sidebar channel markers', () => {
@@ -582,27 +602,13 @@ describe('Sidebar channel markers', () => {
       .not.toBeInTheDocument();
   });
 
-  it('given a project member, when the accordion opens, then the child is the same channel row as the recent list', () => {
+  it('given a space placement, when the accordion opens, then the child is the same channel row as the recent list', () => {
     const memberId = '00000000-0000-7000-8000-0000000000e1';
-    const member = {
+    const placement = space();
+    const member = placedIn({
       ...workstream(memberId, 'Ship the launch', 'completed'),
       preview: 'Draft the announcement',
-    };
-    const project = ProjectSummarySchema.parse({
-      id: '00000000-0000-7000-8000-0000000000f2',
-      name: 'Hiring',
-      iconKey: 'briefcase',
-      colorKey: 'blue',
-      scope: 'personal',
-      status: 'active',
-      presentationRevision: 1,
-      audienceGeneration: 1,
-      lifecycleGeneration: 1,
-      participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
-      createdAt: '2026-08-27T00:00:00.000Z',
-      updatedAt: '2026-08-27T00:00:00.000Z',
-      workstreamIds: [memberId],
-    });
+    }, placement.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -610,7 +616,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[project]}
+            spaces={[placement]}
             workspace={workspace}
             workstreams={[member]}
           />
@@ -736,13 +742,13 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the projects, then two groups of
+    // Three for the spaces, then two groups of
     // four and three.
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects and channels')).toBeInTheDocument();
+    expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
     expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
@@ -1582,11 +1588,11 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  // The submenu that used to sit between Rename and the scope item is gone. The
-  // neighbours are asserted alongside it because an absence on its own also
+  // The neighbours are asserted alongside it because an absence on its own also
   // holds when the menu never opened, which would pass whatever the menu says.
-  it('given a project, when the row menu opens, then it offers no Add to project', async () => {
-    const target = workstream('menu-projects', 'Quarterly planning', 'completed');
+  it('given a channel already in a space, when the row menu opens, then only the other spaces are offered', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('menu-spaces', 'Quarterly planning', 'completed'), hiring.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1594,7 +1600,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general(), hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1602,18 +1608,50 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Add to project' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
+    expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
+    // Already a placement there: adding it again is not on offer.
     expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
   });
 
-  // A drag that cannot be released anywhere is worse than no drag: it draws a
-  // ghost, takes the pointer, and then does nothing. The conversation-only
-  // sidebar draws no project section, so having projects is not enough.
-  it('given a project but no project section, when a row renders, then it is not draggable', () => {
+  it('adds a channel to the space its row was dropped on', () => {
+    const onAddChannelToSpace = vi.fn(async () => undefined);
+    const hiring = space();
+    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), general().id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onAddChannelToSpace={onAddChannelToSpace}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = document.querySelector(`[data-workstream-id="${target.id}"]`);
+    expect(row).toHaveAttribute('draggable', 'true');
+    const item = screen.getByText('Hiring').closest('.space-sidebar-item');
+    if (!(item instanceof HTMLElement)) throw new Error('space row missing');
+    fireEvent.drop(item, {
+      dataTransfer: { getData: (type: string) => type === 'application/x-rally-workstream-id' ? target.id : '' },
+    });
+
+    expect(onAddChannelToSpace).toHaveBeenCalledWith(hiring.id, target.id);
+  });
+
+  // Every Channel belongs to at least one Space and the section is drawn in
+  // every shell, so a row is always draggable onto something.
+  it('given the conversation-only sidebar, then the spaces section is still drawn and rows are draggable', () => {
     const target = workstream('drag-conversation-only', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
@@ -1623,7 +1661,7 @@ describe('Sidebar channel markers', () => {
             automations={[]}
             conversationOnly
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general()]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1631,12 +1669,12 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('heading', { name: 'Projects' })).not.toBeInTheDocument();
-    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'false');
+    expect(screen.getByRole('heading', { name: 'Spaces' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
   });
 
-  it('given a project section on screen, when a row renders, then it is draggable onto it', () => {
-    const target = workstream('drag-full-sidebar', 'Quarterly planning', 'completed');
+  it('shows the organization-opening state instead of a half-built hierarchy', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1644,7 +1682,57 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general()]}
+            spacesReady={false}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Rally is opening this organization/u)).toBeVisible();
+    expect(screen.queryByRole('link', { name: /General/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the spaces it has and offers a retry when the directory is out of date', () => {
+    const onRetrySpaces = vi.fn();
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onRetrySpaces={onRetrySpaces}
+            onSignOut={vi.fn()}
+            spaces={[general()]}
+            spacesOutOfDate
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
+    expect(screen.getByText('These spaces may be out of date.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetrySpaces).toHaveBeenCalled();
+  });
+
+  it('opens the same channel from a placement under each of its spaces', () => {
+    const hiring = space();
+    const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
+    const target = placedIn(workstream('two-places', 'Quarterly planning', 'completed'), hiring.id, launch.id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[hiring, launch]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1652,8 +1740,12 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Projects' })).toBeVisible();
-    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
+    const rows = screen.getAllByRole('link', { name: /Quarterly planning/u });
+    // One under each Space, plus the recent list's own.
+    expect(rows).toHaveLength(3);
+    for (const row of rows) expect(row).toHaveAttribute('href', `/workstreams/${target.id}`);
   });
 
   it('marks channels unread on the server and renames from the menu', async () => {
@@ -1719,17 +1811,13 @@ describe('private channels', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  function renderWith(
-    streams: WorkstreamSummary[],
-    onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
-  ): void {
+  function renderWith(streams: WorkstreamSummary[]): void {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
             automations={[]}
-            {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -1808,6 +1896,7 @@ describe('private channels', () => {
       // available to the whole workspace.
       participantUserIds: ['user-1', 'user-2'],
       participantExtraCount: 3,
+      spaceIds: [],
     }]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
@@ -1816,40 +1905,18 @@ describe('private channels', () => {
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
-  it('closes a channel to the people in it from the right-click menu', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
-    renderWith(
-      [workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')],
-      onChangeWorkstreamScope,
-    );
+  // **Make private** is gone. A Channel's readers are the union of its own
+  // scope and every active Space that holds it, so the row cannot answer
+  // whether it is private — the dialog reads the sources and says. What it then
+  // offers is covered in `manage-access-dialog.test.tsx`.
+  it('offers Manage access in place of the old visibility toggle', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')]);
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
-    // Named for the state it moves to, the way the note item is.
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
 
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000023' }),
-      'personal',
-    );
-  });
-
-  it('opens a private channel back up to the organization', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
-    renderWith(
-      [{
-        ...workstream('00000000-4000-4000-8000-000000000024', 'Comp review', 'completed'),
-        scope: 'personal',
-      }],
-      onChangeWorkstreamScope,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Comp review/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to organization' }));
-
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000024' }),
-      'workspace',
-    );
+    expect(await screen.findByRole('menuitem', { name: 'Manage access' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Make public to organization' })).not.toBeInTheDocument();
   });
 
   // A system work stream takes its audience from the subsystem, so the menu
@@ -1864,24 +1931,7 @@ describe('private channels', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Make public to organization' })).not.toBeInTheDocument();
-  });
-
-  it('reports a visibility change the server rejected instead of failing silently', async () => {
-    renderWith(
-      [workstream('00000000-4000-4000-8000-000000000028', 'Launch', 'completed')],
-      vi.fn(async () => {
-        throw new Error('The channel could not be reached.');
-      }),
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Channel visibility could not be changed' });
-    expect(within(dialog).getByText('The channel is still visible to the organization. Try again in a moment.'))
-      .toBeVisible();
-    expect(dialog).not.toHaveTextContent('The channel could not be reached.');
+    expect(screen.queryByRole('menuitem', { name: 'Manage access' })).not.toBeInTheDocument();
   });
 });
 
@@ -2494,33 +2544,22 @@ describe('pinned channels', () => {
       ]);
     });
 
-    it('scopes a project\'s members apart from the recent list', () => {
-      const member = workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed');
-      const project = ProjectSummarySchema.parse({
-        id: '00000000-0000-7000-8000-0000000000f2',
-        name: 'Launch',
-        iconKey: 'briefcase',
-        colorKey: 'blue',
-        scope: 'personal',
-        status: 'active',
-        presentationRevision: 1,
-        audienceGeneration: 1,
-        lifecycleGeneration: 1,
-        participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
-        createdAt: '2026-08-27T00:00:00.000Z',
-        updatedAt: '2026-08-27T00:00:00.000Z',
-        workstreamIds: [member.id],
-      });
+    it('scopes a space\'s placements apart from the recent list', () => {
+      const placement = space('00000000-0000-7000-8000-0000000000f2', 'Launch');
+      const member = placedIn(
+        workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed'),
+        placement.id,
+      );
       render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} projects={[project]} workspace={workspace} workstreams={[member]} />
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[placement]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
       const rows = screen.getAllByRole('link', { name: /Roadmap review/u }).map((link) => link.closest('[data-motion-key]'));
       expect(rows).toHaveLength(2);
       const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
-      expect(scopes).toEqual(expect.arrayContaining([`project:${project.id}`, null]));
+      expect(scopes).toEqual(expect.arrayContaining([`space:${placement.id}`, null]));
       expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
     });
 

@@ -48,7 +48,7 @@ describe('ConnectingCard', () => {
 
   it('shows the failure and offers the one action there is', () => {
     const onRetry = vi.fn();
-    render(<ConnectingCard error="The live connection timed out after 3 attempts." name="Hiring" onRetry={onRetry} state="failed" subject="project" />);
+    render(<ConnectingCard error="The live connection timed out after 3 attempts." name="Hiring" onRetry={onRetry} state="failed" subject="space" />);
 
     expect(document.querySelector('.connecting-card')).toHaveTextContent('Rally could not connect to Hiring.');
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();

@@ -22,6 +22,7 @@ function stream(id: string, pinPosition: number | null, lastActivityAt: string):
     harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
     firstUnreadSequenceNumber: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
+    spaceIds: [],
   };
 }
 

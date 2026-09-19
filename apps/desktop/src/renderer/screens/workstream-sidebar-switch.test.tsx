@@ -83,6 +83,7 @@ function boot(id: string, title: string): WorkstreamBoot {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     createdAt: '2026-08-26T14:00:00.000Z',
     participants: [],
     viewers: [],

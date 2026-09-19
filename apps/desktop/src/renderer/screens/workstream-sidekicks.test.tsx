@@ -92,6 +92,7 @@ function boot(participant = false): WorkstreamBoot {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     createdAt: '2026-09-10T14:00:00.000Z',
     participants: participant ? [{ id: 'person', name: 'Person', email: 'person@example.com', role: 'member', timezone: 'UTC' }] : [],
     viewers: [],
