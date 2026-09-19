@@ -119,7 +119,7 @@ Tracker dedupe does not make an unchanged migration wake invisible to
 operations. Every `withMigrationReport` call is nested in
 `durable_object.schema_migrate` and emits a
 `durable_object_schema_migration` Workers Log row, whether or not the outcome is
-new enough to enqueue. The four migratable classes also route their complete
+new enough to enqueue. The five migratable classes also route their complete
 constructor input gate through `durable_object.initialize`, with a matching
 `durable_object_initialization` row. These are latency diagnostics, not fleet
 state: they stay in regional Worker traces/logs and never update the registry.
