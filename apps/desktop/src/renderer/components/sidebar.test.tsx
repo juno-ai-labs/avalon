@@ -1704,7 +1704,11 @@ describe('Sidebar channel markers', () => {
     expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
   });
 
-  it('shows the organization-opening state instead of a half-built hierarchy', () => {
+  // The section is showing its opening card and no rows, so there is nothing to
+  // drop a Channel on and nothing to add it to — the server refuses either with
+  // `space_bootstrap_pending`.
+  it('shows the organization-opening state instead of a half-built hierarchy', async () => {
+    const target = workstream('opening-state', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1715,7 +1719,7 @@ describe('Sidebar channel markers', () => {
             spaces={[general()]}
             spacesReady={false}
             workspace={workspace}
-            workstreams={[]}
+            workstreams={[target]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -1724,6 +1728,13 @@ describe('Sidebar channel markers', () => {
     expect(screen.getByText(/Rally is opening this organization/u)).toBeVisible();
     expect(screen.queryByRole('link', { name: /General/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
+      .not.toHaveAttribute('draggable', 'true');
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
   });
 
   it('keeps the spaces it has and offers a retry when the directory is out of date', () => {
