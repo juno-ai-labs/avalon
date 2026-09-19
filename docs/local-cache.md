@@ -137,7 +137,13 @@ them are newer than the row.
 
 With the lists present, the sidebar draws rows instead of skeletons, the
 landing route resolves to the first Channel without waiting, and a Space
-dashboard renders its header and its placements.
+dashboard renders its header and its placements. The subscribe answer then
+arrives through the ordinary path described in
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md): page one is
+merged over the resident rows, a whole-directory payload replaces them, and a
+resident row page one cannot account for triggers the existing reconciling
+refetch, which is what retires a seeded row for a work stream archived while
+the device was away.
 
 `spacesReady` is deliberately **not** on the row. It is the Organization's
 current cutover state rather than something the device last saw, and a
@@ -146,13 +152,7 @@ surfaces read a missing answer as ready, which is the same thing a cached
 `true` would have said and one fewer place for it to go stale. The row's
 version went to **3** for the same reason in reverse: a version 2 row holds
 Project directories and Channel rows written before `spaceIds` existed, and a
-Channel in no Space is a state no surface is allowed to render. The subscribe answer then arrives through
-the ordinary path described in
-[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md): page one is
-merged over the resident rows, a whole-directory payload replaces them, and a
-resident row page one cannot account for triggers the existing reconciling
-refetch, which is what retires a seeded row for a work stream archived while
-the device was away.
+Channel in no Space is a state no surface is allowed to render.
 
 After the first live payload the provider mirrors the five entries back to the
 row: any change to any of them schedules one write, coalesced over
@@ -491,6 +491,38 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-09-19 — The directory slice goes to version 3, and the cutover flag stays off it
+
+**What changed:** The `directory` slice's version went from 2 to 3, its two
+Project directories became the active and archived Space directories, and every
+cached Channel row now carries `spaceIds`. `spacesReady` travels beside the
+directories on the wire and on the snapshot, and is deliberately not persisted
+on the row.
+
+**Why:** A version 2 row holds Project directories and Channel rows written
+before `spaceIds` existed. Every Space surface reads the placement off the row
+— the sidebar's placements, the dashboard's list — and a Channel in no Space is
+a state the PRD says no surface may render, so a version 2 row seeds a
+hierarchy that cannot be drawn truthfully. `spacesReady` is the Organization's
+*current* cutover state rather than something the device last saw: a remembered
+`true` would paint the hierarchy on a launch the next connect contradicts, and
+the surfaces already read a missing answer as ready, which is what a cached
+`true` would have said anyway.
+
+**Considered and rejected:** Migrating a version 2 row by reading its Project
+directories into Space ones and defaulting every Channel's `spaceIds` to
+General's id. The device cannot know General's id before the socket answers,
+and the cutover is the server's to perform — a client that invented a placement
+would seed a membership the Organization may not have made, which is the one
+thing the opening state exists to prevent.
+
+**Consequences:** Every device that had a version 2 row opens cold exactly
+once: skeletons in the sidebar, no landing resolution, and the Space dashboard
+waiting for the socket, after which the version 3 row is written and the next
+launch paints from it. The flag not being on the row means a cold launch always
+starts ready and corrects itself on the first payload, rather than starting in
+the opening state.
 
 ### 2026-09-15 — Live socket owners retain the state they supply
 
