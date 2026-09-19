@@ -301,6 +301,19 @@ optimistically or roll back. A write republishes the whole ordering to every
 socket this person holds, which is what makes a drag in one window move the
 list in another without a reload.
 
+**It republishes to that person's sockets and to nobody else's, and it still
+advances the Organization's one waterline.** The two look inconsistent and are
+not. A snapshot is built per viewer — `list()` is a transaction, and every Space
+is serialized again — so publishing one person's view preference to a 60-person
+Organization is that work sixty times for a payload identical to the one
+everybody already holds, once per step of a held `Alt`+`Arrow`. The waterline is
+the other half: there is one for the whole Space authority, the client's
+versioned receiver refuses a snapshot at or below the waterline it already has,
+and the actor's *other* sessions are the ones that have to accept this one. What
+everybody else pays for the bump is re-applying an unchanged directory the next
+time anything republishes to them — a comparison, not a redraw — which is the
+standing price of one waterline rather than one per person.
+
 **One client helper.** `orderByStoredIds` puts the stored ids first in stored
 order, then everything the arrangement never mentioned in the order the list
 already had, and drops a stored id the list is not carrying. It is also what
@@ -942,7 +955,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, and a write reaching a second session of the same person without it asking. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking, and reaching no session of anybody else. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
