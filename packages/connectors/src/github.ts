@@ -548,6 +548,15 @@ const ISSUE_DETAIL_ROW: FieldProjection = [...ISSUE_ROW, "body", "milestone.titl
 const PULL_REQUEST_DETAIL_ROW: FieldProjection = [
   ...PULL_REQUEST_ROW,
   "body", "milestone.title",
+  // The head repository's name, and nothing else from the record it came from.
+  // Dropping `head.repo` wholesale left no field anywhere in this plugin saying
+  // which repository the head branch is on, and rule 8 keeps a field with no
+  // other read path however inconvenient. The case it answers is a fork: a
+  // caller holding only `head.ref` reads it against the base repository and
+  // gets a 404 it cannot explain, where `acme/widget-fork` explains it in one
+  // field. `base.repo` gets no equivalent, because the base repository is the
+  // one the caller named in the request.
+  "head.repo.full_name",
   "merged", "mergeable", "mergeable_state", "merge_commit_sha", "merged_by.login",
   "comments", "review_comments", "commits", "additions", "deletions", "changed_files",
 ];
@@ -583,7 +592,7 @@ const githubToolInputSchemas = new Map<string, z.ZodType>();
 export const githubTools: ToolDefinition[] = [
   tool("repositories.list", "List installation-authorized repositories, ordered by pinned status and then recent activity. Returns totalCount, page, perPage, and hasMore. Each repository row carries full_name along with the name and owner.login to pass to every other tool here, plus description, default_branch, private, archived, language, pushed_at, html_url, pinned, and access.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
   tool("repositories.search", "Search installation-authorized repositories by case-insensitive repository name or owner/name. Results are ordered by pinned status and then recent activity, and carry the same row as repositories.list.", GitHubCapabilities.metadataRead, "read", repositoriesSearchSchema),
-  tool("repository.get", "Read bounded metadata for one accessible GitHub repository. Returns full_name, name, owner.login, description, homepage, topics, default_branch, private, visibility, fork, archived, language, license.spdx_id, the open issue, star, and fork counts, and the created, updated, and pushed timestamps.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
+  tool("repository.get", "Read bounded metadata for one accessible GitHub repository. Returns full_name, name, owner.login, description, homepage, topics, default_branch, private, visibility, fork, archived, language, license.spdx_id, html_url, the open issue, star, and fork counts, and the created, updated, and pushed timestamps.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
   tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated. Each entry carries its path, type, sha, and size; a tree entry also carries its Git mode, and a directory entry its name.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
   tool("contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned; only a successful contents.get call counts as code-file evidence.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
   tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. Each commit row is a summary: sha, message, the commit author name and date, the GitHub account that authored it as author.login, whether the signature verified, and html_url. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits; on a later page it only means the earlier pages held everything.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
@@ -593,7 +602,7 @@ export const githubTools: ToolDefinition[] = [
   tool("issues.update", "Update an issue's title, body, state, labels, or assignees. Returns the updated issue in the same shape issues.get uses.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
   tool("issue_comments.create", "Create a comment on a GitHub issue. Returns the created comment as id, user.login, created_at, updated_at, body, and html_url.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
   tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. Each pull request row is a summary: number, title, state, draft, author, head and base branch, head and base sha, labels, assignees, requested reviewers as requested_reviewers and requested teams as requested_teams, timestamps, and html_url; read a pull request body with pull_requests.get. To list every open pull request, send only owner and repo: head and base are narrowing filters, and on page 1 an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests. On a later page an empty list only means the earlier pages held everything.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
-  tool("pull_requests.get", "Read one GitHub pull request and its bounded body. Returns the pull_requests.list row plus body, milestone.title, merged, mergeable, mergeable_state, merge_commit_sha, merged_by.login, and the comment, review comment, commit, addition, deletion, and changed-file counts. Whether it can merge is mergeable and mergeable_state, which GitHub computes per read; merged says it already did.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
+  tool("pull_requests.get", "Read one GitHub pull request and its bounded body. Returns the pull_requests.list row plus body, milestone.title, merged, mergeable, mergeable_state, merge_commit_sha, merged_by.login, and the comment, review comment, commit, addition, deletion, and changed-file counts. Whether it can merge is mergeable and mergeable_state, which GitHub computes per read; merged says it already did. A read taken just after a push can answer null and unknown while GitHub is still computing the test merge, which means ask again shortly rather than that the branch conflicts.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
   tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request. Returns files, count, page, perPage, and hasMore. Each file row carries filename, status, additions, deletions, changes, previous_filename when the file was renamed, and the patch itself.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. Each review row carries id, author, state, submitted_at, commit_id, body, and html_url. An empty page 1 means nobody has reviewed it yet; an empty later page only means the earlier pages held every review.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.create", "Create a pull request from an existing branch. Returns the created pull request in the same shape pull_requests.get uses.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
@@ -2269,10 +2278,11 @@ function githubCountedListPage(
  * review body — rather than standing in for a decision nobody had made.
  */
 function boundGitHubRow(item: unknown, row: FieldProjection): unknown {
-  // A non-record element cannot be projected, and forwarding it unchanged would
-  // put an undeclared value in a list whose contract is that every item has the
-  // declared shape. GitHub does not do this; if it ever does, saying so beats
-  // emitting one row the model cannot read among twenty-nine it can.
+  // A non-record cannot be projected, and forwarding it unchanged would put an
+  // undeclared value where the contract promises a declared shape — in a list
+  // whose every item is supposed to have one, or as the whole of a single read.
+  // GitHub does not do this; if it ever does, saying so beats handing back
+  // something the model cannot read and cannot tell is wrong.
   if (!isRecord(item)) throw new ConnectorError("provider_error", "GitHub returned a value that is not an object");
   return boundGitHubValue(projectFields(item, row));
 }
