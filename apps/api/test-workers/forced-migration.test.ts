@@ -28,6 +28,7 @@ import {
   reportForcedMigration,
 } from "../src/durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { SPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/space-do-schema";
 import type { Env } from "../src/env";
 import {
   applyMigrationCommand,
@@ -196,7 +197,7 @@ describe("forceMigration", () => {
     });
     // One version, not the work stream's seventeen: a Space has no history to
     // replay, so its ledger renders that history's current shape at version 1.
-    expect(MIGRATION_COMMAND_HEADS.SpaceDO).toBe(1);
+    expect(MIGRATION_COMMAND_HEADS.SpaceDO).toBe(latestMigrationVersion(SPACE_DO_SCHEMA_MIGRATIONS));
 
     // The class fence, asked of the object itself. Routing the same command
     // through `WORKSTREAM_DOS` cannot reach this — the platform refuses an id

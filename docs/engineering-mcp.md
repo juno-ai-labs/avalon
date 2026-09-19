@@ -152,8 +152,10 @@ work stream's are.
 
 A Space splits the same way, and `run_space_sql` opens SpaceDO — which runs the
 work-stream schema under the `space_do` migration component, because a Space is
-`WorkstreamDO` under a different role. Its hidden main conversation is reached
-with the substream tools under the Space's ID as the parent.
+`WorkstreamDO` under a different role. Its hidden main conversation is not yet
+reachable through the substream tools: they resolve a parent through an active
+`workstream_authority_routes` row, and nothing writes one for a Space until the
+Space creation path lands.
 
 **Its fence is weaker than a Sidekick's, and knowingly so.** A Sidekick is
 proved real by its `automation_directory` row before its object is addressed.
