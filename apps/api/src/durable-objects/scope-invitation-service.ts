@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { asUserId } from "@rally/contracts";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
-  type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
+  DescribeScopeInvitationSchema, ScopeInvitationDescriptionSchema,
+  type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationDescription, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { Env } from "../env";
 import { encryptString, decryptString, randomToken, hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
+import { scopeInvitationLinkUrl, sealScopeInvitationLink } from "../services/scope-invitation-link";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
 
@@ -78,9 +80,8 @@ export class ScopeInvitationService {
     if (!origin) return denied("configuration_required");
     const prepared = await Promise.all([...new Set(request.emails)].map(async (email) => {
       const id = uuidV7(), token = randomToken();
-      const link = new URL("/invite", origin);
-      link.hash = new URLSearchParams({ region: this.env.AVALON_REGION, workspace: request.workspaceId,
-        workstream: request.parentId, invitation: id, token }).toString();
+      const link = scopeInvitationLinkUrl(origin, await sealScopeInvitationLink(this.env,
+        { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token }));
       const delivery = { recipientEmail: email, text: `You have been invited to collaborate in Rally.\n\nSign in with ${email} and accept:\n${link}\n\nThis invitation does not grant access until you sign in and accept it.` };
       return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         tokenHash: await this.tokenHash(id, token),
@@ -142,6 +143,22 @@ export class ScopeInvitationService {
       }
       return { status: "accepted", invitation: this.invitations.accept(request.invitationId, request.userId, recipient.incarnation) };
     });
+  }
+
+  /**
+   * The invited mailbox, for a recipient who is not signed in yet and whose
+   * link no longer spells out who it was addressed to. The secret is checked
+   * first and on the same terms as acceptance: an invitation id alone, or one
+   * whose invitation has since been revoked or expired, releases nothing.
+   */
+  async describe(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
+    const request = DescribeScopeInvitationSchema.parse(input);
+    const current = this.invitations.read(request.invitationId);
+    const presented = await this.tokenHash(request.invitationId, request.token);
+    if (!current || !timingSafeEqualText(current.tokenHash, presented) || !this.usable(current)) {
+      return ScopeInvitationDescriptionSchema.parse({ status: "denied", reason: "invitation_unavailable" });
+    }
+    return ScopeInvitationDescriptionSchema.parse({ status: "ready", email: current.summary.email });
   }
 
   async revoke(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {
