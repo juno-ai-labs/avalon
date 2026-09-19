@@ -111,22 +111,64 @@ export function persistThemeChoice(choice: ThemeChoice): ThemeState {
 }
 
 /**
- * Re-resolves the `system` mode when the Mac changes appearance.
+ * Re-resolves the `system` mode against the media query, and applies the answer
+ * only if it differs from what is already stamped on the document.
  *
- * The returned function detaches the listener.
+ * The comparison is against the document rather than `currentThemeState`, whose
+ * fallback answers from the store when nothing has been stamped yet — which is
+ * exactly the case that has to apply rather than skip.
+ *
+ * Skipping the no-op matters beyond the DOM write: `applyTheme` reports the
+ * choice to the desktop main process and hands every `useTheme` subscriber a
+ * fresh object, so a reconciliation that ran on each of the events below
+ * without this guard would re-render the renderer every time a window was
+ * focused.
+ */
+function reconcileSystemAppearance(): void {
+  const choice = readThemeChoice();
+  // Only `system` follows the Mac: a person who asked for Light or Dark has
+  // said what they want.
+  if (choice !== 'system') return;
+  const root = document.documentElement;
+  const stamped = parseResolvedTheme(root.dataset['theme']);
+  const stampedMode = parseAppearanceMode(root.dataset['themeMode']);
+  if (stamped === resolvedThemeFor(choice) && stampedMode === choice) return;
+  applyTheme(choice);
+}
+
+/**
+ * Keeps the `system` mode resolved against the Mac's current appearance.
+ *
+ * The `change` event is the notification, and for a window someone is looking
+ * at it is the whole mechanism. It is not reliable on its own: a page holds one
+ * answer, resolved once at `installTheme`, and repairs it only when told to. A
+ * tab that was occluded, discarded, or restored from the back/forward cache
+ * when the Mac changed appearance never hears the event, and there is nothing
+ * later that re-asks — so it draws the appearance that was current whenever it
+ * last booted, indefinitely. It was reported as a browser tab stuck light on a
+ * dark Mac, which corrected itself the moment DevTools was opened, because
+ * attaching DevTools re-evaluates the page's media features and finally
+ * delivers the event.
+ *
+ * So the query is re-read whenever the page is looked at again — becoming
+ * visible, or being restored — and not only when something announces a change.
+ * `pageshow` covers the back/forward cache, where no script re-runs at all and
+ * `visibilitychange` does not necessarily fire.
+ *
+ * The returned function detaches every listener.
  */
 export function watchSystemAppearance(): () => void {
   if (typeof window.matchMedia !== 'function') return () => undefined;
   const query = window.matchMedia(SYSTEM_DARK_QUERY);
-  const handler = (): void => {
-    const choice = readThemeChoice();
-    // Only `system` listens: a person who asked for Light or Dark has said what
-    // they want.
-    if (choice !== 'system') return;
-    applyTheme(choice);
-  };
+  const handler = (): void => reconcileSystemAppearance();
   query.addEventListener('change', handler);
-  return () => query.removeEventListener('change', handler);
+  document.addEventListener('visibilitychange', handler);
+  window.addEventListener('pageshow', handler);
+  return () => {
+    query.removeEventListener('change', handler);
+    document.removeEventListener('visibilitychange', handler);
+    window.removeEventListener('pageshow', handler);
+  };
 }
 
 /**

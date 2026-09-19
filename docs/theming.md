@@ -40,6 +40,13 @@ the original preference to `data-theme-mode`. The generated stylesheet has one
 block for `[data-theme='light']` and one for `[data-theme='dark']`; light is also
 emitted on `:root` to make the first frame deterministic.
 
+`system` is resolved at `installTheme` and re-resolved by
+`watchSystemAppearance`, which listens for the media query's `change` event and
+also re-reads the query on `visibilitychange` and `pageshow`. The re-read is
+what covers a page that was not being looked at when the appearance changed and
+so was never told; it applies only when the answer differs from what is already
+stamped on `<html>`, so an unchanged appearance costs nothing.
+
 The preference is device-local. `theme.ts` writes it beside the other device
 preferences and reports it to the main process. Main stores the scalar in
 `application-settings.json`, uses its resolved value for a new BrowserWindow's
@@ -149,6 +156,9 @@ an arbitrary URL to it.
 ## Failure modes and limits
 
 - A missing or malformed preference falls back to `system`.
+- A `system` page that misses the `change` event stays on its boot appearance
+  until it is next made visible or restored. Nothing re-resolves while it is
+  hidden, and nothing polls.
 - A stored preference from the former object shape retains only its valid
   `mode`; an invalid mode falls back to `system`.
 - A remote font response that is empty, exceeds 8 MiB, fails a declared SHA-256
@@ -181,6 +191,42 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-19 — A hidden page re-asks for the appearance instead of trusting its boot answer
+
+**What changed:** `watchSystemAppearance` re-resolves a `system` preference on
+`visibilitychange` and `pageshow` as well as the media query's `change` event,
+and the resolution moved into `reconcileSystemAppearance`, which applies only
+when the answer differs from the `data-theme` and `data-theme-mode` already on
+`<html>`.
+
+**Why:** A browser tab sat light on a dark Mac and stayed light, correcting
+itself only when DevTools was opened, because attaching DevTools re-evaluates
+the page's media features and finally delivers the event. The appearance was
+decided once at `installTheme` and repaired only when something announced a
+change, so a page that was occluded, discarded, or in the back/forward cache at
+the moment the Mac changed never heard, and nothing later re-asked. It then drew
+the appearance current at its last boot indefinitely. The `change` event is a
+notification, not a source of truth, and a page that only ever reacts to it has
+no way back from a single missed delivery.
+
+**Considered and rejected:** *Polling the query on a timer.* It would repair the
+same fault, but it spends work on every page forever to cover a notification
+that is almost always delivered, and it still repairs at an arbitrary moment
+rather than the one where it can be seen. *Re-reading the store instead of the
+query.* The store holds the choice, not the appearance; `system` is precisely
+the choice whose answer lives outside it. *Applying unconditionally on each
+event.* `applyTheme` reports the choice to main and hands every `useTheme`
+subscriber a fresh object, so every window focus would re-render the renderer
+and send an IPC message for an appearance that had not moved — which is why the
+comparison is against the document rather than `currentThemeState`, whose store
+fallback would answer "unchanged" for a document nothing has stamped yet.
+
+**Consequences:** The repair is bounded by when a page is next looked at: a
+hidden page still holds a stale appearance, and that is now a documented limit
+rather than a silent one. Anything that adds a route back to the surface should
+reconcile through `reconcileSystemAppearance` rather than calling `applyTheme`
+directly, or it reintroduces the churn the guard removes.
 
 ### 2026-09-18 — Share theme presentation between desktop and browser
 

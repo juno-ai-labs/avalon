@@ -15,7 +15,12 @@ import {
   watchThemeBroadcast,
 } from './theme';
 
-function installMatchMedia(prefersDark: boolean): { change: (dark: boolean) => void } {
+/**
+ * `set` changes what the query answers without dispatching, which is the tab
+ * that was occluded or in the back/forward cache while the Mac changed
+ * appearance: the preference really is different and no event ever arrives.
+ */
+function installMatchMedia(prefersDark: boolean): { change: (dark: boolean) => void; set: (dark: boolean) => void } {
   let matches = prefersDark;
   const listeners = new Set<() => void>();
   Object.defineProperty(window, 'matchMedia', {
@@ -31,6 +36,9 @@ function installMatchMedia(prefersDark: boolean): { change: (dark: boolean) => v
     }),
   });
   return {
+    set: (dark: boolean) => {
+      matches = dark;
+    },
     change: (dark: boolean) => {
       matches = dark;
       for (const listener of [...listeners]) listener();
@@ -164,6 +172,69 @@ describe('theme', () => {
     watchSystemAppearance()();
 
     media.change(true);
+    expect(document.documentElement.dataset['theme']).toBe('light');
+  });
+
+  it.each(['visibilitychange', 'pageshow'] as const)(
+    're-resolves system on %s when the change event never arrived',
+    (event) => {
+      const media = installMatchMedia(false);
+      persistThemeChoice('system');
+      installTheme();
+      const stop = watchSystemAppearance();
+
+      // The Mac went dark while this page was not being looked at, so nothing
+      // announced it.
+      media.set(true);
+      expect(document.documentElement.dataset['theme']).toBe('light');
+
+      const target = event === 'visibilitychange' ? document : window;
+      target.dispatchEvent(new Event(event));
+
+      expect(document.documentElement.dataset['theme']).toBe('dark');
+      stop();
+    },
+  );
+
+  it('leaves a pinned preference alone when the page is looked at again', () => {
+    const media = installMatchMedia(false);
+    persistThemeChoice('light');
+    const stop = watchSystemAppearance();
+
+    media.set(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(document.documentElement.dataset['theme']).toBe('light');
+    stop();
+  });
+
+  it('announces nothing when the appearance is already the one on screen', () => {
+    installMatchMedia(true);
+    const bridge = installBridge();
+    persistThemeChoice('system');
+    const stop = watchSystemAppearance();
+    const announced = bridge.reported.length;
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pageshow'));
+
+    // A reconciliation that applied unconditionally would re-report the choice
+    // to main and hand every `useTheme` subscriber a fresh object each time a
+    // window was focused, for an appearance that had not moved.
+    expect(bridge.reported).toHaveLength(announced);
+    expect(document.documentElement.dataset['theme']).toBe('dark');
+    stop();
+  });
+
+  it('stops re-resolving on visibility once detached', () => {
+    const media = installMatchMedia(false);
+    persistThemeChoice('system');
+    installTheme();
+    watchSystemAppearance()();
+
+    media.set(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+
     expect(document.documentElement.dataset['theme']).toBe('light');
   });
 
