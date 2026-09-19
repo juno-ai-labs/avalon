@@ -498,11 +498,11 @@ function CitationPill({ citation, number, onOpen }: {
         <Tooltip.Trigger asChild>
           <button
             aria-label={label}
-            className={favicon ? 'citation-pill citation-pill-favicon' : 'citation-pill'}
+            className={favicon.source ? 'citation-pill citation-pill-favicon' : 'citation-pill'}
             onClick={onOpen}
             type="button"
-          >{favicon
-            ? <img alt="" aria-hidden="true" src={favicon} />
+          >{favicon.source
+            ? <img alt="" aria-hidden="true" onError={favicon.onError} src={favicon.source} />
             : still ? number : '*'}</button>
         </Tooltip.Trigger>
         <Tooltip.Portal>

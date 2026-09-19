@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { RallyApi } from './api';
 import { useFaviconApi } from './favicon-api';
 
@@ -25,14 +25,30 @@ export function httpHostname(href: string | undefined): string | null {
   }
 }
 
+/** What a caller needs to draw a host's icon, and to stop drawing it. */
+export interface HostFavicon {
+  /** An object URL, or null while there is nothing to draw. */
+  readonly source: string | null;
+  /** The `<img>`'s `onError`: what was fetched is not an image this renderer can paint. */
+  readonly onError: () => void;
+}
+
 /**
  * A host's favicon as an object URL, or null while there is none to draw.
  *
- * Null covers three distinct states on purpose: the host has no icon, the
- * request has not landed yet, and the surface has no API to ask — a detached
- * still export, or a focused test. A caller cannot usefully tell them apart,
- * because the answer in every one of them is to draw whatever it draws without
- * an icon.
+ * Null covers four distinct states on purpose: the host has no icon, the
+ * request has not landed yet, the surface has no API to ask — a detached still
+ * export, or a focused test — and the bytes that came back would not decode. A
+ * caller cannot usefully tell them apart, because the answer in every one of
+ * them is to draw whatever it draws without an icon.
+ *
+ * The last of those is the reason `onError` is part of the contract rather than
+ * each caller's business. The endpoint validates that it is serving an image
+ * and serves `image/svg+xml` among others, so a blob can be a perfectly good
+ * response and still fail to paint here; without this the element left in the
+ * DOM is a broken-image glyph. In front of a link that is a bad decoration, and
+ * in a marker it is worse than nothing — the icon is the whole signal, so the
+ * reader gets a broken glyph where the asterisk was promised.
  *
  * The lifetime is the caller's mount: a response that arrives after the link
  * has scrolled out of a virtualised transcript is dropped rather than set, and
@@ -50,10 +66,14 @@ export function httpHostname(href: string | undefined): string | null {
  * the result only when it still matches makes the stale case impossible to
  * render rather than a race to be won.
  */
-export function useHostFavicon(href: string | undefined): string | null {
+export function useHostFavicon(href: string | undefined): HostFavicon {
   const api = useFaviconApi();
   const hostname = httpHostname(href);
   const [resolved, setResolved] = useState<{ api: RallyApi; hostname: string; source: string } | null>(null);
+  // Dropping the record is enough to stop drawing it: the effect does not
+  // re-run while the target holds still, so nothing re-offers the same bytes.
+  // The URL itself is still revoked by the cleanup that owns it.
+  const onError = useCallback(() => setResolved(null), []);
   useEffect(() => {
     if (!api || !hostname) return;
     let active = true;
@@ -70,5 +90,6 @@ export function useHostFavicon(href: string | undefined): string | null {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [api, hostname]);
-  return resolved !== null && resolved.api === api && resolved.hostname === hostname ? resolved.source : null;
+  const source = resolved !== null && resolved.api === api && resolved.hostname === hostname ? resolved.source : null;
+  return { onError, source };
 }
