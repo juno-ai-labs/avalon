@@ -729,11 +729,24 @@ somebody with Organization sizes in hand, not a guess to make here.
 **A breakout is visible only through its parent.** The Channel's own visibility
 predicate is applied to the breakout arm too — the same
 `scope = 'workspace' OR is_participant` test against the same Channel row — and
-then the breakout's own viewer row has to say `listable`. Two gates because
-they answer different questions: the first is whether this person may know the
-Channel exists, the second is whether the breakout is one of theirs. Without
-the first, a private Channel's side thread would be listed to somebody who
-cannot open the Channel.
+then the breakout has to pass a gate of its own. Two gates because they answer
+different questions: the first is whether this person may know the Channel
+exists, the second is whether the breakout is one of theirs. Without the first,
+a private Channel's side thread would be listed to somebody who cannot open the
+Channel.
+
+The second gate is `scope = 'workspace' OR listable`, over a **left-joined**
+viewer row under the generation fence — the same shape as the Channel's,
+because a missing viewer row and `listable = 0` are two different answers and
+only the second is the authority saying no. `directory_user` effects go out
+only for the users an update affects, so when a Channel's authority generation
+advances, a breakout's next message carries its shared row forward and leaves
+every unaffected person's viewer row a generation behind; under an inner join
+each of them lost the row until they happened to become an affected user, with
+nothing to report it. An Organization-wide breakout is granted by its own scope
+and survives that. A personal one still needs the row and is left out without
+it — the same answer a personal Channel gets, and the safe one, because nothing
+in the Organization knows who a private child's participants are.
 
 The desktop draws both kinds as one row type: a status dot from the shared
 marker function, a title, an activity time. A Channel row carries **Remove**; a
