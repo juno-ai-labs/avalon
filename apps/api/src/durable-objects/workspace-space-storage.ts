@@ -443,6 +443,34 @@ export function channelVisibleToViewerSql(directory: string, viewer: string): st
  * disagree. The branch costs nothing after the first row, where `?3` is a
  * bound value rather than a column.
  */
+/**
+ * Whether this person may list a breakout, in SQL.
+ *
+ * The breakout half of {@link channelVisibleToViewerSql}, and shaped the same
+ * way on purpose: the viewer row is left-joined under the generation fence, so
+ * **a missing row and `listable = 0` are two different answers**, and only the
+ * second one is the authority saying no.
+ *
+ * A missing row is this person's projection not having caught up — the case
+ * that made this a `LEFT JOIN`. `directory_user` effects only go out for the
+ * users an update affects, so when a Channel's authority generation advances,
+ * a breakout's next message carries its shared row forward and leaves every
+ * unaffected person's viewer row a generation behind. Under an inner join
+ * every one of them lost the row until they happened to become an affected
+ * user, which is a disappearance nothing would ever have reported.
+ *
+ * What fills the gap is the breakout's **own scope**, exactly as the Channel
+ * directory's scope fills it for a Channel with no viewer row: an
+ * Organization-wide breakout is one everybody who can see the Channel may
+ * list, and the Channel gate has already been applied by the time this is
+ * asked. A personal one still needs the row, and is left out without it —
+ * the same answer a personal Channel gets, and the safe one, because nothing
+ * else in the Organization knows who a private child's participants are.
+ */
+function breakoutListableToViewerSql(breakout: string, viewer: string): string {
+  return `(${breakout}.scope = 'workspace' OR ${viewer}.listable = 1)`;
+}
+
 function afterCursorSql(
   kind: "channel" | "breakout",
   activity: string,
@@ -1368,7 +1396,7 @@ export class WorkspaceSpaceStorage {
               AND viewer.authority_generation = directory.authority_generation
              JOIN workspace_breakout_directory breakout
                ON breakout.workstream_id = membership.workstream_id
-             JOIN workspace_breakout_viewers breakout_viewer
+             LEFT JOIN workspace_breakout_viewers breakout_viewer
                ON breakout_viewer.workstream_id = breakout.workstream_id
               AND breakout_viewer.substream_id = breakout.substream_id
               AND breakout_viewer.user_id = ?1
@@ -1377,7 +1405,7 @@ export class WorkspaceSpaceStorage {
               AND directory.archived_at IS NULL
               AND ${channelVisibleToViewerSql("directory", "viewer")}
               AND breakout.archived_at IS NULL
-              AND breakout_viewer.listable = 1
+              AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
               AND ${liveForViewerSql("breakout", "breakout_viewer")}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
             ORDER BY breakout.last_activity_at DESC, breakout.substream_id
