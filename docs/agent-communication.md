@@ -105,7 +105,8 @@ behalf, and no other message. A failed background run emits
 `Agent failed due to <reason>. Id: <id>`, where the reason is the terminal
 diagnostic code (or `unknown reason` when unavailable). A background run that
 completes without one completed send to any agent emits
-`Agent <name> finished without replying. Id: <id>`; a run that sent at least
+`Agent <name> finished without replying. Id: <id>. Message it if you still
+need its result.`; a run that sent at least
 one message, asked for input, or was stopped emits nothing. Each notice takes
 its delivery identity from the run, so settlement retries cannot duplicate it,
 and each preserves a stopped parent’s admission hold: it remains pending until
@@ -119,11 +120,12 @@ Explicit sends use durable tool effect identities and ordinary admission replay;
 replaying a send after lost confirmation and a recipient crash must not duplicate input or inference.
 An archived destination refuses the send through the normal tool result.
 The `start_agent`, `send_message` and `reply_to_message` results each carry a
-`next` sentence saying that the reply arrives as a message, at the next step
-or by waking the conversation after the turn ends, and that there is nothing
-to fetch; a result is read at the moment the model decides its next step,
-where a description was skimmed. `list_agents` is a directory of `agentId`,
-name and description, not a status feed.
+`next` sentence saying that the reply will arrive as a message whether the
+model keeps working or finishes its turn, and that there is no tool to fetch
+it; a result is read at the moment the model decides its next step, where a
+description was skimmed, so the descriptions say only that the call returns
+at once. `list_agents` is a directory of `agentId`, name and description, not
+a status feed.
 
 Background identity travels in the existing child common-state projection.
 The conversation parent counts running background substreams, including nested
@@ -226,19 +228,21 @@ owned Sidekick contact. Complete desktop behavior remains an implementation gate
 ### 2026-09-19 — Ending the turn is the wait, the tools say so, and a silent completion is reported
 
 **What changed:** The `start_agent`, `send_message` and `reply_to_message`
-results carry a `next` sentence: the reply arrives here as a message, at your
-next step if you keep working or by waking this conversation after you finish,
-and there is nothing to fetch. Their descriptions say the same in a clause
-where they said only "does not wait". `list_agents` returns `agentId`, name and
-description and no longer a status. Every role's guidance gained two
-sentences: after delegating, keep working on what does not depend on the
-result or end the turn with a short status, and schedule one wake-up only as a
-deadline, never a repeating one. A background agent is also told to send its
-findings, or why it has none, before finishing. The host emits
-`Agent <name> finished without replying. Id: <id>` to the owner of a
-background run that completes without one completed send to any agent, with
-the same per-run delivery identity and stopped-owner handling as the failure
-notice.
+results carry a `next` sentence: the reply will arrive here as a message
+whether you keep working or finish your turn, and there is no tool to fetch
+it. Their descriptions say only that the call returns at once, where they said
+"does not wait"; the delivery contract is stated once, in the result, where it
+is read. `list_agents` returns `agentId`, name and description and no longer a
+status. Every role's guidance gained four short sentences: after delegating,
+keep working on what does not need the result or end the turn with a short
+status; the reply arrives as a message and wakes the conversation; do not poll
+or resend; schedule one wake-up only as a deadline, not a repeating one. A
+background agent is also told to send its findings, or the reason it has none,
+before finishing. The host emits
+`Agent <name> finished without replying. Id: <id>. Message it if you still
+need its result.` to the owner of a background run that completes without one
+completed send to any agent, with the same per-run delivery identity and
+stopped-owner handling as the failure notice.
 
 **Why:** In the "Avalon scroll gradients" substream of 2026-09-18 the
 foreground agent delegated, then stayed in its run: four `list_agents` calls,

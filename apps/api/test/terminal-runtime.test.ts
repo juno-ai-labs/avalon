@@ -692,7 +692,7 @@ describe("Daytona Terminal runtime", () => {
     outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\n", stderr: "" };
     await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
       code: "patch_does_not_apply",
-      message: "The patch could not be applied (Invalid Context 0:). Re-read the affected files, regenerate the patch from their current contents, and retry.",
+      message: "The patch could not be applied: Invalid Context 0. Re-read the affected files, regenerate the patch from their current contents, and retry.",
     });
     outcome = { exitCode: 53, stdout: "", stderr: "" };
     await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "patch_tooling_unavailable" });

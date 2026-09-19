@@ -27,7 +27,7 @@ export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as 
  * a description was only skimmed, so the delivery contract is stated here:
  * the reply is a message that arrives on its own, and nothing is fetched.
  */
-const REPLY_ARRIVES = "at your next step if you keep working, or by waking this conversation after you finish. Nothing to fetch";
+const REPLY_ARRIVES = "whether you keep working or finish your turn. There is no tool to fetch it";
 
 /** Host-only routing: tools cannot supply their sender, workspace, team or principal. */
 export class AgentCommunicationService {
@@ -135,7 +135,7 @@ export class AgentCommunicationService {
     return {
       agentId: childId,
       name: args.name,
-      next: `Started ${args.name}. Its reply arrives here as a message from it, ${REPLY_ARRIVES}; do not resend the assignment.`,
+      next: `Started ${args.name}. Its reply will arrive here as a message, ${REPLY_ARRIVES}. Do not resend the assignment.`,
     };
   }
 
@@ -147,7 +147,7 @@ export class AgentCommunicationService {
         return this.deliver(args, await this.messageId(context), true, teamId);
       })()
       : await this.deliver(args, await this.messageId(context));
-    return { ...delivered, next: `Delivered. A reply arrives here as a message from that agent, ${REPLY_ARRIVES}.` };
+    return { ...delivered, next: `Delivered. Any reply will arrive here as a message, ${REPLY_ARRIVES}.` };
   }
 
   /**
@@ -164,7 +164,7 @@ export class AgentCommunicationService {
    * exactly as a failure does; a run that sent even one message needs no notice.
    */
   async notifySilentCompletion(name: string | null) {
-    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}`, `completion:${this.input.harnessRunId}`);
+    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`);
   }
 
   private async notifyOwner(message: string, effectKey: string) {
