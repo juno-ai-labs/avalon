@@ -380,6 +380,8 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   return {
     id: invocation.id,
     name: invocation.activityName ?? invocation.toolName,
+    // Kept beside the display name, which the prose above has taken over.
+    wireName: invocation.toolName,
     summary: invocation.outputSummary ?? invocation.inputSummary,
     status: invocation.status === 'pending' ? 'started' : invocation.status,
     // The live row identifies a connector plugin by its model-facing id while
