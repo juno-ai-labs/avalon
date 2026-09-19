@@ -1912,6 +1912,30 @@ export function Sidebar({
             />
           )}
 
+          {/*
+            A member with no Channels at all, told so.
+
+            The line the time-grouped list used to carry, in the one state that
+            list existed to describe: a brand-new Organization shows **Spaces →
+            General → No channels** and then, without this, nothing — a sidebar
+            that has stopped talking rather than one that is empty. It sits
+            under the hierarchy because that is where the reader has just been
+            told where Channels live, and it is one line rather than a section
+            because there is no list to head.
+
+            Nothing pinned and nothing unplaced are both implied by the test:
+            all three sections draw from the same rows.
+          */}
+          {spacesEnabled && !loading && visibleWorkstreams.length === 0 && (
+            // In a section of its own, for the gap every other section carries:
+            // hung directly off the nav it lands against the last Space's own
+            // "No channels" and reads as a second line of that Space's rather
+            // than as the sidebar's.
+            <div className="sidebar-section">
+              <p className="sidebar-empty">No channels yet</p>
+            </div>
+          )}
+
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting
               above the work they came here for. */}
