@@ -19,6 +19,7 @@ import { boundParameterChunks } from "./bound-parameters";
 import type {
   RemainingChannelAudience,
   SpaceDefaultKind,
+  SpaceMembershipReach,
   WorkspaceSpaceAudienceNoteRequest,
   WorkspaceSpaceDefaultRequest,
   WorkspaceSpaceDefaultResult,
@@ -726,12 +727,28 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /** Every Channel this Space holds, archived ones included. */
-  memberWorkstreamIds(userId: string, spaceId: string): string[] | false {
+  /**
+   * Every Channel this Space holds, archived ones included.
+   *
+   * `reach` is the difference between what a surface means by a member and what
+   * a retraction fan-out is about. `prepareArchive` and `prepareMembershipRemoval`
+   * flip a membership to `removing` *before* the Channel is asked to withdraw
+   * the source, so the set a staged operation still has work for is
+   * `active` plus `removing` — and an archive that read the active set would
+   * walk nothing and leave its source on every Channel it reached.
+   */
+  memberWorkstreamIds(
+    userId: string,
+    spaceId: string,
+    reach: SpaceMembershipReach = "active",
+  ): string[] | false {
     if (!this.canRead(userId, spaceId)) return false;
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT workstream_id FROM space_channel_memberships
-        WHERE space_id = ? AND state = 'active' ORDER BY workstream_id`,
+      reach === "reaching"
+        ? `SELECT workstream_id FROM space_channel_memberships
+            WHERE space_id = ? AND state IN ('active', 'removing') ORDER BY workstream_id`
+        : `SELECT workstream_id FROM space_channel_memberships
+            WHERE space_id = ? AND state = 'active' ORDER BY workstream_id`,
       spaceId,
     ).toArray().map((row) => row.workstream_id);
   }
