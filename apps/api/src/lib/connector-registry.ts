@@ -44,6 +44,13 @@ export function customMcpConnectorConfig(env: Env): CustomMcpConnectorConfig {
   };
 }
 
+export function canvaConnectorConfig(env: Env): CanvaConnectorConfig {
+  return {
+    redirectUri: new URL("/connections/canva/callback", env.PUBLIC_API_BASE_URL).toString(),
+    allowLoopbackRedirect: true,
+  };
+}
+
 /**
  * The rollout gate, and the only thing keeping a half-launched region honest.
  *
@@ -55,11 +62,6 @@ export function customMcpConnectorConfig(env: Env): CustomMcpConnectorConfig {
  * type is absent from `GET /connections/catalog`, and creation is refused; the
  * rows of a region that is switched back off are retained and inert.
  */
-export function canvaConnectorConfig(env: Env): CanvaConnectorConfig | null {
-  if (env.CANVA_CONNECTOR_ENABLED !== "true") return null;
-  return { redirectUri: new URL("/connections/canva/callback", env.PUBLIC_API_BASE_URL).toString(),
-    allowLoopbackRedirect: env.CANVA_LOOPBACK_ENABLED === "true" };
-}
 
 export function firefliesConnectorConfig(env: Env): FirefliesConnectorConfig | null {
   if (env.FIREFLIES_CONNECTOR_ENABLED !== "true") return null;
@@ -191,7 +193,7 @@ function buildConnectorRegistry(env: Env) {
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
     customMcp,
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
-    ...(canva ? { canva } : {}),
+    canva,
     ...(fireflies ? { fireflies } : {}),
     granola,
     ...(google ? { google } : {}),

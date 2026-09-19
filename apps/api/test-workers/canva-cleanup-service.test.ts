@@ -38,7 +38,7 @@ describe("Canva post-run cleanup", () => {
       seedRun(state, runId, "running");
       state.storage.sql.exec("UPDATE runs SET legacy_attempt_id = 'cleanup-attempt', lease_owner = 'cleanup-owner', lease_expires_at = ? WHERE run_id = ?", Date.now() + 600_000, runId);
     });
-    const scopedEnv = { ...env, CANVA_CONNECTOR_ENABLED: "true", CONNECTOR_CREDENTIALS_KEY: "canva-cleanup-test-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" };
+    const scopedEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: "canva-cleanup-test-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" };
     const receipts = createToolReceiptObjectPort(scopedEnv, workspaceId, parentId);
     const fence = { runId, attemptId: "cleanup-attempt", owner: "cleanup-owner" };
     await receipts.admit({ effectIntentId: "canva-start", runId, toolCallId: "canva-start", toolName: "start-editing-transaction",
