@@ -83,6 +83,57 @@ describe("workstream scope grants in real workerd", () => {
     });
   });
 
+  it("given a migrated Channel, when a Space seats a reader through the participant path, then the grant is the Space's and reaches no directory", async () => {
+    // The whole authority, not the storage class: `mutateParticipantGrant` is
+    // the method `substream-agent.ts` calls for every add on a Channel that
+    // has moved to grant authority, and `authorizedGrantMutation` rebuilds the
+    // mutation field by field on the way through. A rebuild that drops
+    // `spaceSourceId` writes the row `direct` and publishes it, which is the
+    // one thing PRD acceptance 18 forbids.
+    const spaceSourceId = "00000000-0000-4000-8000-000000000006";
+    const readerId = asUserId("00000000-0000-4000-8000-000000000007");
+    const target = { kind: "conversation" as const, ...address, substreamId: asSubstreamId("0") };
+    // The relationship reads this authority makes before it decides. The
+    // workerd suite's D1 starts with no schema, so the test declares them.
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),
+      env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(workspaceId),
+      env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, access_class TEXT,
+        role TEXT, status TEXT, incarnation TEXT, revision INTEGER)`),
+      ...[userId, readerId].map((id) => env.DB
+        .prepare("INSERT INTO workspace_members VALUES (?,?,'guest',NULL,'active',?,1)")
+        .bind(workspaceId, id, id)),
+    ]);
+    const stub = env.WORKSTREAM_DOS.getByName("scope-grant-space-participant-path");
+    await stub.authority(address);
+    await runInDurableObject(stub, (instance, state) => {
+      state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+        (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+        VALUES (1,?,?,'global',1,'Hiring','','','personal','idle',0,0,0)`, workspaceId, parentId);
+      state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at,status) VALUES ('0','main',0,'ready')");
+      // The actor's own grant is what gives them sharing authority here, and
+      // it is direct: it is published, which is what the reader's row is
+      // compared against below.
+      instance['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(), actorUserId: userId,
+        userId, target, active: true, expectedRevision: 0 }, userId);
+    });
+
+    expect(await stub.mutateParticipantGrant({ operationId: crypto.randomUUID(), actorUserId: userId,
+      userId: readerId, target, active: true, spaceSourceId })).toMatchObject({ status: "committed" });
+
+    await runInDurableObject(stub, (instance, state) => {
+      const store: ScopeGrantStorage = instance['scopeGrants'](address);
+      // It admits the reader exactly as a direct share would — the same row,
+      // read by the same `resolveScopedAccess`.
+      expect(store.read(readerId, target)).toMatchObject({ active: true });
+      // And it reaches no candidate index: the actor's direct grant is the
+      // only thing published. A Space-derived reader finds the Channel
+      // through the Organization's Space directory.
+      expect(deliveries(state).map((delivery) => delivery.grant.userId)).toEqual([userId]);
+      expect(store.sourceKind(readerId, target)).toBe("space");
+    });
+  });
+
   it("publishes combined access and does not acknowledge a newer projection with an old receipt", async () => {
     await withStorage("scope-grant-effective-projection", (store,state) => {
       state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,created_at,audience) VALUES ('0','main',1,'restricted'),(?,'child',1,'inherits_workstream')",childId);
