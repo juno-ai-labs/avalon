@@ -302,6 +302,34 @@ describe('the Spaces sidebar section', () => {
     await waitFor(() => expect(onAddChannel).toHaveBeenCalledWith(hiring.id, workstreamId));
   });
 
+  // The Channel's row sits inside the Space's own drag item, so its drag start
+  // reaches the Space too. Reordering on it moved the Space the Channel was
+  // dragged out of, on top of placing the Channel where it was dropped.
+  it('given a channel dragged out of an expanded space, then only the placement is requested', async () => {
+    const onAddChannel = vi.fn(async () => undefined);
+    const onReorder = vi.fn(async () => undefined);
+    const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
+    const placement = channel('00000000-0000-7000-8000-0000000000e4', 'Ship it', '2026-08-27T02:00:00.000Z', hiring.id);
+    renderSection({ onAddChannel, onReorder, spaces: [hiring, launch], workstreams: [placement] });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+
+    const dataTransfer = {
+      effectAllowed: '',
+      getData: (type: string) => type === 'application/x-rally-workstream-id' ? placement.id : '',
+      setData: () => undefined,
+      types: ['application/x-rally-workstream-id'],
+    };
+    const row = screen.getByRole('link', { name: 'Ship it' });
+    const target = screen.getByText('Launch').closest('.space-sidebar-item')!;
+    fireEvent.dragStart(row, { dataTransfer });
+    fireEvent.dragEnter(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragEnd(row, { dataTransfer });
+
+    await waitFor(() => expect(onAddChannel).toHaveBeenCalledWith(launch.id, placement.id));
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
   it('given a dragged channel, when adding it fails, then the failure is visible outside either modal', async () => {
     renderSection({ onAddChannel: async () => { throw new Error('The space changed'); } });
 
