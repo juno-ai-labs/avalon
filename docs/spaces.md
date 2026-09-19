@@ -315,16 +315,29 @@ participants the connector's record may not — and the Organization is not
 `spacesReady` while that runs, which is the honest answer for an Organization
 holding a Channel in no Space.
 
-The seed route waits for that projection before it places anything, which the
-coordinator gets for free. Reserving a Channel's main conversation writes the
-parent authority's identity row and delivers a provisional directory row
-synchronously; seeding writes through the conversation instead, so the parent
-learns of the Channel from an effect that drifts up on its outbox, and a
-placement issued first is refused `conversation_parent_missing`. Waiting for the
-Channel to appear on one page of the cutover's own view is what makes both
-halves work: the placement addresses an authority that exists, and — because the
-close asks whether any Channel *in the directory* is outside every Space — the
-walk a refusal reopens cannot find an empty directory and close over it.
+**Both of those paths have to make the Channel's own authority exist before they
+place it**, which the coordinator gets for free. A placement addresses the
+Channel's `WorkstreamDO` directly, and that object learns the Channel exists
+either from `reserveChild` — which writes its identity row synchronously — or
+from an effect that drifts up the conversation's outbox some time later.
+Provisioning the conversation alone and placing immediately is refused
+`conversation_parent_missing` every time, and because a refusal reopens the
+cutover, that is not a lost placement but every member's sidebar behind the
+opening card until the walk catches up.
+
+The Slack path calls `reserveChild` first, exactly as the coordinator does
+before `initialize`, and defers the provisional directory delivery until after
+the placement so the Channel is never listed while it is in no Space. Nothing
+polls: a production ingest path must not wait for a projection to appear. The
+conversation's own effect arrives afterwards and finds the metadata already
+written, so it updates the row rather than creating it and nothing is
+provisioned twice.
+
+The seed route instead waits for the Channel to appear on one page of the
+cutover's own view, which is acceptable only because that route is
+development-only. It buys a second property there: because the close asks
+whether any Channel *in the directory* is outside every Space, a walk that a
+refusal reopens cannot find an empty directory and close over it.
 
 ### A Channel's first Space
 

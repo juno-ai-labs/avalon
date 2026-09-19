@@ -1,5 +1,6 @@
 import {
   ExternalActorSchema,
+  asSubstreamId,
   asUserId,
   asWorkstreamId,
   type UserId,
@@ -35,6 +36,9 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workstreamDOName } from "../durable-objects/names";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -108,17 +112,61 @@ export class SlackWorkspaceWorkstreamService {
     // own authority's now, and the transcript takes its own sequence number.
     const at = Date.now();
     const creatorUserId = input.creatorUserId ?? null;
+    const scope = input.scope ?? "personal";
+    const participantUserIds = [
+      ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
+    ];
+    // The parent authority first, the way the creation coordinator does it.
+    // `provision` opens the *conversation*; the Channel's own authority learns
+    // it exists only from the effect that conversation's outbox delivers later,
+    // and the placement below addresses that authority directly. Provisioning
+    // first therefore asked a `WorkstreamDO` with no identity yet to record a
+    // Space source, which it refuses with `conversation_parent_missing` — so
+    // every Slack creation left its Channel unplaced and reopened the whole
+    // Organization's cutover, blanking every member's sidebar behind the
+    // opening card until the walk caught up. `reserveChild` writes that
+    // identity synchronously and is the same call the coordinator makes before
+    // `initialize`; the conversation's own effect finds the metadata already
+    // there and updates it rather than creating it, so nothing is provisioned
+    // twice.
+    //
+    // Deferred delivery, and flushed after the placement, for the reason the
+    // coordinator settles its memberships before reserving: the provisional
+    // directory row is what puts this Channel on every sidebar, and a Channel
+    // in no Space is a state no surface may render.
+    const workstream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      this.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.workspaceId, asWorkstreamId(workstreamId)),
+    );
+    await workstream.reserveChild({
+      workspaceId: this.workspaceId,
+      parentId: workstreamId,
+      substreamId: asSubstreamId("0"),
+      kind: "main",
+      createdByUserId: creatorUserId,
+      authorityGeneration: (await readWorkstreamAuthorityControl(this.env)).generation,
+      directory: {
+        title,
+        description: input.objective,
+        scope,
+        systemKind: null,
+        emailAddress: emailRoute.emailAddress,
+        titleStatus: input.title == null ? "naming" : "settled",
+        createdAt: new Date(at).toISOString(),
+      },
+      deferDirectoryDelivery: true,
+    });
     await provisionWorkstreamObject(this.env, {
       workspaceId: this.workspaceId,
       workstreamId,
       title,
       titleStatus: input.title == null ? "naming" : "settled",
       objective: input.objective,
-      scope: input.scope ?? "personal",
+      scope,
       createdByUserId: creatorUserId,
-      participantUserIds: [
-        ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
-      ],
+      participantUserIds,
       harnessStatus: "scheduled",
       emailAddress: emailRoute.emailAddress,
       emailRouteStatus: "reserved",
@@ -133,11 +181,16 @@ export class SlackWorkspaceWorkstreamService {
     // non-deleted Channel still belongs to at least one Space.
     await placeConnectorChannelInGeneral(this.env, this.workspaceId, {
       workstreamId: asWorkstreamId(workstreamId),
-      scope: input.scope ?? "personal",
+      scope,
       placed: false,
-      participantUserIds: [
-        ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
-      ].map(asUserId),
+      participantUserIds: participantUserIds.map(asUserId),
+    });
+    // Now the Channel has a home, so it may be listed. The outbox is the
+    // authority and the parent's alarm is the recovery path, so this is a
+    // promptness call rather than the only delivery.
+    await workstream.flushProvisionalDirectory({
+      workspaceId: this.workspaceId,
+      parentId: workstreamId,
     });
     const openingMessageId = newId();
     const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };

@@ -24,6 +24,7 @@ import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from
 
 import type { AuthContext, Env } from "../src/env";
 import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -291,5 +292,62 @@ describe("a Channel created inside a Space", () => {
       workstreamId: asWorkstreamId(created.workstream.id),
     })).toEqual({ spaceIds: [spaceId] });
     expect(created.workstream.scope).toBe("personal");
+  });
+});
+
+describe("a Channel the Slack ingress opens", () => {
+  it("is placed in General without reopening the Organization's cutover", async () => {
+    // An Organization that has been through the cutover, which is every
+    // Organization by the time a Slack message reaches one. The first creation
+    // is what opens General, so the Slack path below finds it rather than
+    // making it.
+    await createChannel("opens-general");
+    await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+    const before = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
+    expect(before.phase).toBe("complete");
+
+    const created = await new SlackWorkspaceWorkstreamService(creationEnv(), WORKSPACE_ID).create({
+      actor: {
+        provider: "slack",
+        providerAccountId: "T123",
+        providerUserId: "U456",
+        displayName: "Taylor",
+        avatarUrl: null,
+      },
+      title: "Investigate the alert",
+      objective: "Investigate the alert",
+      text: "Investigate the alert",
+      clientMessageId: "slack:opening",
+      creatorUserId: USER_ID,
+      slackOrigin: {
+        teamId: "T123",
+        channelId: "C123",
+        channelName: "general",
+        threadTs: "123.456",
+        invocationType: "app_mention",
+        channelType: "public",
+        matchedAvalonUserId: USER_ID,
+        nearbyMessagesStatus: "available",
+        nearbyMessages: [],
+        attachments: [],
+      },
+    });
+
+    // The placement itself, on the Organization's side. This is the assertion
+    // the old order could not satisfy: the Channel's own authority had no
+    // identity yet when `applySpaceAccessSource` reached it, so the placement
+    // was refused and the membership never became active.
+    expect(await workspace().channelSpaces({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      workstreamId: asWorkstreamId(created.workstream.id),
+    })).toEqual({ spaceIds: [before.generalSpaceId] });
+
+    // And nothing reopened. A refused placement sends the whole Organization
+    // back to the walk, which takes `spacesReady` away from every member's
+    // sidebar until it finishes — the cost that makes this an ordering bug
+    // rather than a slow path.
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toEqual({ ...before, phase: "complete", ready: true });
   });
 });
