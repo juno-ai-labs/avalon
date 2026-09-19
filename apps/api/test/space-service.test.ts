@@ -278,6 +278,48 @@ describe("SpaceService lifecycle fan-out", () => {
 
 });
 
+describe("SpaceService intent resumption", () => {
+  it("given a superseded audience intent, when it resumes, then it converges on the current Space", async () => {
+    const log: string[] = [];
+    const workspace = workspaceDouble({
+      // The Space has moved since the intent was staged: a later audience
+      // change accepted while this one was half way through its walk.
+      spaceSummary: vi.fn(async () => ({ ok: true, space: summary({ revision: 9 }) })),
+      listSpaceMembers: vi.fn(async () => ({ ok: true, workstreamIds: [CHANNEL_ID] })),
+      recordSpaceIntentReceipt: vi.fn(async (input: { receipt: string }) => {
+        log.push(`receipt:${input.receipt}`);
+        return { recorded: true };
+      }),
+    });
+    const channels = channelDoubles(log);
+
+    await new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).resumeIntent({
+      operationId: "00000000-0000-7000-8000-0000000000e1",
+      kind: "audience",
+      spaceId: SPACE_ID,
+      workstreamId: null,
+      spaceRevision: 4,
+      membershipGeneration: null,
+    });
+
+    // The interrupted walk left some Channels on the old roster and some on
+    // the new one. Settling without converging left them split, so the resume
+    // re-applies the Space as it is now — against the current revision, which
+    // is also what fences it against the newer change's own walk.
+    expect(log).toEqual([
+      `retract:${CHANNEL_ID}`,
+      `apply:${CHANNEL_ID}:1`,
+      "receipt:audience_superseded",
+    ]);
+    expect(channels.room.retractSpaceAccessSource)
+      .toHaveBeenCalledWith(expect.objectContaining({ expectedSpaceRevision: 9 }));
+    expect(channels.room.applySpaceAccessSource)
+      .toHaveBeenCalledWith(expect.objectContaining({ spaceRevision: 9 }));
+  });
+});
+
 describe("SpaceService creation", () => {
   it("given a Space whose object cannot be opened, when creation fails, then the reservation is cancelled", async () => {
     const workspace = workspaceDouble();
