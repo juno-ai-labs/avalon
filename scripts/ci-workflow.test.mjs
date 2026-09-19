@@ -135,6 +135,66 @@ test('CI retains one terminal verify check for branch protection', async () => {
   assert.match(verifyJob, /test "\$CHECKS_RESULT" = success/u);
 });
 
+/**
+ * The secret-scanning gate is the one job whose failure is not necessarily
+ * about the pull request it fails. `gitleaks detect` with no range walks every
+ * ref the checkout fetched, and `fetch-depth: 0` fetches all of them, so a
+ * finding on any unmerged branch in the repository failed this job on every
+ * open pull request simultaneously — each with nothing in its own diff to fix,
+ * and no way to re-run its way out. Scoping the scan to the commits the pull
+ * request adds to its base branch is what makes a red gate mean "this change
+ * introduced a secret".
+ *
+ * Every part of that range is asserted here, because none of it is obvious
+ * from reading the job and each part has its own failure:
+ *
+ * - The full history, without which the range cannot be computed at all.
+ * - Both excluded sides. The live tip alone misses a base branch force-pushed
+ *   past the recorded SHA; the recorded SHA alone misses a finding that lands
+ *   on the base branch after the event fired and is then merged in. Either
+ *   omission puts base commits back in the range, which is the original bug.
+ * - The range resolving before the scan. `detect` exits 0 when git rejects its
+ *   range — it logs the error and reports no leaks — so without this the gate
+ *   fails open, and a required security check that passes silently is worse
+ *   than one that never ran.
+ */
+test('the secret scan covers what this pull request adds, and nothing else', async () => {
+  const workflow = await readWorkflow();
+  const start = workflow.indexOf('\n  secrets:');
+
+  assert.notEqual(start, -1, 'CI must define the secrets job');
+  // Bounded at both ends, like the `verify` test above. `secrets` is the last
+  // job today, and an unbounded slice would quietly re-aim two of these guards
+  // at whatever gets appended after it: a second `gitleaks detect` would fail
+  // the count for the wrong reason, and a `fetch-depth: 0` in the new job would
+  // satisfy the assertion below even after this checkout lost it.
+  const body = workflow.indexOf('\n', start + 1) + 1;
+  const nextJob = workflow.slice(body).search(/^ {2}\S/mu);
+  const secretsJob = nextJob === -1 ? workflow.slice(start) : workflow.slice(start, body + nextJob);
+
+  assert.match(secretsJob, /^ {10}fetch-depth: 0$/mu);
+  assert.match(secretsJob, /^ {10}BASE_REF: \$\{\{ github\.base_ref \}\}$/mu);
+  assert.match(secretsJob, /^ {10}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/mu);
+  assert.match(secretsJob, /^ {10}HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/mu);
+  assert.match(
+    secretsJob,
+    /--log-opts="\$HEAD_SHA --not origin\/\$BASE_REF \$BASE_SHA"/u,
+    'the scan must exclude both the base branch tip and the recorded base SHA',
+  );
+  assert.match(
+    secretsJob,
+    /^ {10}git rev-list --count "\$HEAD_SHA" --not "origin\/\$BASE_REF" "\$BASE_SHA" > \/dev\/null$/mu,
+    'an unresolvable range must fail the job rather than pass it silently',
+  );
+  assert.equal(
+    // `match` with /g returns null rather than [], so the message below is what
+    // a removed invocation reports instead of a TypeError.
+    (secretsJob.match(/gitleaks" detect/gu) ?? []).length,
+    1,
+    'CI must keep a single Gitleaks invocation, so the range cannot be bypassed by a second one',
+  );
+});
+
 test('CI still runs every repository quality gate', async () => {
   const workflow = await readWorkflow();
   const commands = [

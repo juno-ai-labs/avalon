@@ -730,6 +730,16 @@ Global exports them — and the notifier sends only codes, counts, and opaque
 ids, escaped for Slack markup: the channel is outside Rally's trust boundary
 ([`ops-alerting.md`](ops-alerting.md)).
 
+The Gitleaks gate scans the commits a pull request adds to its base branch —
+`HEAD_SHA --not <base tip>` — and not the repository's whole history. `detect`
+with no range walks every ref the checkout fetched, which makes one branch's
+finding everyone's failing job: the gate stops saying "this change introduces a
+secret" and starts saying "somebody, somewhere, has an unmerged branch". What
+that scope does not do is re-scan what is already on the base branch, so a
+secret that reaches `main` is caught on the pull request that carries it or not
+at all. That is the same one chance the gate has always had in practice — CI
+runs on `pull_request` only, so nothing scans `main` after a merge either.
+
 Exceptions to the Gitleaks scan live in `.gitleaks.toml` as narrowly bounded
 patterns rather than as suppressed paths or fingerprints, because those two fail in
 opposite directions. A path exemption is permanent and total: it suppresses
@@ -927,13 +937,23 @@ does not own the subsystems on either side of them:
 - **A packaged helper carrying a restricted `com.apple.developer.*` entitlement is
   killed by AMFI only after the app reaches another machine.** The release verifier
   exists because that failure is invisible on the build host.
-- **A credential-shaped string on any branch fails the `secrets` CI job
-  everywhere.** The job checks out with `fetch-depth: 0`, so the history it scans
-  spans every branch: the gate goes red on `main` and on every open pull request,
-  including one that has never been merged and never will be. Because the scan
-  reads commits rather than the working tree, editing the file afterwards does not
-  clear it — only rewriting that branch's history does, which is the fix to reach
-  for first.
+- **A credential-shaped string fails the `secrets` CI job for the pull request
+  that adds it, and deleting it later does not clear it.** The scan reads
+  commits, not the working tree, so a fixture that was committed and then
+  removed is still in the range; rewriting the branch's history is the fix to
+  reach for. It used to be worse: the scan spanned every branch the checkout
+  fetched, so one such string went red on every open pull request at once. The
+  range is now the pull request's own commits, and the limit that remains is the
+  other side of that — a secret already on the base branch is not re-reported,
+  because it was this gate's to catch on the pull request that carried it.
+- **A secret introduced only by a conflict resolution is invisible to the
+  `secrets` gate.** `git log -p` emits no patch for a merge commit, so a value
+  that appears in neither parent and only in the merged tree is in no patch the
+  scan reads. This is not a consequence of scanning a range — the unscoped
+  whole-history scan that preceded it had the identical gap, confirmed against
+  the pinned binary both ways — and it is the same property that keeps a merge
+  from double-reporting the commits under it. A conflict resolution that pastes
+  a credential is therefore caught by review or not at all.
 - **One documented dependency advisory is accepted.** As of August 2026 the package
   audit still reports
   [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) against
@@ -963,7 +983,8 @@ no unit test standing in for them.
 | `apps/site/test/site.test.ts` | Every public entry, route-before-identity behavior, storage failure isolation, and tracking disclosure. |
 | `pnpm --filter @rally/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
 | `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
-| The `secrets` CI job | Gitleaks over the full history, all branches. |
+| The `secrets` CI job | Gitleaks over the commits a pull request adds to its base branch — `HEAD_SHA --not <base tip>` — and not the base branch's own history. |
+| `scripts/ci-workflow.test.mjs` (`pnpm test:scripts`) | That the job keeps that range, the full-history checkout the range needs, and one Gitleaks invocation. The range is the difference between a red gate meaning "this change introduces a secret" and meaning "somebody has an unmerged branch". |
 
 The trap in the desktop suites is that they assert on the *stored* shape of a
 credential. A test that constructs an envelope by hand rather than through
@@ -999,6 +1020,54 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-09-19 — The secret gate scans the pull request, not the repository
+
+**What changed:** the `secrets` job passes
+`--log-opts="$HEAD_SHA --not origin/$BASE_REF $BASE_SHA"` to `gitleaks detect`,
+so it scans the commits the pull request adds to its base branch. Both sides of
+that branch are excluded — its live tip and the SHA recorded when the event
+fired — and the range is resolved with `git rev-list` before the scan runs.
+`fetch-depth: 0` stays, because the range needs both sides.
+`scripts/ci-workflow.test.mjs` fails if either exclusion, the range check, the
+full history or the single invocation goes away.
+
+**Why:** `detect` with no range walks every ref the checkout fetched, and
+`fetch-depth: 0` fetches all of them. A credential-shaped test fixture pushed to
+one unmerged branch therefore failed this job on every open pull request at
+once — each with nothing in its own diff to fix, no way to re-run out of it, and
+a red required check blocking auto-merge. The gate had stopped answering "does
+this change introduce a secret" and started answering "does anyone have a branch
+with a finding on it", which is not a question a pull request author can act on.
+
+**Considered and rejected:** allowlisting the fingerprint that triggered this.
+It is the fix this document already argues against, and it treats one instance
+of a structural problem — the next branch would do it again. Also rejected:
+scanning `git log` from the merge commit, which walks the base branch's whole
+history again and reintroduces exactly what this removes.
+
+**Two ways this range can be got wrong, both found in review and both fixed
+here.** Excluding only one side of the base branch leaves a hole at each end: the
+live tip alone misses a base branch force-pushed past the recorded SHA, and the
+recorded SHA alone misses a finding that lands on the base branch afterwards and
+is then merged in — either one puts base commits back in the range, which is the
+original bug. And `gitleaks detect` **exits 0 when git rejects its range**: it
+logs `stderr is not empty` and reports "no leaks found", so a stale variable or a
+missing ref would have turned a required security check green. `git rev-list`
+resolves the range first, and a gate that cannot work out its own scope now fails
+loudly rather than passing silently. An earlier revision of this change had a
+fallback to the recorded SHA when the remote-tracking ref was missing; excluding
+both sides unconditionally leaves it nothing to do.
+
+**Consequences:** a finding on the base branch is no longer re-reported on every
+pull request, which is the point, and also the cost: a secret that is already on
+`main` will not be found by this gate again. It was caught, or missed, on the
+pull request that carried it. Anything relying on the old behaviour to
+retroactively catch history — nothing does today — needs a scan of its own
+rather than a widening of this one. A scheduled full-history scan is the obvious
+shape for that, and is deliberately not added here: it is a standing job with a
+standing noise budget, and whether the repository wants one is the team's call
+rather than this change's to make.
 
 ### 2026-09-19 — Bind Canva loopback redemption to the initiating session
 
