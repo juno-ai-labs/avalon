@@ -611,6 +611,21 @@ one — an unfinished external cleanup, the ledger at 57 — then connects a soc
 because a guarded read that answers empty and an unguarded one that throws look
 identical until something asks.
 
+**A pending cutover is a due alarm, and a fixture has to account for it.** The
+`space_bootstrap` row is a derived alarm candidate whose `not_before` migration
+61 leaves at the epoch, so constructing a WorkspaceDO arms a wake-up that the
+platform delivers immediately and that runs the object's whole alarm handler.
+That is the mechanism rather than an accident — it is how the fleet migration
+starts with nobody signed in — so a workerd fixture whose subject is something
+else closes the cutover after `initializeWorkspace`, the way the path that opens
+a new Organization does, and disarms what construction already armed.
+`scheduled-alarms.test.ts` and `workspace-resources-inventory.test.ts` both do,
+the second because that handler's resource sweep would otherwise reap the drafts
+its cases are about. In the Node suite the equivalent is
+`test/helpers/space-creation-rpcs.ts`: the three WorkspaceDO RPCs and two room
+RPCs a create now passes through, doubled in their steady case for a file whose
+subject is Slack assignment or origin attachment.
+
 The service tests double the object stubs rather than the namespaces, and they
 are not where a fence is proved. A fence is a property of real storage; what the
 service tests hold is which authority is asked first and what is left unwritten
@@ -811,6 +826,11 @@ which is why an Organization can end the pass *incomplete*: a Channel whose
 retained content the Organization may not read stays personal and holds
 `spacesReady` false until somebody decides, which is a product decision rather
 than a migration's.
+
+A pending cutover is also what makes every WorkspaceDO wake immediately: the
+`space_bootstrap` row is a derived alarm candidate due at the epoch until the
+pass finishes. That is the mechanism, not a side effect, and it is what a test
+fixture standing up a WorkspaceDO for some other reason has to account for.
 
 The `426` gate needed a discriminator and no version signal existed. A request
 with an `Origin` is a browser context, which is the desktop renderer, which is
