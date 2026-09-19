@@ -10,6 +10,17 @@ shipped Project mechanism; its product design is now superseded by the planned
 [Spaces and Organization hierarchy](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md),
 which defines the eventual cutover and retirement of this module.
 
+**Spaces have replaced Projects, and this module is on its way out.** The Space
+authority ships in WorkspaceDO migration 61 and is documented in
+[`spaces.md`](spaces.md); `/projects/*` already answers `410
+client_update_required` naming `/spaces`. What is still here is the authority
+underneath that refusal — the tables, the RPCs, the service and the
+default-resource consumer — kept dormant through the retry and rollback
+observation window the PRD's rollout describes. Phase 5 of that plan verifies
+the shutdown barrier and deletes it. Do not build on anything below; read
+`spaces.md` instead, and change this only to keep the dormant path from
+breaking.
+
 ## Where the code lives
 
 | Path | Responsibility |
