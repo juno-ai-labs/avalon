@@ -40,6 +40,7 @@ import {
   type BindLoopTransition,
   type BindProviderBoundary,
   type HarnessActivationInput,
+  type PendingBindToolBatch,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
 import { projectParticipantTextMessage } from "../services/workstream-participant-model-message";
@@ -306,6 +307,53 @@ export interface PendingInputActivationOutcome {
   deliveryEffects: PendingInputDeliveryEffectInput[];
   loop: SubstreamLoopRow;
   receiptRunId: string;
+}
+
+/**
+ * The one spelling of a loop release refused for an unsettled tool batch.
+ *
+ * `drainPersistentLoop` selects its deferral branch on this, so a free-floating
+ * message literal at each of the two throw sites was a rename away from
+ * reverting the whole change: the catch would stop matching, the throw would
+ * escape as a plain `substream_loop_drain_failed`, and the loop would be back
+ * to the invisible hot retry this exists to remove.
+ */
+export const UNSETTLED_TOOL_BATCH_ERROR_CODE = "substream_loop_has_unsettled_tool_batch";
+
+/**
+ * A loop release refused because the projection still owes Bind tool results.
+ *
+ * Carries what `unsettledToolBatchBlockingRelease` already computed. Both call
+ * sites used to throw that away and leave an operator a bare code, which is the
+ * defect [`naming-a-schema-failure.md`](../../../../docs/naming-a-schema-failure.md)
+ * exists to stop: the turn and the number of withheld calls are the difference
+ * between "a batch is stuck" and knowing which one.
+ */
+export class UnsettledToolBatchError extends Error {
+  readonly code = UNSETTLED_TOOL_BATCH_ERROR_CODE;
+  readonly turnId: string;
+  readonly modelTurnIndex: number;
+  readonly withheldCallCount: number;
+
+  constructor(batch: PendingBindToolBatch) {
+    super(UNSETTLED_TOOL_BATCH_ERROR_CODE);
+    this.name = "UnsettledToolBatchError";
+    this.turnId = batch.turnId;
+    this.modelTurnIndex = batch.modelTurnIndex;
+    this.withheldCallCount = batch.calls.length;
+  }
+}
+
+/**
+ * Whether a caught throw is that refusal.
+ *
+ * The message arm is not a second literal: it is the same constant, and it is
+ * what makes this survive an object-port hop, which flattens a typed error to a
+ * bare `Error` carrying only its message.
+ */
+export function isUnsettledToolBatchError(error: unknown): error is Error {
+  return error instanceof UnsettledToolBatchError
+    || (error instanceof Error && error.message === UNSETTLED_TOOL_BATCH_ERROR_CODE);
 }
 
 export interface TranscriptExecutionFence {
@@ -3797,22 +3845,69 @@ export class WorkstreamTranscriptStorage {
   /**
    * The withheld calls of an open question, and nothing else.
    *
-   * A batch withheld for any other reason is a run's own to repair from its
-   * tool receipts, and it keeps the behaviour it has: the queue stays FIFO and
-   * Bind refuses the head loudly, rather than a silent stall nothing reports.
+   * A batch withheld for any other reason is nobody's to close by answering:
+   * only a live execution can repair it from the tool receipts, which is what
+   * `unsettledToolBatchBlockingRelease` below keeps the loop alive for.
+   *
+   * `cancelled` is deliberately not an open question. The row only ever moves
+   * `pending -> answered` or `pending -> cancelled`, and a cancelled question
+   * has no answer coming, so counting it as open would park the queue on an
+   * input that can never arrive. The release guard has always read the status
+   * this way; this selector did not, and the two disagreeing is how the same
+   * batch could be judged answerable here and unsettled there.
    */
   private openQuestionToolCallIds(projection: BindLoopProjectionState): Set<string> {
     const withheld = pendingBindToolBatch(projection);
     if (!withheld) return new Set();
-    const open = new Set<string>();
-    for (const call of withheld.calls) {
-      const asked = this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT elicitation_id FROM elicitation_requests WHERE tool_call_id = ?`,
-        call.receiptToolCallId,
-      ).toArray()[0];
-      if (asked) open.add(call.receiptToolCallId);
-    }
+    // One statement per chunk rather than one per call. This selector answers
+    // for both release paths *and* every activation check, so a parallel batch
+    // of N questions used to cost N round trips on each of them; the release
+    // guard this replaced had always read them in a single `IN (…)`.
+    const open = new Set(boundParameterChunks(
+      withheld.calls.map((call) => call.receiptToolCallId),
+    ).flatMap((receiptToolCallIds) =>
+      this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT tool_call_id FROM elicitation_requests
+          WHERE status IN ('pending', 'answered')
+            AND tool_call_id IN (${receiptToolCallIds.map(() => "?").join(", ")})`,
+        ...receiptToolCallIds,
+      ).toArray().map((row) => String(row.tool_call_id))));
     return open.size === withheld.calls.length ? open : new Set();
+  }
+
+  /**
+   * The tool batch that must be settled before this loop may go back to `idle`,
+   * or `null` when nothing holds the release.
+   *
+   * Only a *running* execution can settle such a batch:
+   * `recoverInterruptedToolBatch` reads the durable tool receipts and appends
+   * the missing results, and every write it makes is fenced on a live lease.
+   * So a loop released to `idle` with the batch still open can never be
+   * repaired — the only route back to an execution is admitting a pending
+   * input, and `applyBindLoopTransition` refuses a `protocol_user_appended`
+   * while the last assistant step is unsettled. The refusal is correct and the
+   * repair is unreachable, which leaves the loop wedged: every drain throws
+   * `bind_loop_protocol_user_invalid`, nothing durable changes, and the queue
+   * still looks like work to `nextLoopWorkAt`, which re-arms at `now`.
+   *
+   * On 2026-09-19 one substream sat in exactly that state for a day, logging
+   * about six `substream_loop_drain_failed` a second — 397k of them before it
+   * was found, and found only because somebody was reading the logs for
+   * something else. The release that produced it checked for an unmaterialized
+   * assistant turn and not for this.
+   *
+   * A batch of open questions is the one exception, and is not withheld work at
+   * all: its answer is a pending input, so the room releases itself as soon as
+   * somebody replies.
+   */
+  unsettledToolBatchBlockingRelease(loopId: string): PendingBindToolBatch | null {
+    const projection = this.readBindProjection(loopId);
+    if (!projection) return null;
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld) return null;
+    return this.openQuestionToolCallIds(projection).size === withheld.calls.length
+      ? null
+      : withheld;
   }
 
   /**
@@ -3836,10 +3931,23 @@ export class WorkstreamTranscriptStorage {
     projection: BindLoopProjectionState | null,
     pendingInputs: readonly PendingLoopInputRow[],
   ): PendingLoopInputRow[] {
-    const openToolCallIds = projection === null
-      ? new Set<string>()
-      : this.openQuestionToolCallIds(projection);
-    if (openToolCallIds.size === 0) return [...pendingInputs];
+    if (projection === null) return [...pendingInputs];
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld) return [...pendingInputs];
+    const openToolCallIds = this.openQuestionToolCallIds(projection);
+    // A withheld batch that is not entirely open questions belongs to the host
+    // repair, not to this queue, and nothing here can be appended until that
+    // repair runs: Bind refuses every `protocol_user_appended` while the last
+    // assistant step is unsettled, whatever is queued behind it.
+    //
+    // Returning the queue anyway is not a harmless optimism. It made the head
+    // look like executable work, so `nextLoopWorkAt` derived a wake at `now`,
+    // `armNextAlarm` floored it at `now + 1`, and the object re-entered as fast
+    // as it could return — each pass throwing `bind_loop_protocol_user_invalid`
+    // and changing nothing. Holding the queue is what makes the stall quiet and
+    // visible instead: `nextLoopWorkAt` derives no instant, and the loop is
+    // reported once through `substream_loop_parked_with_queued_input`.
+    if (openToolCallIds.size === 0) return [];
     const answers = new Map<string, PendingLoopInputRow>();
     for (const pending of pendingInputs) {
       const toolCallId = this.answeredQuestionToolCallId(pending);

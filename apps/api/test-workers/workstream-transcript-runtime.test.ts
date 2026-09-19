@@ -16,6 +16,7 @@ import type { Env } from "../src/env";
 import { conversationObjectName, substreamLoopId } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
+import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
@@ -715,6 +716,656 @@ describe("work-stream transcript on workerd SQLite", () => {
         expect.objectContaining({ activityId: "double-compaction:compaction:1", state: "completed" }),
         expect.objectContaining({ activityId: "double-compaction:compaction:2", state: "completed" }),
       ]);
+    });
+  });
+
+  /**
+   * The wedge of 2026-09-19, at the two places that produced and prolonged it.
+   *
+   * A run failed between accepting an assistant tool batch and accepting its
+   * results. `recordWorkflowFailed` released the loop to `idle` anyway — it
+   * checked only for an unmaterialized assistant turn, while the sibling
+   * release in `WorkstreamHarnessRunStorage` had always checked for the batch
+   * too. From `idle` the batch can never be settled: the repair needs a live
+   * execution, and the only route to one is admitting a pending input, which
+   * `applyBindLoopTransition` refuses while the last assistant step is
+   * unsettled. The queue then still looked like work, so the object re-armed at
+   * `now` and re-entered as fast as it could return — about six
+   * `substream_loop_drain_failed` a second for a day.
+   */
+  describe("a run that fails holding an unsettled tool batch", () => {
+    const RUN_ID = "00000000-0000-7000-8000-000000000801";
+    const OWNER = "wedge-test-owner";
+    const ATTEMPT_ID = "wedge-test-attempt";
+
+    /**
+     * Drive a real object to the exact shape: an accepted assistant turn with
+     * one tool call and no result, under a live execution.
+     */
+    async function wedgeLoop(
+      stub: DurableObjectStub,
+      options: { toolCalls?: boolean } = {},
+    ): Promise<void> {
+      const withToolCalls = options.toolCalls !== false;
+      const now = Date.now();
+      const workflowInput = WorkstreamWorkflowInputSchema.parse({
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        parentKind: "workstream",
+        parentId: WORKSTREAM_ID,
+        substreamId: "0",
+        loopId: LOOP_ID,
+        harnessRunId: RUN_ID,
+        triggerMessageId: null,
+        activityId: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+      await runInDurableObject(stub, async (instance, state) => {
+        seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        await transcript.commitBindTransition({
+          kind: "state_initialized",
+          loopId: LOOP_ID,
+          generation: 1,
+          stateRevision: 1,
+          systemProjection: {
+            revision: 1,
+            rendererVersion: "workstream-system-v1",
+            inputHash: "system-input",
+            message: { role: "system", content: "System" },
+          },
+          nonSystemMessages: [{ role: "user", content: "Question" }],
+          nonSystemMessageOrigins: [{
+            originKind: "derived",
+            sourceKind: "participant_turn",
+            sourceId: "message-1",
+            sourceRevision: 1,
+          }],
+        });
+        const runs = new WorkstreamHarnessRunStorage(state.storage);
+        runs.admitRun({
+          runId: RUN_ID,
+          origin: "member_message",
+          executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+          status: "running",
+          startedAt: now,
+          model: "test/model",
+          triggerPartId: null,
+          parentRunId: null,
+          expectedLatestRunId: null,
+          now,
+        });
+        state.storage.sql.exec(
+          `UPDATE runs SET execution_context_json = ? WHERE run_id = ?`,
+          JSON.stringify(workflowInput),
+          RUN_ID,
+        );
+        const loop = new SubstreamLoopStorage(state.storage);
+        loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+        loop.activateExecutionReceipt({
+          runId: RUN_ID,
+          loopId: LOOP_ID,
+          executionEpoch: 1,
+          leaseOwner: OWNER,
+          leaseExpiresAt: now + 60_000,
+          expectedLoopRevision: loop.loop()!.revision,
+          expectedBindStateRevision: 1,
+          now,
+        });
+        // A real run holds an attempt, and two things select on it: the
+        // residual receipt sweep, and the settlement's check that this isolate
+        // still owns the attempt it is about to fence a receipt write with. The
+        // owner is therefore the object's own, not a string of the test's
+        // choosing — a fixture with an invented owner is not a run this code
+        // ever sees, and would quietly take the stand-down path instead.
+        runs.claimAttempt({
+          runId: RUN_ID,
+          attemptId: ATTEMPT_ID,
+          owner: (instance as unknown as {
+            harnessAttemptOwner: (
+              input: { substreamId: string | null; harnessRunId: string },
+              attemptId: string,
+            ) => string;
+          }).harnessAttemptOwner({ substreamId: "0", harnessRunId: RUN_ID }, ATTEMPT_ID),
+          leaseSeconds: 60,
+          lifecycleEventId: "wedge-test-attempt-claimed",
+          now,
+        });
+        const reservation = loop.reserveAssistantTurn({
+          executionId: RUN_ID,
+          executionEpoch: 1,
+          leaseOwner: OWNER,
+          expectedLoopRevision: loop.loop()!.revision,
+          receiptRunId: RUN_ID,
+          turnId: `${LOOP_ID}:turn:1`,
+          modelTurnIndex: 1,
+          streamId: "wedge-test-stream",
+          now,
+        });
+        await transcript.commitBindTransition({
+          kind: "assistant_reserved",
+          loopId: LOOP_ID,
+          generation: 1,
+          stateRevision: 2,
+          turnId: `${LOOP_ID}:turn:1`,
+          modelTurnIndex: 1,
+          transcriptSequence: reservation.reservation.transcript_sequence,
+        }, now, {
+          executionId: RUN_ID,
+          executionEpoch: 1,
+          leaseOwner: OWNER,
+          expectedBindStateRevision: 1,
+        });
+        await transcript.commitBindTransition({
+          kind: "assistant_accepted",
+          loopId: LOOP_ID,
+          generation: 1,
+          stateRevision: 3,
+          turnId: `${LOOP_ID}:turn:1`,
+          modelTurnIndex: 1,
+          transcriptSequence: reservation.reservation.transcript_sequence,
+          message: {
+            role: "assistant",
+            content: "Looking that up",
+            ...(withToolCalls
+              ? {
+                  tool_calls: [{
+                    id: "provider-call",
+                    type: "function",
+                    function: { name: "search", arguments: "{}" },
+                  }],
+                }
+              : {}),
+          },
+        }, now + 1, {
+          executionId: RUN_ID,
+          executionEpoch: 1,
+          leaseOwner: OWNER,
+          expectedBindStateRevision: 2,
+        });
+        // The state under test, stated rather than assumed.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toEqual(
+          withToolCalls
+            ? expect.objectContaining({
+                turnId: `${LOOP_ID}:turn:1`,
+                calls: [expect.objectContaining({ providerToolCallId: "provider-call" })],
+              })
+            : null,
+        );
+      });
+    }
+
+    it("keeps the loop executing so the lease expiry can hand the batch to the repair", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const product = (instance as unknown as {
+          product: {
+            recordWorkflowFailed(
+              runId: string,
+              error: { code: string; message: string },
+              execution: {
+                loopId: string;
+                executionId: string;
+                executionEpoch: number;
+                leaseOwner: string;
+              },
+            ): Promise<void>;
+          };
+        }).product;
+
+        await expect(product.recordWorkflowFailed(
+          RUN_ID,
+          { code: "agent_loop_failed", message: "Rally could not complete this execution" },
+          { loopId: LOOP_ID, executionId: RUN_ID, executionEpoch: 1, leaseOwner: OWNER },
+        )).rejects.toThrow("substream_loop_has_unsettled_tool_batch");
+
+        // Both halves of the refusal matter. The loop keeps its execution, so
+        // the lease can expire into `claimPersistentLoopExecution`'s recovery
+        // branch; and the run stays un-terminalized, which is the only state in
+        // which `recoverInterruptedToolBatch` can settle its tool receipts.
+        const loop = new SubstreamLoopStorage(state.storage).loop()!;
+        expect(loop).toMatchObject({
+          status: "executing",
+          active_execution_id: RUN_ID,
+          lease_owner: OWNER,
+        });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "running", terminalized_at: null });
+      });
+    });
+
+    it("settles the batch as it fails, so the loop releases without waiting out the lease", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      const workflowInput = WorkstreamWorkflowInputSchema.parse({
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        parentKind: "workstream",
+        parentId: WORKSTREAM_ID,
+        substreamId: "0",
+        loopId: LOOP_ID,
+        harnessRunId: RUN_ID,
+        triggerMessageId: null,
+        activityId: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        const resident = instance as unknown as {
+          activeLoopExecution: {
+            runId: string;
+            leaseOwner: string;
+            executionEpoch: number;
+          } | null;
+          settleInterruptedToolBatchForFailure(input: WorkstreamWorkflowInput): Promise<void>;
+          product: {
+            recordWorkflowFailed(
+              runId: string,
+              error: { code: string; message: string },
+              execution: {
+                loopId: string;
+                executionId: string;
+                executionEpoch: number;
+                leaseOwner: string;
+              },
+            ): Promise<void>;
+          };
+        };
+        resident.activeLoopExecution = {
+          runId: RUN_ID,
+          leaseOwner: OWNER,
+          executionEpoch: 1,
+        };
+
+        // The call has no receipt at all — the shape a run refused before its
+        // tool ran leaves behind, and the one that made a five-minute deferral
+        // the wrong answer.
+        await resident.settleInterruptedToolBatchForFailure(workflowInput);
+
+        expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)
+          .map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toBeNull();
+
+        // Settled, so the ordinary failure now completes rather than being
+        // refused: the run terminalizes and the loop is free for the queue.
+        await resident.product.recordWorkflowFailed(
+          RUN_ID,
+          { code: "agent_loop_failed", message: "Rally could not complete this execution" },
+          { loopId: LOOP_ID, executionId: RUN_ID, executionEpoch: 1, leaseOwner: OWNER },
+        );
+        expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({ status: "idle" });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "failed", terminalized_at: expect.any(Number) });
+      });
+    });
+
+    it("offers Bind no queued input it would have to refuse", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const now = Date.now();
+        const loop = new SubstreamLoopStorage(state.storage);
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        loop.reserveInputPreparation({
+          inputId: "queued-behind-the-batch",
+          loopId: LOOP_ID,
+          clientMessageId: "queued-behind-the-batch",
+          preparationKind: "human_message",
+          envelopeJson: JSON.stringify({ text: "Anyone there?" }),
+          now,
+        });
+        loop.completeInputPreparation({
+          inputId: "queued-behind-the-batch",
+          preparedTurnId: "queued-behind-the-batch",
+          mode: "queue",
+          actor: "human",
+          authorUserId: USER_ID,
+          authorNameSnapshot: "Member",
+          authorAvatarUrlSnapshot: null,
+          clientMessageId: "queued-behind-the-batch",
+          externalActorJson: null,
+          messageType: "message",
+          preparedPayloadId: "queued-payload",
+          preparedFactId: "queued-fact",
+          preparedPayloadAudience: "shared",
+          preparedPayloadMediaType: "application/json",
+          preparedPayloadJson: JSON.stringify({ role: "user", content: "Anyone there?" }),
+          preparedPayloadSha256: "0".repeat(64),
+          preparedPayloadByteLength: 12,
+          bindPayloadJson: JSON.stringify({ role: "user", content: "Anyone there?" }),
+          provenanceJson: JSON.stringify({
+            originKind: "derived",
+            sourceKind: "participant_turn",
+            sourceId: "queued-behind-the-batch",
+            sourceRevision: 1,
+          }),
+          authorizationJson: JSON.stringify({
+            executionPrincipal: { type: "user", userId: USER_ID },
+            reason: "user_message",
+          }),
+          attachmentsJson: "[]",
+          mentionsJson: "[]",
+          now,
+        });
+
+        // The input is durably queued and stays queued: what it is waiting for
+        // is the host repair, not a turn of its own. Returning it here is what
+        // made `nextLoopWorkAt` derive a wake at `now` on every alarm.
+        expect(loop.pendingInputs().map((row) => row.input_id))
+          .toEqual(["queued-behind-the-batch"]);
+        expect(transcript.nextActivationInput(LOOP_ID)).toBeUndefined();
+      });
+    });
+
+    /**
+     * The production ordering, through the real drain rather than its parts.
+     *
+     * The cases above call the two repair helpers directly, which proves each
+     * one works and proves nothing about whether `drainPersistentLoop` calls
+     * them. Removing either call site left every one of them green. This drives
+     * a failing run through the real catch block and asserts what it leaves
+     * behind, so the wiring and its order are covered too.
+     */
+    it("settles the batch, terminalizes, and closes the open receipt in one failed drain", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const receipts = new WorkstreamToolReceiptStorage(state.storage);
+        receipts.seedDevelopmentReceipt({
+          effectIntentId: "drain-open-effect",
+          runId: RUN_ID,
+          toolPosition: 0,
+          toolCallId: `${LOOP_ID}:turn:1:tool:0`,
+          toolName: "web_fetch",
+          mode: "read",
+          requestHash: "request-hash",
+          status: "executing",
+          connectionId: null,
+          inputJson: "{}",
+          outputSummary: null,
+          executionPlanJson: JSON.stringify({ capability: "web.fetch", mode: "read" }),
+          startedAt: Date.now(),
+          settledAt: null,
+        });
+        // Expire the loop lease so the drain's recovery branch adopts this
+        // execution, which is how it reaches the failure path at all.
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = 1, revision = revision + 1,
+                  updated_at = MAX(updated_at, ?) WHERE id = 1`,
+          Date.now(),
+        );
+
+        const resident = instance as unknown as {
+          executeAgentRun: (input: WorkstreamWorkflowInput) => Promise<unknown>;
+          drainPersistentLoop: (ownsDrain: () => boolean) => Promise<void>;
+        };
+        // The run throws where a real one does: inside the execution, after the
+        // assistant batch was accepted and before its results were.
+        resident.executeAgentRun = () =>
+          Promise.reject(new Error("tool_receipt_persistence_failed"));
+
+        await resident.drainPersistentLoop(() => true);
+      });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // Settled before the release, so the projection is a shape Bind accepts.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toBeNull();
+        expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)
+          .map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+        // Released, because the batch was settled first.
+        expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({ status: "idle" });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "failed", terminalized_at: expect.any(Number) });
+        // And the card the failed run had open is closed, with the marker that
+        // keeps the bounded sweep from rescanning it.
+        expect(state.storage.sql.exec<{ status: string } & Record<string, SqlStorageValue>>(
+          `SELECT status FROM tool_effects WHERE effect_intent_id = 'drain-open-effect'`,
+        ).one().status).toBe("failed");
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM run_lifecycle_events
+            WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
+          RUN_ID,
+        ).one().count).toBe(1);
+      });
+    });
+
+    /**
+     * The deferral branch, which exists so that a settlement this run cannot do
+     * becomes a slow recovery rather than a silent wedge.
+     *
+     * Its selector is a caught error, so review's point stands: nothing else
+     * here executes it, and a rename at either throw site would send the throw
+     * on to `drainLoopToCompletion` as a plain `substream_loop_drain_failed` —
+     * the invisible hot retry this whole change removes. The attempt lease is
+     * cleared to reach it, which is exactly what `settleInterruptedToolBatchForFailure`
+     * stands down on.
+     */
+    it("leaves the loop executing when the batch cannot be settled by this run", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        // No attempt owner this isolate can prove, so the settlement declines
+        // rather than fencing a receipt write against a row that vouches for
+        // itself.
+        state.storage.sql.exec(
+          `UPDATE runs SET lease_owner = 'taken-over-by-someone-else', updated_at = ?
+            WHERE run_id = ?`,
+          Date.now(),
+          RUN_ID,
+        );
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = 1, revision = revision + 1,
+                  updated_at = MAX(updated_at, ?) WHERE id = 1`,
+          Date.now(),
+        );
+
+        const resident = instance as unknown as {
+          executeAgentRun: (input: WorkstreamWorkflowInput) => Promise<unknown>;
+          drainPersistentLoop: (ownsDrain: () => boolean) => Promise<void>;
+        };
+        resident.executeAgentRun = () =>
+          Promise.reject(new Error("tool_receipt_persistence_failed"));
+
+        // The deferral returns rather than throwing: a throw here is the
+        // regression the typed error exists to prevent.
+        await expect(resident.drainPersistentLoop(() => true)).resolves.toBeUndefined();
+      });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // Nothing was settled and nothing was released: the batch is still
+        // owed, and the run is still the only thing that can be asked for it.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).not.toBeNull();
+        expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({
+          status: "executing",
+          active_execution_id: RUN_ID,
+        });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "running", terminalized_at: null });
+      });
+    });
+
+    it.each([
+      { status: "pending", answerable: true },
+      { status: "cancelled", answerable: false },
+    ])("treats a $status question as answerable=$answerable when the batch is withheld", async ({
+      status,
+      answerable,
+    }) => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const now = Date.now();
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // The withheld call is this loop's turn-1 tool 0, addressed the way
+        // `pendingBindToolBatch` derives a receipt coordinate.
+        state.storage.sql.exec(
+          `INSERT INTO elicitation_requests
+             (elicitation_id, run_id, prompt, response_type, options_json,
+              minimum_selections, maximum_selections, target_user_id, status,
+              answer_json, answered_by_user_id, external_actor_json,
+              created_at, answered_at, tool_call_id)
+           VALUES (?, ?, 'Which one?', 'select', '[]', 1, 1, ?, ?,
+                   NULL, NULL, NULL, ?, NULL, ?)`,
+          `elicitation-${status}`,
+          RUN_ID,
+          USER_ID,
+          status,
+          now,
+          `${LOOP_ID}:turn:1:tool:0`,
+        );
+
+        // A question somebody can still answer is not withheld work: the room
+        // releases itself when they reply, so the release is allowed and the
+        // answer is admissible. A cancelled one has no answer coming, so the
+        // batch is the host's to settle and the release must be refused —
+        // reading `cancelled` as open is how the queue used to park for ever
+        // on an input nobody would ever send.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toEqual(
+          answerable ? null : expect.objectContaining({ turnId: `${LOOP_ID}:turn:1` }),
+        );
+      });
+    });
+
+    it("closes the tool cards a failed run left open", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      // The same failure, but with the batch already settled, so the release is
+      // allowed and the run really does terminalize. What it leaves behind is
+      // the subject here.
+      await wedgeLoop(stub, { toolCalls: false });
+
+      const workflowInput = WorkstreamWorkflowInputSchema.parse({
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        parentKind: "workstream",
+        parentId: WORKSTREAM_ID,
+        substreamId: "0",
+        loopId: LOOP_ID,
+        harnessRunId: RUN_ID,
+        triggerMessageId: null,
+        activityId: null,
+        executionPrincipal: { type: "user", userId: USER_ID },
+        reason: "user_message",
+      });
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const receipts = new WorkstreamToolReceiptStorage(state.storage);
+        receipts.seedDevelopmentReceipt({
+          effectIntentId: "open-effect",
+          runId: RUN_ID,
+          toolPosition: 0,
+          toolCallId: `${LOOP_ID}:turn:1:tool:0`,
+          toolName: "web_fetch",
+          mode: "read",
+          requestHash: "request-hash",
+          status: "executing",
+          connectionId: null,
+          inputJson: "{}",
+          outputSummary: null,
+          // The mode the sweep reads is the plan's, not the column's: a receipt
+          // with no plan is treated as a possible write and settles
+          // `ambiguous`. A real `web_fetch` carries `"mode":"read"`, so this
+          // fixture does too, and the settlement can say the call did not land.
+          executionPlanJson: JSON.stringify({
+            canonicalToolName: "fetch",
+            capability: "web.fetch",
+            connectionId: null,
+            idempotency: "safe",
+            mode: "read",
+            pluginId: "rally:web",
+          }),
+          startedAt: Date.now(),
+          settledAt: null,
+        });
+
+        const resident = instance as unknown as {
+          product: {
+            recordWorkflowFailed(
+              runId: string,
+              error: { code: string; message: string },
+              execution: {
+                loopId: string;
+                executionId: string;
+                executionEpoch: number;
+                leaseOwner: string;
+              },
+            ): Promise<void>;
+          };
+          settleResidualReceiptsAfterFailure(input: WorkstreamWorkflowInput): Promise<void>;
+        };
+        await resident.product.recordWorkflowFailed(
+          RUN_ID,
+          { code: "agent_loop_failed", message: "Rally could not complete this execution" },
+          { loopId: LOOP_ID, executionId: RUN_ID, executionEpoch: 1, leaseOwner: OWNER },
+        );
+
+        // `recordWorkflowFailed` terminalizes with its own SQL, so it writes no
+        // settlement marker and closes nothing. This is the gap.
+        expect(state.storage.sql.exec<{ status: string } & Record<string, SqlStorageValue>>(
+          `SELECT status FROM tool_effects WHERE effect_intent_id = 'open-effect'`,
+        ).one().status).toBe("executing");
+
+        await resident.settleResidualReceiptsAfterFailure(workflowInput);
+
+        expect(state.storage.sql.exec<{
+          status: string;
+          settled_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, settled_at FROM tool_effects WHERE effect_intent_id = 'open-effect'`,
+        ).one()).toMatchObject({ status: "failed", settled_at: expect.any(Number) });
+        // The marker is what stops the bounded sweep rescanning this run for
+        // ever, so it is as much the fix as the settled receipt is.
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM run_lifecycle_events
+            WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
+          RUN_ID,
+        ).one().count).toBe(1);
+      });
     });
   });
 });
