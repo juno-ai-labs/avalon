@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { SpaceSummarySchema, asSpaceId, type SpaceSummary } from '@rally/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../lib/api';
 import { SpaceDashboardScreen } from './space-dashboard';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 
@@ -206,8 +207,14 @@ describe('the Space dashboard', () => {
     expect(screen.getByRole('button', { name: 'Change icon and color for General' })).toBeInTheDocument();
   });
 
+  // The server's sentence is a diagnostic written for a log, in the
+  // Organization's internal words; the code is what the person is shown.
   it('given an archive the server refuses, then it names what has to move first', async () => {
-    api.archiveSpace.mockRejectedValue(new Error('A Channel in “Hiring” belongs to no other Space, so it would have no home'));
+    api.archiveSpace.mockRejectedValue(new ApiError(
+      'A Channel in “Hiring” belongs to no other Space, so it would have no home',
+      409,
+      'space_membership_final',
+    ));
     renderSpace();
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive space' }));
@@ -215,7 +222,9 @@ describe('the Space dashboard', () => {
     expect(within(dialog).getByText(/A channel whose only space is this one has to be moved first/u)).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
 
-    expect(await screen.findByText(/belongs to no other Space/u)).toBeVisible();
+    expect(await screen.findByText('This is the channel\u2019s only space, and every channel needs one. Add it to another space first.'))
+      .toBeVisible();
+    expect(screen.queryByText(/belongs to no other Space/u)).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive space?' })).toBeVisible();
   });
 
