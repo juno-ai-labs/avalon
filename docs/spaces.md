@@ -25,7 +25,9 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the conversation waterlines (migration 63), the dashboard's conversation page and its live-for-viewer SQL, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 63), and the generation-fenced applies over them. |
+| `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 62, which retires Projects. |
 | `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
@@ -644,14 +646,158 @@ The two exceptions are paginated and therefore cannot ride the socket: a Space's
 member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 (`GET /workstreams/:id/access`).
 
-`GET /spaces/:id/channels` answers **Channels**, not ids. WorkspaceDO pages the
-membership rows for their ids and then projects those ids through the same
-directory select and mapper the sidebar's own list uses, chunked against the
-bound-parameter ceiling, so a Space page and a sidebar row are the same shape
-built by the same code rather than two projections that can drift. The
-visibility predicate travels with it: a row is answered only if the Channel is
-Organization-wide or the viewer is one of its participants, which is what keeps
-a Space page from being a way to enumerate Channels the viewer cannot open.
+`GET /spaces/:id/channels` answers **conversations**, not ids and not only
+Channels. The path keeps the word `channels` because it is a shipped route and
+renaming one to describe its payload buys a reader nothing; what it returns is
+`SpaceChannelPageSchema`, a page of `SpaceConversation` rows. The next section
+is what that page is.
+
+WorkspaceDO decides which conversations the page is about and in what order,
+then projects the Channels through the same directory select and mapper the
+sidebar's own list uses and the breakouts through their equivalent, chunked
+against the bound-parameter ceiling — so a Space page and a sidebar row are the
+same shape built by the same code rather than two projections that can drift.
+The visibility predicate travels with it: a Channel row is answered only if the
+Channel is Organization-wide or the viewer is one of its participants, which is
+what keeps a Space page from being a way to enumerate Channels the viewer
+cannot open.
+
+### The dashboard list: every conversation that needs you
+
+The Space dashboard's list is **every conversation in the Space that currently
+needs the viewer** — its member Channels *and those Channels' breakouts, in one
+list* — ordered by most recent activity first, with everything else left out
+entirely. A conversation that is stale for this reader is not greyed out or
+pushed to the bottom; it is absent, and stays reachable from the sidebar under
+its Space and from search.
+
+**Stale is a state, not an age.** A conversation is *live* for a viewer when
+its harness status is `scheduled`, `running` or `needs_input`, or it is unread
+for them, or it is unseen (new to them), or they are mentioned in it. That is
+exactly the set of markers ranked above `completed` in `MARKER_PRECEDENCE`
+(`apps/desktop/src/renderer/lib/format.ts`), which is deliberate rather than a
+coincidence to preserve: the ranking decides which of several true things a
+person is shown, and this decides whether any of them is true at all. Everything
+else — `completed`, `stopped`, `failed`, `idle`, all read — is stale. Age was
+rejected as the input: a conversation nobody has touched for a month whose run
+is waiting on an answer still wants that answer, and one that was busy a minute
+ago and has been read wants nothing.
+
+**The predicate is defined once and mirrored once.** `conversationNeedsViewer`
+in `@rally/contracts` is a pure function over the four summary fields
+(`harnessStatus`, `hasUnread`, `unseen`, `youAreMentioned`); the desktop calls
+it where it draws. WorkspaceDO's page query renders the same decision in SQL,
+through `liveForViewerSql`, once per table alias. **The SQL is the authority**,
+because the SQL is what decides the page: a client-side filter over a
+server-ordered page would hand back arbitrarily short pages and a cursor that
+had already skipped rows. Nothing in the type system makes the two agree —
+what does is
+`apps/api/test-workers/space-conversation-page.test.ts`, which walks every
+combination of harness status × unread × unseen × mentioned and asserts the
+query and the function reach the same answer. That test is the contract; if it
+is deleted the two implementations start drifting the same day.
+
+**One page query, one order, one cursor.** `conversationPage` is a `UNION ALL`
+of the Space's active member Channels that are not archived and those Channels'
+breakouts that are not archived, each joined to the viewer's row, filtered to
+live-for-viewer, ordered by `last_activity_at DESC` and then by kind and id.
+The cursor is a keyset over that whole sort key rather than an offset or an id:
+a Channel and the breakout that produced its activity share a timestamp to the
+millisecond, so a cursor carrying only the timestamp would repeat or skip the
+rows on either side of it. `SPACE_CHANNEL_PAGE_SIZE` still bounds the page.
+
+**A breakout is visible only through its parent.** The Channel's own visibility
+predicate is applied to the breakout arm too — the same
+`scope = 'workspace' OR is_participant` test against the same Channel row — and
+then the breakout's own viewer row has to say `listable`. Two gates because
+they answer different questions: the first is whether this person may know the
+Channel exists, the second is whether the breakout is one of theirs. Without
+the first, a private Channel's side thread would be listed to somebody who
+cannot open the Channel.
+
+The desktop draws both kinds as one row type: a status dot from the shared
+marker function, a title, an activity time. A Channel row carries **Remove**; a
+breakout row carries the ↳ glyph the middle column uses, its parent Channel's
+name, a link to `/workstreams/<channel>?substream=<breakout>`, and no
+**Remove** — a breakout follows its Channel, and the Space authority has no
+word for taking one out on its own. Two empty states are distinguished by
+`channelCount`: a Space with no Channels says "No channels yet", and a Space
+whose conversations are all stale says "Nothing here needs you right now",
+because telling somebody a Space with forty Channels in it is empty sends them
+looking for a bug.
+
+### Breakouts reach the Organization
+
+`WorkstreamDO.aggregatesChildProjection` folds only the main conversation into
+the Channel's own row, and until migration 63 a breakout's `directory_common`
+and `directory_user` projections were stored in the Channel object's
+`substream_directory` and stopped there. A Channel now **forwards** them as
+well, through the hook `forwardsChildProjection` beside that one: the child's
+own payload, under its own projection key (`substream:<id>:common` and
+`substream:<id>:user:<userId>`), over the same outbox → `parent_effect` →
+`applyWorkstreamDirectoryEffects` path every Channel projection takes, with the
+substream id on the envelope. The two hooks are separate questions and a parent
+answers them independently — a breakout must not move its Channel's title or
+state, and must still be listable — which is why forwarding it is not a change
+to what is aggregated.
+
+The envelope's `substreamId` is what routes it. Absent means the parent's own
+aggregate, which is every envelope that existed before this; present, and never
+`"0"`, means one breakout. The handoff refuses `"0"` and refuses a Space's
+envelope carrying one at all: the main conversation's projection is what the
+aggregate is built from, so an envelope naming it would ask the Organization to
+store the Channel twice, and a Space has no breakout any surface draws.
+
+**Background agents are not forwarded.** A background agent is a worker the
+Channel starts — counted in `backgroundAgentCount`, drawn nowhere as a row —
+and forwarding one would put a Queue message and a workspace row on every step
+it takes. The flag is read back from the child's own stored projection, which
+the apply has just written, so a common effect is classified by the payload
+that arrived with it.
+
+WorkspaceDO stores them in **two new tables beside the Channel ones**,
+`workspace_breakout_directory` and `workspace_breakout_viewers`, keyed by
+`(workstream_id, substream_id[, user_id])`. Not a `substream_id` column on
+`workspace_workstream_directory`: every sidebar page, pin, watch registration,
+retirement enumeration and cutover query reads that table as "one row per
+Channel", and the first one that forgot the new filter would have listed a
+breakout as a Channel. Redelivery stays idempotent through the receipt the
+Channel directory already keeps — `workspace_workstream_effect_receipts`, keyed
+by the envelope's message id — rather than a second receipt table that would be
+a second thing to expire and a second way for the two to disagree. Nothing
+publishes a breakout row to the sidebar socket; no surface draws one there.
+
+### The refresh signal
+
+A Space has no socket, and the dashboard's page is the one thing on that screen
+the socket cannot replace. An activity-ordered, state-filtered list changes on
+far more than a membership: a message in a member Channel or breakout reorders
+it, a run finishing drops a row out of it, and this reader opening one takes it
+off their list and nobody else's.
+
+So the Space summary carries **`conversationWaterline`**, one per-viewer number
+the client refetches on. It is the sum of two counters WorkspaceDO keeps: a
+per-Space one advanced when a member conversation's shared row or its
+membership changes, and a per-(Space, person) one advanced when *that* person's
+viewer row on a member conversation changes. Each half only increases and each
+event advances exactly one of them, so the sum strictly increases on every
+change this viewer's page could be affected by and never moves for one it could
+not. Two halves rather than one per-person counter because a message in an
+Organization-wide Channel would otherwise cost one write per member, and rather
+than one shared counter because every member would then refetch whenever any
+other member read anything.
+
+It **subsumes `channelCount`** as a staleness signal, because a settled
+membership advances it too — so the dashboard has one refetch trigger rather
+than one for Channels and a second for breakouts. `channelCount` stays on the
+summary for what it is actually good at: telling the two empty states apart.
+
+The page itself is never pushed. What rides the socket is the Space snapshot,
+republished when the waterline moves, and that is the cost this list buys:
+every message in every member Channel republishes it. The alternative —
+pushing the page down the socket — would put one Channel's traffic on every
+reader of every Space that holds it, and would put breakouts on a socket
+nothing else draws them on.
 
 ### The desktop surfaces
 
@@ -686,10 +832,12 @@ is otherwise rejecting, exactly as it fills an empty participant pile at a
 pinned waterline. Without that the Channel stayed under the Spaces it had for
 the session, and the local cache carried the stale row through a reload.
 
-The Space dashboard's own Channel page is the one thing on that screen the
+The Space dashboard's own conversation page is the one thing on that screen the
 socket cannot replace, so it is refetched when the Space snapshot's
-`channelCount` moves — the Organization saying the membership changed somewhere
-else, which **Add to space** on a sidebar row and a drag both are.
+`conversationWaterline` moves. That covers the membership changing somewhere
+else — **Add to space** on a sidebar row, a drag — and everything else that
+reorders or empties an activity-ordered, state-filtered list. [The refresh
+signal](#the-refresh-signal) is the mechanism.
 
 The sidebar holds one page of the Organization's Channels, so an expanded Space
 lists the placements this device has and says nothing about the rest. It does
@@ -866,6 +1014,25 @@ through to the Space row, which is what a placement is.
   and a control that described it alone would contradict the Space beside it.
 - **No product surface opens a Space's conversation.** The dashboard carries no
   composer, transcript, feed socket, Main link or Breakout list.
+- **The dashboard page's filter is the SQL, and the contracts predicate is a
+  copy of it.** Two implementations of one decision exist because the page is
+  decided on the server and drawn on the client; the only thing keeping them
+  equal is the combination walk in
+  `space-conversation-page.test.ts`. A change to either without the other is a
+  list whose rows disagree with the rows it contains.
+- **A breakout is never a row in the Channel directory.** Its projection lands
+  in `workspace_breakout_directory`, and every query that reads
+  `workspace_workstream_directory` may go on assuming one row per Channel. A
+  `substream_id` column there would make that assumption a filter every
+  existing query has to learn.
+- **A viewer sees a breakout only if they see its parent Channel.** The
+  Channel's own visibility is checked on the breakout arm of the page as well
+  as the breakout's `listable`. A breakout's own viewer row cannot grant
+  discovery of a Channel its reader may not open.
+- **A breakout has no membership of its own.** Its Spaces are its parent
+  Channel's, and the Space authority has no operation that adds or removes one.
+  A **Remove** control on a breakout row would be offering a write nothing
+  implements.
 
 ## Boundary
 
@@ -1016,6 +1183,8 @@ belongs in the route suite as well as wherever its authority is proved.
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and counted once, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, a keyset walk across a page boundary that falls inside a four-way tie, the refresh signal moving for a member breakout and not for a Channel in another Space, and the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal. |
+| `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
@@ -1040,6 +1209,7 @@ pnpm --filter @rally/api exec vitest run test/space-service.test.ts
 pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-routes.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-conversation-page.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-member-walk.test.ts
@@ -1100,7 +1270,7 @@ when one of them refuses.
 
 ## Data model
 
-Ten tables, all in WorkspaceDO's migration 61.
+Ten tables in WorkspaceDO's migration 61, and four more in migration 63.
 
 `workspace_space_directory` is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
@@ -1147,6 +1317,30 @@ no receipt table beside it.
 Migration 61 also rebuilds `workspace_retirement_graph` so its `parent_kind`
 CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts —
 through a scratch table. Migration 42 is released and is not edited.
+
+**Migration 63 adds the four tables the dashboard list needs.**
+`workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
+carrying what the forwarded effect carries — title, description, scope, state,
+`last_activity_at`, `completed_at`, `archived_at`, the attention ordinals, the
+created and updated instants — under the same generation/waterline/payload-hash
+fence the Channel directory applies. `workspace_breakout_viewers` is the
+per-person half, keyed by that pair plus `user_id`, holding `is_participant`,
+`unread_count`, `you_are_mentioned`, `unseen`, `listable`,
+`seen_attention_ordinal`, the manual-unread pair and the mention ordinal. The
+columns are spelled the way the Channel directory spells the same facts on
+purpose: one code-owned predicate text is rendered against both aliases, and a
+column named differently here would be a second predicate pretending to be one.
+`space_conversation_state` and `space_conversation_viewer_state` are the two
+halves of [the refresh signal](#the-refresh-signal).
+
+Neither breakout table is a node in `workspace_retirement_graph`. That graph
+enumerates *objects* to close — a Channel's `WorkstreamDO`, a Sidekick's
+`AutomationDO`, a Space's `SpaceDO` — and a breakout is a conversation inside a
+Channel's object, already walked as one of its children. These are projections
+in WorkspaceDO's own database, closed by WorkspaceDO's own tombstone like every
+other row in it. What a new WorkspaceDO table does owe is a routing decision in
+`apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
+as reached by typed RPC only.
 
 **Migration 62 deletes the eight Project tables**, after the invalidation
 described under [Operations](#operations) and children-before-parents, because
@@ -1229,8 +1423,8 @@ rather than from here.
 
 ## Operations
 
-Migrations 61 and 62 are visible through the existing Durable Object migration
-tracker, and **the tracker's forced pass is what starts the cutover**: it wakes
+Migrations 61, 62 and 63 are visible through the existing Durable Object
+migration tracker, and **the tracker's forced pass is what starts the cutover**: it wakes
 every WorkspaceDO, and the alarm armed by construction claims the first page.
 The napkin sum for that fleet-wide burst on the shared activity Queue — one
 in-flight page per Organization, against the platform's published per-queue
@@ -1441,6 +1635,72 @@ only order the page in front of it, and the stored ids would name Channels no
 page had fetched.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
+
+### 2026-09-19 — The Space dashboard lists what needs you, breakouts included
+
+**What changed:** The dashboard's Channels section is now every conversation in
+the Space that currently needs the viewer — member Channels and those Channels'
+breakouts in one list, ordered by most recent activity, with everything stale
+for that reader left out. "Stale" is the conversation's current state for that
+person, not its age: live is `scheduled`, `running` or `needs_input`, or
+unread, or unseen, or mentioned, which is exactly the set of markers ranked
+above `completed` in `MARKER_PRECEDENCE`. The predicate is
+`conversationNeedsViewer` in `@rally/contracts`, mirrored by the page query's
+SQL. Migration 63 adds `workspace_breakout_directory` and
+`workspace_breakout_viewers`, which a Channel now fills by forwarding its
+breakouts' own directory projections over the outbox path it already had, with
+the substream id on the envelope. `GET /spaces/:id/channels` keeps its name and
+answers `SpaceConversation` rows carrying `kind` and, for a breakout, its
+parent Channel, its substream id and the parent's title. The Space summary
+carries `conversationWaterline`, one per-viewer number the dashboard refetches
+on.
+
+**Why:** The section listed every Channel in the Space in id order, which is
+the least useful ordering a list of conversations can have and is not what
+anybody opens a Space to find out. The question a Space dashboard answers is
+"what in here wants me", and the Organization already held every fact needed to
+answer it for Channels — it just had none of them for breakouts, because a
+breakout's projection reached its Channel's `substream_directory` and stopped.
+A breakout is where most of the work that needs an answer actually happens, so
+a list that could not show one was answering the question with half the data.
+Hiding stale rows rather than ranking them down is the same decision the
+sidebar already makes by hiding `completed`: a list you have to read to find
+the three rows that matter is a list you stop reading.
+
+**Considered and rejected:** *Age-based staleness* — hide anything older than
+some window. It needs a number nobody here can derive, and it is wrong in both
+directions: a run that has been waiting three weeks for an answer still wants
+it, and a conversation that was busy a minute ago and has been read wants
+nothing. State is the honest input and needs no number. *A client-side filter
+over an id-ordered page* — keep the existing query and drop the stale rows
+where the list is drawn. That makes every page arbitrarily short, makes the
+cursor a promise about rows the client has already thrown away, and makes the
+**Load more** control unable to say whether there is more. The filter has to be
+where the page is decided. *Widening `workspace_workstream_directory` with a
+`substream_id` column* — one directory table for both kinds. Every sidebar
+page, pin, watch registration, retirement enumeration and cutover query in
+WorkspaceDO reads that table as "one row per Channel"; each would have had to
+learn a filter, and the first one that forgot would list a breakout as a
+Channel in somebody's sidebar. Two tables means only the query that
+deliberately lists both has to know both exist. *Pushing the page over the
+socket* — it would put one member Channel's traffic on every reader of every
+Space holding it, and would put breakouts on a socket nothing else draws them
+on. *A second refresh mechanism for breakouts* — the waterline covers both
+kinds and subsumes `channelCount`, so there is one trigger rather than three.
+
+**Consequences:** The page's SQL is the authority for what is listed and
+`conversationNeedsViewer` is a copy of it; the combination walk in
+`space-conversation-page.test.ts` is the only thing keeping them equal, and a
+change to either without the other is a defect that test is there to catch. A
+member conversation's activity now republishes the Space snapshot to every
+subscribed socket, which is a real increase in socket traffic — every message
+in every member Channel — and it is the cost the activity-ordered list buys; if
+it has to come down, the thing to change is what the snapshot carries, not the
+signal. A test fixture that publishes an idle, fully-read Channel and expects
+it on the page will now fail, correctly: `space-authority.test.ts` publishes
+`needs_input` for exactly that reason. A future conversation kind — a Sidekick
+run, say — joins the list by adding an arm to `conversationPage` and a branch
+to the mapper, not by widening either directory table.
 
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 

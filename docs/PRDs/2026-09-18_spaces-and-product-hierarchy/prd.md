@@ -634,6 +634,61 @@ one array.
 `space-do-schema.ts` and its test are deleted; `space_do`'s head is
 `workstream_do`'s head.
 
+### 2026-09-19 — The Space dashboard lists conversations that need the viewer, not memberships
+
+**Decided:** The dashboard's Channels list becomes the list of every
+conversation in the Space that currently needs the viewer: member **Channels
+and their breakouts, in one list**, ordered by most recent activity first, with
+everything stale for that viewer hidden entirely rather than ranked down.
+Stale is decided by each conversation's current state *for that person*, not by
+age: live is a harness status of `scheduled`, `running` or `needs_input`, or
+unread, or unseen, or mentioned — exactly the markers ranked above `completed`
+in `MARKER_PRECEDENCE`. Hidden conversations stay reachable from the sidebar
+under their Space and from search.
+
+The predicate is defined once, as `conversationNeedsViewer` in
+`@rally/contracts`, over the four summary fields; the desktop calls it where it
+draws and WorkspaceDO's page query mirrors it in SQL. **The SQL is the
+authority**, because it decides the page. A workerd test walks every
+combination of the four inputs and asserts the two agree; that test is what
+keeps them equal.
+
+A breakout reaches the Organization through the pipeline a Channel already has
+— its own `directory_common` and `directory_user` projections, forwarded over
+the outbox with the substream id on the envelope — and lands in two new
+WorkspaceDO tables beside the Channel ones, in migration 63. A breakout row
+carries no **Remove**: a breakout follows its Channel. `GET
+/spaces/:id/channels` keeps its path and answers conversations. One per-viewer
+waterline on the Space summary is the dashboard's single refresh signal, and it
+subsumes `channelCount`.
+
+**Why:** Section 4's dashboard lists "active Channels", which in an
+Organization of any size is a list nobody reads: General holds every Channel,
+the order was the Channel id, and the thing a person opens a Space to find out
+— what in here wants me — was not answerable from it at all. Breakouts are
+where most of the work that is waiting on somebody actually sits, and section
+5's hierarchy already makes a Breakout a first-class part of the product, so a
+Space surface that could not name one was describing half the hierarchy it
+introduced. Age was rejected as the staleness input in both directions: a run
+that has waited three weeks for an answer still wants it, and a conversation
+that was busy a minute ago and has been read wants nothing — and an age window
+needs a number nobody here can derive. Filtering on the client was rejected
+because the page is server-ordered and paginated: a client-side filter makes
+every page arbitrarily short and the cursor a promise about rows the client has
+already discarded.
+
+**Changes:** Section 4's "active Channels with controls to create, add, or
+remove a Channel" narrows to the conversations that need the viewer, and gains
+breakout rows that have no remove control. Section 4's statement that the
+dashboard "contains no … Breakout list" still holds as written — it is about
+the Space's *own* hidden conversation, which still has no surface; what the
+dashboard now lists is member Channels' breakouts. Section 5's product
+hierarchy is unchanged. The `GET /spaces/:id/channels` response in section 7
+gains `kind` and, for a breakout, its parent Channel, its substream id and the
+parent's title; `SpaceSummary` gains `conversationWaterline`. Nothing in the
+agreed goals or non-goals moves. Guest access to Spaces stays deferred, so a
+guest sees none of this.
+
 ## Key design decisions
 
 1. **A Space specializes the work-stream primitive.** A thin `SpaceDO` reuses

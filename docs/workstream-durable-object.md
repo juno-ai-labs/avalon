@@ -310,9 +310,13 @@ Every request names `{workspaceId, parentId}` and the implementer asserts it
 against its own row (`assertParent`). The shared base,
 `ConversationParentDurableObject` in `durable-objects/conversation-parent-object.ts`,
 implements the last two and everything behind them; each class supplies
-`parentIdentity()`, `admitChildEnvelope()`, `forwardsChildEffect()`, and the
+`parentIdentity()`, `admitChildEnvelope()`, `forwardsChildEffect()`,
+`aggregatesChildProjection()` and `forwardsChildProjection()`, and the
 aggregate hooks `onChildCommonAggregate` / `onChildUserAggregate` /
-`afterChildEffects`. Table names are shared between the two classes on purpose:
+`afterChildEffects`. The last two hooks are the ones that are easy to confuse:
+`aggregatesChildProjection` asks whether this child counts toward the parent's
+own row, `forwardsChildProjection` asks whether the child gets a row of its own
+in the workspace, and a Channel answers no and yes for its breakouts. Table names are shared between the two classes on purpose:
 `WorkstreamDO`'s released migrations created them, and a second set of names
 would have put a table-name parameter on every statement for no reader's
 benefit.
@@ -1078,6 +1082,10 @@ SubstreamAgent SQLite product transaction
   -> parent alarm: ACTIVITY_QUEUE.sendBatch, envelope inline; rows deleted on success
   -> consumeActivityQueue, by effect kind:
        directory_common / directory_user  -> WorkspaceDO.applyWorkstreamDirectoryEffects
+                                             (the envelope's substreamId, when it
+                                              carries one, routes it to the
+                                              breakout tables instead of the
+                                              Channel directory)
        directory_automation               -> WorkspaceDO.applyAutomationDirectory
        activity_event, mention_notification, participant_notification
                                           -> WorkspaceDO.applyWorkstreamRegionalEffect,
@@ -1115,10 +1123,30 @@ cannot be delivered before that person's directory row has landed.
 `WorkstreamDO` forwards Main effects, plus mention and participant-added
 notifications addressed to current private-child members. It stamps these with
 the child ID, preserving the child's title and notification identity. Child
-common projections update only the private-child title registry; child activity
-and viewer state do not enter shared surfaces. Before forwarding a person
-notification, it ensures an unchanged Main viewer projection (or a neutral
-nonparticipant projection) supplies the existing delivery barrier. `AutomationDO`
+activity and viewer state do not enter shared surfaces, and a child common
+projection still updates only the private-child title registry — it is never
+merged into Main's. Before forwarding a person notification, it ensures an
+unchanged Main viewer projection (or a neutral nonparticipant projection)
+supplies the existing delivery barrier.
+
+**It also forwards a breakout's own `directory_common` and `directory_user`
+projections, unchanged, under keys of their own.** That is a second question
+from the one `aggregatesChildProjection` answers, and the base class asks it
+separately (`forwardsChildProjection`): whether a child counts toward the row
+the parent publishes *about itself*, and whether the child gets a row of its
+own up there, are independent, and a breakout answers no to the first and yes
+to the second. Its payload leaves under the projection key
+`substream:<id>:common` or `substream:<id>:user:<userId>` — so its versions are
+numbered independently of Main's and of every other child's — with the
+substream id on the envelope, which is what tells WorkspaceDO to store it
+beside the Channel directory rather than in it. A background agent is excluded,
+read from the flag on the child's own stored projection: it is a worker this
+object starts rather than a conversation anybody opens, and forwarding one
+would cost a Queue message and a workspace row per step it takes. A Space
+forwards none of this: its hidden main conversation is its only one.
+[`spaces.md`](spaces.md#breakouts-reach-the-organization) owns what the
+Organization does with them, which today is one list on one screen.
+`AutomationDO`
 forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
 the parent's own projections, and dropped. What the workspace hears from an
@@ -1851,6 +1879,43 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+
+### 2026-09-19 — A Channel forwards its breakouts' own projections
+
+**What changed:** The shared parent gains `forwardsChildProjection` beside
+`aggregatesChildProjection`, and a Channel answers yes to it for every
+non-main, non-background-agent conversation. The child's own
+`directory_common` and `directory_user` payloads leave under their own
+projection keys, with the substream id on the `ParentEffectEnvelope`. Nothing
+about what is *aggregated* changed: a breakout's title, state and activity
+still never become the Channel's.
+
+**Why:** The Space dashboard lists the conversations in a Space that need the
+viewer, and most of the work that needs somebody is in a breakout — so the list
+could not be built without the Organization knowing a Channel's breakouts
+exist. Until now their projections reached this object's `substream_directory`
+and stopped there, which was right while nothing outside the Channel drew them
+and wrong the moment something did. Splitting the question in two rather than
+widening `aggregatesChildProjection` is what keeps a side thread from moving
+its Channel's row: the two were one flag because no parent had ever needed to
+answer them differently.
+
+**Considered and rejected:** Letting the workspace read a Channel's breakouts
+on demand, over an RPC per Channel on the page. That is a cross-object await
+per row on a read that is already bounded at 250 rows, for state the Channel
+already publishes on every change. And aggregating breakouts into the
+Channel's row so nothing new had to be forwarded — which is the bug the
+`substreamId === "0"` aggregate exists to prevent, and would have put a
+breakout's title in every sidebar.
+
+**Consequences:** A breakout's every projection is now a Queue message, where
+before it stopped at its Channel. Background agents are excluded on exactly
+that arithmetic, and the exclusion is read from the flag on the child's own
+stored projection rather than from a registry — a future child kind that should
+not be forwarded has to set that flag or add an arm to
+`forwardsChildProjection`. The envelope's `substreamId` is optional and absent
+on every envelope that predates this, which is what makes the change
+backward-compatible with an outbox row written before it.
 
 ### 2026-09-19 — A Space is this class under an immutable role, and Space-derived access is provenance applied through the Channel's own operations
 
