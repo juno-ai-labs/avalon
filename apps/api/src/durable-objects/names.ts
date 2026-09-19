@@ -54,8 +54,8 @@ export function spaceDOName(
 /**
  * One conversation object per substream, named by its parent.
  *
- * `parentId` is a work stream id or an automation id; the kind is not in the
- * name because both are UUIDs and the object records its own kind. The main
+ * `parentId` is a work stream id, an automation id, or a Space id; the kind is
+ * not in the name because all three are UUIDs and the object records its own kind. The main
  * substream (`"0"`) deliberately retains the historical WorkstreamRoom name, so
  * no deployed object moved when the parent became typed. Additional substreams
  * receive independent objects suffixed by their substream id.

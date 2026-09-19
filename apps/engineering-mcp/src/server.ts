@@ -176,7 +176,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }));
 
   server.registerTool("list_spaces", {
-    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; it is a WorkstreamDO under the space role and has no message feed.",
+    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; it is a WorkstreamDO under the space role and has no message feed. Until the Space directory projection ships, the list is empty for every workspace, so an empty answer here does not mean the workspace has no Spaces.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {
