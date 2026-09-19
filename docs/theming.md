@@ -130,6 +130,15 @@ serves it through `rally-font://`.
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
   never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
   at equal specificity further down the file.
+- **A hover fill takes the hover token, never the surface the control sits on.**
+  The two appearances do not agree about what `sys.color.surface.raised` means:
+  dark paints it `#2f2f2f` over a `#070707` canvas, where it reads as a step,
+  and light sets it to the canvas's own `#fcfcfc`, where it reads as nothing at
+  all. `sys.color.surface.raised-hover` is the wash for answering a pointer, and
+  light declares it translucent, so it steps off a canvas, a dialog and a menu
+  alike. Three of the work-stream header's controls took `raised` and so had no
+  visible hover in light for as long as light has existed;
+  `app.css.node.test.ts` holds them on the wash now.
 - **Appearance files are data.** They cannot carry HTML or JavaScript, and the
   desktop registers no appearance-document protocol or iframe.
 
@@ -181,6 +190,43 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-19 — Hover is a token of its own, not a lighter reading of the surface
+
+**What changed:** `.icon-button`'s hover, open and focus-visible fill, along with
+`.participant-header-button:hover` and `.header-socket-state:hover`, moved from
+`sys.color.surface.raised` to `sys.color.surface.raised-hover`. The stream's top
+bar was the report — its share, participant and socket controls answered the
+pointer with nothing in light — but the rule is `.icon-button`'s, so the same
+blank hover was everywhere the primitive is used.
+
+**Why:** `surface.raised` is not a step above the canvas in both appearances.
+Dark separates the two by forty hex points; light sets them to the same
+`#fcfcfc`, so the hover painted the canvas back onto the canvas. Nothing about
+that was local to the header: the three rules had simply each named the surface
+where they meant the wash, and `.workstream-title-button` beside them, already on
+`raised-hover`, is what made the gap legible — the name lit up under the pointer
+and every icon next to it stayed blank.
+
+**Considered and rejected:** Giving light a darker `surface.raised`. That token
+is also the fill of menus, dialogs, cards and the segmented control's chosen
+pill, all of which are meant to be white against a white canvas and separated by
+their border; darkening it to fix a hover would have greyed every one of them.
+Scoping a one-off fill to the work-stream header was rejected for the reason the
+spacing invariant above gives: the defect is the primitive's, and overriding one
+consumer leaves the next three to find it again.
+
+**Consequences:** In dark the fill moves `#2f2f2f` → `#313131`, which is below
+the threshold of noticing and was checked in a window. Tinted derivatives that
+mix a hue into `surface.raised` — `.icon-button-danger`, `.title-edit-save`,
+`.title-edit-cancel`, `.panel-toggle.is-active` — were left alone: their
+visibility comes from the hue, not from the base. `.appearance-picker-trigger`
+was also left on `cmp.row.background-hover`, and is now the faintest hover in
+that top bar; the note beside it argues that the hexagon has to fill the same way
+in the header as in the sidebar, and that in light `surface.raised-hover` is the
+value `cmp.row.background-selected` holds, so a mark nothing had selected would
+announce itself as selected. Pulling it into the family means answering that
+first.
 
 ### 2026-09-18 — Share theme presentation between desktop and browser
 
