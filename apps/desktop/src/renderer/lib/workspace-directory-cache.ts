@@ -125,17 +125,25 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
 }
 
 /**
- * Version 3 is the Spaces cutover.
+ * Version 4 is a Space's reach.
  *
- * A version 2 row holds Project directories and Channel rows written before
- * `spaceIds` existed, and a Channel with no Space is a state the hierarchy does
- * not allow any surface to render. Bumping drops those rows rather than
- * painting a sidebar in which every Channel is in no Space at all; the cost is
- * one cold launch per person after the cutover.
+ * A version 3 row holds Space summaries written before `reach` existed, and it
+ * is the one field on that shape `parse` cannot absorb: it says why *this
+ * person* can see the Space, and a device holds nothing to derive it from. The
+ * two absences it could be read as are both wrong where a reader can see it —
+ * guessing a full relationship draws a plus, an **Add to space** entry and a
+ * drop target on a Space every one of whose writes the server refuses, and
+ * guessing the narrow one takes those controls off every Space on screen and
+ * puts them back a moment later.
+ *
+ * That is the rule the slice is under, and it is the opposite answer to the
+ * `ordering` key beside it, which `parse` reads as an empty arrangement
+ * because an absence there costs one launch drawn in the natural order. The
+ * cost here is one cold launch per device, once.
  */
 export const workspaceDirectorySlice = defineLocalCacheSlice<CachedWorkspaceDirectory>({
   kind: 'directory',
-  version: 3,
+  version: 4,
   parse: parseCachedDirectory,
 });
 
