@@ -246,28 +246,26 @@ export function SubstreamLaunchSurface({
       <div className="launch-transcript-layer transcript-scroll">
         <ConnectingCardSlot>{connecting}</ConnectingCardSlot>
         <div className="transcript-column substream-launch-column">
-          {draft.provenance.length > 0 && (
-            /* The slot is what leaves on submit; the turns inside it are what
-               says where this came from. `inert` rather than unmounting: the
-               block collapses over 220ms, and a reader that can still find
-               "Branching from" in a surface that is now drawing the substream
-               would be told about a branch point that is no longer on screen —
-               while taking it out of the DOM would drop the turns on the frame
-               the collapse was meant to animate. */
-            <div className="substream-branch-context-slot" inert={launching !== null}>
-              <section aria-label="Branching from" className="substream-branch-context">
-                {draft.provenance.map((message) => (
-                  <MessageBlock
-                    {...(currentUser ? { currentUserId: currentUser.id } : {})}
-                    key={message.id}
-                    {...(loadAttachmentContent ? { loadAttachmentContent } : {})}
-                    message={message}
-                    onAnswerElicitation={async () => undefined}
-                    onOpenAttachment={onOpenAttachment}
-                  />
-                ))}
-              </section>
-            </div>
+          {/* Only while somebody is still composing. What is being branched
+              from is a fact about writing this substream rather than about the
+              substream, and from the submit keystroke this column holds what
+              the created child holds: leaving the turns in it — collapsing,
+              faded, or inert — leaves the opening turn displaced by whatever
+              height they still have, and creation can finish before any
+              transition does. */}
+          {launching === null && draft.provenance.length > 0 && (
+            <section aria-label="Branching from" className="substream-branch-context">
+              {draft.provenance.map((message) => (
+                <MessageBlock
+                  {...(currentUser ? { currentUserId: currentUser.id } : {})}
+                  key={message.id}
+                  {...(loadAttachmentContent ? { loadAttachmentContent } : {})}
+                  message={message}
+                  onAnswerElicitation={async () => undefined}
+                  onOpenAttachment={onOpenAttachment}
+                />
+              ))}
+            </section>
           )}
           {openingTurn && (
             <div className="launch-arrival" style={{ '--arrival-index': 0 } as React.CSSProperties}>

@@ -772,28 +772,27 @@ describe('work-stream launch surface geometry', () => {
   });
 
   /**
-   * The branch turns leave on the submit keystroke, and the block is one turn
-   * tall or five. A `max-height` ceiling would be a number nobody can justify
-   * and the wrong duration for the short case; a grid row eased from `1fr` to
-   * `0fr` closes whatever is in it. jsdom computes no layout, so the rule is
-   * what a component test cannot hold onto.
+   * Nothing eases the surface *into* the launching state, and that is the
+   * point: creation can finish before a 220ms transition does — `prepare`
+   * returns a prepared receipt without doing any work, so a retry lands in one
+   * round trip — and a header caught mid-growth hands over to the destination's
+   * 44px row. Anything animating the header on the way in therefore measures
+   * the jump rather than removing it. The transition belongs to the collapse
+   * back, which only the failure path takes, and nothing is racing it there.
    */
-  it('collapses the branch turns on a grid row rather than a guessed height', () => {
-    const slot = rule('.substream-branch-context-slot');
-    const leaving = rule('.workstream-launch-screen.is-launching .substream-branch-context-slot');
-    const clip = rule('.substream-branch-context-slot > *');
+  it('eases the header closed but not open, so the swap cannot catch it growing', () => {
+    const shared = rule('.workstream-launch-screen > .launch-header');
+    const resting = rule('.workstream-launch-screen:not(.is-launching) > .launch-header');
 
-    expect(slot).not.toBeNull();
-    expect(leaving).not.toBeNull();
-    expect(clip).not.toBeNull();
-    expect(slot).toContain('grid-template-rows: 1fr;');
-    expect(slot).toContain('transition: grid-template-rows');
-    expect(leaving).toContain('grid-template-rows: 0fr;');
-    expect(slot).not.toContain('max-height');
-    expect(leaving).not.toContain('max-height');
-    // Without this the row closes and the turns inside it keep drawing past it.
-    expect(clip).toContain('min-height: 0;');
-    expect(clip).toContain('overflow: hidden;');
+    expect(shared).not.toBeNull();
+    expect(resting).not.toBeNull();
+    // Stated on the state the surface leaves, never on the one both take: a
+    // transition here applies in both directions.
+    expect(shared).not.toContain('transition');
+    expect(resting).toContain('transition: height');
+    // The `.workstream-header` class this element borrows for its padding and
+    // border brings a `min-height` that outranks both stated heights.
+    expect(shared).toContain('min-height: 0;');
   });
 
 });

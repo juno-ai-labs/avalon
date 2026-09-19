@@ -172,8 +172,9 @@ describe('substream launch surface', () => {
   it('takes the branch point out of the surface once the substream is being created', () => {
     // It says what is being branched *from*, which is a fact about composing
     // this substream rather than about the substream. The created child draws
-    // its opening turn against the top of an empty transcript, so a surface
-    // still holding the branch turns is a surface the swap has to move.
+    // its opening turn against the top of an empty transcript, so anything left
+    // above that turn here — collapsing, faded, or merely inert — is height the
+    // swap has to take back, and creation can finish before a transition does.
     renderSurface({
       launching: {
         attachments: [],
@@ -182,15 +183,11 @@ describe('substream launch surface', () => {
         text: 'Compare it with last release',
       },
     });
-    // `inert` is what takes it out: a browser drops an inert subtree from the
-    // accessibility tree and from the tab order, so the branch point stops
-    // being something to find. jsdom implements neither, which is why this
-    // asserts the attribute rather than a role query that would pass either way.
-    const slot = document.querySelector('.substream-branch-context-slot');
-    expect(slot).toHaveAttribute('inert');
-    // Still drawn, and still holding the turns: the block collapses over 220ms
-    // rather than vanishing on the frame the keystroke landed.
-    expect(slot?.textContent ?? '').toContain('Main turn 4');
+    expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Main turn 4')).not.toBeInTheDocument();
+    // The turn it is being replaced by is drawn, so this is the swap having
+    // happened rather than the surface having rendered nothing at all.
+    expect(screen.getByText('Compare it with last release')).toBeInTheDocument();
   });
 
   it('says only what it is when there is no branch point to show', () => {
