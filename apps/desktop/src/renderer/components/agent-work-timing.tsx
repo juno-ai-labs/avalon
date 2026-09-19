@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import { formatDuration } from '../lib/format';
@@ -18,6 +19,9 @@ import { useAppearance } from '../lib/theme';
  * waiting on reads as the stop being ignored all over again.
  */
 export const STOPPING_LABEL = 'Stopping once the current work finishes…';
+
+/** The settled half of that sentence, and the whole of what is left to say. */
+export const STOPPED_LABEL = 'Run stopped';
 
 export interface AgentWorkTimingProps {
   active: boolean;
@@ -125,6 +129,35 @@ export function AgentCompactionIndicator(): React.JSX.Element {
  */
 export function RunStoppingIndicator(): React.JSX.Element {
   return <ActivityStatusRow label={STOPPING_LABEL} />;
+}
+
+/**
+ * What the dock says once that stop has settled.
+ *
+ * The same line, in the same place, with the orb replaced by the stop square
+ * and the sentence in the past tense: these two are one acknowledgement with
+ * two phases, and it answers a button press, so it is drawn where the button
+ * is. It is not an activity row — nothing is running — so it does not borrow
+ * `ActivityStatusRow`, whose whole contract is a state that is still going.
+ *
+ * The mark takes the orb's 20px slot, so the line does not shift under itself
+ * as the phase changes.
+ */
+export function RunStoppedIndicator(): React.JSX.Element {
+  return (
+    <div
+      aria-atomic="true"
+      aria-label={STOPPED_LABEL}
+      aria-live="polite"
+      className="agent-work-timing"
+      role="status"
+    >
+      <span aria-hidden="true" className="run-stopped-mark">
+        <Square fill="currentColor" size={11} />
+      </span>
+      <span aria-hidden="true" className="agent-work-timing-label">{STOPPED_LABEL}</span>
+    </div>
+  );
 }
 
 /**
