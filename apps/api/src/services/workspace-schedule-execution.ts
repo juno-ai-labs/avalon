@@ -1,3 +1,4 @@
+import { runtimeDeferral } from "../lib/defer";
 import { refreshTerminalProviderObservation } from "./terminal/observation";
 /**
  * What a workspace's alarm actually runs.
@@ -89,6 +90,12 @@ export interface WorkspaceScheduleContext {
   workspaceId: string;
   directory: WorkspaceScheduleDirectory;
   notificationIntents: WorkspaceScheduleNotificationIntents;
+  /**
+   * The conversations of one work stream whose Terminal deadline has come
+   * due, earliest first. The directory carries one deadline per work stream;
+   * the work stream's own object knows which of its conversations it is.
+   */
+  dueTerminalSubstreams(workstreamId: string, through: Date): Promise<string[]>;
 }
 
 /** Every kind of thing a workspace alarm can be waiting on. */
@@ -486,11 +493,11 @@ export async function recordWorkspaceScheduleFailure(
   error: unknown,
 ): Promise<void> {
   if (target.kind === "schedule") {
-    await recordScheduleFailure(ctx, target.id, error);
+    runtimeDeferral(recordScheduleFailure(ctx, target.id, error));
     return;
   }
   if (target.kind === "watch") {
-    await recordWatchFailure(ctx, target.id, error);
+    runtimeDeferral(recordWatchFailure(ctx, target.id, error));
     return;
   }
   logStructuredEvent(ctx.env, "warn", "workspace_schedule_target_failed", {
@@ -527,8 +534,15 @@ export function terminalReconcileOutcome(transition: TerminalLifecycleTransition
 }
 
 /**
- * Advance one work stream's Terminal sandbox to whatever state it is now due
- * for: a warm stop, an archive, or an expiry that preserves the final diff.
+ * Advance every due Terminal sandbox under one work stream to whatever state
+ * it is now due for: a warm stop, an archive, or an expiry that preserves the
+ * final diff.
+ *
+ * A work stream's directory entry is the earliest deadline of its
+ * conversations, so one due entry can mean several due sandboxes — the main
+ * conversation's and a side thread's — and each is its own object's row,
+ * reconciled on its own. The strictest outcome wins: a sandbox this pass had
+ * to hold decides the re-check for the entry, whatever the others did.
  */
 async function reconcileTerminalSandbox(
   ctx: WorkspaceScheduleContext,
@@ -538,8 +552,39 @@ async function reconcileTerminalSandbox(
   const configuration = parseTerminalRegionConfiguration(ctx.env);
   if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
   const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
+  // A work stream created before conversations reported their own deadlines
+  // lists none; its sandbox, if any, is the main conversation's.
+  const due = await ctx.dueTerminalSubstreams(workstreamId, now);
+  const substreams = due.length > 0 ? due : ["0"];
+  let outcome: ScheduledAlarmOutcome = undefined;
+  for (const substreamId of substreams) {
+    outcome = soonerTerminalOutcome(
+      outcome,
+      await reconcileConversationTerminalSandbox(ctx, provider, workstreamId, substreamId, now),
+    );
+  }
+  return outcome;
+}
+
+/** The outcome that re-checks first; a Terminal pass only ever answers with a wait. */
+function soonerTerminalOutcome(
+  current: ScheduledAlarmOutcome,
+  next: ScheduledAlarmOutcome,
+): ScheduledAlarmOutcome {
+  if (!next || !("waitMs" in next)) return current;
+  if (!current || !("waitMs" in current)) return next;
+  return next.waitMs < current.waitMs ? next : current;
+}
+
+async function reconcileConversationTerminalSandbox(
+  ctx: WorkspaceScheduleContext,
+  provider: ReturnType<typeof createTerminalProviderRpcClient>,
+  workstreamId: string,
+  substreamId: string,
+  now: Date,
+): Promise<ScheduledAlarmOutcome> {
   const executionEnv = ctx.workspaceEnv;
-  const port = createTerminalPortFactory(executionEnv);
+  const port = createTerminalPortFactory(executionEnv, undefined, substreamId);
   const terminal = port(ctx.workspaceId, workstreamId);
   const sandbox = await terminal.sandbox();
   const observation = await terminal.providerObservation();
@@ -556,12 +601,15 @@ async function reconcileTerminalSandbox(
     ctx.workspaceId,
     workstreamId,
     now,
-    createTerminalFinalDiffPreserver(executionEnv, provider, ctx.workspaceId, workstreamId),
+    createTerminalFinalDiffPreserver(executionEnv, provider, ctx.workspaceId, workstreamId, substreamId),
+    undefined,
+    substreamId,
   );
   if (result.transition !== "none") {
     logStructuredEvent(ctx.env, "info", "terminal_sandbox_lifecycle_transition", {
       workspace_id: ctx.workspaceId,
       workstream_id: workstreamId,
+      substream_id: substreamId,
       transition: result.transition,
     });
   }
@@ -569,7 +617,7 @@ async function reconcileTerminalSandbox(
     if (observationDue && result.transition === "none") return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
     return terminalReconcileOutcome(result.transition);
   }
-  const repository = await port(ctx.workspaceId, workstreamId).selectedRepository();
+  const repository = await terminal.selectedRepository();
   emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),
     name: "terminal_workspace_terminal",
@@ -733,7 +781,7 @@ async function recordScheduleFailure(
   error: unknown,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : "unknown scheduler error";
-  await ctx.env.DB.prepare(
+  await ctx.env.AUDIT_DB.prepare(
     `INSERT INTO audit_events (
        id, workspace_id, actor_type, actor_user_id, workstream_id, action,
        target_type, target_id, metadata_json, created_at
@@ -755,7 +803,7 @@ async function recordWatchFailure(
   error: unknown,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : "unknown resource watch error";
-  await ctx.env.DB.prepare(
+  await ctx.env.AUDIT_DB.prepare(
     `INSERT INTO audit_events (
        id, workspace_id, actor_type, actor_user_id, workstream_id, action,
        target_type, target_id, metadata_json, created_at

@@ -23,10 +23,11 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
+| `apps/desktop/src/renderer/lib/host-favicon.ts` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, its object-URL revocation, and a result that is *target*-scoped rather than merely mount-scoped — it is read only for the `{api, hostname}` it was fetched for, and dies with the URL it names. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
-| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
+| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
@@ -256,6 +257,17 @@ unmounts. A missing or failed favicon changes nothing about the link. Glances
 remain inert text and synchronous still exports do not start asynchronous
 decoration.
 
+Markers are requesters in their own right, not free riders on the links: a
+lifted definition's link is never rendered, so before markers wore icons those
+hosts were fetched only when the body also linked them. The endpoint answers
+`private, no-cache` and `RallyApi` coalesces only *in-flight* calls, so every
+mount asks again and a miss is not remembered in the client — a scroll back
+through a grounded answer in a virtualised transcript re-requests every marker's
+host. The 30-day KV entry absorbs that, and this is deliberately not the place
+to invent a client cache; `host-favicon.ts` is simply the one module that would
+own a `Map<hostname, Promise<Blob | null>>` if the churn ever shows up as a
+cost.
+
 The API resolves a deep hostname and its registrable domain in parallel. The
 exact host returns as soon as it produces an icon, without waiting for the
 already-started primary-domain fallback; that fallback is registered with the
@@ -322,11 +334,42 @@ initial load, reconnect, and while an agent response streams.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
-inline asterisk pill with a hover popover, and its entry is dropped from the
+inline marker with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
 footnote rendering, and the section renders only what was left. In the common
 all-citations case nothing renders at the bottom at all, which is the vertical
 space the feature exists to reclaim.
+
+**A web source's marker is the site's own favicon; everything else keeps the
+asterisk pill.** The icon is the same one drawn in front of a link to that host,
+requested the same way, so the two readings of one destination agree — and at
+one character it is the only marker that can say *which* source before the
+popover is open. It is decoration in the accessibility tree: the pill's own
+`aria-label` still carries `Source <n>: <label>`, and the popover still names
+the source and where it opens. Everything a favicon cannot answer for degrades
+to the asterisk, in one direction: a resource or a person has no host, a host
+has no icon, the request has not landed yet, the surface has no API to ask, or
+the bytes that came back will not paint — the endpoint serves SVG among other
+formats, so a good response can still fail to decode here, and the `<img>`'s
+`onError` is part of the hook's contract rather than each caller's business.
+The plate the asterisk sits on — tint, border, pill radius, raise and hover —
+stays exactly as it is and the icon sits inside it, because a sentence citing a
+web page and an internal document cites both the same way and a marker that
+changed shape by target would read as two mechanisms. The icon is sized to the
+box that is already there rather than the other way round, so the two markers
+are identical in height and within a pixel and a half in width.
+
+**In dark appearance the icon is given a ground of its own.** A favicon is
+commonly a dark glyph on a transparent field, drawn for a browser's light tab
+strip, and the plate is `text-default` at 16% — a few percent above the surface
+in dark appearance, so the icon lands nearly black on nearly black. The ground
+is `neutral-14`, the appearance's own high-contrast end, which in dark is the
+near-white the artwork assumes; the plate's tint stays as the ring around it, so
+the geometry does not move. It is deliberately not applied in light appearance:
+the mirror case there is a *light* glyph on transparent, which a light ground
+makes invisible rather than faint — which is what a browser's own light tab
+strip does with the same file, and is a property of the artwork rather than of
+this surface.
 
 **While a turn streams, a reference whose definition has not arrived wears the
 pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
@@ -365,7 +408,10 @@ see. Label text says less and says nothing false. The wider lookup returns with
 the rail's fetch-by-id detail, and the two have to land together.
 
 A citation rendered into a **still** — the saved card — keeps numbered pills
-instead of asterisks, so they identify entries in its trailing source list. Lifting a definition trades the list for a popover,
+instead of asterisks or icons, so they identify entries in its trailing source
+list. A still is rendered synchronously and photographed, so it asks for no
+icon at all: one arriving after the shutter is an empty box in the file somebody
+keeps. Lifting a definition trades the list for a popover,
 which is the right trade on a surface that can be hovered and the wrong one in a
 picture: the export stylesheet hides the popover, so a lifted card showed bare
 numbers over nothing and the sources were gone from the file somebody kept.
@@ -507,9 +553,56 @@ sets `list-style: none` on every `ul` and `ol`; the group takes that back, and
 restates the browser's own `disc → circle → square` progression, counting depth
 in list ancestors of either kind so that an `ol` holding a `ul` is a second level.
 
+Every paint in that group is a substitution rather than a token reference:
+`.markdown-body` declares its rule-local properties — `--markdown-ink`, its one
+stronger step and its three quieter ones, `--markdown-wash`,
+`--markdown-surface`, `--markdown-rule`, `--markdown-quote-bar`,
+`--markdown-border`, the two link roles, and the two GFM affordances that are
+painted without being text, `--markdown-mark` for a task box's tick and
+`--markdown-scrollbar-thumb` for the bar under a wide table — from the
+appearance's own tokens, and every element rule reads one of those.
+
+The indirection is there because not every markdown surface sits on the
+appearance's canvas. A person's turn is drawn on a filled bubble — near-black in
+the light appearance, mid-grey in the dark one, or the sender's profile colour —
+carrying whichever of the two absolute palette inks that fill takes. A ramp step
+knows nothing about that fill, and the bubble had been patching over the
+consequences one element at a time: two rules forced `p`, `strong`, `em`, `code`
+and `a` to the bubble's foreground and left the chip behind
+`.markdown-inline-code` on `neutral-4`, so a `/goal` in a message was a
+near-white word on a near-white chip. The heading, the quote bar, list markers,
+a table's cells, a thematic break, a ticked task box and a wide table's
+scrollbar thumb each had a quieter version of the same problem. The fenced block
+did not: it carried its own `surface-raised` ground, which is why it now opts
+out below rather than joining them.
+
+So a surface that fills itself re-points the group — `.human-message-bubble
+.markdown-body` does, from `currentColor` — instead of restating element rules.
+Percentages of the bubble's own ink contrast by construction whichever fill is
+underneath, which is what the mention chip and the in-flight sweep on the same
+bubble already do, and an element added to the group is painted correctly on
+every surface the day it lands. They compound where a parent is itself a tint:
+a chip inside a blockquote is 14% of the quote's 82%, which is a quote receding
+as a whole.
+
+**A fenced block opts out, and takes the whole group back to the appearance.**
+Both kinds of contents it can hold are resolved from the root and cannot follow
+a surface: `markdownCodeTheme` hands the highlighter inline references to the
+`syntax` group, and `readMermaidThemeConfig` resolves a diagram against
+`document.documentElement` once per window. Painting the panel from the group
+instead costs contrast exactly where the quietest roles live — a language label
+on the dark appearance's default bubble measured 2.93:1 against the 4.14:1 the
+appearance's own panel gives it, and 2.00:1 on a saturated profile fill — so the
+block re-points `--markdown-ink` and its quieter steps, `--markdown-wash`,
+`--markdown-surface` and `--markdown-border` back to the appearance's tokens,
+its header included. The cost is that a code panel inside a coloured bubble
+reads as a panel from somewhere else; that is the arrangement this group found
+and deliberately kept.
+
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Two surfaces take the exemption: a note reads as a document
+markdown element, and it paints by re-pointing the group rather than by naming
+an element. Two surfaces take the exemption: a note reads as a document
 page and steps its headings 22/17/14, the meeting briefing sits in a narrow
 rail beside a transcript and holds every level at 15px. Compact resource rows
 no longer contain a markdown glance or its heading override.
@@ -546,8 +639,17 @@ written this way is a sign it is not a typography override.
 - **A host may override typography, not elements.** The distinction is whether
   the declaration describes the surface or the markdown. A heading scale and a
   measure describe the surface; a list indent, a code background, and a table
-  border describe the markdown. Text colour is on neither list, because it is
-  not a host's to set at all — see the failure modes below.
+  border describe the markdown. Text colour is on neither list: a surface that
+  needs different paint re-points the group below, and one that does not fill
+  itself has no business changing it — see the failure modes below.
+- **Markdown paint is a group, and only a surface with a fill of its own
+  re-points it.** Every element rule reads `--markdown-*`, never a ramp step, so
+  the whole of markdown can be moved onto another ground in one block. The
+  bubble's block is that block; a host copying it without filling itself is
+  restyling markdown with extra steps. Re-point the whole group when you do it:
+  half a group is how the inline-code chip stayed on the neutral ramp under ink
+  the bubble had already forced to near-white, and it is what
+  `app.css.node.test.ts` compares the two sets of names to catch.
 - **A host override wins on specificity, not source order.** Name
   `.markdown-body` in the selector. Anything relying on being further down the
   file is a regression waiting for the next person who splits a stylesheet, and
@@ -706,14 +808,24 @@ needs it should parse rather than widen the pattern again.
   never widens the page, which matters most in the meeting rail, the narrowest
   surface that renders one.
 - **A `color` set on a host does not reach the markdown.** `.markdown-body`
-  declares its own, and a declaration beats an inherited value, so the colour
-  stops at the wrapper. This is the one override that fails by doing nothing at
+  declares its own — now `var(--markdown-ink)` — and a declaration beats an
+  inherited value, so the colour stops at the wrapper. Re-pointing
+  `--markdown-ink` is how a surface says it meant it; inside a filled bubble
+  that value is `currentColor`, which is the one spelling that does resolve back
+  to the host's ink. This is the one override that fails by doing nothing at
   all rather than by losing a cascade fight, which makes it the one most likely
   to be met with `!important` or a second `.markdown-body` rule — the divergence
   the rest of this document exists to prevent. A surface that genuinely needs a
   different body colour has to restate it inside the wrapper, and should say why
   in the same breath. `.note-detail-article` carried a dead `color` of this kind
   until 2026-08-12.
+- **A fenced block does not follow its surface**, per the styling section
+  above: it is an island of the appearance, so a code panel or a diagram inside
+  a coloured bubble is drawn in the window's colours on the window's ground.
+  The alternatives were a per-surface syntax palette, which for Mermaid means
+  deriving its whole role set — surfaces through chart series — from one ink,
+  and reducing a fence to the surface's ink at three strengths, which reads well
+  on a dark fill and measured 2.00:1 for a comment on a saturated one.
 - **A `resource://` target that is malformed, unknown, or invisible to the
   viewer** renders as the citation's label text — no chip, no card, no anchor.
 - **A footnote reference whose definition never arrived** renders literally on a
@@ -786,6 +898,133 @@ The traps, both of which have bitten:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it), with
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
+
+## Changelog
+
+### 2026-09-19 — A web source's footnote marker is the site's favicon
+
+**What changed:** A lifted footnote whose target is an HTTP(S) URL draws that
+host's favicon as its inline marker in place of the asterisk, through the same
+authenticated endpoint and cache the link decoration already uses. It keeps the
+asterisk pill's plate and sits inside it. The fetch,
+the mount-scoped lifetime and the object-URL revocation moved out of
+`workstream-blocks.tsx` into `lib/host-favicon.ts`, which both callers now
+share; `favicon-api.tsx` stays what it was, the context that narrows the session
+to one capability. Everything without a host, without an icon, or without an API
+to ask keeps the asterisk, and a still keeps its numbers and asks for nothing.
+
+**Why:** The asterisk is the same character for every source, so a grounded
+paragraph with several of them says only *that* it is grounded; the reader has
+to hover each one to learn which is the pricing page and which is the deck. The
+mark for that already existed one position away — the icon in front of a link to
+the same host — so the marker could carry it without a new request path, a new
+cache, or any renderer egress. Two positions drawing one host's icon two ways
+was the thing to avoid, which is what the shared hook now prevents.
+
+**Considered and rejected:** Dropping the plate and letting the icon sit bare on
+the line, which was built and looked at first — it reads as a cleaner mark on
+its own, and as a different mechanism the moment a paragraph cites a web page
+and a document in the same sentence, which is the common case. Also: sharing a
+decorated `<img>` component rather than the hook, which cannot serve both
+positions because the absent case is empty space in front of a link and a glyph
+in a marker; and letting a still fetch icons, which would print whatever had
+arrived by the moment the card was photographed. Also: giving the icon its
+light ground in *both* appearances rather than only in dark, which reads as one
+rule instead of a fork — rejected on the screenshots, because in light
+appearance the case it would have to fix is a light glyph, which a light ground
+turns from faint into invisible.
+
+**Consequences:** The icon is decoration only — the source still reaches
+assistive technology through the pill's `aria-label`, and the popover now also
+names the host, so "which source" has an answer in words for a reader whose
+glance did not land on the mark. `useHostFavicon` returns an `onError` alongside
+the source, its result carries the `api` and `hostname` it was fetched for, and
+that result dies with the object URL it names: a target that changes under a
+mount React keeps, one that changes and comes back, a request that rejects, and
+a blob that will not decode all degrade to the asterisk rather than leaving a
+broken or empty plate where the marker belongs.
+
+Shape and format are not special-cased: a non-square mark is letterboxed into
+the square box by `object-fit: contain` rather than distorted or allowed to
+change the plate, and an SVG blob paints like any other — with the `onError`
+above as the answer for one that does not.
+
+**One case is accepted rather than fixed:** a favicon that is a *light* glyph on
+a transparent field, in light appearance, is a plate with nothing legible in it.
+The ground that rescues the dark case makes this one worse rather than better,
+and it is what a browser's own light tab strip does with the same file, so it is
+a property of that artwork rather than of this surface —
+[`using-company-brand-icons.md`](using-company-brand-icons.md) is where the same
+comparison was run for connector marks, whose answer was to draw them in
+`currentColor`, which is not available to a favicon. What keeps this from being
+an invisible citation is the plate: the marker is still there to be found and
+hovered, and the popover names the host. `app.css.node.test.ts` now guards both inline-icon rules — this one and
+`.markdown-link-favicon` — because the margin collision below is invisible to
+every DOM assertion. The icon rule is qualified as
+`.markdown-body .citation-pill-favicon img` and sets `margin: 0`: the
+block-image rule further down that stylesheet carries `margin: var(--space-4) 0`,
+which on an icon inside a sentence grows the line box of every line in the
+paragraph, and an unqualified rule ties it on specificity and loses on source
+order. Sizing the icon under one em of the pill's own reduced type is what keeps
+it inside the existing line box; a larger one would resize the plate and part
+the two markers. A future surface that wants a host's icon takes the hook rather
+than reimplementing the lifetime.
+
+### 2026-09-19 — Markdown paint is a group a filled surface re-points
+
+**What changed:** Every colour in the `.markdown-body` group is now a
+substitution. `.markdown-body` declares fourteen rule-local `--markdown-*`
+properties from the same appearance tokens the element rules used to name
+directly — including the two that are painted without being text, a task box's
+`accent-color` and the thumb under a wide table — and each rule reads one of
+them. `.human-message-bubble .markdown-body` re-points all of them as
+percentages of `currentColor`. A fenced block re-points them back to the
+appearance. The two rules that forced `p`, `strong`, `em`, `code` and `a` to the
+bubble's foreground are gone, and so is the `color` an agent turn restated.
+Computed paint on every other markdown surface is byte-identical, checked
+element by element in a real window before and after.
+
+**Why:** A person's turn is the one markdown surface whose ground is not the
+appearance's canvas: it is near-black in the light appearance, mid-grey in the
+dark one, or the sender's profile colour, under whichever of the two absolute
+palette inks that fill carries. An absolute ramp step cannot be right on a
+ground the ramp has never seen, and the symptom was routine — a `/goal` in a
+message was near-white text on a `neutral-4` chip, because the bubble had forced
+the ink and nothing had moved the chip under it. Patching each element as
+somebody notices it is how that state was reached, and the elements nobody had
+noticed yet — a heading, a quote bar, list markers, a table's cells, a thematic
+break, a ticked task box in the reader's accent rather than the sender's ink,
+and a scrollbar thumb at `#2f2f2f` on a `#070707` bubble — were sitting in the
+same bubble. The full catalogue is in the styling section above rather than
+here.
+
+**Considered and rejected:** Adding a third element override to the pair the
+bubble already had, which is the fix that produced the bug and does nothing for
+the next element. Promoting the group to registry tokens, which the appearance
+files cannot express: what a theme has an opinion about is which colours exist,
+not which of them a surface that paints its own fill should be using instead, so
+these sit beside `--sweep-ink` and `--turn-bubble-radius` in the stylesheet's
+own namespace. Reducing a fence to the surface's ink at three strengths, which
+this change shipped first and review measured: a ground washed toward a
+surface's own ink has less headroom for that ink than the appearance's ground
+does, and a language label came out at 2.93:1 on the dark appearance's default
+bubble and 2.00:1 on a saturated profile fill, against 4.14:1 before. A fence is
+an island of the appearance instead — the arrangement that already existed,
+kept deliberately this time, with the reasoning written down.
+
+**Consequences:** A new element rule in this group names a `--markdown-*`
+property, not a token, or it is wrong on the first filled surface it reaches;
+`app.css.node.test.ts` scans for that directly, and its two exemptions — the
+fence island and a failure notice's `danger-soft` — are the argued list a third
+has to join. A role added to the group has to be re-pointed in the bubble's
+block, which the same file's name comparison catches. Anything inside a fence,
+highlighting and Mermaid alike, keeps the appearance's palette and needs no
+per-surface mapping. The mixes are percentages of the ink rather than fixed
+values, so a palette colour added to the product needs no rule here; they were
+checked in both appearances against both default fills, a dark profile fill and
+a light one, which are the two ink cases the palette can produce. Nothing
+outside a bubble moved.
+
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 

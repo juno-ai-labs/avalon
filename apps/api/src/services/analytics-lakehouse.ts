@@ -179,14 +179,14 @@ function recordFromRow(row: AcceptedAnalyticsRow, envelope: TelemetryEnvelope): 
 }
 
 export async function enqueueAnalyticsLakehousePointer(
-  env: Pick<Env, "AVALON_REGION" | "ANALYTICS_LAKEHOUSE_QUEUE" | "DB" | "LOG_LEVEL" | "APP_VERSION" | "BUILD_SHA">,
+  env: Pick<Env, "AVALON_REGION" | "ANALYTICS_LAKEHOUSE_QUEUE" | "TELEMETRY_DB" | "LOG_LEVEL" | "APP_VERSION" | "BUILD_SHA">,
   eventId: string,
   payloadHash: string,
 ): Promise<boolean> {
   if (!env.ANALYTICS_LAKEHOUSE_QUEUE) return false;
   try {
     await env.ANALYTICS_LAKEHOUSE_QUEUE.send(analyticsLakehousePointer(eventId, payloadHash, env.AVALON_REGION));
-    await env.DB.prepare(
+    await env.TELEMETRY_DB.prepare(
       `UPDATE telemetry_accepted_events
        SET analytics_lakehouse_state = 'queued'
        WHERE event_id = ? AND payload_hash = ?
@@ -207,7 +207,7 @@ export async function recoverUndeliveredAnalyticsLakehouseEvents(env: Env): Prom
   if (!env.ANALYTICS_LAKEHOUSE_QUEUE) return 0;
   // Fifty is the established telemetry outbox quantum and the maximum accepted
   // client batch, so recovery cannot create a larger burst than normal ingest.
-  const rows = await env.DB.prepare(ANALYTICS_LAKEHOUSE_RECOVERY_QUERY)
+  const rows = await env.TELEMETRY_DB.prepare(ANALYTICS_LAKEHOUSE_RECOVERY_QUERY)
     .bind(new Date().toISOString()).all<{ event_id: string; payload_hash: string }>();
   let queued = 0;
   for (const row of rows.results) {
@@ -217,11 +217,11 @@ export async function recoverUndeliveredAnalyticsLakehouseEvents(env: Env): Prom
 }
 
 async function rejectStoredAnalyticsRow(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "TELEMETRY_DB">,
   row: AcceptedAnalyticsRow,
   reason: string,
 ): Promise<AnalyticsLakehouseDeliveryResult> {
-  await env.DB.prepare(
+  await env.TELEMETRY_DB.prepare(
     `UPDATE telemetry_accepted_events
      SET analytics_lakehouse_state = 'rejected'
      WHERE event_id = ?
@@ -231,7 +231,7 @@ async function rejectStoredAnalyticsRow(
 }
 
 export async function deliverAnalyticsLakehousePointer(
-  env: Pick<Env, "AVALON_REGION" | "ANALYTICS_LAKEHOUSE" | "DB">,
+  env: Pick<Env, "AVALON_REGION" | "ANALYTICS_LAKEHOUSE" | "TELEMETRY_DB" | "DB">,
   body: unknown,
 ): Promise<AnalyticsLakehouseDeliveryResult> {
   const pointer = AnalyticsLakehousePointerSchema.parse(body);
@@ -239,13 +239,12 @@ export async function deliverAnalyticsLakehousePointer(
     throw new Error(`analytics_lakehouse_pointer_misrouted:${pointer.region}:${env.AVALON_REGION}`);
   }
   if (!env.ANALYTICS_LAKEHOUSE) throw new Error("analytics_lakehouse_pipeline_binding_missing");
-  const row = await env.DB.prepare(
+  const row = await env.TELEMETRY_DB.prepare(
     `SELECT e.event_id, e.payload_hash, e.envelope_json, e.route, e.routing_basis,
             e.analytics_subject_id, e.workspace_analytics_id, e.accepted_at,
             e.normalized_timestamp, e.delete_at, e.subject_user_id,
-            e.analytics_lakehouse_state, u.product_analytics_enabled
+            e.analytics_lakehouse_state
      FROM telemetry_accepted_events e
-     LEFT JOIN users u ON u.id = e.subject_user_id
      WHERE e.event_id = ?`,
   ).bind(pointer.eventId).first<AcceptedAnalyticsRow>();
   if (!row) return { outcome: "expired" };
@@ -281,13 +280,16 @@ export async function deliverAnalyticsLakehousePointer(
   }
   const envelope = parsedEnvelope.data as TelemetryEnvelope;
   if (isRetiredMeetingTelemetry(envelope)) {
-    await env.DB.prepare("DELETE FROM telemetry_accepted_events WHERE event_id = ?").bind(pointer.eventId).run();
+    await env.TELEMETRY_DB.prepare("DELETE FROM telemetry_accepted_events WHERE event_id = ?").bind(pointer.eventId).run();
     return { outcome: "suppressed" };
   }
+  row.product_analytics_enabled = row.subject_user_id === null ? null : (await env.DB.prepare(
+    "SELECT product_analytics_enabled FROM users WHERE id = ?",
+  ).bind(row.subject_user_id).first<{ product_analytics_enabled: number }>())?.product_analytics_enabled ?? null;
   if (row.subject_user_id !== null
     && envelope.category !== "essential"
     && row.product_analytics_enabled !== 1) {
-    await env.DB.prepare(
+    await env.TELEMETRY_DB.prepare(
       `UPDATE telemetry_accepted_events
        SET analytics_lakehouse_state = 'suppressed'
        WHERE event_id = ? AND payload_hash = ?`,
@@ -296,7 +298,7 @@ export async function deliverAnalyticsLakehousePointer(
   }
   const record = recordFromRow(row, envelope);
   await env.ANALYTICS_LAKEHOUSE.send([record]);
-  await env.DB.prepare(
+  await env.TELEMETRY_DB.prepare(
     `UPDATE telemetry_accepted_events
      SET analytics_lakehouse_state = 'delivered', analytics_lakehouse_delivered_at = ?
      WHERE event_id = ? AND payload_hash = ?`,

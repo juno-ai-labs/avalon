@@ -3,6 +3,7 @@ import type {
   TerminalProviderInstrumentation,
   TerminalSandboxProvider,
   TerminalSandboxSnapshot,
+  TerminalSandboxWaitOptions,
 } from "./provider-contract";
 
 export type SupportedTerminalConfiguration = Extract<
@@ -70,8 +71,16 @@ export interface TerminalProviderRpcSession {
     idOrName: string,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<TerminalSandboxSnapshot>>;
-  recoverSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
-  startSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  recoverSandbox(
+    idOrName: string,
+    options?: TerminalSandboxWaitOptions,
+    callbacks?: TerminalProviderRpcCallbacks,
+  ): Promise<TerminalProviderRpcResult<void>>;
+  startSandbox(
+    idOrName: string,
+    options?: TerminalSandboxWaitOptions,
+    callbacks?: TerminalProviderRpcCallbacks,
+  ): Promise<TerminalProviderRpcResult<void>>;
   stopSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   archiveSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   deleteSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;

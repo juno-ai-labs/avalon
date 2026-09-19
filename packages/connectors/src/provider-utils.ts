@@ -452,6 +452,182 @@ export function truncateText(value: string, maxChars = 50_000): { text: string; 
   return { text: value.slice(0, maxChars), truncated: true, totalChars };
 }
 
+/**
+ * `truncateText` with the cut made visible to whoever reads the value.
+ *
+ * A bare `truncateText(value, max).text` is indistinguishable from a value that
+ * ended where it ended: the flag saying otherwise is right there in the return
+ * and every caller in this package drops it. A model then reasons off half a
+ * pull-request body, half a review, or half a check-run summary and never
+ * learns there was more, which surfaces later as a confident wrong answer with
+ * nothing in the transcript to explain it. `docs/agent-tools.md` requires the
+ * marker for that reason: a boundary the model can see is one it can work
+ * around by reading the resource directly.
+ */
+export function truncateTextWithMarker(value: string, maxChars: number): string {
+  const { truncated, totalChars } = truncateText(value, maxChars);
+  if (!truncated) return value;
+  // The marker is spent from the budget rather than added to it. A caller that
+  // asked for 12,000 characters and received 12,064 has been handed a limit
+  // that does not limit, and the patch budget exists because something
+  // downstream is counting.
+  const marker = `\n[truncated: ${totalChars} characters exceeds the ${maxChars}-character limit]`;
+  // Degenerate only for a budget shorter than the marker itself, which none of
+  // these are: there the marker is kept and the budget overshot, because a cut
+  // nobody can see is the worse of the two failures.
+  return `${value.slice(0, Math.max(0, maxChars - marker.length))}${marker}`;
+}
+
+/**
+ * The field paths one provider record contributes to a tool result — a declared
+ * row.
+ *
+ * `"state"` keeps a top-level field. `"head.ref"` keeps a nested one and
+ * rebuilds the record around it, so several paths sharing a prefix merge into
+ * one object. `"labels[].name"` keeps one field of every element of an array.
+ *
+ * A path ends at the field it keeps, and that field is kept whole. `"labels"`
+ * and `"labels[]"` therefore mean the same thing — keep the array as the
+ * provider sent it — rather than "keep the array, projected to nothing", which
+ * is what the second spelling looks like it should mean. Write the element
+ * field you want (`"labels[].name"`); a trailing `[]` with nothing after it
+ * declares the whole value, undeclared members and all.
+ */
+export type FieldProjection = readonly string[];
+
+/**
+ * Keep the declared fields of a provider record and drop everything else.
+ *
+ * Adapters in this package bound their tool results by *count* — strings
+ * clamped at tens of thousands of characters, arrays and object keys at a
+ * hundred, recursion at eight levels — and by nothing else, so whatever shape
+ * the provider sent reaches the model. The cost is not hypothetical: a measured
+ * substream spent 5.1 MB of 5.2 MB of model-facing payload on five GitHub list
+ * calls, at roughly 24.5 KB per pull request and 21.3 KB per workflow run,
+ * because each row carried two complete embedded repository records and around
+ * thirty URL templates that nothing downstream reads. Every count-based bound
+ * was inside its limit the whole time. A row is wide, not long, and no cap on
+ * length fixes a width problem.
+ *
+ * Projection is deliberately separate from those clamps rather than replacing
+ * them: this decides what a row *is*, and the clamps stay behind it as the
+ * backstop for a provider field that is declared and enormous, such as a patch
+ * or a body.
+ *
+ * Four rules decide the result, and each is a test in
+ * `provider-utils.test.ts`:
+ *
+ * - **What is present stays present.** A declared field the provider sent as
+ *   `null` is kept as `null`, at any depth, because `merged_at: null` is the
+ *   answer to "was it merged" and an absent key is not. A declared field the
+ *   provider did not send at all is absent from the result, because inventing a
+ *   `null` for it would claim the provider answered a question it was never
+ *   asked.
+ * - **A container appears only when something declared was found beneath it.**
+ *   `["user.login"]` against `{ user: { id: 1 } }` is `{}`, not `{ user: {} }`:
+ *   an empty object standing where a field was asked for reads as a value that
+ *   came back blank, which is a different answer from one that was never sent.
+ * - **A declared array keeps its positions.** One output element per source
+ *   element, so the count and the order stay true even where an element carries
+ *   none of the declared fields. A present but empty array is kept as `[]`,
+ *   because "there are none" is a complete answer rather than a missing one.
+ * - **The narrower declaration wins.** Declaring both `"head"` and `"head.ref"`
+ *   yields `{ head: { ref } }`. The paths compile to a trie before the source is
+ *   read, so an over-specified projection resolves to the reading that cannot
+ *   retain an undeclared field, in either declaration order, rather than to
+ *   whichever path happened to be applied last.
+ *
+ * A declared leaf is kept by reference, so a caller that intends to mutate the
+ * result clones it first. Every caller in this package passes the result
+ * straight to a bounding walk that rebuilds it.
+ */
+export function projectFields(
+  source: Record<string, unknown>,
+  projection: FieldProjection,
+): Record<string, unknown> {
+  return projectNode(source, compileProjection(projection)).value;
+}
+
+/**
+ * One node per declared path segment. A node with no children is a leaf, which
+ * is what makes the narrower declaration win without a separate flag: adding
+ * `"head.ref"` gives `head` a child, and a node with children is never read as
+ * a leaf again however `"head"` was declared.
+ */
+interface ProjectionNode {
+  mapsElements: boolean;
+  children: Map<string, ProjectionNode>;
+}
+
+function compileProjection(projection: FieldProjection): ProjectionNode {
+  const root: ProjectionNode = { mapsElements: false, children: new Map() };
+  for (const path of projection) {
+    let node = root;
+    for (const segment of path.split(".")) {
+      const mapsElements = segment.endsWith("[]");
+      const key = mapsElements ? segment.slice(0, -2) : segment;
+      const existing = node.children.get(key);
+      if (existing) {
+        existing.mapsElements ||= mapsElements;
+        node = existing;
+        continue;
+      }
+      const child: ProjectionNode = { mapsElements, children: new Map() };
+      node.children.set(key, child);
+      node = child;
+    }
+  }
+  return root;
+}
+
+/**
+ * `copied` is what keeps an absent field from becoming an empty container: a
+ * nested object is attached to its parent only after something inside it was
+ * actually found.
+ */
+function projectNode(
+  source: Record<string, unknown>,
+  node: ProjectionNode,
+): { value: Record<string, unknown>; copied: boolean } {
+  const value: Record<string, unknown> = {};
+  let copied = false;
+  for (const [key, child] of node.children) {
+    // `Object.hasOwn` rather than `in`, which would walk the prototype chain and
+    // copy `Object.prototype`'s member of a name the provider did not send.
+    if (!Object.hasOwn(source, key)) continue;
+    const field = source[key];
+
+    if (child.children.size === 0) {
+      value[key] = field;
+      copied = true;
+      continue;
+    }
+    if (field === null) {
+      value[key] = null;
+      copied = true;
+      continue;
+    }
+
+    if (child.mapsElements) {
+      if (!Array.isArray(field)) continue;
+      const elements = field.map((element) => (isRecord(element)
+        ? projectNode(element, child)
+        : { value: {}, copied: false }));
+      if (field.length > 0 && !elements.some((element) => element.copied)) continue;
+      value[key] = elements.map((element) => element.value);
+      copied = true;
+      continue;
+    }
+
+    if (!isRecord(field)) continue;
+    const nested = projectNode(field, child);
+    if (!nested.copied) continue;
+    value[key] = nested.value;
+    copied = true;
+  }
+  return { value, copied };
+}
+
 export function base64(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = "";

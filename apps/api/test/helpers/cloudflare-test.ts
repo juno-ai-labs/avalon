@@ -69,7 +69,8 @@ type CloudflareBinding =
   | VectorizeIndex;
 
 export function createTestEnv<T extends EnvDouble>(value: ExactKeys<EnvDouble, T>): Env {
-  return value as Env;
+  // Legacy focused fixtures share a connection; isolation tests override these bindings.
+  return { TELEMETRY_DB: value.DB, AUDIT_DB: value.DB, ...value } as Env;
 }
 
 /** Builds an intentionally malformed environment for contract-failure tests. */

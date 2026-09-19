@@ -41,6 +41,41 @@ the implementation that future changes must preserve.
 For the implementation checklist, see
 [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md).
 
+## Storage and background writes
+
+`TELEMETRY_DB` owns accepted events, delivery receipts, and replay audit rows.
+Its independent schema is in `packages/db/telemetry-migrations`. Receipts stay
+with events so their existing acceptance transaction remains local. Identity,
+preferences, and profile jobs remain in `DB`; background delivery and replay
+read preferences there instead of joining across databases. These telemetry
+IDs are historical references, without foreign keys to identity tables.
+There is currently no user-deletion operation in the API. Removing an identity
+row directly no longer cascades into these databases: pending attributable
+nonessential telemetry is suppressed during delivery, retained events expire
+at their existing deadlines, and audits remain historical records. A future
+account-erasure operation must explicitly delete from these stores if required;
+this split does not claim automatic erasure.
+
+Product-derived telemetry uses the existing `runtimeDeferral`/`waitUntil`
+mechanism. Audit writes likewise run in the background against `AUDIT_DB`.
+Neither write is a condition of a successful user mutation or tool turn. A failed
+background write may be lost; this split adds no outbox, dual writes, or retry
+layer. Explicit telemetry ingestion still acknowledges its existing acceptance
+boundary, and the existing accepted-event delivery machinery is unchanged.
+
+Deployment applies both independent schemas before activating the API Worker.
+The cutover starts fresh. Regional migration
+`0113_drop_legacy_observability_tables.sql` discards the four inactive legacy
+observability tables after the compatible Worker deploys and passes health
+verification. The reaper uses only `TELEMETRY_DB` for accepted events, receipts,
+and replay audit; other telemetry tables remain in `DB`. The dedicated databases
+and their data are unaffected. No backfill or old-table compatibility path remains.
+Applied migrations remain immutable. Opt-out purges pending events in the background through the
+request-entry timestamp inclusively after rechecking the disabled preference
+version. This is best-effort across databases, not an atomic cross-database
+transaction. Delivery also checks the canonical user
+preference and rechecks pending identity transitions after selecting events.
+
 ## How it works
 
 Interactive search uses the existing `renderer_perf_flow` diagnostic event with
@@ -489,7 +524,7 @@ WorkstreamDO for work-stream product data.
   most 4 MiB; source maps are at most 16 MiB.
 
 - Global analytics lakehouse handoff is unretractable in the current design. A
-  late opt-out, user cascade, or D1 expiry does not delete a current Iceberg row;
+  late opt-out or D1 expiry does not delete a current Iceberg row;
   the projected deadline and registry retention fields are metadata until an
   automated transactional Iceberg deletion engine exists.
 
@@ -1886,6 +1921,29 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-18 — Retire regional observability copies after successful cutover
+
+PR #835 deployed the dedicated telemetry and audit databases successfully. Drop
+the inactive regional copies to remove their residual data and identity-migration
+coupling, and stop reaping them. The existing Worker-first migration sequence
+ensures the reaper no longer queries the tables when they are dropped. Keeping
+unused history and permanent dual-database cleanup would leave the original
+coupling in place; the agreed fire-and-forget cutover needs neither. The large
+pre-recovery telemetry and audit backlog was already deleted during deployment
+recovery. The approved cleanup also deliberately discards any remaining legacy
+`audit_events` (no expiry) and `telemetry_replay_audit` (normally a 90-day deadline),
+even before those replay deadlines, without export. This is a one-time retirement
+decision, not a change to retention in the new databases.
+
+### 2026-09-18 — Isolate event and audit storage from identity
+
+Large observational tables made an identity migration fail during table copying.
+Accepted telemetry and its transaction companions now use `TELEMETRY_DB`, while
+audit events use `AUDIT_DB`. Existing background deferral keeps these writes off
+product response paths. Separate bindings and a fresh cutover were chosen over
+cross-database replication or backfill machinery; future changes must preserve
+canonical preferences in `DB` and keep observational failures out of mutations.
 
 ### 2026-09-17 — Product actions no longer await observational telemetry
 

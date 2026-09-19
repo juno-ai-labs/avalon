@@ -25,8 +25,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: rebuild-terminal-snapshot
@@ -48,8 +47,26 @@ jobs:
       TERMINAL_REGION_CAPABILITY: supported
 
     steps:
+      # A push authenticated with GITHUB_TOKEN starts no other workflows, so
+      # production would keep the previous image after a green job. The PAT is
+      # what makes `deploy-api.yml` run. Fail before the build if it is absent.
+      - name: Require the token that can push to main
+        env:
+          PR_TOKEN_CONFIGURED: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$PR_TOKEN_CONFIGURED" != "true" ]; then
+            echo "TERMINAL_SNAPSHOT_PR_TOKEN is required to push to main; a GITHUB_TOKEN push would not start deploy-api.yml" >&2
+            exit 1
+          fi
+
       - name: Check out the revision
         uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN }}
+          # Full history so the post-build rebase onto origin/main has a
+          # merge-base after a 45-minute job on a clone that started at one SHA.
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -80,9 +97,9 @@ jobs:
       # The dispatch input reaches the shell through the environment, never by
       # expression interpolation into the script: an interpolated input is
       # shell-injectable, in a job that holds the Daytona key. The name is also
-      # held to the character set a snapshot, a branch, and the config value can
+      # held to the character set a snapshot name and the config value can
       # carry, which keeps the perl rewrite below from writing anything but a
-      # name into both regions' production configs.
+      # name into the production config.
       - name: Name this week's snapshot
         id: snapshot
         env:
@@ -92,7 +109,7 @@ jobs:
           name="${REQUESTED_NAME:-}"
           if [ -z "$name" ]; then
             # Minute-stamped so a same-day re-run after a transient failure does
-            # not collide with a snapshot, branch, or pull request that exists.
+            # not collide with a snapshot that already exists.
             name="rally-terminal-$(date -u +%Y%m%d-%H%M)"
           fi
           if ! printf '%s' "$name" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,62}$'; then
@@ -121,21 +138,13 @@ jobs:
       # A verified snapshot nobody adopts is the failure mode this workflow is
       # most likely to have: the job goes green every Monday, the rebuild sits
       # unused, and production keeps running an image that ages anyway. A step
-      # summary would not be read. A pull request lands in the review queue the
-      # team already works, so adoption is one merge and a rollback is one
-      # revert — while still keeping a human between a rebuilt image and every
-      # new work-stream sandbox.
-      # A pull request opened with `GITHUB_TOKEN` starts no workflows, so it
-      # would get no CI — and it is the one automated change to both regions'
-      # production config, which `deploy-api.yml` ships on merge. A fine-grained
-      # token with contents and pull-requests write on this repository, stored
-      # as `TERMINAL_SNAPSHOT_PR_TOKEN` in the `api-production` environment,
-      # makes the opened pull request run CI like any other. Without it the job
-      # still opens the pull request and says so in the step summary.
-      - name: Open the adoption pull request
+      # summary would not be read. Pushing the one-line config bump to main is
+      # the adoption; rollback is reverting that commit. Existing sandboxes are
+      # untouched. The push authenticates with `TERMINAL_SNAPSHOT_PR_TOKEN`
+      # because a `GITHUB_TOKEN` push starts no workflows, including the
+      # `deploy-api.yml` run that is the only reason to adopt.
+      - name: Push the adoption to main
         env:
-          GH_TOKEN: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
-          PR_TOKEN_CONFIGURED: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN != '' }}
           SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: |
           set -euo pipefail
@@ -152,50 +161,20 @@ jobs:
             fi
           done
           if git diff --quiet -- apps/api/wrangler.global.jsonc; then
-            echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
+            echo "Production already runs \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          branch="daytona-snapshot-upgrade/$SNAPSHOT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
           # By path: `-a` would sweep anything the build or the gate left in the
-          # tree into a production-config pull request.
+          # tree into a production-config commit.
           git add apps/api/wrangler.global.jsonc
           git commit -qm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
-          git push -u origin "$branch"
-
-          # The label is what makes these findable as a series rather than one
-          # more weekly PR; creating it here keeps the workflow self-contained.
-          gh label create daytona-snapshot-upgrade \
-            --color BFD4F2 \
-            --description "Weekly Terminal sandbox image rebuild, verified against the provider" \
-            || true
-
-          gh pr create \
-            --title "Daytona Snapshot Upgrade — $SNAPSHOT" \
-            --label daytona-snapshot-upgrade \
-            --body "$(cat <<BODY
-          This week's Terminal sandbox image, rebuilt against Daytona's current
-          managed base and verified with \`terminal:verify-provider\` before this
-          pull request was opened.
-
-          **Why this exists.** Rally owns its Terminal snapshot, so Daytona's OS
-          and system-package fixes no longer reach us on their own, and nothing
-          detects that drift — the snapshot manifest fails closed on a capability
-          that is missing or broken, not on one that is merely stale. Merging
-          weekly is what bounds how far behind the image can get.
-
-          **What merging does.** Points both regions at \`$SNAPSHOT\`. It applies
-          only when a sandbox is created, so existing sandboxes are unaffected
-          and a rollback is reverting this commit.
-
-          **If you do not merge it**, production keeps running the previous
-          image. Nothing breaks today; the gap to Daytona's base just widens.
-          BODY
-          )"
-          echo "Opened the adoption pull request for \`$SNAPSHOT\`." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PR_TOKEN_CONFIGURED" != "true" ]; then
-            echo "It was opened with GITHUB_TOKEN, so CI did not start on it: push an empty commit or close and reopen it to run the checks. Set TERMINAL_SNAPSHOT_PR_TOKEN in the api-production environment to avoid this." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # The build can take most of the job's 45 minutes; main may have
+          # moved. Rebase so the push is a fast-forward. A conflict is a red
+          # job, not a force-push.
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+          echo "Pushed \`$SNAPSHOT\` to main." >> "$GITHUB_STEP_SUMMARY"

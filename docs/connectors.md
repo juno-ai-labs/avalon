@@ -556,6 +556,48 @@ requests ends its list early. Parameter descriptions are principle 13 in
 [`agent-tools.md`](agent-tools.md), and
 `apps/api/test/tool-schema-descriptions.test.ts` holds them.
 
+**Inside that envelope, every row is declared rather than passed through.** Each
+list names the fields it carries in a `FieldProjection` beside the tool, applied
+by `projectFields` before the adapter's character, array and depth clamps see
+it. GitHub's objects are not rows: a pull request embeds `head.repo` and
+`base.repo`, two complete repository records with about thirty URL templates
+each, and a workflow run embeds `repository` and `head_repository` the same way,
+which measured 24.5 KB and 21.3 KB per row against roughly 400 bytes of answer.
+Note that no count-based bound was near its limit while that was true — a row is
+wide, not long — which is why the fix is a declaration rather than a smaller
+page. Rows keep GitHub's own field spelling (`html_url`, `head.ref`) while the
+envelope around them keeps this adapter's; each tool description says what its
+row holds and names the `get` that returns the rest, because a model reads an
+absent field as an empty one. The contract and the four rules that decide what a
+row may drop are principle 8 in [`agent-tools.md`](agent-tools.md).
+
+The single reads are declared the same way, as the matching list row plus what
+the read was for: `issues.get` adds the body and the milestone title,
+`pull_requests.get` adds those plus `merged`, `mergeable`, `mergeable_state`,
+`merge_commit_sha`, `merged_by.login`, `head.repo.full_name` and the counts that
+describe the change — comments, review comments, commits, additions, deletions
+and changed files — `actions.get_workflow_run` adds the workflow file path, the head commit
+and the two actors that differ on a re-run, and `repository.get` adds
+visibility, topics, licence, homepage and the counts. Composing them from the
+list rows rather than declaring them separately is deliberate: a field that
+earns a place on the list row cannot silently lose it on the read. The write
+tools that echo what they wrote — `issues.create`, `issues.update`,
+`pull_requests.create`, `issue_comments.create`, `pull_requests.create_review` —
+return the same records, so the shape of a created issue matches the shape of
+that issue read back one call later.
+
+Three rows carry a field that looks like an obvious cut and is not.
+`pull_requests.list_files` keeps `patch`, which is the answer the caller came
+for, under its own 12,000-character budget. `checks.list_for_ref` keeps
+`output.text`, the widest field on any row here, because this plugin has no
+check-run get, no annotations tool and no job-log tool, and `details_url` is the
+reporting app's own page rather than anything this connector can fetch — without
+it a run can say a check failed and not say why. `repositories.list` keeps
+`name` and `owner.login` beside `full_name`, because those are the two
+parameters every other tool in the plugin takes. Every string is bounded with a
+visible marker, so a cut is legible to the model instead of arriving later as a
+wrong answer.
+
 The GitHub plugin prompt treats metadata and code evidence as different things.
 When a repository is not named, the model searches the authorized set and
 chooses the best match from the request, work-stream context, pinned status,
@@ -643,8 +685,15 @@ region — see [`notion-ingress.md`](notion-ingress.md).
 
 Ashby has independent personal and workspace modes. **Connect for me** uses
 Ashby's hosted MCP service, with the personal `ashby.personal.mcp` grant and
-owner authorization. Tool names and schemas come from live discovery; all retain
-conservative write execution and receipts without individual tool confirmations.
+owner authorization. It has a prerequisite Rally cannot check and the OAuth
+redirect cannot explain: **the Ashby organization must have opted into Ashby
+MCP, and the account signing in must be eligible for it.** Without that, the
+authorization fails provider-side with nothing naming the cause. The personal
+**Connect for me** tooltip says so, and
+<https://rallywith.ai/support/connectors/ashby/> is the setup walkthrough.
+
+Tool names and schemas come from live discovery; all retain conservative write
+execution and receipts without individual tool confirmations.
 **Connect for workspace** requires a Rally administrator and an Ashby API key
 with webhook management access. Its model-visible workspace catalogue explicitly describes an event-only
 connection and directs recruiting queries or updates to a personal connection;
@@ -1297,13 +1346,115 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ### 2026-09-19 — Personal Canva and explicit design observation
 
-The gated Canva adapter discovers the live MCP catalog and uses backend-held
+The Canva adapter discovers the live MCP catalog and uses backend-held
 OAuth credentials. Only explicit named-design watches poll; connecting is not
 consent to account-wide monitoring. Design revisions and new discussion IDs are
-newsworthy in the manifest, while polling marks them non-digestible until the
-provider recipient policy permits delivery. Complete comment and reply scans
+newsworthy and digestible under ordinary Rally permissions. Complete comment and reply scans
 replace a sorted top-ID watermark because a reply does not advance its parent's
-timestamp. [Canva integration](canva-integration.md) owns the lifecycle details.
+timestamp. Canva is available to every member without a feature flag, with
+desktop loopback login until server callback approval. [Canva integration](canva-integration.md) owns the lifecycle details.
+
+### 2026-09-19 — Every connector card is one sentence, and nothing else
+
+**What changed:** The Connections grid renders one paragraph per card: the
+sentence that says what the connector gives you. The three conditional
+paragraphs under the Ashby and Fireflies cards are gone — the "Personal account
+/ Workspace events" status line, the Ashby MCP opt-in sentence, and the Ashby
+setup guide link. Granola, Linear, Notion, Custom MCP, the inbound webhook, X,
+Slack and both Google cards had descriptions that ran to two sentences, two
+clauses, or a different grammatical shape than their neighbours; each is now a
+single noun phrase in the shape GitHub's already had. Ashby's opt-in
+prerequisite moved to the personal **Connect for me** tooltip and to the Ashby
+section above.
+
+**Why:** The 2026-09-18 entry below shortened the Ashby and Fireflies
+descriptions and the rows still came out uneven, because a card's height is the
+height of its content: those two cards each carried a second paragraph, and one
+of them a third, and the grid stretches a row to its tallest card. Fewer words
+in one paragraph could not offset a whole extra paragraph. The status line also
+duplicated what the installed-connections list above the grid already shows,
+and the setup guide link sent a person out of the app before they had tried the
+button underneath it.
+
+**Considered and rejected:** Blaming `flex: 1` on `.provider-card > p` and
+scoping it to the first paragraph. This entry said that in its first draft and
+it is wrong — `flex` distributes a card's *slack* space among its paragraphs
+and does not set the card's height. Measured in a real window with a deep-link
+guidance paragraph rendered: the card is 286px with that paragraph at `flex: 1`
+and 286px at `flex: none`, and 208px — the row's height — with it hidden. Only
+removing content shortens a card. Also rejected: giving Ashby's personal scope
+a setup modal of its own, the way the workspace scope has one. The prerequisite
+is one sentence and the button it qualifies already composes tooltip text, so a
+modal would be a screen built to hold a sentence.
+
+**Consequences:** A card is a mark, a name, a status word, one sentence and its
+buttons. One paragraph may still join them: the `settings-search-guidance`
+`<p>` a settings deep-link renders into the targeted card, which does make that
+row taller for as long as the target is selected. That is a deliberate,
+transient status message, and no `flex` rule can make it free — a paragraph
+costs its own height. Anything a provider needs to explain — an opt-in, an
+eligibility rule, a setup walkthrough — belongs in that provider's connect
+tooltip, its setup modal, or this document, not in the grid; a prerequisite
+that lives only in the card is one deletion away from existing nowhere, which
+is what nearly happened to Ashby's. Adding a paragraph back to a card re-breaks
+the row.
+
+
+### 2026-09-19 — The GitHub single reads are declared too
+
+**What changed:** `repository.get`, `issues.get`, `pull_requests.get`,
+`actions.get_workflow_run` and the five write tools that echo what they wrote
+project onto declared records, composed as the matching list row plus the
+content and state the read was for.
+
+**Why:** Declaring the list rows left the reads as pass-through on the reasoning
+that one deliberate object per call was affordable. It is, for one call. A run
+lists thirty pull requests and opens six of them, and each `pull_requests.get`
+carried the `head.repo` and `base.repo` the list had just dropped, handing most
+of the saving back within the same run.
+
+**Considered and rejected:** Declaring each read independently of its list row,
+which lets the two drift and a field earn its place on one and lose it on the
+other. Leaving the write echoes alone, which would have made a created issue and
+the same issue read back a call later two different shapes.
+
+**What a future change has to respect:** The records compose from the list rows,
+so a field added to a list row appears on its read as well, and what a read adds
+over its row is what a caller opened it to see.
+
+PR follow-up to [#842](https://github.com/juno-ai-labs/avalon/pull/842).
+
+### 2026-09-19 — GitHub list rows are declared, not passed through
+
+**What changed:** Every GitHub list tool now returns a declared set of fields
+rather than the object GitHub sent, via `projectFields` in
+`packages/connectors/src/provider-utils.ts`. The envelope, the paging, and the
+`appliedFilters` echo are unchanged. `truncateTextWithMarker` replaces the silent
+string cuts `boundGitHubValue` was making by discarding `truncateText`'s
+`truncated` flag.
+
+**Why:** A substream measurement found five GitHub list calls holding 5.1 MB of
+the 5.2 MB of model-facing payload it stored, at 24.5 KB per pull request and
+21.3 KB per workflow run. Nothing was unbounded: `perPage`, the character clamp,
+the array and depth clamps were all inside their limits, because every one of
+them bounds a row's length and the problem was its width.
+
+**Considered and rejected:** A smaller `perPage`, which leaves the bytes per
+useful fact unchanged and buys the same waste in more round trips. A byte
+ceiling on the result, which truncates the useful tail of a page to keep its
+useless head, and whose number is the team's rather than an implementer's per
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
+Dropping `checks.list_for_ref`'s `output.text` on width grounds, which review
+caught: it is the only failure diagnostic this plugin can read.
+
+**What a future change has to respect:** A row that drops an identifier another
+tool documents as copied from it is a broken tool, not a smaller one, and a row
+that drops a field with no other read path takes a capability with it. The
+adapter's repository access policy resolves GitHub's numeric repository id
+against the raw response before projection, so removing `id` from the
+model-facing row does not touch immutable-id authorization.
+
+PR [#842](https://github.com/juno-ai-labs/avalon/pull/842).
 
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
 

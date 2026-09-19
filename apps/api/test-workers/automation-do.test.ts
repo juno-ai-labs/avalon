@@ -520,6 +520,9 @@ describe("AutomationDO", () => {
     sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } },
       { name: 'sidekick_attach', arguments: { sidekickId: AUTOMATION_ID } },
       { name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }];
+    const rootCompletedRuns = () => runInDurableObject(root, (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
+    const rootRunsBefore = await rootCompletedRuns();
     const started = await agents.start({ name: 'Knowledge helper', description: 'Use shared knowledge',
       message: 'Attach and load relevant knowledge.', attachmentIds: [] }, toolContext);
     const address = agentAddressForId(started.agentId);
@@ -527,6 +530,9 @@ describe("AutomationDO", () => {
     const completedRuns = () => runInDurableObject(hidden, (_instance, state) =>
       state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
     await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    // The hidden worker finished without replying, so its owner is told once
+    // and runs on that; wait for it, or the next script feeds the wrong run.
+    await expect.poll(rootCompletedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(rootRunsBefore + 1);
     expect(await parent.authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: workstreamId,
       substreamId: address.substreamId, userId: AUTHOR_ID })).toMatchObject({ authorized: false });
     const userService = new WorkstreamService(TEST_ENV, { sessionId: SESSION_ID, userId: AUTHOR_ID,
@@ -540,6 +546,7 @@ describe("AutomationDO", () => {
     await agents.send({ agentId: started.agentId, message: 'Detach that recommendation.', attachmentIds: [] },
       { ...toolContext, effectIntentId: crypto.randomUUID() });
     await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+    await expect.poll(rootCompletedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(rootRunsBefore + 2);
     const managementResults = provider.calls.flatMap((call) => call.messages)
       .filter((message) => message.role === 'tool' && 'tool_call_id' in message
         && ['call-sidekick_attach', 'call-sidekick_detach'].includes(String(message.tool_call_id)));

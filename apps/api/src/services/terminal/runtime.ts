@@ -10,7 +10,6 @@ import {
 import type {
   TerminalCommandOutput,
   TerminalImportResourceOutput,
-  TerminalPatchOutput,
   TerminalPublishedBranchAndPrOutput,
   TerminalPublishedResourceOutput,
   TerminalPublishOutput,
@@ -20,6 +19,8 @@ import type {
   TerminalWriteFileOptions,
 } from "./tools";
 import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import { TERMINAL_PYDANTIC_REQUIREMENT, TERMINAL_SNAPSHOT_PYLIB } from "./snapshot-manifest";
+import { APPLY_PATCH_SCRIPT, parsePatch } from "./patch-format";
 import {
   assertKindTransitionAllowed,
   bundleArchive,
@@ -32,8 +33,7 @@ import type { TerminalTaskRecord } from "../../durable-objects/workstream-termin
 import type { TerminalRepositorySelector } from "./repository-selection";
 import { TERMINAL_OUTPUT_DIRECTORY, TERMINAL_OUTPUT_ROOT, TERMINAL_WORKSPACE_ROOT } from "./contract";
 import { recordTerminalAcquisition } from "./tracing";
-import { INSTRUCTIONS_PENDING_EXIT_CODE } from "./instruction-files";
-import { instructionsPendingError, type TerminalInstructionFiles, type TerminalInstructionProbe } from "./instructions";
+import type { TerminalInstructionFiles, TerminalInstructionProbe } from "./instructions";
 
 const ROOT = TERMINAL_WORKSPACE_ROOT;
 const RESOURCE_ROOT = ".rally/resources";
@@ -55,9 +55,14 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
 const MAXIMUM_PUBLISH_BYTES = 25_000_000;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
+/** An edit's target no longer holds the bytes the edit was computed from. */
+const FILE_CHANGED_EXIT_CODE = 48;
 const FILE_NOT_UTF8_EXIT_CODE = 49;
 const FILE_TOO_LARGE_EXIT_CODE = 50;
 const FILE_LINE_TOO_LARGE_EXIT_CODE = 51;
+/** The `*** Begin Patch` applier's one dependency could not be imported or installed. */
+const PATCH_TOOLING_UNAVAILABLE_EXIT_CODE = 53;
+const PATCH_DESTINATION_EXISTS_EXIT_CODE = 54;
 const COUNT_UTF8_LINES_PYTHON = "import pathlib, sys; text = pathlib.Path(sys.argv[1]).read_bytes().decode('utf-8'); print(0 if not text else len(text.split('\\n')) - int(text.endswith('\\n')))";
 export const TERMINAL_READ_TEXT_PAGE_PYTHON = [
   "import json, os, pathlib, sys",
@@ -195,6 +200,47 @@ function containmentCommands(): string[] {
   ];
 }
 
+/**
+ * The command that applies a `*** Begin Patch` patch with the vendored
+ * reference applier, written into the sandbox beside the patch.
+ *
+ * Every path the patch names is contained in its own right first, because the
+ * applier follows symlinks and `git apply` is not there to refuse them. A
+ * path an `*** Add File:` or `*** Move to:` section would create must not
+ * exist yet, because the applier opens it for writing without looking and
+ * would report success over a truncated file; `git apply` refuses the same
+ * collision in a unified diff. The applier's one dependency, `pydantic`, is
+ * baked into the Rally-owned snapshot; a sandbox whose snapshot predates that
+ * installs the same pin from PyPI into its own `.rally/pylib`, staged and
+ * moved into place so a killed install never leaves a half-populated
+ * directory that imports and then fails. The applier's stderr joins stdout,
+ * because the provider has no stderr channel and a crash's last line is the
+ * reason the model needs.
+ */
+function openAiApplyCommand(
+  script: string,
+  patch: string,
+  paths: { touched: readonly string[]; destinations: readonly string[] },
+): string {
+  const lib = `${ROOT}/.rally/pylib`;
+  return [
+    `trap 'rm -f -- ${shellQuote(patch)} ${shellQuote(script)}' EXIT`,
+    ...paths.touched.flatMap((path) => [`target=${shellQuote(absolutePath(path))}`, ...containmentCommands()]),
+    ...paths.destinations.flatMap((path) => [
+      `target=${shellQuote(absolutePath(path))}`,
+      `if [ -e "$target" ] || [ -L "$target" ]; then printf '%s\\n' ${shellQuote(path)}; exit ${PATCH_DESTINATION_EXISTS_EXIT_CODE}; fi`,
+    ]),
+    `lib=${shellQuote(lib)}`,
+    `pythonpath=${shellQuote(TERMINAL_SNAPSHOT_PYLIB)}:"$lib"`,
+    `if ! PYTHONPATH="$pythonpath" python3 -c 'import pydantic' >/dev/null 2>&1; then`,
+    `  staging="$lib.staging"; log="$lib.log"; rm -rf -- "$staging" "$log"`,
+    `  if ! python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$staging" ${shellQuote(TERMINAL_PYDANTIC_REQUIREMENT)} >"$log" 2>&1; then tail -n 1 -- "$log"; rm -rf -- "$staging" "$log"; exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}; fi`,
+    `  rm -rf -- "$lib" "$log" && mv -T -- "$staging" "$lib" || exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}`,
+    `fi`,
+    `PYTHONUTF8=1 PYTHONWARNINGS=ignore PYTHONPATH="$pythonpath" python3 ${shellQuote(script)} < ${shellQuote(patch)} 2>&1`,
+  ].join("\n");
+}
+
 function pathOutsideRootError(): TerminalToolError {
   return new TerminalToolError(
     "path_outside_root",
@@ -249,60 +295,36 @@ function commandOutputFromTask(task: TerminalTaskRecord): DurableTerminalCommand
   };
 }
 
-function parsePatch(patch: string): TerminalPatchOutput {
-  const files = new Map<string, { path: string; previousPath?: string; operation: "created" | "edited" | "renamed" | "deleted"; additions: number; deletions: number }>();
-  let current: ReturnType<typeof files.get>;
-  for (const line of patch.split("\n")) {
-    const header = /^(---|\+\+\+)\s+(.+?)(?:\t.*)?$/u.exec(line);
-    let headerPath: string | undefined;
-    if (header) {
-      const rawPath = header[2]!;
-      try {
-        headerPath = rawPath.startsWith('"') ? JSON.parse(rawPath) as string : rawPath;
-      } catch {
-        throw new TerminalToolError("patch_invalid", "A patch file header is malformed. Regenerate the unified patch and retry.");
-      }
-      if (headerPath !== "/dev/null") headerPath = headerPath.replace(/^[ab]\//u, "");
-    }
-    if (header?.[1] === "---") {
-      const oldPath = headerPath!;
-      current = { path: oldPath, operation: "edited", additions: 0, deletions: 0 };
-    } else if (header?.[1] === "+++") {
-      const newPath = headerPath!;
-      if (!current) throw new TerminalToolError("patch_invalid", "The patch is missing a --- file header. Regenerate a unified patch and retry.");
-      if (newPath === "/dev/null") {
-        current.operation = "deleted";
-      } else if (current.path === "/dev/null") {
-        current.path = newPath;
-        current.operation = "created";
-      } else if (current.path !== newPath) {
-        current.previousPath = current.path;
-        current.path = newPath;
-        current.operation = "renamed";
-      }
-      if (current.path.startsWith("/") || current.path.split("/").includes("..")) {
-        throw new TerminalToolError("path_outside_root", "A patch path leaves the Terminal workspace. Regenerate it using relative paths only.");
-      }
-      files.set(current.path, current);
-    } else if (current && line.startsWith("+") && !line.startsWith("+++")) {
-      current.additions += 1;
-    } else if (current && line.startsWith("-") && !line.startsWith("---")) {
-      current.deletions += 1;
-    }
-  }
-  if (files.size === 0) throw new TerminalToolError("patch_invalid", "No unified file changes were found. Include --- and +++ headers and retry.");
-  if (files.size > 100) throw new TerminalToolError("limit_exceeded", "A patch may change at most 100 files. Split it into smaller patches.");
-  const outputFiles = [...files.values()];
-  return {
-    files: outputFiles,
-    additions: outputFiles.reduce((total, file) => total + file.additions, 0),
-    deletions: outputFiles.reduce((total, file) => total + file.deletions, 0),
-  };
+/**
+ * Every method gives the lease back when it returns or throws.
+ *
+ * Wrapped once here rather than written into each body: a body that returns
+ * early on a refusal, or throws from a provider call, would otherwise have to
+ * remember to release on every path, and the one that forgot would hold the
+ * workspace for sixteen minutes. A method that never took the lease costs
+ * nothing here; the bookkeeping decides.
+ */
+function releasingAfterEachCall<T extends object>(
+  runtime: T,
+  release: (context: HarnessToolContext) => Promise<void>,
+): T {
+  return Object.fromEntries(Object.entries(runtime).map(([name, value]) => [
+    name,
+    typeof value === "function"
+      ? async (context: HarnessToolContext, ...rest: unknown[]) => {
+          try {
+            return await (value as (...args: unknown[]) => Promise<unknown>)(context, ...rest);
+          } finally {
+            await release(context);
+          }
+        }
+      : value,
+  ])) as T;
 }
 
 export function createDaytonaTerminalRuntime(
   terminalPort: TerminalPortFactory,
-  coordinator: Pick<TerminalSandboxCoordinator, "acquire">,
+  coordinator: Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning" | "holderSubstreamId">,
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
@@ -318,63 +340,99 @@ export function createDaytonaTerminalRuntime(
   const acquiredByRun = new Map<string, Promise<AcquiredTerminalSandbox>>();
 
   /**
-   * The probe rides the tool's own sandbox command: appended after a read,
-   * prepended in `abort` mode before a mutation so a governing instruction file
-   * that is not yet in context stops the command before it changes anything.
+   * The probe rides a read's own sandbox command and reports what it finds; the
+   * instructions it records arrive with that batch. No mutation carries one:
+   * the read that precedes an edit is where a file's instructions are found,
+   * and a mutation never waits for them (see the 2026-09-19 entry in
+   * `docs/terminal-workspaces.md`).
    */
-  async function probeFragment(
-    mode: "report" | "abort",
-    touched: readonly string[],
-  ): Promise<TerminalInstructionProbe | null> {
-    return instructions ? instructions.fragment({ mode, touched }) : null;
+  async function probeFragment(touched: readonly string[]): Promise<TerminalInstructionProbe | null> {
+    return instructions ? instructions.fragment({ touched }) : null;
   }
 
-  /**
-   * Record what the probe found and hand back the tool's own stdout. Exit code
-   * 52 is the probe stopping a mutation; the instructions it recorded are
-   * delivered with this batch, so the refusal names them and asks for a retry.
-   */
+  /** Record what the probe found and hand back the tool's own stdout. */
   async function settleProbe(
     sandbox: AcquiredTerminalSandbox,
-    result: { exitCode: number; stdout: string },
+    result: { stdout: string },
     probe: TerminalInstructionProbe | null,
   ): Promise<string> {
     if (!instructions || !probe) return result.stdout;
     const recorded = await instructions.record({
       stdout: result.stdout,
       marker: probe.marker,
-      exitCode: result.exitCode,
       sourceGeneration: sandbox.generation,
     });
-    if (result.exitCode === INSTRUCTIONS_PENDING_EXIT_CODE) {
-      throw instructionsPendingError(recorded);
-    }
     return recorded.stdout;
   }
 
   /**
-   * A mutation whose command cannot carry the probe (`run_command` runs the
-   * model's own text; an import lands through the resource bridge) probes in
-   * a command of its own, before anything changes.
+   * The calls of a run that currently need the lease, by tool call id.
+   *
+   * The lease is the run's; the calls are what hold it. A call that made the
+   * sandbox ready, or claimed the lease for its own work, records itself
+   * here, and the release after that call gives the lease back only when no
+   * other call of the same run is recorded — activation's readiness and the
+   * first tool can overlap, and the tool's claim must not be released out
+   * from under it by activation finishing first.
    */
-  async function probeBeforeMutation(
-    context: HarnessToolContext,
-    sandbox: AcquiredTerminalSandbox,
-    touched: readonly string[],
-  ): Promise<void> {
-    const probe = await probeFragment("abort", touched);
-    if (!probe) return;
-    const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
-      operation: "instructions.probe",
-      command: probe.text,
-      cwd: ROOT,
-      timeoutMs: 30_000,
-      signal: context.signal,
-    });
-    await settleProbe(sandbox, result, probe);
+  const holdsByCall = new Map<string, string>();
+  function markHeld(context: HarnessToolContext): void {
+    holdsByCall.set(context.toolCallId, context.harnessRunId);
+  }
+  async function releaseAfterCall(context: HarnessToolContext): Promise<void> {
+    endTurn(context);
+    if (!holdsByCall.delete(context.toolCallId)) return;
+    for (const runId of holdsByCall.values()) {
+      if (runId === context.harnessRunId) return;
+    }
+    // The coordinator retries and logs a release that fails; nothing here
+    // turns a finished call's result into a failure.
+    await coordinator.release(context);
   }
 
-  async function acquire(
+  /**
+   * A run's write calls, one at a time.
+   *
+   * The lease is re-entrant for a run: a claim by the run that already holds
+   * it is answered "held", which is what lets a call's readiness and its own
+   * claim coexist. The harness runs a turn's tool calls in parallel, so
+   * without this two write calls of one run would both be answered "held"
+   * and reach the sandbox at once. The turn is in-process because every call
+   * of a run executes in the isolate that holds this runtime; a sibling run
+   * is kept out by the lease itself. A read takes no turn, as it takes no
+   * lease, and a call that already has the turn keeps it through the reads
+   * it makes on the way.
+   */
+  const turns = new Map<string, Promise<void>>();
+  const turnEndByCall = new Map<string, () => void>();
+  async function takeTurn(context: HarnessToolContext): Promise<void> {
+    if (turnEndByCall.has(context.toolCallId)) return;
+    const previous = turns.get(context.harnessRunId) ?? Promise.resolve();
+    let end!: () => void;
+    const mine = new Promise<void>((resolve) => { end = resolve; });
+    turnEndByCall.set(context.toolCallId, end);
+    turns.set(context.harnessRunId, previous.then(() => mine));
+    await previous;
+  }
+  function endTurn(context: HarnessToolContext): void {
+    const end = turnEndByCall.get(context.toolCallId);
+    if (!end) return;
+    turnEndByCall.delete(context.toolCallId);
+    end();
+  }
+
+  /**
+   * The sandbox this run has made ready: created, started or restored under
+   * the run's authority and policy, with its repository prepared.
+   *
+   * Paid once per run and shared by every call, activation included. The
+   * coordinator returns holding the lease, because the transitions it makes
+   * need exclusivity, and the call that ran it records the hold; the call's
+   * end releases it. This is readiness only: whether the row still describes
+   * this sandbox is decided per call, in `acquire` or `readable`, not by a
+   * deadline on the cache.
+   */
+  async function ready(
     context: HarnessToolContext,
     preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
   ): Promise<AcquiredTerminalSandbox> {
@@ -385,21 +443,18 @@ export function createDaytonaTerminalRuntime(
     if (cached) {
       const startedAt = cacheNow();
       const sandbox = await cached;
-      if (sandbox.operationLeaseExpiresAt > cacheNow()) {
-        recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
-        return sandbox;
-      }
-      if (acquiredByRun.get(context.harnessRunId) === cached) {
-        acquiredByRun.delete(context.harnessRunId);
-      }
+      recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
+      return sandbox;
     }
     const startedAt = cacheNow();
+    markHeld(context);
     const pending = (async () => {
       const sandbox = await coordinator.acquire(context);
       await preparation?.(context, sandbox, provider);
       return sandbox;
     })();
     acquiredByRun.set(context.harnessRunId, pending);
+    void pending.then(() => settledHandles.add(pending), () => settledHandles.add(pending));
     try {
       return await pending;
     } catch (error) {
@@ -410,6 +465,68 @@ export function createDaytonaTerminalRuntime(
     } finally {
       recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: false });
     }
+  }
+
+  /** Readiness promises that have settled; a settled handle may be stale, a pending one cannot be. */
+  const settledHandles = new WeakSet<Promise<AcquiredTerminalSandbox>>();
+
+  function evict(context: HarnessToolContext): void {
+    acquiredByRun.delete(context.harnessRunId);
+  }
+
+  /**
+   * The sandbox, with this call holding the operation lease.
+   *
+   * Readiness is the cached handle; the lease is taken here, per call, and
+   * released when the call ends. A claim that finds the row moved on — the
+   * generation replaced, the sandbox stopped by the sweep or a policy change
+   * — runs readiness again, which transitions the sandbox under the lease
+   * and hands back a handle that matches the row.
+   */
+  async function acquire(
+    context: HarnessToolContext,
+    preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
+  ): Promise<AcquiredTerminalSandbox> {
+    await takeTurn(context);
+    const sandbox = await ready(context, preparation);
+    if (await coordinator.claimForOperation(context, sandbox) === "held") {
+      markHeld(context);
+      return sandbox;
+    }
+    evict(context);
+    return ready(context, preparation);
+  }
+
+  /**
+   * The sandbox as a read may use it: running, this caller's, and taking no
+   * lease.
+   *
+   * A read never blocks on another run's call and never blocks one; the
+   * bargain is that it can observe a file another run is mid-way through
+   * writing. When the sandbox is not simply running — stopped by the sweep,
+   * never started, replaced — the read goes through readiness like a write,
+   * which takes the lease to start it and releases it after the call.
+   */
+  async function readable(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
+    const startedAt = cacheNow();
+    // A readiness still in flight — activation's, usually — is this run
+    // starting the sandbox or preparing its checkout. The row is marked
+    // running before the preparation ends, so it is joined first: a read that
+    // peeked past it would see a checkout half made.
+    const inFlight = acquiredByRun.get(context.harnessRunId);
+    if (inFlight && !settledHandles.has(inFlight)) return ready(context);
+    const peeked = await coordinator.peekRunning(context);
+    if (peeked) {
+      recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
+      return peeked;
+    }
+    // A readiness another call of this run started while this one was
+    // peeking is joined rather than evicted; a burst of reads on a sandbox
+    // that is not yet running starts it once.
+    const started = acquiredByRun.get(context.harnessRunId);
+    if (started && !settledHandles.has(started)) return ready(context);
+    evict(context);
+    return ready(context);
   }
 
   async function cleanupTemporaryFile(providerSandboxId: string, path: string): Promise<void> {
@@ -685,8 +802,8 @@ export function createDaytonaTerminalRuntime(
     return { size: Number(match[1]), sha256: match[2]! };
   }
 
-  return {
-    prepare: acquire,
+  const runtime: DaytonaTerminalRuntime = {
+    prepare: ready,
     async checkoutRepository(context, input) {
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
@@ -696,9 +813,13 @@ export function createDaytonaTerminalRuntime(
       // bootstrap's clone and the checkout's replacement would otherwise run
       // against one sandbox at once. A rejected acquisition is exactly what a
       // checkout repairs, so only its end matters here, not its outcome.
+      await takeTurn(context);
       const inFlight = acquiredByRun.get(context.harnessRunId);
       if (inFlight) await inFlight.then(() => undefined, () => undefined);
       acquiredByRun.delete(context.harnessRunId);
+      // The selector takes the lease itself, for the replacement; this call
+      // is what gives it back.
+      markHeld(context);
       const selected = await selector.checkout(context, input);
       acquiredByRun.delete(context.harnessRunId);
       // The old checkout's instructions have no successor message to supersede
@@ -707,12 +828,11 @@ export function createDaytonaTerminalRuntime(
       return selected;
     },
     async readFile(context, filePath) {
-      const sandbox = await acquire(context);
+      const sandbox = await readable(context);
       const path = absolutePath(filePath);
-      // The read that precedes an edit: the instructions governing the file
-      // have to be in context before the edit, so the probe runs first and
-      // in abort mode.
-      const probe = await probeFragment("abort", [filePath]);
+      // The read that precedes an edit: the probe rides it, so the file's
+      // instructions arrive with the edit's batch.
+      const probe = await probeFragment([filePath]);
       const metadata = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         operation: "file.inspect",
         command: [
@@ -754,9 +874,9 @@ export function createDaytonaTerminalRuntime(
     },
 
     async readFilePage(context, filePath, offset, limit) {
-      const sandbox = await acquire(context);
+      const sandbox = await readable(context);
       const path = absolutePath(filePath);
-      const probe = await probeFragment("report", [filePath]);
+      const probe = await probeFragment([filePath]);
       const read = `python3 -c ${shellQuote(TERMINAL_READ_TEXT_PAGE_PYTHON)} ${shellQuote(ROOT)} ${shellQuote(path)} ${offset} ${limit} ${256 * 1_024} ${10 * 1_048_576}`;
       const raw = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         operation: "file.read_page",
@@ -807,9 +927,6 @@ export function createDaytonaTerminalRuntime(
       const sandbox = await acquire(context);
       const target = absolutePath(filePath);
       const temporary = `${ROOT}/.rally/tmp/${newId()}`;
-      // An edit already probed when it read the file; a whole-file write is
-      // the first touch and probes here, before the temporary moves into place.
-      const probe = options ? null : await probeFragment("abort", [filePath]);
       await provider.writeFile(sandbox.providerSandboxId, temporary, bytes, context.signal);
       let result: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
@@ -820,11 +937,18 @@ export function createDaytonaTerminalRuntime(
             `temporary=${shellQuote(temporary)}`,
             'trap \'rm -f -- "$temporary"\' EXIT',
             ...(options ? [
+              // An edit replaces the bytes it was computed from and nothing
+              // else: the read that produced them took no lease, so another
+              // run's write may have landed since, and one that has is a
+              // conflict for the model to resolve by reading again.
               "created=0",
               `previous_lines=${lineCount(options.previousText)}`,
+              `expected=${shellQuote(options.previousSha256)}`,
+              `if [ ! -e "$target" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
+              'actual=$(sha256sum -- "$target" | cut -d " " -f 1) || exit 47',
+              `if [ "$actual" != "$expected" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
             ] : [
               ...containmentCommands(),
-              ...(probe ? [probe.text] : []),
               "created=1",
               "previous_lines=0",
               'if [ -e "$target" ]; then',
@@ -848,7 +972,13 @@ export function createDaytonaTerminalRuntime(
         throw error;
       }
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
-      result = { ...result, stdout: await settleProbe(sandbox, result, probe) };
+      if (result.exitCode === FILE_CHANGED_EXIT_CODE) {
+        throw new TerminalToolError(
+          "file_changed",
+          "The file changed since it was read. Read it again and rebuild the edit from the current text.",
+          { filePath, reason: `Call read_file for ${filePath} again, then rebuild oldString and newString from the current text.` },
+        );
+      }
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with run_command before replacing it.", { filePath });
       }
@@ -867,34 +997,88 @@ export function createDaytonaTerminalRuntime(
     },
 
     async applyPatch(context, patch) {
-      const parsed = parsePatch(patch);
+      const { format, output: parsed } = parsePatch(patch);
       const sandbox = await acquire(context);
-      const temporary = `${ROOT}/.rally/tmp/${newId()}.patch`;
-      const probe = await probeFragment("abort", parsed.files.flatMap((file) =>
-        file.previousPath ? [file.path, file.previousPath] : [file.path]));
-      await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(patch), context.signal);
+      const stem = `${ROOT}/.rally/tmp/${newId()}`;
+      const temporary = `${stem}.patch`;
+      // The reference applier reads its envelope from the first byte, so a
+      // blank line a model puts before `*** Begin Patch` is dropped here.
+      const script = format === "openai" ? `${stem}.apply_patch.py` : null;
+      const text = script ? patch.replace(/^(?:[ \t]*\n)+/u, "") : patch;
+      const temporaries = script ? [temporary, script] : [temporary];
+      await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(text), context.signal);
+      if (script) await provider.writeFile(sandbox.providerSandboxId, script, new TextEncoder().encode(APPLY_PATCH_SCRIPT), context.signal);
       let result: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
         result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
           operation: "file.apply_patch",
-          // Check, then probe, then apply: the probe sits between the dry run
-          // and the real one so a patch that would not apply is reported as
-          // such, and one that would is held until its instructions are read.
-          command: [
-            `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
-            `git apply --check -- ${shellQuote(temporary)} || exit $?`,
-            ...(probe ? [probe.text] : []),
-            `git apply -- ${shellQuote(temporary)}`,
-          ].join("\n"),
+          command: script
+            ? openAiApplyCommand(script, temporary, {
+              touched: [...new Set(parsed.files.flatMap((file) => file.previousPath ? [file.path, file.previousPath] : [file.path]))],
+              destinations: parsed.files.filter((file) => file.operation === "created" || file.operation === "renamed").map((file) => file.path),
+            })
+            // Check, then apply: a patch that would not apply is reported as
+            // such before anything changes.
+            : [
+              `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
+              `git apply --check -- ${shellQuote(temporary)} || exit $?`,
+              `git apply -- ${shellQuote(temporary)}`,
+            ].join("\n"),
           cwd: ROOT,
           timeoutMs: 60_000,
           signal: context.signal,
         });
       } catch (error) {
-        await cleanupTemporaryFile(sandbox.providerSandboxId, temporary);
+        await Promise.all(temporaries.map((path) => cleanupTemporaryFile(sandbox.providerSandboxId, path)));
         throw error;
       }
-      await settleProbe(sandbox, result, probe);
+      if (script) {
+        if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+        if (result.timedOut) {
+          throw new TerminalToolError(
+            "patch_tooling_unavailable",
+            "The *** Begin Patch applier did not finish in time. The first such call in a sandbox may install pydantic, which can take that long; retry the same patch once.",
+            { reason: "Retry the same patch; a pydantic install is paid once per sandbox." },
+          );
+        }
+        if (result.exitCode === PATCH_TOOLING_UNAVAILABLE_EXIT_CODE) {
+          // The install step prints pip's last line before it exits.
+          const detail = sanitizeTerminalOutput(result.stdout.trim().split("\n").at(-1) ?? "").slice(0, 160);
+          throw new TerminalToolError(
+            "patch_tooling_unavailable",
+            `The *** Begin Patch applier needs the pydantic package and the sandbox could not import or install it${detail ? ` (${detail})` : ""}. Send the same change as a unified diff, or retry later.`,
+            { reason: "Install pydantic in the sandbox, or send a unified diff." },
+          );
+        }
+        if (result.exitCode === PATCH_DESTINATION_EXISTS_EXIT_CODE) {
+          // The preflight printed the path it refused; it is one the patch
+          // names, so echoing it back tells the model which section to fix.
+          const path = sanitizeTerminalOutput(result.stdout.trim().split("\n")[0]?.slice(0, 4_096) ?? "");
+          const section = parsed.files.find((file) => file.path === path)?.operation === "renamed" ? "*** Move to:" : "*** Add File:";
+          throw new TerminalToolError(
+            "patch_does_not_apply",
+            `The patch could not be applied: \`${path}\` already exists, and \`${section}\` would replace it. Read it and change it in place, or choose another path.`,
+            { reason: "The patch would create a file that already exists; nothing was applied." },
+          );
+        }
+        // On success the reference applier's whole output is `Done!`, its
+        // last statement, and nothing else in the command prints. A rejected
+        // patch's classification comes first, at exit 0, followed by the
+        // patch's own context lines, which is why the last line alone would
+        // be forgeable by a file that ends in `Done!`. A crash is a traceback
+        // at exit 1 whose last line names the exception.
+        const printed = result.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+        if (result.exitCode !== 0 || printed.length !== 1 || printed[0] !== "Done!") {
+          const line = result.exitCode === 0 ? printed[0] : printed.at(-1);
+          const reason = sanitizeTerminalOutput(line || "the applier printed nothing").slice(0, 120).replace(/[\s:]+$/u, "");
+          throw new TerminalToolError(
+            "patch_does_not_apply",
+            `The patch could not be applied: ${reason}. Re-read the affected files, regenerate the patch from their current contents, and retry.`,
+            { reason: "Re-read every affected file and regenerate the patch from current contents." },
+          );
+        }
+        return parsed;
+      }
       if (result.exitCode !== 0) {
         throw new TerminalToolError(
           "patch_does_not_apply",
@@ -941,17 +1125,13 @@ export function createDaytonaTerminalRuntime(
         );
       }
 
-      // A command runs the model's own text, which the probe cannot ride, so
-      // discovery is its own command first: the working directory's chain, and
-      // nothing durable admitted until the instructions are in context.
-      if (!existing) await probeBeforeMutation(context, sandbox, input.cwd ? [input.cwd] : []);
-
       const startedAt = existing?.startedAt ?? Date.now();
       const deadlineAt = existing?.commandDeadlineAt
         ?? Date.now() + DAYTONA_REQUEST_TIMEOUT_MS;
       const taskAdmitted = await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
+        runSubstreamId: coordinator.holderSubstreamId(),
         effectIntentId,
         sandboxGeneration: sandbox.generation,
         sandboxId: sandbox.providerSandboxId,
@@ -1123,9 +1303,6 @@ export function createDaytonaTerminalRuntime(
         ? input.destinationPath
         : `${RESOURCE_ROOT}/${input.resourceId}/resource`;
       await resolveInsideRoot(context, sandbox, destination);
-      // The default placement lands under Rally-owned `.rally/`, whose chain
-      // the candidate builder reduces to the root.
-      await probeBeforeMutation(context, sandbox, [destination]);
       return resources.importResource(
         context,
         input,
@@ -1199,4 +1376,5 @@ export function createDaytonaTerminalRuntime(
       return publisher.publishBranchAndPr(context, input, sandbox, provider);
     },
   };
+  return releasingAfterEachCall(runtime, releaseAfterCall);
 }

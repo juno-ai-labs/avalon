@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryCollector } from '../src/telemetry/collector';
 import { replayTelemetryEvent } from '../src/telemetry/replay';
 import { createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
 
 const eventId = '018f22f2-4c22-7abc-8def-0123456789ab';
 const operatorId = '018f22f2-4c22-7abc-8def-0123456789ac';
@@ -32,7 +32,7 @@ describe('regional telemetry replay', () => {
   afterEach(() => vi.useRealTimers());
 
   it('requeues a terminal Global row without changing its identity, payload, or deadline', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
     await new TelemetryCollector(env).accept(envelope(), {
       route: 'global', routingBasis: 'geolocation_fallback', analyticsSubjectId: 'anon-1',
@@ -61,7 +61,7 @@ describe('regional telemetry replay', () => {
   });
 
   it('rejects unauthorized, expired, and cross-region replay without mutating the row', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
     await new TelemetryCollector(env).accept(envelope(), {
       route: 'global', routingBasis: 'geolocation_fallback', analyticsSubjectId: 'anon-1',

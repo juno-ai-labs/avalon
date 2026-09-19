@@ -87,6 +87,12 @@ describe("workspace runtime database routing", () => {
     )).toBe(true);
   });
 
+  it("names the audit authority boundary for a mixed read", () => {
+    expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
+      "SELECT a.id FROM audit_events a JOIN slack_agent_sessions s ON s.workspace_id = a.workspace_id",
+    )).toThrow("workspace_runtime_cross_authority_statement:audit_events");
+  });
+
   it("rejects regional mutations that smuggle a WorkspaceDO table through a subquery", () => {
     expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
       `INSERT INTO audit_events (id, workspace_id)

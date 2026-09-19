@@ -12,7 +12,7 @@ import {
 import { TelemetryCollector } from "../src/telemetry/collector";
 import { canonicalTelemetryJson, telemetryPayloadHash } from "../src/telemetry/payload-integrity";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 const eventId = "018f22f2-4c22-7abc-8def-0123456789ab";
 
@@ -81,7 +81,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("projects backend events through the same accepted-event path", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pointers: unknown[] = [];
     const delivered: AnalyticsLakehouseRecord[][] = [];
     const env = createTestEnv({
@@ -123,7 +123,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("projects the complete accepted client metadata without direct user IDs", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pointers: unknown[] = [];
     const delivered: AnalyticsLakehouseRecord[][] = [];
     const env = createTestEnv({
@@ -192,7 +192,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("leaves a failed enqueue pending and recovers it without changing acceptance", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const recovered: unknown[] = [];
     const queue = createCloudflareTestBinding<Queue>({
       send: vi.fn().mockRejectedValueOnce(new Error("queue unavailable"))
@@ -225,7 +225,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("recovers queued rows after consumer retries can exhaust", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pointers: unknown[] = [];
     const pipelineSend = vi.fn().mockRejectedValueOnce(new Error("pipeline unavailable"))
       .mockResolvedValue(undefined);
@@ -280,7 +280,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("uses the partial recovery index without sorting the retained ledger", () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const plan = database.prepare(`EXPLAIN QUERY PLAN ${ANALYTICS_LAKEHOUSE_RECOVERY_QUERY}`)
       .all("2026-08-24T20:00:00.000Z") as { detail: string }[];
     expect(plan.some((step) => step.detail.includes("telemetry_accepted_events_analytics_lakehouse_idx"))).toBe(true);
@@ -289,7 +289,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("acknowledges a missing acceptance row as expired", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const ack = vi.fn();
     const retry = vi.fn();
     const env = createTestEnv({
@@ -320,7 +320,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("acknowledges a pointer whose hash does not match the canonical row", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pointers: unknown[] = [];
     const pipelineSend = vi.fn();
     const env = createTestEnv({
@@ -367,7 +367,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("acknowledges an analytics pointer that reaches the enterprise consumer", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pipelineSend = vi.fn();
     const ack = vi.fn();
     const retry = vi.fn();
@@ -400,7 +400,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("suppresses an attributable product event after a late opt-out", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
       VALUES ('analytics-user', 'analytics-google', 'analytics@example.com', 'Analytics User',
@@ -445,7 +445,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("recomputes the acceptance hash and rejects a modified stored envelope", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const pointers: unknown[] = [];
     const pipelineSend = vi.fn();
     const env = createTestEnv({
@@ -494,7 +494,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("terminalizes an accepted envelope that the live registry no longer accepts", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const original = event();
     const retiredEnvelope = { ...original, name: "retired_event_name" };
     const payloadHash = await telemetryPayloadHash(retiredEnvelope, {
@@ -546,7 +546,7 @@ describe("analytics events lakehouse", () => {
   });
 
   it("exports configured enterprise telemetry with its deployment identifier", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const send = vi.fn();
     const env = createTestEnv({
       DB: sqliteD1(database),

@@ -1,17 +1,22 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
   TerminalSandboxCoordinator,
+  terminalSandboxStableName,
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
+import { TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS } from "../src/services/terminal/contract";
+import { sha256 } from "../src/lib/crypto";
 import type {
   TerminalSandboxProvider,
   TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
+import type { TerminalPortFactory } from "../src/services/terminal/object-port";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -27,7 +32,9 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   testResourcePortFactory,
+  testHarnessRunPort,
   testTerminalPortFactory,
+  testResourcePort,
 } from "./helpers/durable-authority";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -247,7 +254,10 @@ describe("Terminal sandbox coordinator", () => {
     advance(10);
 
     const acquired = await coordinator.acquire(context());
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ state: "running" });
     expect(workstreamObjectGet(
       objectStore,
@@ -271,9 +281,102 @@ describe("Terminal sandbox coordinator", () => {
 
     const acquired = await coordinator.acquire(context());
 
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(acquired).toMatchObject({ providerSandboxId: "sandbox-1", state: "running" });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  describe("acquisition deadline", () => {
+    // Installed and restored in hooks rather than the test body, per
+    // docs/testing.md: a restore a throwing assertion can skip is not a
+    // restore.
+    const ACQUISITION_STARTED_AT = 1_700_000_000_000;
+    let wallClock = ACQUISITION_STARTED_AT;
+
+    beforeEach(() => {
+      wallClock = ACQUISITION_STARTED_AT;
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("gives a restore the tool's acquisition deadline, not a provider default", async () => {
+      const { objectStore, env, provider, clock, advance } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      await coordinator.acquire(context());
+      advance(90);
+
+      // The deadline is anchored to when acquisition began, so everything it
+      // spends before the restore — the workspace policy read, the
+      // repository-authority join, the provider state read-back — comes out of
+      // the same budget rather than resetting it. Handing the provider an
+      // instant rather than a duration is what makes that true across the RPC
+      // hop and the adapter's own lookup as well.
+      vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+      vi.mocked(provider.getSandbox).mockImplementation(async (requested) => {
+        wallClock += 25_000;
+        return {
+          id: "sandbox-1",
+          name: requested,
+          state: "archived" as const,
+          domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+        };
+      });
+
+      await coordinator.acquire(context());
+
+      expect(provider.startSandbox).toHaveBeenLastCalledWith("sandbox-1", {
+        deadlineAtMs: ACQUISITION_STARTED_AT + TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
+      });
+    });
+  });
+
+  it("re-observes a created sandbox whose start ran out of the deadline", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    // The wait is bounded by the caller's deadline now, not a fixed minute, so
+    // running out of it is an ordinary outcome. The restore is still on its
+    // way, and Daytona says so when asked.
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({
+      providerSandboxId: "sandbox-1",
+      state: "running",
+    });
+    expect(provider.getSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("returns retryable guidance when a created sandbox is still starting", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    vi.mocked(provider.createSandbox).mockResolvedValueOnce({
+      id: "sandbox-1",
+      name: "stable",
+      state: "archived",
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    });
+    vi.mocked(provider.startSandbox).mockRejectedValueOnce(new Error("timed out"));
+    observeProviderState(provider, "sandbox-1", "starting");
+
+    // A raw Daytona error here would reach the model as an unclassified tool
+    // failure. It gets a retryable code and a reason instead, and the sandbox
+    // is kept rather than discarded over a wait that merely ran out.
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({
+      code: "sandbox_unavailable",
+      details: { retryAfterMs: 5_000 },
+    });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
   });
 
   it.each([true, false, undefined])("honors provider recoverability %s before replacing an errored sandbox", async (recoverable) => {
@@ -315,6 +418,14 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "running");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.recoverSandbox).toHaveBeenCalledOnce();
+    // Recovery is a restore too — the failed-but-recoverable case is exactly
+    // the one the old fixed minute censored — so it is bounded like one.
+    // Asserting only the call count here left the argument unproved: deleting
+    // it from the coordinator kept the whole suite green.
+    expect(provider.recoverSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
@@ -360,7 +471,10 @@ describe("Terminal sandbox coordinator", () => {
 
     observeProviderState(provider, "sandbox-1", "archived");
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
@@ -419,7 +533,10 @@ describe("Terminal sandbox coordinator", () => {
     observeProviderState(provider, "sandbox-1", "archived");
     vi.mocked(provider.readFile).mockRejectedValueOnce(Object.assign(new Error("runner unavailable"), { status }));
     await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
@@ -480,7 +597,7 @@ describe("Terminal sandbox coordinator", () => {
         code: "sandbox_busy",
         details: {
           retryAfterMs: 5_000,
-          reason: "Wait for the current agent run to release the Terminal workspace, then retry.",
+          reason: "Retry in a few seconds; the workspace is released after each tool call.",
         },
       });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -852,5 +969,326 @@ describe("Terminal sandbox coordinator", () => {
       harnessRunId: successorRun,
       toolCallId: "renew-race-successor",
     })).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+  });
+
+  it("names a side thread's sandbox by its own conversation and keeps the main conversation's name", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    // The main conversation's derivation is the one every deployed sandbox
+    // was created under; a changed hash would orphan them all at Daytona.
+    const legacyHash = await sha256(`${WORKSPACE_ID}:${WORKSTREAM_ID}`);
+    const mainName = `avalon-${legacyHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+    await expect(terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, "0")).resolves.toBe(mainName);
+
+    const coordinator = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+    );
+    await coordinator.acquire(context());
+
+    const created = vi.mocked(provider.createSandbox).mock.calls[0]![0];
+    expect(created.substreamId).toBe(thread);
+    expect(created.stableName).not.toBe(mainName);
+    expect(created.stableName).toBe(await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, thread));
+  });
+
+  it("hands a Sidekick's sandbox to Daytona for deletion, and a work stream's to the sweep", async () => {
+    const run = "00000000-0000-4000-8000-000000000088";
+    const created = async (parentKind: "automation" | "workstream", substreamId: string) => {
+      // Each conversation's object is its own store; one fixture is one conversation.
+      const { objectStore, env, provider, clock } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(
+        env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+        undefined, false, undefined,
+        { parentKind, runSubstreamId: substreamId, authoritySubstreamId: substreamId, runsPort: () => testHarnessRunPort(objectStore) },
+      );
+      await coordinator.acquire(context());
+      expect(provider.createSandbox).toHaveBeenCalledOnce();
+      return vi.mocked(provider.createSandbox).mock.calls[0]![0];
+    };
+
+    // A triggered run's conversation sits under the automation, where no
+    // workspace sweep projects a deadline; Daytona must retire it alone.
+    expect(await created("automation", run)).toMatchObject({
+      substreamId: run,
+      autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
+    });
+    expect(await created("workstream", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
+  });
+
+  it("retries a failed lease release once and logs one that fails again, with its reason", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const ports = testTerminalPortFactory(objectStore);
+    let refusals = 0;
+    // The owner's object refusing the release hop, as a reset object does.
+    const flaky: TerminalPortFactory = (workspaceId, workstreamId, substreamId) => {
+      const port = ports(workspaceId, workstreamId, substreamId);
+      return new Proxy(port, {
+        get(target, key, receiver) {
+          if (key !== "releaseOperation") return Reflect.get(target, key, receiver);
+          return async (input: Parameters<typeof port.releaseOperation>[0]) => {
+            if (refusals > 0) {
+              refusals -= 1;
+              throw new Error("object_reset");
+            }
+            return target.releaseOperation(input);
+          };
+        },
+      });
+    };
+    const coordinator = new TerminalSandboxCoordinator(env, flaky, testResourcePortFactory(objectStore), provider, clock);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const lease = () => workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1");
+
+    await coordinator.acquire(context());
+    expect(lease()).toEqual({ operation_run_id: RUN_ID });
+    refusals = 1;
+    await coordinator.release(context());
+    // The second attempt gave it back, and a hop that recovered is not news.
+    expect(lease()).toEqual({ operation_run_id: null });
+    expect(warn).not.toHaveBeenCalled();
+
+    await coordinator.acquire({ ...context(), toolCallId: "second-call" });
+    refusals = 2;
+    await expect(coordinator.release({ ...context(), toolCallId: "second-call" })).resolves.toBeUndefined();
+    // Still this run's until its next call, its yield, or the lease deadline;
+    // the log says so, and says why.
+    expect(lease()).toEqual({ operation_run_id: RUN_ID });
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "terminal_lease_release_failed",
+      harness_run_id: RUN_ID,
+      tool_call_id: "second-call",
+      reason: "object_reset",
+    }));
+  });
+
+  it("drops a row a side thread reserved under the main conversation's name and reserves its own", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000066";
+    // Before a sandbox belonged to a conversation, this thread's row was
+    // reserved under the work stream's one name and holds the main
+    // conversation's Daytona sandbox.
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_workspace
+        (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+         authority_fingerprint, applied_network_revision, version, last_command_at,
+         idle_expires_at, archive_due_at, expire_due_at, created_at, updated_at)
+       VALUES (1, 'daytona', 'running', ?, 'sandbox-main', 1, 'authority', 1, 1, ?, ?, ?, ?, ?, ?)`,
+      await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, "0"),
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T12:04:00.000Z"),
+      Date.parse("2026-08-13T13:00:00.000Z"),
+      Date.parse("2026-09-12T12:00:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+      Date.parse("2026-08-13T11:59:00.000Z"),
+    );
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const coordinator = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+    );
+
+    // Not a sandbox a read may use, and not one readiness reuses.
+    await expect(coordinator.peekRunning(context())).resolves.toBeNull();
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(vi.mocked(provider.createSandbox).mock.calls[0]![0].stableName)
+      .toBe(await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, thread));
+    // The main conversation's sandbox was neither stopped nor deleted by a
+    // conversation that does not own it; only the row was dropped, and said so.
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "terminal_legacy_alias_row_retired", terminal_substream_id: thread, sandbox_generation: 1,
+    }));
+    info.mockRestore();
+  });
+
+  it("refuses a background agent whose authority differs from its owner's sandbox rather than replacing it", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const otherUser = asUserId("00000000-0000-4000-8000-0000000000ee");
+    seedWorkstreamRun(objectStore, {
+      id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: otherUser }),
+      createdAt: Date.parse("2026-08-13"),
+    });
+    const runsPort = () => testHarnessRunPort(objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    await owner.acquire(context());
+    await owner.release(context());
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+
+    // An agent under another principal would, as an ordinary run, destroy
+    // and reprovision the sandbox; it is the owner's checkout, so it refuses.
+    await expect(agent.acquire({ ...context(otherUser), harnessRunId: workerRun, toolCallId: "worker-call" }))
+      .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it("judges each import by the conversation whose attachment authorized it", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const ownerResource = "00000000-0000-4000-8000-0000000000a1";
+    const workerResource = "00000000-0000-4000-8000-0000000000a2";
+    seedWorkstreamRun(objectStore, {
+      id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+      createdAt: Date.parse("2026-08-13"),
+    });
+    // The agent's conversation is its own object, with its own attachments.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    for (const [store, resourceId] of [[objectStore, ownerResource], [workerStore, workerResource]] as const) {
+      await env.DB.prepare(
+        `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, title, created_at, updated_at, uploaded_by_user_id, attachment_status)
+         VALUES (?, ?, 'file', 'avalon_upload', 'file.txt', '2026-08-13', '2026-08-13', ?, 'attached')`,
+      ).bind(resourceId, WORKSPACE_ID, USER_ID).run();
+      workstreamObjectRun(
+        store,
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+         VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+        resourceId, USER_ID, JSON.stringify({ id: resourceId }), Date.parse("2026-08-13"), Date.parse("2026-08-13"),
+      );
+    }
+    const ownerLinks = testResourcePort(objectStore);
+    const workerLinks = testResourcePort(workerStore);
+    const resources = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      substreamId === worker ? workerLinks : ownerLinks;
+    const runsPort = () => testHarnessRunPort(objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), resources, provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), resources, provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+    await owner.acquire(context());
+    await owner.release(context());
+    // The owner imported what its conversation had attached; the agent, what its own had.
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID, "0");
+    await terminal.recordImportedResource({
+      sandboxGeneration: 1, resourceId: ownerResource, destinationPath: "/workspace/imports/owner.txt",
+      sourceSha256: "a".repeat(64), sizeBytes: 1, state: "completed", importedAt: 1, now: 1,
+    });
+    await terminal.recordImportedResource({
+      sandboxGeneration: 1, resourceId: workerResource, destinationPath: "/workspace/imports/worker.txt",
+      sourceSha256: "b".repeat(64), sizeBytes: 1, state: "completed", importedAt: 1, attachedSubstreamId: worker, now: 1,
+    });
+    const agentContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
+
+    // Neither conversation's import is revoked by the other's attachments.
+    await expect(agent.acquire(agentContext)).resolves.toMatchObject({ generation: 1 });
+    await agent.release(agentContext);
+    await expect(owner.acquire({ ...context(), toolCallId: "owner-second" })).resolves.toMatchObject({ generation: 1 });
+    await owner.release({ ...context(), toolCallId: "owner-second" });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+
+    // Detached where it was attached, the agent's import is revoked for the
+    // sandbox: no read uses it, and the owner's next call replaces it.
+    workstreamObjectRun(workerStore, "DELETE FROM workstream_resource_links WHERE resource_id = ?", workerResource);
+    await expect(owner.peekRunning({ ...context(), toolCallId: "owner-peek" })).resolves.toBeNull();
+    await expect(owner.acquire({ ...context(), toolCallId: "owner-third" })).resolves.toMatchObject({ generation: 2 });
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a background agent settle a command that outran its lease", async () => {
+    const { objectStore } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID, "0");
+    const claimedAt = Date.parse("2026-08-13T12:00:00.000Z");
+    const deadlines = {
+      idleExpiresAt: claimedAt + 5 * 60_000, archiveDueAt: claimedAt + 60 * 60_000, expireDueAt: claimedAt + 30 * 24 * 60 * 60_000,
+    };
+    // The worker's run is in its own object; here it is known only by its lease.
+    await terminal.reserveFirstGeneration({
+      stableName: "owner-sandbox", authorityFingerprint: "authority", networkRevision: 1,
+      runId: workerRun, runSubstreamId: worker,
+      operationLeaseExpiresAt: claimedAt + TERMINAL_OPERATION_LEASE_MS, ...deadlines, now: claimedAt,
+    });
+    await terminal.attachProviderSandbox({ generation: 1, sandboxId: "sandbox-1", lifecycleState: "running", ...deadlines, now: claimedAt });
+    await expect(terminal.insertTask({
+      taskId: "task-long", runId: workerRun, runSubstreamId: worker, effectIntentId: "effect-long",
+      sandboxGeneration: 1, sandboxId: "sandbox-1", providerTaskName: "avalon-task-effect-long",
+      commandSha256: "command", commandDeadlineAt: claimedAt + 17 * 60_000, startedAt: claimedAt, now: claimedAt,
+    })).resolves.toBe(true);
+
+    // Seventeen minutes on the lease is past its deadline, and the command
+    // has just finished. The run that submitted it is the one that settles it.
+    const finishedAt = claimedAt + 17 * 60_000;
+    await expect(terminal.settleTask({
+      effectIntentId: "effect-long", runId: workerRun, sandboxGeneration: 1, sandboxId: "sandbox-1",
+      state: "completed", exitCode: 0, terminationReason: "exited",
+      stdoutHead: "", stdoutTail: "", stderrHead: "", stderrTail: "", stdoutBytes: 0, stderrBytes: 0,
+      completedAt: finishedAt, now: finishedAt,
+    })).resolves.toBe(true);
+    expect(workstreamObjectGet(objectStore, "SELECT state FROM terminal_tasks WHERE task_id = 'task-long'"))
+      .toEqual({ state: "completed" });
+  });
+
+  it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    // The worker's run row is in the worker's own object, never in the
+    // owner's, so the owner's storage cannot read its liveness itself.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    seedWorkstreamRun(workerStore, { id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
+    const runsPort = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      testHarnessRunPort(substreamId === worker ? workerStore : objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+    const workerContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
+
+    await expect(agent.acquire(workerContext)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id, operation_run_substream_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: workerRun, operation_run_substream_id: worker });
+    // Held: the worker is still running in its own object, which is where
+    // the owner's coordinator asks.
+    await expect(owner.acquire(context())).rejects.toMatchObject({ code: "sandbox_busy" });
+
+    workstreamObjectRun(workerStore, "UPDATE runs SET status = 'completed' WHERE run_id = ?", workerRun);
+    await expect(owner.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id, operation_run_substream_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: RUN_ID, operation_run_substream_id: null });
+    // One sandbox, shared: the worker created it and the owner reused it.
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 });

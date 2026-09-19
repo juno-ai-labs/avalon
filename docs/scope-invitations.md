@@ -5,7 +5,11 @@ email recipients. The invitation and resulting grants live in the same
 WorkstreamDO. Client integration lands in the browser-lite layer of the PR stack
 (#825); this platform layer (#822) owns the protocol. The [lite browser entry](browser-client.md) accepts invitations through this
 protocol. The shared email panel creates and revokes pending invitations from
-the browser conversation header or native participant dialog. The same panel manages direct accepted grants. Participant mutations use the
+the browser conversation header or native participant dialog. The same panel manages direct accepted grants.
+The panel reports a created invitation to its container rather than confirming it
+in place: the standalone share dialog dismisses itself, and the participant
+dialog, which embeds the panel beside its own controls, stays open on an emptied
+form. Participant mutations use the
 parent grant ledger after first-share handoff; transcript execution stays in the
 conversation owner.
 
@@ -179,6 +183,31 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-09-19 — Dismiss the share dialog, and drop the invited-address notice
+
+The share dialog exists only to take email addresses, so leaving it open after a
+successful share made the user close a form that had nothing left to do. The
+panel now reports success to whoever rendered it rather than deciding for itself,
+because the participant dialog embeds the same panel beside its member list and
+must stay open.
+
+The `Invited <addresses>.` line went with it, on every surface this panel
+appears on rather than only in the dialog that no longer outlives it. Keeping it for the embedded panel alone would
+have left the same action confirmed on one surface and silent on the other, and
+the pending invitation is not a delivered one: the line restated addresses the
+user had just typed while the send itself is still an alarm away. The emptied
+form is the acknowledgement now. Failures keep their own notice, and keep the
+typed batch, because a retry needs both. If sharing later needs a confirmation
+that means delivery rather than acceptance of the form, it belongs in an
+app-level notice this tree does not have yet, not back inside the panel.
+
+The outcome is handled on the `mutate` call rather than on the mutation hook,
+which is what makes the dismissal safe. A hook-level `onSuccess` runs even after
+its component is gone, so a share the user dismissed mid-flight would close
+whichever dialog had been opened in its place and take the addresses typed into
+it. React Query skips the per-call callbacks once the observer has no listeners,
+so a dismissal belongs to the panel that submitted the share.
 
 ### 2026-09-17 — Order invitations with the grants they activate
 

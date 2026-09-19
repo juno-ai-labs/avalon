@@ -41,7 +41,7 @@ describe("the operator-visible record of a schedule target that failed", () => {
   it("names the field a stored schedule row failed, behind the row's own constant", async () => {
     const { env, binds } = recordingEnv();
     await recordWorkspaceScheduleFailure(
-      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never },
+      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never, dueTerminalSubstreams: async () => [] },
       { kind: "schedule", id: "schedule-1" } as never,
       rejection,
     );
@@ -53,7 +53,7 @@ describe("the operator-visible record of a schedule target that failed", () => {
   it("names the field a stored watch row failed the same way", async () => {
     const { env, binds } = recordingEnv();
     await recordWorkspaceScheduleFailure(
-      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never },
+      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never, dueTerminalSubstreams: async () => [] },
       { kind: "watch", id: "watch-1" } as never,
       rejection,
     );
@@ -63,7 +63,7 @@ describe("the operator-visible record of a schedule target that failed", () => {
   it("keeps the constant for a target that threw a code, and the code in the message", async () => {
     const { env, binds } = recordingEnv();
     await recordWorkspaceScheduleFailure(
-      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never },
+      { env, workspaceEnv: env, workspaceId: "workspace", directory: {} as never, notificationIntents: {} as never, dueTerminalSubstreams: async () => [] },
       { kind: "schedule", id: "schedule-1" } as never,
       new Error("connector_poll_timeout"),
     );

@@ -246,7 +246,8 @@ describe('the Projects sidebar section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Red' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore archived project' }));
     fireEvent.click(screen.getByRole('button', { name: /Hiring/u }));
-    await screen.findByText('Resolve the project conflict');
+    await screen.findByText('The project couldn’t be restored.');
+    expect(screen.queryByText('Resolve the project conflict')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
@@ -278,7 +279,8 @@ describe('the Projects sidebar section', () => {
 
     fireEvent.keyDown(screen.getByRole('link', { name: /Second/u }), { altKey: true, key: 'ArrowUp' });
 
-    expect(await screen.findByText('Could not save project order')).toBeVisible();
+    expect(await screen.findByText('Projects couldn’t be reordered.')).toBeVisible();
+    expect(screen.queryByText('Could not save project order')).not.toBeInTheDocument();
   });
 
   it('given member work streams, when the project expands, then children are newest first', () => {
@@ -362,7 +364,8 @@ describe('the Projects sidebar section', () => {
       },
     });
 
-    expect(await screen.findByText('The project changed')).toBeVisible();
+    expect(await screen.findByText('That work stream couldn’t be added to the project.')).toBeVisible();
+    expect(screen.queryByText('The project changed')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import {
   type TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
+import { TERMINAL_PYDANTIC_REQUIREMENT, TERMINAL_SNAPSHOT_PYLIB } from "../src/services/terminal/snapshot-manifest";
 import {
   createDaytonaTerminalRuntime,
   TERMINAL_READ_TEXT_PAGE_PYTHON,
@@ -24,6 +25,7 @@ import {
   type TerminalResourceBridge,
 } from "../src/services/terminal/runtime";
 import { createTerminalInstructionFiles, type TerminalInstructionFiles } from "../src/services/terminal/instructions";
+import { APPLY_PATCH_SCRIPT } from "../src/services/terminal/patch-format";
 import { WorkstreamResidentContextStorage } from "../src/durable-objects/workstream-resident-context-storage";
 import { createResidentContextPortFactory } from "../src/runtime/resident-context-port";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -52,6 +54,7 @@ import {
   testResourcePortFactory,
   testTerminalPortFactory,
   seedToolReceipt,
+  testHarnessRunPort,
 } from "./helpers/durable-authority";
 
 const W = "00000000-0000-4000-8000-000000000011";
@@ -80,12 +83,8 @@ afterEach(() => {
 function splitProbe(command: string): { rest: string; fragment: string | null } {
   const start = command.indexOf("( set +e; python3 -c '");
   if (start === -1) return { rest: command, fragment: null };
-  const endings = [") || true", ") || exit $?"]
-    .map((ending) => ({ ending, index: command.indexOf(ending, start) }))
-    .filter((candidate) => candidate.index !== -1)
-    .sort((left, right) => left.index - right.index);
-  const end = endings[0]!;
-  const stop = end.index + end.ending.length;
+  const ending = ") || true";
+  const stop = command.indexOf(ending, start) + ending.length;
   return { rest: command.slice(0, start) + command.slice(stop), fragment: command.slice(start, stop) };
 }
 
@@ -93,7 +92,11 @@ function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
   acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[7],
   prepareSandbox?: NonNullable<Parameters<typeof createDaytonaTerminalRuntime>[6]>,
-  options: { withInstructions?: boolean } = {},
+  options: {
+    withInstructions?: boolean;
+    /** Which conversation the run executes in and which owns the sandbox; the main one for both by default. */
+    scope?: { parentKind: "workstream" | "automation"; runSubstreamId: string; authoritySubstreamId: string };
+  } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
@@ -223,12 +226,9 @@ function fixture(
   provider.runUtilityCommand = vi.fn(async (id, input) => {
     // A command carrying the instruction probe runs the probe for real, against
     // the temp root, and the rest of the command against the simulated shell.
-    // In abort mode a pending candidate stops the command exactly as the
-    // sandbox would: nothing after the probe runs.
     const { rest, fragment } = splitProbe(input.command);
     if (fragment) {
       const executed = spawnSync("bash", ["-c", fragment.split("'/workspace'").join(`'${probeRoot}'`)], { encoding: "utf8" });
-      if (executed.status === 52) return { exitCode: 52, stdout: executed.stdout, stderr: "" };
       const result = await provider.runUtilityCommand(id, { ...input, command: rest });
       return { ...result, stdout: `${result.stdout}${executed.stdout}` };
     }
@@ -313,6 +313,7 @@ function fixture(
     undefined,
     false,
     acquisitionObserved,
+    options.scope ? { ...options.scope, runsPort: () => testHarnessRunPort(objectStore) } : undefined,
   );
   return { database, objectStore, files, provider, sandboxState, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
@@ -437,22 +438,162 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runUtilityCommand).toHaveBeenCalledTimes(64);
   });
 
-  it("reacquires after the cached operation lease expires", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
-      const clock = { now: () => new Date(Date.now()) };
-      const { coordinator, runtime } = fixture(clock);
-      const acquire = vi.spyOn(coordinator, "acquire");
+  it("releases the lease after each call and re-runs readiness when the row moved on", async () => {
+    const { coordinator, runtime, objectStore, provider, sandboxState } = fixture();
+    const acquire = vi.spyOn(coordinator, "acquire");
+    const bytes = new TextEncoder().encode("first\n");
 
-      await runtime.readFile(context, "src/file.txt");
-      vi.setSystemTime(new Date("2026-08-13T12:17:00.000Z"));
-      await runtime.readFile({ ...context, toolCallId: "call-runtime-after-lease" }, "src/file.txt");
+    await runtime.writeFile(context, "src/file.txt", bytes);
+    // Nothing is held between two calls of one run: the lease is the call's.
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: null });
+    await runtime.writeFile({ ...context, toolCallId: "call-runtime-second" }, "src/file.txt", bytes);
+    expect(acquire).toHaveBeenCalledOnce();
 
-      expect(acquire).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    // The sweep stopped the sandbox while this run held nothing. The cached
+    // handle is not trusted past the row: the claim sees a stopped sandbox
+    // and readiness starts it again under the lease this call now holds.
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET lifecycle_state = 'stopped', idle_expires_at = NULL WHERE id = 1");
+    sandboxState.current = "stopped";
+    await runtime.writeFile({ ...context, toolCallId: "call-runtime-after-stop" }, "src/file.txt", bytes);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "running", operation_run_id: null });
+  });
+
+  it("runs one run's write calls one at a time even when the harness overlaps them", async () => {
+    const { provider, runtime } = fixture();
+    const bytes = new TextEncoder().encode("one\n");
+    let finishFirst!: () => void;
+    vi.mocked(provider.writeFile).mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }));
+    const first = runtime.writeFile(context, "src/a.txt", bytes);
+    await vi.waitFor(() => expect(provider.writeFile).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    const second = runtime.writeFile({ ...context, toolCallId: "call-runtime-overlapping" }, "src/b.txt", bytes);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The lease is the run's, so the second call's claim would be answered
+    // "held"; the turn is what keeps it off the sandbox until the first ends.
+    expect(provider.writeFile).toHaveBeenCalledOnce();
+
+    finishFirst();
+    await expect(first).resolves.toMatchObject({ created: true });
+    await expect(second).resolves.toMatchObject({ created: true });
+    expect(provider.writeFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses an edit whose file changed since it was read", async () => {
+    const { provider, runtime } = fixture();
+    const read = new TextEncoder().encode("hello\n");
+    const digest = await sha256Hex(read);
+    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async (_id, input) => {
+      expect(input.operation).toBe("file.replace");
+      // The replacement is fenced on the digest of what the edit read.
+      expect(input.command).toContain(digest);
+      // A sibling's write landed between the read and this replacement.
+      return { exitCode: 48, stdout: "", stderr: "" };
+    });
+
+    await expect(runtime.writeFile(
+      context, "src/file.txt", new TextEncoder().encode("changed\n"),
+      { previousText: "hello\n", previousSha256: digest },
+    )).rejects.toMatchObject({ code: "file_changed" });
+  });
+
+  it("does not read past this run's own preparation of the checkout", async () => {
+    let finishPreparation!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const { provider, runtime } = fixture(undefined, undefined, prepare);
+    const preparing = runtime.prepare(context);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    // The row already says running; the checkout is not there yet. A read
+    // from this run joins the preparation instead of peeking past it.
+    const read = runtime.readFile({ ...context, toolCallId: "call-runtime-early-read" }, "src/file.txt");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
+
+    finishPreparation();
+    await preparing;
+    await expect(read).resolves.toEqual(new TextEncoder().encode("hello\n"));
+  });
+
+  it("does not let a read use a sandbox made under another principal", async () => {
+    const { provider, runtime, objectStore } = fixture();
+    await runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n"));
+    const otherPrincipal = {
+      ...context,
+      toolCallId: "call-runtime-other-principal",
+      executionPrincipal: { type: "user" as const, userId: asUserId("00000000-0000-4000-8000-0000000000ee") },
+    };
+
+    await runtime.readFile(otherPrincipal, "src/file.txt");
+    // Replaced before it was read, not read: the generation's files were
+    // another principal's, and a read skips the lease but not that check.
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 2 });
+  });
+
+  it("records a background agent's command in its owner's object, which does not hold the agent's run", async () => {
+    const worker = "00000000-0000-4000-8000-000000000077";
+    const workerRun = "00000000-0000-4000-8000-000000000078";
+    const workerEffect = "00000000-0000-4000-8000-000000000079";
+    // A holder from another conversation is live while its lease is, judged
+    // against the instant the command starts, so the two clocks have to agree.
+    const { objectStore, runtime } = fixture({ now: () => new Date() }, undefined, undefined, {
+      scope: { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0" },
+    });
+    // Neither the agent's run nor the receipt the harness planned for this
+    // call is in this object: both live in the agent's own conversation.
+    const agent = { ...context, harnessRunId: workerRun, toolCallId: "call-worker", effectIntentId: workerEffect };
+
+    await expect(runtime.runCommand(agent, { command: "true", timeoutMs: 3_000 })).resolves.toBeDefined();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT run_id, run_substream_id, state FROM terminal_tasks WHERE effect_intent_id = ?",
+      workerEffect,
+    )).toEqual({ run_id: workerRun, run_substream_id: worker, state: "completed" });
+  });
+
+  it("still refuses a command of this object's own run that the harness never planned", async () => {
+    const { objectStore, runtime } = fixture();
+    const unplanned = { ...context, toolCallId: "call-unplanned", effectIntentId: "00000000-0000-4000-8000-000000000080" };
+
+    await expect(runtime.runCommand(unplanned, { command: "true", timeoutMs: 3_000 }))
+      .rejects.toMatchObject({ code: "command_recovery_unavailable" });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+  });
+
+  it("reads without the lease while another run holds it, and writes wait", async () => {
+    const { objectStore, provider, runtime } = fixture();
+    seedWorkstreamRun(objectStore, { id: R2, status: "running",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    const other = { ...context, harnessRunId: R2, toolCallId: "call-other-run" };
+    let finishWrite!: () => void;
+    // Hold the other run's write open at the provider so its lease is held
+    // for the whole of this test's middle.
+    vi.mocked(provider.writeFile).mockImplementationOnce(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    const held = runtime.writeFile(other, "src/other.txt", new TextEncoder().encode("held\n"));
+    await vi.waitFor(() => expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: R2 }), { timeout: 5_000 });
+
+    await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
+    await expect(runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n")))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: R2 });
+
+    finishWrite();
+    await expect(held).resolves.toEqual({ created: true, previousLines: 0 });
+    await expect(runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n")))
+      .resolves.toEqual({ created: false, previousLines: 1 });
+    expect(workstreamObjectGet(objectStore, "SELECT operation_run_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ operation_run_id: null });
   });
 
   it("cleans an uploaded write temp file after a provider request failure", async () => {
@@ -571,24 +712,30 @@ describe("Daytona Terminal runtime", () => {
       harnessRunId: R2,
       toolCallId: "call-submission-successor",
     };
-    await expect(runtime.readFile(
+    // A write: a read takes no lease and would neither wait nor recover.
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    await expect(runtime.writeFile(
       linkedContext,
       "src/file.txt",
+      linkedBytes,
     )).rejects.toMatchObject({ code: "sandbox_busy" });
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     acquisitionObserved.mockClear();
 
     clockNow = submitting.command_deadline_at + 1;
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       linkedContext,
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      linkedBytes,
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.getSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime-2", "/workspace/src/file.txt");
+    expect(provider.writeFile).toHaveBeenCalledWith(
+      "sandbox-runtime-2", expect.stringContaining("/workspace/.rally/tmp/"), linkedBytes, expect.anything(),
+    );
     expect(acquisitionObserved).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ action: "start", localFilesRetained: false }),
@@ -625,7 +772,7 @@ describe("Daytona Terminal runtime", () => {
       context,
       "src/file.txt",
       new TextEncoder().encode("updated\n"),
-      { previousText: new TextDecoder().decode(bytes!) },
+      { previousText: new TextDecoder().decode(bytes!), previousSha256: await sha256Hex(bytes!) },
     );
 
     expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
@@ -646,6 +793,128 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining("git apply --check"),
     }));
+  });
+
+  it("applies a *** Begin Patch envelope with the vendored reference applier written beside the patch", async () => {
+    const { provider, runtime, files } = fixture();
+    const original = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
+    const commands: string[] = [];
+    let outcome: { exitCode: number; stdout: string; stderr: string; timedOut?: boolean } = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    vi.mocked(provider.runUtilityCommand).mockImplementation(async (id, input) => {
+      if (input.operation === "file.apply_patch" && input.command.includes(".apply_patch.py")) {
+        commands.push(input.command);
+        return outcome;
+      }
+      return original(id, input);
+    });
+    const patch = [
+      "",
+      "*** Begin Patch",
+      "*** Update File: src/file.txt",
+      "@@",
+      "-hello",
+      "+bye",
+      "*** Add File: docs/new.txt",
+      "+first",
+      "+second",
+      "*** End Patch",
+      "",
+    ].join("\n");
+    await expect(runtime.applyPatch(context, patch)).resolves.toEqual({
+      files: [
+        { path: "src/file.txt", operation: "edited", additions: 1, deletions: 1 },
+        { path: "docs/new.txt", operation: "created", additions: 2, deletions: 0 },
+      ],
+      additions: 3,
+      deletions: 1,
+    });
+    // The applier travels with the patch: the vendored text, unmodified, and
+    // the patch without the blank line the model put before its envelope.
+    const script = [...files.keys()].find((path) => path.endsWith(".apply_patch.py"))!;
+    const written = [...files.keys()].find((path) => path.endsWith(".patch"))!;
+    expect(new TextDecoder().decode(files.get(script))).toBe(APPLY_PATCH_SCRIPT);
+    expect(new TextDecoder().decode(files.get(written))).toBe(patch.slice(1));
+    expect(commands[0]).toContain(`python3 '${script}' < '${written}'`);
+    expect(commands[0]).toContain("import pydantic");
+    expect(commands[0]).not.toContain("git apply");
+    // The install is the snapshot's pin, staged and moved into place as one
+    // step, and the snapshot's own copy is searched first.
+    expect(commands[0]).toContain(`--target "$staging" '${TERMINAL_PYDANTIC_REQUIREMENT}'`);
+    expect(commands[0]).toContain(`mv -T -- "$staging" "$lib"`);
+    expect(commands[0]).toContain(`pythonpath='${TERMINAL_SNAPSHOT_PYLIB}':"$lib"`);
+    // Every path the patch names is contained before the applier runs.
+    expect(commands[0]).toContain("target='/workspace/src/file.txt'");
+    expect(commands[0]).toContain("target='/workspace/docs/new.txt'");
+    // A path an `*** Add File:` section would create must not exist yet: the
+    // applier would truncate it and still print `Done!`. The preflight is the
+    // command's own shell, so it runs here against a scratch root: clean until
+    // the destination appears, then exit 54 naming it, while an updated file's
+    // existence is not a collision.
+    const root = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands[0]!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${root}`);
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "src/file.txt"), "hello\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
+      mkdirSync(join(root, "docs"));
+      writeFileSync(join(root, "docs/new.txt"), "kept\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 54, stdout: "docs/new.txt\n" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    outcome = { exitCode: 54, stdout: "docs/new.txt\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied: `docs/new.txt` already exists, and `*** Add File:` would replace it. Read it and change it in place, or choose another path.",
+    });
+    // Containment runs in that same shell, before the applier: a path that
+    // resolves outside the root through a symlink exits 43.
+    outcome = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    await expect(runtime.applyPatch(context, [
+      "*** Begin Patch", "*** Update File: src/escape/passwd", "@@", "-root", "+toor", "*** End Patch",
+    ].join("\n"))).resolves.toBeDefined();
+    const escapeRoot = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands.at(-1)!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${escapeRoot}`);
+      mkdirSync(join(escapeRoot, "src/escape"), { recursive: true });
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0 });
+      rmSync(join(escapeRoot, "src/escape"), { recursive: true });
+      symlinkSync("/etc", join(escapeRoot, "src/escape"));
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 43 });
+    } finally {
+      rmSync(escapeRoot, { recursive: true, force: true });
+    }
+    // A rejected patch's classification comes first and the patch's own
+    // context lines follow, still at exit 0, so a file that ends in `Done!`
+    // cannot forge success; a crash's last line is the exception; a timeout,
+    // an empty output and a failed install each say what they are.
+    outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\nDone!\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied: Invalid Context 0. Re-read the affected files, regenerate the patch from their current contents, and retry.",
+    });
+    outcome = { exitCode: 1, stdout: "Traceback (most recent call last):\n  File \"apply_patch.py\", line 1\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("The patch could not be applied: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff."),
+    });
+    outcome = { exitCode: 0, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: expect.stringContaining("the applier printed nothing"),
+    });
+    outcome = { exitCode: 124, stdout: "", stderr: "", timedOut: true };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("did not finish in time"),
+    });
+    outcome = { exitCode: 53, stdout: "ERROR: No matching distribution found for pydantic==2.13.5\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_tooling_unavailable",
+      message: expect.stringContaining("(ERROR: No matching distribution found for pydantic==2.13.5)"),
+    });
+    outcome = { exitCode: 43, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "path_outside_root" });
   });
 
   it("refuses every write path before it touches the provider at all", async () => {
@@ -768,44 +1037,52 @@ describe("Daytona Terminal runtime", () => {
       })
     ));
 
-    const firstLinkedRead = runtime.readFile(linkedContext, "src/file.txt");
-    let linkedReadSettled = false;
-    void firstLinkedRead.then(
-      () => { linkedReadSettled = true; },
-      () => { linkedReadSettled = true; },
+    // Writes, because a read takes no lease: it would neither wait for the
+    // retained command nor recover it.
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    const firstLinkedWrite = runtime.writeFile(linkedContext, "src/file.txt", linkedBytes);
+    let linkedWriteSettled = false;
+    void firstLinkedWrite.then(
+      () => { linkedWriteSettled = true; },
+      () => { linkedWriteSettled = true; },
     );
     await vi.waitFor(() => expect(provider.stopSandbox).toHaveBeenCalledOnce());
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R3, toolCallId: "call-linked-contender" },
       "src/file.txt",
+      linkedBytes,
     )).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(linkedReadSettled).toBe(false);
+    expect(linkedWriteSettled).toBe(false);
     expect(provider.startSandbox).not.toHaveBeenCalled();
-    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.writeFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "running" });
     finishStop();
-    await expect(firstLinkedRead).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(firstLinkedWrite).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.stopSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
-    expect(provider.readFile).toHaveBeenCalledTimes(2);
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
+    expect(provider.writeFile).toHaveBeenCalledOnce();
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0]!);
     expect(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(provider.readFile).mock.invocationCallOrder[0]!);
+      .toBeLessThan(vi.mocked(provider.writeFile).mock.invocationCallOrder[0]!);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state, termination_reason FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "cancelled", termination_reason: "cancelled" });
+    // The linked run's call is over, and the recovered lease went back with it.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ operation_run_id: R2 });
+    )).toEqual({ operation_run_id: null });
   });
 
   it("keeps a linked run fenced when provider stop is not confirmed", async () => {
@@ -824,16 +1101,19 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
+      new TextEncoder().encode("linked\n"),
     )).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.writeFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ state: "running" });
+    // The failed call released nothing: a run with its own command still
+    // unsettled keeps the lease, which is what a successor recovers from.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
@@ -871,9 +1151,10 @@ describe("Daytona Terminal runtime", () => {
         id: "sandbox-runtime", name: "sandbox-runtime", state: "archived", domainAllowList: [],
       });
     }
+    const linkedBytes = new TextEncoder().encode("linked\n");
     if (providerState === "absent") {
-      await expect(runtime.readFile(
-        { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" }, "src/file.txt",
+      await expect(runtime.writeFile(
+        { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" }, "src/file.txt", linkedBytes,
       )).rejects.toMatchObject({ code: "sandbox_busy" });
       expect(provider.deleteSandbox).not.toHaveBeenCalled();
       expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -885,17 +1166,21 @@ describe("Daytona Terminal runtime", () => {
     }
     const expectedId = "sandbox-runtime";
     const expectedGeneration = 1;
-    await expect(runtime.readFile(
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" },
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      linkedBytes,
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledTimes(expectedGeneration);
-    expect(provider.readFile).toHaveBeenCalledWith(expectedId, "/workspace/src/file.txt");
+    expect(provider.writeFile).toHaveBeenCalledWith(
+      expectedId, expect.stringContaining("/workspace/.rally/tmp/"), linkedBytes, expect.anything(),
+    );
+    // Recovered, used, and released: the call is over.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT generation, sandbox_id, operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: R2 });
+    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: null });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -941,7 +1226,8 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     const linked = { ...context, harnessRunId: R2, toolCallId: "call-abort-successor" };
-    await expect(runtime.readFile(linked, "src/file.txt"))
+    const linkedBytes = new TextEncoder().encode("linked\n");
+    await expect(runtime.writeFile(linked, "src/file.txt", linkedBytes))
       .rejects.toMatchObject({ code: "sandbox_busy" });
     expect(workstreamObjectGet(
       objectStore,
@@ -949,10 +1235,13 @@ describe("Daytona Terminal runtime", () => {
       I,
     )).toEqual({ state: "running" });
 
-    await expect(runtime.readFile(linked, "src/file.txt"))
-      .resolves.toEqual(new TextEncoder().encode("hello\n"));
+    await expect(runtime.writeFile(linked, "src/file.txt", linkedBytes))
+      .resolves.toEqual({ created: false, previousLines: 1 });
     expect(provider.stopSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
+    expect(provider.startSandbox).toHaveBeenCalledWith(
+      "sandbox-runtime",
+      expect.objectContaining({ deadlineAtMs: expect.any(Number) }),
+    );
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -988,10 +1277,13 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
-    await expect(runtime.readFile(
+    // A write: it is what recovers the retained command. A read would take
+    // no lease and leave the command as it found it.
+    await expect(runtime.writeFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
-    )).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      new TextEncoder().encode("linked\n"),
+    )).resolves.toEqual({ created: false, previousLines: 1 });
     finishProvider({ exitCode: 7, stdout: "x".repeat(150_000), stderr: "late-error\n" });
     await expect(late).resolves.toMatchObject({
       state: "failed",
@@ -1279,7 +1571,13 @@ describe("Daytona Terminal runtime", () => {
     const acquiring = new Promise<never>((_resolve, reject) => {
       rejectAcquire = () => reject(new TerminalToolError("repository_access_revoked", "Repository access was revoked."));
     });
-    const coordinator = { acquire: vi.fn(() => acquiring) } satisfies Pick<TerminalSandboxCoordinator, "acquire">;
+    const coordinator = {
+      acquire: vi.fn(() => acquiring),
+      claimForOperation: vi.fn(async () => "held" as const),
+      release: vi.fn(async () => undefined),
+      holderSubstreamId: () => null,
+      peekRunning: vi.fn(async () => null),
+    } satisfies Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning" | "holderSubstreamId">;
     const checkedOut: TerminalCheckoutRepositoryOutput = {
       repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
       baseRef: "main", baseSha: "a".repeat(40), headRef: "rally/workstream", remoteAccess: "read_only",
@@ -1328,64 +1626,58 @@ describe("Daytona Terminal runtime", () => {
       expect(probeFailures).toEqual([]);
     });
 
-    it("refuses the first mutation beneath an unread instruction file, records it, and lets the retry through", async () => {
+    it("lets a mutation beneath an unread instruction file proceed, and delivers the file with the read an edit starts with", async () => {
       const { runtime, ledger, files, probeRoot } = checkout();
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "never write generated files\n");
       const bytes = new TextEncoder().encode("new\n");
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_pending",
-        message: "Repository instructions for `./`, `./src/` were loaded with this call and nothing was changed. Read the `Instructions added from` message that follows, then retry the same call.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
-      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
-      // Recorded is not yet seen: a second mutation in the same batch is refused
-      // the same way, and nothing is recorded twice.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({ code: "instructions_pending" });
-      expect(ledger.allBlocks()).toHaveLength(2);
-      // The settled step delivers; the retry after it proceeds.
-      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // A whole-file write carries no probe: it is not refused, and it discovers nothing.
       await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
       expect(files.has("/workspace/src/new.txt")).toBe(true);
-      // An edit's read and a patch check the same way; both are resident now.
+      expect(ledger.pendingDeliveries()).toEqual([]);
+      // The read an edit starts with records the chain for delivery with that batch.
       await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
-      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
-        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
-      // Editing the instruction file itself delivers the new content once more.
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
+      // Recorded is not yet seen: a second read in the same batch reports the
+      // same files again, and nothing is recorded twice.
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      expect(ledger.allBlocks()).toHaveLength(2);
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      // Editing the instruction file itself delivers the new content once more, through the next read.
       writeFileSync(join(probeRoot, "src", "AGENTS.md"), "revised\n");
-      await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "instructions_pending" });
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
       expect(ledger.allBlocks().filter((block) => block.blockId === "src/AGENTS.md").map((block) => [block.content, block.residency]).sort())
         .toEqual([["never write generated files\n", "none"], ["revised\n", "transcript"]]);
+      // A patch carries no probe either, and proceeds before that message has landed.
+      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
+        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
     });
 
-    it("refuses once with instructions_unavailable when the ledger fails, then stops gating for the run", async () => {
-      const { runtime, ledger, files, probeFailures } = checkout();
-      const bytes = new TextEncoder().encode("new\n");
+    it("reports a ledger failure once, leaves the read's outcome alone, and keeps discovering on the next read", async () => {
+      const { runtime, ledger, probeFailures } = checkout();
       vi.spyOn(ledger, "recordLoaded").mockImplementationOnce(() => { throw new Error("ledger unavailable"); });
-      // The probe stopped the write; the ledger could not record what it found,
-      // so no instructions message will follow and the refusal says so.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
-        code: "instructions_unavailable",
-        message: "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
-      });
-      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      // The probe found the root file and the ledger could not record it: the
+      // read still succeeds, and the failure is reported rather than surfaced.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
+      expect(ledger.pendingDeliveries()).toEqual([]);
       expect(probeFailures).toEqual(["record"]);
-      // The retry is not refused again: the probe reports without gating, and
-      // recording is attempted as before.
-      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
-      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      // The next read records it as before.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md"]);
       expect(probeFailures).toEqual(["record"]);
     });
 
-    it("probes before admitting a command's durable task and retires every block when the checkout is replaced", async () => {
+    it("admits a command without a probe of its own and retires every block when the checkout is replaced", async () => {
       const { runtime, ledger, objectStore, provider, resources, publisher, coordinator, instructions } = checkout();
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))
-        .rejects.toMatchObject({ code: "instructions_pending" });
-      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+      // A command runs the model's own text, which the probe cannot ride, and
+      // pays no probe command first: it is admitted at once and discovers nothing.
+      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
+      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 1 });
+      expect(ledger.pendingDeliveries()).toHaveLength(0);
+      // A read is what discovers the root file.
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
       expect(ledger.pendingDeliveries()).toHaveLength(1);
       ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
       expect(ledger.residentBlocks({ kind: "repository_instructions" })).toHaveLength(1);
-      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
 
       const checkedOut: TerminalCheckoutRepositoryOutput = {
         repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",

@@ -74,6 +74,36 @@ describe('capsule composer stacking', () => {
     expect(rule(`${spanning} :is(textarea, .composer-highlight),\n${withAttachments} :is(textarea, .composer-highlight)`))
       .not.toContain('39px');
   });
+
+  /**
+   * The capsule holds two things outside its own box — Stop parks past the
+   * right edge, and the input shell is translated across the flip — so any
+   * scrolling overflow on it is a scroll offset nothing resets.
+   * `docs/conversation-surfaces.md` carries the incident. The invariant is
+   * every rule's, not one declaration's: a later `@container` or theme rule
+   * restating `overflow: hidden`, or a longhand `overflow-x: auto` after this
+   * one, would strand a draft exactly as the original did.
+   */
+  it('leaves no rule that makes the capsule scrollable', () => {
+    const capsule = ':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule';
+    // Rules whose *subject* is the capsule. A descendant may scroll on its own
+    // account — the field does, and reserves a gutter for it — so a rule that
+    // merely reaches through the capsule is not this invariant's to hold.
+    const own = rulesNaming('is-message-capsule').filter(({ prelude }) => prelude
+      .split(',')
+      .some((selector) => selector.trim().split(/\s+/u).at(-1)?.includes('.is-message-capsule')));
+
+    expect(own.flatMap(({ prelude, declarations }) =>
+      [...declarations.matchAll(/(overflow[a-z-]*)\s*:\s*([^;]+)/gu)]
+        .filter(([, , value]) => /\b(?:auto|scroll|hidden)\b/u.test(value!))
+        .map(([, property, value]) => `${prelude} { ${property}: ${value!.trim()} }`)))
+      .toEqual([]);
+
+    // And it does still clip: under `visible` the parked Stop would be drawn
+    // outside the capsule. Read from the scan, whose comments are stripped, so
+    // that prose naming a value cannot satisfy or break this.
+    expect(own.find(({ prelude }) => prelude === capsule)?.declarations).toMatch(/overflow:\s*clip;/u);
+  });
 });
 
 /**
@@ -95,21 +125,6 @@ describe('jump to latest', () => {
 
   /** A shorthand this scan cannot expand, so that it fails rather than passes. */
   const UNREADABLE = '<unreadable to this scan>';
-
-  /**
-   * Every rule whose selector names one class, in source order, so a second
-   * rule cannot quietly restate what the first one settled. Rules nested in an
-   * `@media` block are found the same way `preludes()` finds them: the pattern
-   * cannot cross a brace, so the wrapper never matches and its contents do.
-   */
-  function rulesNaming(className: string): { prelude: string; declarations: string }[] {
-    // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
-    // for the class it is named after.
-    const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
-    return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
-      .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
-      .filter(({ prelude }) => named.test(prelude));
-  }
 
   /** A box shorthand's one to four values as `[top, bottom]`, in this app's writing mode. */
   function blockValues(declared: string, count: 2 | 4): [string, string] | null {
@@ -663,6 +678,23 @@ describe('clipped scroll edges on both navigation rails', () => {
   });
 });
 
+/**
+ * Every rule whose selector names one class, in source order, so a second
+ * rule cannot quietly restate what the first one settled. Rules nested in an
+ * `@media` block are found the same way `preludes()` finds them: the pattern
+ * cannot cross a brace, so the wrapper never matches and its contents do.
+ *
+ * Comments go first, so prose naming a property is never read as a declaration.
+ */
+function rulesNaming(className: string): { prelude: string; declarations: string }[] {
+  // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
+  // for the class it is named after.
+  const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
+  return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
+    .filter(({ prelude }) => named.test(prelude));
+}
+
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -670,20 +702,27 @@ function ruleWithin(source: string, selector: string): string | null {
 }
 
 /**
- * Every rule's selector prelude, with comments removed.
+ * Every rule, as its selector prelude and its declarations.
  *
  * Splitting on `}` and taking the text before the *last* `{` in each piece
  * keeps the inner selector of a nested rule rather than the `@media` that
  * encloses it. Comments go first so that prose naming a selector — this
  * stylesheet's comments name several — is not mistaken for the rule itself.
  */
-function preludes(): string[] {
+function rules(): { selector: string; body: string }[] {
   return stylesheet
     .replace(/\/\*[\s\S]*?\*\//gu, ' ')
     .split('}')
-    .map((block) => (block.includes('{') ? (block.split('{').at(-2) ?? '') : ''))
-    .map((prelude) => prelude.trim())
-    .filter(Boolean);
+    .flatMap((block) => {
+      if (!block.includes('{')) return [];
+      const selector = (block.split('{').at(-2) ?? '').trim();
+      return selector ? [{ selector, body: block.split('{').at(-1) ?? '' }] : [];
+    });
+}
+
+/** Just the selector preludes, for the checks that never look at a body. */
+function preludes(): string[] {
+  return rules().map(({ selector }) => selector);
 }
 
 /**
@@ -820,6 +859,35 @@ describe('Grok Bot mention-chip geometry', () => {
     expect(userChip).toContain(
       'background: color-mix(in srgb, currentColor 24%, transparent);',
     );
+  });
+});
+
+describe('inline icons inside prose', () => {
+  // Both of these sit inside a sentence, and both lose to `.markdown-body img`
+  // — `margin: var(--space-4) 0`, `max-width: 100%` — on source order unless
+  // they name the host the way the card preview below does. The cost is not a
+  // misplaced icon: an 18px block margin on an inline image grows the line box
+  // of every line in the paragraph, which no DOM assertion can see.
+  it('keeps the citation marker icon inside the line it is set in', () => {
+    const icon = rule('.markdown-body .citation-pill-favicon img');
+
+    expect(icon).not.toBeNull();
+    expect(icon).toContain('margin: 0;');
+    expect(icon).toContain('max-width: none;');
+    // Under one em of the pill's own reduced type, so the plate keeps the
+    // asterisk's height and the two markers stay one mechanism.
+    expect(icon).toContain('height: 0.95em;');
+    expect(icon).toContain('width: 0.95em;');
+  });
+
+  it('keeps the link favicon inside the line it is set in', () => {
+    const icon = rule('.markdown-body img.markdown-link-favicon');
+
+    expect(icon).not.toBeNull();
+    expect(icon).toContain('margin: 0 0.3em 0 0;');
+    expect(icon).toContain('max-width: none;');
+    expect(icon).toContain('height: 1em;');
+    expect(icon).toContain('width: 1em;');
   });
 });
 
@@ -1045,7 +1113,7 @@ describe('raised popover interaction states', () => {
     expect(highlighted).not.toBeNull();
     expect(danger).not.toBeNull();
     expect(content).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(highlighted).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(highlighted).toContain('background-image: var(--hover-layer);');
     expect(danger).toContain('background: var(--av-sys-color-danger-tint);');
   });
 
@@ -1060,7 +1128,93 @@ describe('raised popover interaction states', () => {
     expect(popover).not.toBeNull();
     expect(rows).not.toBeNull();
     expect(popover).toContain('background: var(--av-sys-color-surface-raised);');
-    expect(rows).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(rows).toContain('background-image: var(--hover-layer);');
+  });
+});
+
+describe('the one hover wash', () => {
+  /**
+   * Hover used to be spelled seven different ways — `surface.raised`,
+   * `surface.raised-hover`, `surface.elevated-hover`, `surface.subtle`, three
+   * steps of the neutral ramp and the sidebar's own row token — and which one a
+   * control got was an accident of when it was written. `surface.raised` was
+   * the worst of them: it is a step above the canvas only in dark, and light
+   * sets it to the canvas's own #fcfcfc, so the stream header's icons had no
+   * visible hover at all while the title button beside them lit up.
+   */
+  it('paints the controls a pointer crosses in one sweep from the same token', () => {
+    const icon = rule(
+      '.icon-button:hover:not(:disabled),\n'
+      + ".icon-button[data-state='open']:not(:disabled),\n"
+      + '.icon-button:focus-visible',
+    );
+    const family = [
+      icon,
+      rule('.participant-header-button:hover:not(:disabled)'),
+      rule('.header-socket-state:hover,\n.header-socket-state:focus-visible'),
+      rule('.workstream-title-button:hover'),
+      rule('.menu-item[data-highlighted]'),
+      rule('.appearance-picker-trigger:hover'),
+    ];
+
+    for (const declarations of family) {
+      expect(declarations).not.toBeNull();
+      expect(declarations).toContain('background-image: var(--hover-layer);');
+    }
+  });
+
+  /**
+   * The wash is layered, not substituted. A control that paints its own
+   * surface — `.button` on `surface.raised`, a provider card, a citation chip
+   * — keeps that surface in `background-color`; taking the wash as the
+   * background instead composited it against the ancestor, which in dark
+   * turned #2f2f2f into roughly #1a1a1a and made the control go *darker*
+   * under the pointer.
+   */
+  it('layers the wash over the control rather than replacing what it paints', () => {
+    expect(rule(':root')).toContain('--hover-layer: linear-gradient(var(--av-sys-color-state-hover) 0 100%);');
+
+    const layered = rules().filter(({ body }) => body.includes('var(--hover-layer)'));
+    expect(layered.length).toBeGreaterThan(40);
+    for (const { selector, body } of layered) {
+      expect(body, selector).toContain('background-image: var(--hover-layer);');
+      // `background:` would reset `background-color` to transparent and undo
+      // the layering the property name is there to provide.
+      expect(body, selector).not.toMatch(/(?:^|[;{\s])background:/u);
+    }
+  });
+
+  /**
+   * The guard, rather than one assertion per control: a hover added later takes
+   * the wash, and a neutral surface fill can no longer reach a hover rule by
+   * being copied off the one next to it. A hover that carries a hue is exempt
+   * because the hue is the point, and a rule shared with a selected or pressed
+   * state is exempt because that state is not a hover.
+   */
+  it('lets no hover paint a neutral surface fill instead', () => {
+    const neutralSurface = /var\(--av-(?:sys-color-surface-[a-z-]+|ref-color-neutral-\d+|cmp-row-background-selected|cmp-control-background-quiet)\)/u;
+    const hue = /danger|success|warning|brand|accent|scrim|bubble/u;
+    const settled = /\.is-selected|\.is-active|\.is-current|aria-pressed/u;
+    // The capsule composer's round tools rest on the wash already, so their
+    // hover has to be a further step or there is no feedback at all.
+    const restsOnTheWash = '.is-message-capsule .composer-tools > .icon-button:hover:not(:disabled)';
+
+    const offenders = rules()
+      .map(({ selector, body }) => ({ selector: selector.replace(/\s+/gu, ' '), body }))
+      .filter(({ selector }) => /:hover|\[data-highlighted\]/u.test(selector))
+      .filter(({ selector }) => !settled.test(selector) && !selector.endsWith(restsOnTheWash))
+      .filter(({ body }) => !body.includes('var(--hover-layer)'))
+      .filter(({ body }) => {
+        // The *last* declaration, not the first: a rule that opens with the
+        // wash and then overrides it with a neutral surface violates the
+        // invariant through the one that actually paints.
+        const declared = [...body.matchAll(/(?:^|[;{\s])background(?:-color)?:\s*([^;}]+);?/gu)];
+        const background = declared.at(-1)?.[1] ?? '';
+        return neutralSurface.test(background) && !hue.test(background);
+      })
+      .map(({ selector }) => selector);
+
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -1092,7 +1246,7 @@ describe('sidebar project rows', () => {
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
     expect(stylesheet).toContain(
-      '.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }',
+      '.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }',
     );
     expect(stylesheet).toContain(
       '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
@@ -1486,11 +1640,92 @@ describe('markdown list markers', () => {
       expect(prelude).toContain('.citation-card-preview');
     }
 
-    expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
-    expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
+    // Every paint is a substitution now, so the tokens are asserted where they
+    // are named — on the group — and the elements are asserted to read it.
+    expect(rule('.markdown-body')).toContain('--markdown-ink-strong: var(--av-ref-color-neutral-14);');
+    expect(rule('.markdown-body')).toContain('--markdown-link: var(--av-sys-color-accent-soft);');
+    expect(rule('.markdown-body strong')).toContain('var(--markdown-ink-strong)');
+    expect(rule('.markdown-body a')).toContain('var(--markdown-link)');
     expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
     expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
+  });
+});
+
+/**
+ * The paint group, and the one surface that re-points it.
+ *
+ * Every colour in the shared group is a `--markdown-*` substitution, so a
+ * surface with a fill of its own moves the whole of markdown onto its own ink
+ * in one block rather than restating element rules — which is what the person's
+ * bubble had been doing, one element at a time, as somebody noticed each one.
+ */
+describe('markdown paint', () => {
+  /**
+   * A person's bubble paints its own fill, so it re-points the whole group.
+   *
+   * Half of it is the failure worth guarding: `.markdown-inline-code` took its
+   * chip from the neutral ramp while the bubble had already forced the ink to
+   * near-white, and a `/goal` in a message was a light pill with nothing
+   * legible inside it. A role added to the group later inherits that bug on
+   * every filled bubble unless it is re-pointed too, and the day it lands is
+   * the cheap day to notice — so the two sets are compared rather than the
+   * individual values, which are the bubble's to tune.
+   */
+  it('re-points every markdown paint inside a filled bubble', () => {
+    const names = (selector: string): string[] => [
+      ...(rule(selector) ?? '').matchAll(/(--markdown-[a-z-]+)\s*:/gu),
+    ].map((match) => match[1]!).sort();
+
+    const group = names('.markdown-body');
+    expect(group.length).toBeGreaterThan(0);
+    expect(names('.human-message-bubble .markdown-body')).toEqual(group);
+  });
+
+  /**
+   * The half the name comparison above cannot see: that an element rule reads
+   * the group at all.
+   *
+   * Comparing declared names says nothing about what the elements consume, so
+   * reverting `.markdown-inline-code` to `background: var(--av-ref-color-neutral-4)`
+   * — the literal bug this change exists to fix — passes every other test in
+   * this file. What makes a paint follow its surface is naming a `--markdown-*`
+   * property, and that is what this scans for.
+   *
+   * The exemptions are the two kinds of paint that deliberately do not follow a
+   * surface, and each has to be argued rather than added: the fenced block,
+   * which takes the whole group back to the appearance because its highlighter
+   * and its diagrams are resolved from the root, and a failure notice, whose
+   * colour is a meaning rather than a shade. Anything else reaching for an
+   * `--av-*` colour inside this group is the bug coming back.
+   */
+  it('paints every markdown element through the group, not from a token', () => {
+    const EXEMPT = [
+      // Re-points the group back to the appearance, which is the whole point of
+      // it; `markdown-rendering.md` holds the argument.
+      '.markdown-body .markdown-code-block',
+      // `danger-soft` is what "this did not render" means, on any surface.
+      '.markdown-mermaid-error',
+    ];
+    // A citation card and a mention chip are components that happen to be
+    // rendered inside a markdown body, not markdown elements: they carry their
+    // own semantic paint wherever they appear, and the chip already has the
+    // `currentColor` rule a filled bubble needs.
+    const COMPONENT = /\.(citation|mention|connector)-/u;
+    const MARKDOWN = /^(\.markdown-body\b|\.markdown-(inline-code|code-block|code-language|table-scroll)\b)/u;
+
+    const offenders = preludes()
+      .filter((prelude) => prelude.split(',').some((selector) => MARKDOWN.test(selector.trim())))
+      .filter((prelude) => !EXEMPT.some((exempt) => prelude.startsWith(exempt)))
+      .filter((prelude) => !COMPONENT.test(prelude))
+      .filter((prelude) => {
+        const declarations = (rule(prelude) ?? '')
+          .split(';')
+          .filter((declaration) => /(?:^|\s)(?:color|background|background-color|border[a-z-]*color|accent-color|fill)\s*:/u.test(declaration));
+        return declarations.some((declaration) => /var\(--av-[a-z0-9-]*color/u.test(declaration));
+      });
+
+    expect(offenders).toEqual([]);
   });
 });
 

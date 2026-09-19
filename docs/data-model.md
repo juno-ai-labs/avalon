@@ -150,6 +150,10 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   owner/admin/member administrative role. A guest's role is null. Incarnation
   identifies one membership lifetime; revision orders admission changes within
   it. Promotion changes the existing row without replacing its user or sessions.
+  One row per person per workspace, so a workspace may hold any number of
+  administrators; [`workspace-member-roles.md`](workspace-member-roles.md) owns
+  what each role means, the one write that assigns one, why a guest has none,
+  and the guard against demoting a workspace's last administrator.
 
 - WorkspaceDO's `scope_grant_directory` is a typed-RPC-only candidate projection
   keyed by parent, user and exact scope. It retains generation/version tombstones
@@ -609,12 +613,21 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - Terminal's work-stream-specific durable rows are object-local.
   `terminal_workspace` owns one generation, authority fingerprint, provider
   reconciliation identity, exclusive operation lease, lifecycle deadlines, and
-  final-diff pointer per work stream. `terminal_tasks` binds one command to one
+  final-diff pointer per conversation: the main conversation's sandbox is the
+  work stream's, a side thread has its own, and a background agent uses the
+  one of the conversation that started it, with `operation_run_substream_id`
+  naming the holder's conversation while a run from elsewhere holds the lease
+  (conversation schema 63). `terminal_tasks` binds one command to one
   harness tool receipt and retains only command hash, terminal state, exit,
   termination reason, byte counts, and bounded head/tail plus an optional full-log
-  resource. `terminal_imported_resources` records planned and completed imports
+  resource; since conversation schema 65 it no longer keys the run and the
+  receipt to this object's own tables, because a background agent's command
+  records its task in its owner's object while its run and receipt stay in its
+  own, named by `run_substream_id`. `terminal_imported_resources` records planned and completed imports
   per generation, destination, source hash, and byte size so a retry never trusts
-  pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
+  pre-existing sandbox bytes, and since conversation schema 64 the conversation
+  whose attachment authorized the import when that is not the row's own
+  (`attached_substream_id`). `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
   own the revision-fenced preview/confirm/read-back protocol.
   `terminal_repository` stores the immutable numeric GitHub
   repository ID, canonical name, selected base/ref/SHA, fixed head ref, durable
@@ -787,7 +800,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 - `resource_watches` records explicit direct relationships.
 
-- `audit_events` records security- and side-effect-relevant actions without copying
+- `audit_events` in the independent `AUDIT_DB` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
 ### Demo workspaces and object retirement
@@ -1067,6 +1080,18 @@ Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, a
 sessions bound by registration establish delivery eligibility. Receipts identify
 one workspace intent and device. Notification content remains in WorkspaceDO,
 read through typed RPC. See [Apple push](push-notifications.md).
+
+## Observational databases
+
+The regional Worker binds `TELEMETRY_DB` and `AUDIT_DB` separately from identity
+`DB`. `packages/db/telemetry-migrations` owns `telemetry_accepted_events`,
+`telemetry_delivery_receipts`, and `telemetry_replay_audit`;
+`packages/db/audit-migrations` owns `audit_events`. Their user, workspace, and
+workstream IDs have no cross-database foreign keys. Audit writes are best-effort
+background work using the existing runtime deferral. See [telemetry](telemetry.md#storage-and-background-writes)
+for the fresh cutover and delivery behavior. Regional migration `0113_drop_legacy_observability_tables.sql` drops the four
+inactive legacy tables after deploying the Worker that no longer reaps them.
+The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 

@@ -53,7 +53,7 @@ export function ConversationHeader({
   // A null draft means the heading is displayed; any string means the inline
   // editor is open, so there is one source of truth for both.
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
-  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameFailed, setRenameFailed] = useState(false);
   const [renaming, setRenaming] = useState(false);
   // The route keeps this component mounted across work streams, so an open
   // editor would otherwise carry the previous stream's draft into the next one.
@@ -66,7 +66,7 @@ export function ConversationHeader({
   }
   useEffect(() => {
     setRenameDraft(null);
-    setRenameError(null);
+    setRenameFailed(false);
     setRenaming(false);
   }, [conversationKey]);
   // Closing the editor unmounts the field, which would leave focus on the body
@@ -93,12 +93,12 @@ export function ConversationHeader({
   const renameHintId = useId();
   const startRename = (): void => {
     setRenameDraft(workstream.title);
-    setRenameError(null);
+    setRenameFailed(false);
   };
   const cancelRename = (): void => {
     returnFocusToTitle.current = true;
     setRenameDraft(null);
-    setRenameError(null);
+    setRenameFailed(false);
   };
   const submitRename = async (): Promise<void> => {
     const title = renameDraft?.trim() ?? '';
@@ -115,15 +115,15 @@ export function ConversationHeader({
     // since opened on it.
     const submittedFor = shownWorkstreamId.current;
     setRenaming(true);
-    setRenameError(null);
+    setRenameFailed(false);
     try {
       await onRename(title);
       if (shownWorkstreamId.current !== submittedFor) return;
       returnFocusToTitle.current = true;
       setRenameDraft(null);
-    } catch (error) {
+    } catch {
       if (shownWorkstreamId.current !== submittedFor) return;
-      setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
+      setRenameFailed(true);
     } finally {
       if (shownWorkstreamId.current === submittedFor) setRenaming(false);
     }
@@ -185,7 +185,7 @@ export function ConversationHeader({
           setRenameDraft(event.currentTarget.value);
           // The reason for a failed save stands in for the status
           // line, so it cannot outlive the draft that caused it.
-          setRenameError(null);
+          setRenameFailed(false);
         }}
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={(event) => {
@@ -232,7 +232,7 @@ export function ConversationHeader({
           <div className="grokbot-conversation-title">
               {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change work-stream icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
               {titleContent}
-              {renameError && <InlineError>{renameError}</InlineError>}
+              {renameFailed && <InlineError>That work stream couldn’t be renamed. Try again.</InlineError>}
           </div>
         )}
         <div className="grokbot-header-actions window-no-drag">
@@ -294,8 +294,8 @@ export function ConversationHeader({
             {workstream.scope === 'personal' && <Badge className="badge-private"><Lock aria-hidden="true" size={9} /> Private</Badge>}
           </div>
           <div className="workstream-subtitle">
-            {renameError ? (
-              <InlineError>{renameError}</InlineError>
+            {renameFailed ? (
+              <InlineError>That work stream couldn’t be renamed. Try again.</InlineError>
             ) : (
               <>
                 <StatusDot status={harnessMarkerStatus(workstream.harnessStatus)} />

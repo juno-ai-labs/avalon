@@ -8,12 +8,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   TERMINAL_SNAPSHOT_PROBES,
+  TERMINAL_SNAPSHOT_RESOURCES,
   terminalBaselineHostAcceptanceCommand,
   terminalManagedSnapshotBootstrapCommand,
   terminalPackageManagerAcceptanceCommand,
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
+  TERMINAL_PYDANTIC_REQUIREMENT,
+  TERMINAL_SNAPSHOT_PYLIB,
 } from "../src/services/terminal/snapshot-manifest";
 
 describe("Terminal snapshot manifest", () => {
@@ -76,6 +79,17 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("AVALON_BOOTSTRAP_INSTALLED=");
     expect(command).not.toContain("python3 -c");
     expect(command).not.toContain("gh --version");
+  });
+
+  it("bakes the patch applier's pinned pydantic into the snapshot behind a directory check", () => {
+    // `runtime.ts` installs the same pin into a sandbox whose snapshot lacks
+    // it, so the two cannot drift; the check is a directory, not an
+    // interpreter, because the bootstrap carries no probes.
+    const command = terminalManagedSnapshotBootstrapCommand();
+    expect(TERMINAL_PYDANTIC_REQUIREMENT).toMatch(/^pydantic==\d+\.\d+\.\d+$/u);
+    expect(command).toContain(`--target ${TERMINAL_SNAPSHOT_PYLIB} '${TERMINAL_PYDANTIC_REQUIREMENT}'`);
+    expect(command).toContain(`if [ ! -d ${TERMINAL_SNAPSHOT_PYLIB}/pydantic ]`);
+    expect(command).toContain(`install -d -o "$(id -u)" -g "$(id -g)" -m 755 ${TERMINAL_SNAPSHOT_PYLIB}`);
   });
 
   it("installs both Node capabilities in a single npm invocation", () => {
@@ -232,5 +246,13 @@ describe("Terminal snapshot manifest", () => {
       "registry.npmjs.org",
     ]) expect(command).toContain(host);
     expect(command).toContain('GIT_SSL_CAINFO="$CURL_CA_BUNDLE" git ls-remote');
+  });
+
+  it("builds every sandbox at the size the team set", () => {
+    // Pinned as a literal rather than read from the constant: this is the team's
+    // number, and the only thing that should be able to change it is a diff a
+    // reviewer sees. Everything else in this file derives its expectations from
+    // the constant, so a manifest edited to 2 / 4 / 7 would otherwise go green.
+    expect(TERMINAL_SNAPSHOT_RESOURCES).toEqual({ cpu: 2, memory: 4, disk: 8 });
   });
 });
