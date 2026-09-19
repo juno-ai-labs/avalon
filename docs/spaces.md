@@ -812,8 +812,21 @@ A Space lives in the same configured deployment as its Organization and its
 Channels. Its id, membership, projections, grants, resources and Sidekicks do
 not cross the regional boundary, and the Global identity service routes an
 Organization before any `SpaceDO` is addressed. No global Space index and no
-cross-region Space exists. The only external read on a Space path is the
-same-region D1 membership and access-class check.
+cross-region Space exists. Every external hop a Space path makes is to the same
+region's D1:
+
+- **The membership and access-class check**, on every Space write RPC — the one
+  read every Space path makes, and on most of them the only one.
+- **Two `workstream_authority_control` reads and one `workstream_authority_routes`
+  write**, when `ensureGeneral` finds no General and provisions the Space's own
+  object: `bootstrapWorkstreamRuntimeEnvironment` reads the authority control row
+  and writes the route anchor batch, and `provisionSpaceObject` reads the control
+  row again for the generation it fences `reserveChild` with. This is the
+  fallback path — `openGeneralSpaceForNewWorkspace` is meant to have run when the
+  Organization opened — so it is not on an ordinary creation.
+- **A second `workspace_members` read** in the cutover driver, which has no
+  session and reads the Organization's owner or administrator in order to act as
+  somebody.
 
 ## Security and trust model
 
