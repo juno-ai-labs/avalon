@@ -114,6 +114,8 @@ export const SpaceAccessRetractionSchema = z.strictObject({
   seatUserIds: z.array(UserIdSchema),
   removeUserIds: z.array(UserIdSchema),
 });
+export type SpaceAccessRetraction = z.infer<typeof SpaceAccessRetractionSchema>;
+export type SpaceAccessApplication = z.infer<typeof SpaceAccessApplicationSchema>;
 export const RetractSpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), plan: SpaceAccessRetractionSchema }),
   z.strictObject({ ok: z.literal(false), code: SpaceErrorCodeSchema }),
