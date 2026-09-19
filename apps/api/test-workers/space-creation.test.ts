@@ -169,6 +169,71 @@ describe("a Channel created without a Space", () => {
   });
 });
 
+describe("a settled placement", () => {
+  it("leaves no intent-resume wake behind it", async () => {
+    // Close the cutover first, the way the path that opens a new Organization
+    // does. A `pending` one is a derived alarm candidate due at the epoch —
+    // that is how the fleet migration starts with nobody signed in — so
+    // without this the assertions below would be measuring the cutover.
+    await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+
+    // A Channel and a Space it is not in yet, so the pair of calls below is
+    // the same pair every creation makes for its General placement, driven on
+    // its own rather than inside a creation whose other steps re-derive the
+    // alarm for their own reasons and hide what this one left.
+    const created = await createChannel("settled-placement");
+    const reserved = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      space: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+    });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    const spaceId = asSpaceId(reserved.space.id);
+    const workstreamId = asWorkstreamId(created.workstream.id);
+    await runInDurableObject(workspace(), async (_instance, state) => state.storage.deleteAlarm());
+
+    const plan = await workspace().prepareSpaceMembership({
+      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId, workstreamId,
+    });
+    if (!plan.ok) throw new Error(`prepareSpaceMembership refused: ${plan.code}`);
+    const operationId = `${spaceId}:${workstreamId}:${plan.membershipGeneration}`;
+
+    // The premise: staging the intent arms the object at exactly the instant
+    // written on the row, because the resume is what that wake is for.
+    const staged = await runInDurableObject(workspace(), async (_instance, state) => ({
+      armed: await state.storage.getAlarm(),
+      intent: state.storage.sql.exec<{ state: string; not_before: number }>(
+        "SELECT state, not_before FROM space_intents WHERE operation_id = ?", operationId,
+      ).one(),
+    }));
+    expect(staged.intent.state).toBe("pending");
+    expect(staged.armed).toBe(staged.intent.not_before);
+
+    const settled = await workspace().finalizeSpaceMembership({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      spaceId,
+      workstreamId,
+      spaceRevision: plan.space.revision,
+      membershipGeneration: plan.membershipGeneration,
+    });
+    if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
+
+    // And settling has to take it back. `armNextAlarm` is an exact re-derive
+    // rather than a lowering, so only running it again drops a wake whose
+    // reason has gone; skipping it when this settlement staged no default of
+    // its own left every placement with a wake that finds nothing due.
+    const after = await runInDurableObject(workspace(), async (_instance, state) => ({
+      armed: await state.storage.getAlarm(),
+      intent: state.storage.sql.exec<{ state: string }>(
+        "SELECT state FROM space_intents WHERE operation_id = ?", operationId,
+      ).one(),
+    }));
+    expect(after.intent.state).toBe("settled");
+    expect(after.armed).not.toBe(staged.intent.not_before);
+  });
+});
+
 describe("a creation whose membership cannot settle", () => {
   it("publishes no directory row and leaves no placement behind", async () => {
     // One placement first, so General exists and the failure below is about
