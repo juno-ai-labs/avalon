@@ -162,13 +162,13 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   apply_patch: {
     name: "apply_patch",
-    description: "Apply one context-bearing multi-file UTF-8 patch after inspecting the affected files. All paths and hunks are validated before any file changes; at most 100 files and 2 MiB of patch text.",
+    description: "Apply one multi-file UTF-8 patch after inspecting the affected files. Two formats are accepted: a unified diff, or a `*** Begin Patch` ... `*** End Patch` patch with `*** Add File:`, `*** Update File:` and `*** Delete File:` sections. All paths and hunks are validated before any file changes; at most 100 files and 2 MiB of patch text.",
     capability: "terminal.file.write",
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
-      patch: { type: "string", minLength: 1, maxLength: 2 * 1_048_576, description: "Unified patch text for at most 100 files." },
+      patch: { type: "string", minLength: 1, maxLength: 2 * 1_048_576, description: "Patch text for at most 100 files: a unified diff, or a patch that opens with `*** Begin Patch` and ends with `*** End Patch`." },
     }, ["patch"]),
   },
   run_command: {

@@ -15,6 +15,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-work-stream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
+| `apps/api/src/services/terminal/patch-format.ts`, `vendor/apply_patch.py` | The two patch texts `apply_patch` reads: the unified-diff and `*** Begin Patch` parsers that validate paths and shape the result, and OpenAI's reference applier for the second, vendored unmodified (MIT; provenance in `vendor/README.md`) and written into the sandbox beside a patch that needs it. |
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
 | `apps/api/src/services/terminal/instruction-files.ts`, `instructions.ts` | Discovery of a checkout's own `AGENTS.md` files: the candidate chain, the probe a sandbox command carries, and the glue that records what it found in the context-residency ledger ([`resident-context.md`](resident-context.md)). |
 | `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared work-stream branch, optional typed publisher, and work-stream state API. |
@@ -79,6 +80,20 @@ Model-facing revisions are also absent. Exact-match edits and context-bearing
 patches provide useful drift detection without forcing a medium model to manage
 content versions, while the coordinator keeps exclusive mutation locking and
 internal hashes.
+
+`apply_patch` reads two formats, and the first non-blank line decides. A
+unified diff is applied by `git apply` after a dry run. A patch that opens
+with `*** Begin Patch` is the format OpenAI's models emit for a tool of this
+name: `*** Add File:`, `*** Update File:` (optionally followed by
+`*** Move to:`) and `*** Delete File:` sections whose hunks carry no line
+numbers and are placed by their context lines, with whitespace tolerance. That
+one is applied by OpenAI's reference implementation, vendored unmodified under
+`services/terminal/vendor/` and written into the sandbox beside the patch for
+that call. Every path the patch names is contained in its own right before the
+applier runs, because it follows symlinks. The applier needs `pydantic`; the
+first such call in a sandbox installs it from PyPI into `/workspace/.rally/pylib`,
+which the trusted-only baseline permits, and a sandbox that cannot refuses with
+`patch_tooling_unavailable` rather than failing later.
 
 Participant-authored `run_command` calls are non-interactive foreground Bash.
 The provider runs each such command in a named process session under GNU
@@ -452,7 +467,7 @@ network proxy, or a general GitHub administration surface.
   lifecycle, and policy failures remain durable and retryable; policy read-back
   mismatch leaves verification failed rather than claiming the new policy.
 - Files are UTF-8 regular files and at most 10 MiB. Reads return at most 1,000
-  lines and 256 KiB. A patch is at most 2 MiB and 100 files.
+  lines and 256 KiB. A patch is at most 2 MiB and 100 files, in either format.
 - An instruction file's delivered content and a kind's prompt section are
   bounded by two limits that are open placeholders until the team sets them;
   [`resident-context.md`](resident-context.md#failure-modes-and-limits) owns
@@ -816,9 +831,20 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-09-19 — A mutation no longer waits for its instructions
+### 2026-09-19 — A mutation no longer waits for its instructions, and `apply_patch` takes the model's own format
 
-**What changed:** The instruction-file probe rides only the two reads: the
+**What changed:** Two things, from one analysis of a production run.
+
+`apply_patch` accepts the `*** Begin Patch` format beside a unified diff. The
+first non-blank line decides; `patch-format.ts` holds both parsers, and the
+envelope is applied by OpenAI's reference `apply_patch.py`, vendored byte for
+byte under `vendor/` (MIT, provenance and hash in its README, the hash pinned
+by a test) and written into the sandbox beside the patch. The applier's one
+dependency, `pydantic`, is installed from PyPI into `/workspace/.rally/pylib`
+on the first such call in a sandbox. The Worker bundles gained a Text-module
+rule for `.py` imports and the Node test run a matching Vite plugin.
+
+The instruction-file probe rides only the two reads: the
 `read_file` page read and the read an `edit_file` starts with. It reports what
 it finds and the instructions arrive with that batch. `write_file`,
 `apply_patch`, `run_command` and `import_resource` carry no probe and pay no
@@ -828,7 +854,15 @@ operation, and the system message's sentence about a refused mutation are
 gone. This reverses the gate half of the 2026-09-09 entry below; discovery,
 recording, delivery and the bootstrap's root probe are unchanged.
 
-**Why:** The gate fired on the first action of nearly every fresh agent,
+**Why:** In the same run, GPT-5.6 answered a tool named `apply_patch` with
+the format it was trained on, was refused, then wrote two unified diffs from
+memory whose context no longer matched, and fell back to `edit_file`. The
+model's format has no line numbers and matches on context, which is the more
+forgiving of exactly that mistake, so accepting it fixes both failure modes,
+and the reference applier is the one implementation the training distribution
+was built against; a re-implementation in this repository would drift from it.
+
+The gate fired on the first action of nearly every fresh agent,
 because that action is a mutation more often than not: a `run_command` used
 for discovery, a `write_file`, an import. In the "Avalon scroll gradients"
 substream of 2026-09-18 both the parent and its background agent paid it, and
@@ -837,7 +871,15 @@ sandbox boot. The decision on 2026-09-19 was that a repository's instructions
 load as a side effect of reading, and that a mutation is never refused for
 them.
 
-**Considered and rejected:** Keeping a report-mode probe on mutations, so a
+**Considered and rejected:** Renaming the tool to escape the model's prior:
+the prior is also for the format, and the name is the one the 2026-09-18 entry
+chose deliberately. Re-implementing the applier in TypeScript: smaller to ship
+than a vendored script plus a Python dependency, but every divergence from the
+reference would be a patch the model wrote correctly and Rally rejected.
+Embedding the script as a TypeScript string like the two probe scripts: it
+would no longer be the file as shipped, which is the whole point of vendoring.
+
+Keeping a report-mode probe on mutations, so a
 write beneath an unread file still delivers the file one batch later. The two
 tools that cannot carry the fragment would still pay a probe command each, and
 the read that precedes an edit already delivers the same files. Injecting the
@@ -845,7 +887,15 @@ root file at sandbox acquisition instead of on the first read: cheaper still
 for the root, but it does not reach a nested `AGENTS.md`, and the read path
 covers both.
 
-**Consequences:** A whole-file write, a patch, a command or an import beneath
+**Consequences:** A `.py` file under `apps/api/src` is now text to the
+bundler and to Vitest; a script that should run in the Worker must not take
+that extension. The first envelope patch in a fresh sandbox pays a PyPI
+install inside the command's 60-second budget, so a slow network can turn it
+into a timeout the retry survives. Updating the vendored script means updating
+the hash and re-checking the stdin, `Done!` and exit-0 contract the runtime
+reads.
+
+A whole-file write, a patch, a command or an import beneath
 a file no read has touched proceeds without its instructions; the next read
 delivers them. The Terminal prompt's rule to read a file before editing it is
 now what puts a file's instructions in context before the edit, so weakening

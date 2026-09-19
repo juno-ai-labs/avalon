@@ -24,6 +24,7 @@ import {
   type TerminalResourceBridge,
 } from "../src/services/terminal/runtime";
 import { createTerminalInstructionFiles, type TerminalInstructionFiles } from "../src/services/terminal/instructions";
+import { APPLY_PATCH_SCRIPT } from "../src/services/terminal/patch-format";
 import { WorkstreamResidentContextStorage } from "../src/durable-objects/workstream-resident-context-storage";
 import { createResidentContextPortFactory } from "../src/runtime/resident-context-port";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -639,6 +640,64 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining("git apply --check"),
     }));
+  });
+
+  it("applies a *** Begin Patch envelope with the vendored reference applier written beside the patch", async () => {
+    const { provider, runtime, files } = fixture();
+    const original = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
+    const commands: string[] = [];
+    let outcome = { exitCode: 0, stdout: "Done!\n", stderr: "" };
+    vi.mocked(provider.runUtilityCommand).mockImplementation(async (id, input) => {
+      if (input.operation === "file.apply_patch" && input.command.includes(".apply_patch.py")) {
+        commands.push(input.command);
+        return outcome;
+      }
+      return original(id, input);
+    });
+    const patch = [
+      "",
+      "*** Begin Patch",
+      "*** Update File: src/file.txt",
+      "@@",
+      "-hello",
+      "+bye",
+      "*** Add File: docs/new.txt",
+      "+first",
+      "+second",
+      "*** End Patch",
+      "",
+    ].join("\n");
+    await expect(runtime.applyPatch(context, patch)).resolves.toEqual({
+      files: [
+        { path: "src/file.txt", operation: "edited", additions: 1, deletions: 1 },
+        { path: "docs/new.txt", operation: "created", additions: 2, deletions: 0 },
+      ],
+      additions: 3,
+      deletions: 1,
+    });
+    // The applier travels with the patch: the vendored text, unmodified, and
+    // the patch without the blank line the model put before its envelope.
+    const script = [...files.keys()].find((path) => path.endsWith(".apply_patch.py"))!;
+    const written = [...files.keys()].find((path) => path.endsWith(".patch"))!;
+    expect(new TextDecoder().decode(files.get(script))).toBe(APPLY_PATCH_SCRIPT);
+    expect(new TextDecoder().decode(files.get(written))).toBe(patch.slice(1));
+    expect(commands[0]).toContain(`python3 '${script}' < '${written}'`);
+    expect(commands[0]).toContain("import pydantic");
+    expect(commands[0]).not.toContain("git apply");
+    // Every path the patch names is contained before the applier runs.
+    expect(commands[0]).toContain("target='/workspace/src/file.txt'");
+    expect(commands[0]).toContain("target='/workspace/docs/new.txt'");
+    // The applier reports a rejected hunk on stdout and still exits 0, so
+    // `Done!` is the only success; the reason's first line names the class.
+    outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied (Invalid Context 0:). Re-read the affected files, regenerate the patch from their current contents, and retry.",
+    });
+    outcome = { exitCode: 53, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "patch_tooling_unavailable" });
+    outcome = { exitCode: 43, stdout: "", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({ code: "path_outside_root" });
   });
 
   it("refuses every write path before it touches the provider at all", async () => {
