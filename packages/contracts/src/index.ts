@@ -22,6 +22,7 @@ import {
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
 import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import { SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -621,6 +622,22 @@ export const WorkstreamSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
   participantExtraCount: z.number().int().nonnegative().default(0),
+  /**
+   * Every Space this Channel currently sits in.
+   *
+   * A Channel belongs to at least one Space and may belong to several; each is
+   * a *placement* of this same row rather than a copy of it, so a sidebar
+   * renders one entry per id and all of them open the same Channel.
+   *
+   * Uncapped, deliberately. The ids are the Channel's own memberships rather
+   * than a fan-out over the Organization — a Channel is in as many Spaces as
+   * somebody put it in — and truncating the list would make a placement
+   * disappear from one of the Spaces that actually holds it.
+   *
+   * Defaulted because a payload written before Spaces existed describes a
+   * Channel from the flat directory they replace.
+   */
+  spaceIds: z.array(SpaceIdSchema).default([]),
 });
 
 export const ExternalActorSchema = z.object({
@@ -2269,6 +2286,25 @@ export const WorkspaceSidebarSchema = z.strictObject({
   }),
   /** Optional during the rolling deployment; current servers always send it. */
   projects: ProjectSnapshotSchema.optional(),
+  /**
+   * Both Space directories at one waterline, for this viewer.
+   *
+   * Optional for the same reason `projects` is: a client reading a payload
+   * from a server that predates it treats the hierarchy as absent rather than
+   * failing the connect.
+   */
+  spaces: SpaceSnapshotSchema.optional(),
+  /**
+   * False while the Organization has not finished creating General and placing
+   * every Channel in it.
+   *
+   * The client shows the Organization-opening state rather than a hierarchy
+   * that is half built — a Channel with no Space, or a Space directory missing
+   * General, is not a state any surface is allowed to render. Optional and
+   * read as `true` when absent, so a payload from a server without the cutover
+   * is not permanently stuck opening.
+   */
+  spacesReady: z.boolean().optional(),
 });
 
 /**
@@ -2403,6 +2439,23 @@ export const WorkspaceProjectSnapshotEventSchema = z.strictObject({
   projects: ProjectSnapshotSchema,
 });
 
+/**
+ * The viewer's complete active and inactive Space state after a Space write.
+ *
+ * The Project snapshot's shape, and for the same reasons: WorkspaceDO owns both
+ * lists and their shared waterline, personal-Space visibility and ordering are
+ * per viewer, and absence is the tombstone when somebody stops being a
+ * participant. `spacesReady` travels with it because a write can be the write
+ * that finishes the cutover, and a client holding `false` would otherwise keep
+ * showing the opening state until it reconnected.
+ */
+export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
+  type: z.literal("workspace_space_snapshot"),
+  occurredAt: TimestampSchema,
+  spaces: SpaceSnapshotSchema,
+  spacesReady: z.boolean(),
+});
+
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
 export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
   type: z.literal("workspace_workstream_state"),
@@ -2499,6 +2552,7 @@ export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPag
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceProjectSnapshotEvent = z.infer<typeof WorkspaceProjectSnapshotEventSchema>;
+export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

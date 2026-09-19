@@ -64,6 +64,7 @@ const detail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
+  spaceIds: [],
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],
   resources: [],
