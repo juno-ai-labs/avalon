@@ -760,9 +760,11 @@ a new Organization does, and disarms what construction already armed.
 `scheduled-alarms.test.ts` and `workspace-resources-inventory.test.ts` both do,
 the second because that handler's resource sweep would otherwise reap the drafts
 its cases are about. In the Node suite the equivalent is
-`test/helpers/space-creation-rpcs.ts`: the three WorkspaceDO RPCs and two room
+`test/helpers/space-creation-rpcs.ts`: the three WorkspaceDO RPCs and the room
 RPCs a create now passes through, doubled in their steady case for a file whose
-subject is Slack assignment or origin attachment.
+subject is Slack assignment or origin attachment. It doubles both shapes of the
+provenance call, because an ordinary create takes one — `applySpaceAccessSource`
+in its birth mode — and the connector placement beside it still takes two.
 
 The service tests double the object stubs rather than the namespaces, and they
 are not where a fence is proved. A fence is a property of real storage; what the
@@ -1338,9 +1340,18 @@ check that makes a sixth kind fail to compile instead of being abandoned by name
 in production. An intent that can never settle republishes on the alarm's
 backoff cap forever, one dead-letter message per cycle: what that costs, and
 what deciding a ceiling would need, is in "Numbers handed to the team" above.
-The latency audit's three remaining suggestions — collapsing the creation's
-provenance apply and confirm into one RPC, deferring the Slack path's inline
-placement, and the replay path using the full `addChannel` — are decisions for
-the team and were deliberately not taken here.
+The latency audit left three suggestions. The first was taken: the creation's
+provenance apply and confirm are one call, because the split exists to bracket
+the caller's canonical operations and a Channel born into a Space has none —
+`initialize` wrote that audience already, so the second hop was a same-object
+round trip per Space with nothing in between. It is one *mode* on the existing
+RPC rather than a second RPC, sharing the commit body so the revision fence and
+the direct-scope seeding cannot drift, and the mode is part of the receipt's
+request fence so a redelivery under the other one is refused rather than
+converging on the wrong answer;
+[`workstream-durable-object.md`](workstream-durable-object.md) owns it. The
+other two — deferring the Slack path's inline placement, and the replay path
+using the full `addChannel` — are decisions for the team and were deliberately
+not taken here.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.

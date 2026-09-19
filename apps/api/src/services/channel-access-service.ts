@@ -349,10 +349,16 @@ export class ChannelAccessService {
    * So `born` is the Channel as it was *before* this source: the requested
    * audience for the first Space, and the running union for each one after it.
    * The plan computed against it names exactly the readers this Space added,
-   * and the confirmation commits them. Applying nothing is the point — the
+   * and the same call commits them. Applying nothing is the point — the
    * canonical operations already ran, inside `initialize` — which is why this
    * is here rather than in the coordinator: the seam stays the only writer of a
    * Channel's access provenance.
+   *
+   * **It is also why this is one round trip where every other caller takes
+   * two.** The split exists to bracket the canonical operations that seat the
+   * plan, and there are none here, so `bornWithSourceApplied` has the object
+   * plan and commit in one transaction instead of charging every Channel
+   * creation a second same-object hop per Space.
    *
    * Returns the Channel as the next source will observe it.
    */
@@ -372,22 +378,9 @@ export class ChannelAccessService {
       membershipGeneration: source.membershipGeneration,
       operationId: source.operationId,
       channel: born,
+      bornWithSourceApplied: true,
     });
     if (!applied.ok) throw spaceAccessError(applied.code, channelTitle);
-    const confirmed = await room.confirmSpaceAccessSource({
-      ...this.address(workstreamId),
-      spaceId: source.spaceId,
-      operationId: uuidV7(),
-      seatedUserIds: applied.plan.seatUserIds,
-      source: {
-        scope: source.scope,
-        participantUserIds: [...source.participantUserIds],
-        spaceRevision: source.spaceRevision,
-        membershipGeneration: source.membershipGeneration,
-        channel: born,
-      },
-    });
-    if (!confirmed.ok) throw spaceAccessError(confirmed.code, channelTitle);
     const next = effectiveChannelAudience({
       direct: { scope: born.readers.scope, participantUserIds: born.participantUserIds },
       sources: [{
