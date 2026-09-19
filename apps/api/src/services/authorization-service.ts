@@ -166,17 +166,6 @@ class AuthorizationBatch {
   private async conversation(subject: AuthorizationSubject, resource: Extract<AuthorizationResource, { kind: 'conversation' }>): Promise<AuthorizationDecision> {
     if (!subject.userId) return { status: 'denied', reason: 'outside_delegation', evidence: [] };
     const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId, substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId) };
-    // A Space is not in the authorization universe. Its hidden main
-    // conversation holds the Space's participants and resources and is never a
-    // product surface — no feed, no transcript, no search result — so the
-    // answer is `not_found` by name rather than a read of `SPACE_DOS`. Deciding
-    // it here is also what keeps a Space id from being *named* in the Channel
-    // and Sidekick namespaces on its way to the same answer, which materialises
-    // two empty Durable Objects per check.
-    if (resource.parentKind === 'space') {
-      return { status: 'not_found', resource,
-        evidence: [{ owner: resource.parentId, revision: 'space', validatedAt: Date.now() }] };
-    }
     const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
       // Through the one dispatch point, so the namespace a parent kind resolves
       // to is decided in exactly one place in the tree.
