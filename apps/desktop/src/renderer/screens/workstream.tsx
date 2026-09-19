@@ -19,7 +19,7 @@ import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal } from '../components/primitives';
 
-import { moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
+import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { applyContainerOrder } from '../lib/sidebar-list-store';
 import { usePersonalOrder } from '../lib/use-space-directories';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
@@ -171,9 +171,14 @@ export function WorkstreamScreen(): React.JSX.Element {
    * cannot see a Channel's children, so it stores what it is given and this is
    * where an id that names nothing stops.
    */
+  const storedBreakoutIds: string[] = namedChildren === undefined ? [] : orderByStoredIds(
+    namedChildren,
+    storedOrderFor(ordering, { kind: 'channel', id }),
+    (child) => child.substreamId,
+  ).map((child) => child.substreamId);
   const railChildren = namedChildren === undefined ? undefined : orderByStoredIds(
     namedChildren,
-    breakoutOrder ?? storedOrderFor(ordering, { kind: 'channel', id }),
+    breakoutOrder ?? storedBreakoutIds,
     (child) => child.substreamId,
   );
   const railChildIds: string[] = railChildren?.map((child) => child.substreamId) ?? [];
@@ -567,12 +572,15 @@ export function WorkstreamScreen(): React.JSX.Element {
               // Escape, or a release outside the rail, leaves `dropEffect` at
               // `none` — and the arrangement built while the pointer crossed
               // the other rows must be abandoned rather than saved, or backing
-              // out of a drag becomes the same thing as finishing it.
-              if (cancelled || arranged.join() === railChildIds.join()) {
+              // out of a drag becomes the same thing as finishing it. The
+              // comparison is against `storedBreakoutIds`, never `railChildIds`
+              // — the latter *is* the arrangement this drag is building.
+              const committed = committedOrder(arranged, storedBreakoutIds, cancelled);
+              if (committed === null) {
                 setBreakoutOrder(null);
                 return;
               }
-              void commitBreakoutOrder(arranged);
+              void commitBreakoutOrder(committed);
             },
             onMove: (substreamId: string, direction: -1 | 1) => {
               const from = railChildIds.indexOf(substreamId);
