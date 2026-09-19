@@ -419,8 +419,7 @@
       "$type": "color"
     },
     "sys.color.scrim.veil": {
-      "$type": "color",
-      "$description": "`scrim.solid` at half opacity: the lightbox wash, which shows the window behind it rather than covering it."
+      "$type": "color"
     },
     "sys.color.focus.default": {
       "$type": "color"

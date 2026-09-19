@@ -1517,12 +1517,8 @@ describe('attachment lightbox', () => {
     expect(text).toContain('font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;');
   });
 
-  /*
-    The wash and the blur only work as a pair. `scrim.solid` is 0.98 in both
-    appearances, so for as long as the overlay took it the window behind was
-    hidden outright and the blur under it drew nothing — which is why a blur
-    radius sat there at 1px, doing nothing, without anyone noticing.
-  */
+  // The wash and the blur are one decision: behind an opaque wash a blur draws
+  // nothing, which is how a 1px radius sat here unnoticed.
   it('shows the window behind it through a half-strength wash, blurred', () => {
     const overlay = rule('.attachment-lightbox-overlay');
 
@@ -1532,17 +1528,54 @@ describe('attachment lightbox', () => {
   });
 
   /*
-    Asserting the base rule is not enough: a reduced-motion block cancelled this
-    blur for as long as the wash was opaque, where cancelling it changed nothing
-    anyone could see. Against a half-strength wash the same override hands that
-    reader a sharp, legible window through a veil — the one thing the wash and
-    the blur exist together to prevent. Nothing may take the blur back off,
-    under any query.
+    Sharp and see-through at once is the one state neither preference asks for,
+    and it is what a reduced-motion block produced here until this change
+    removed it. The blur may be given up only together with the transparency,
+    so the count is the assertion: the overlay is named twice in this
+    stylesheet, by its own rule and by that block, and a third mention is a new
+    query taking the blur off on its own.
   */
-  it('never cancels that blur, reduced motion included', () => {
-    expect(stylesheet).not.toMatch(
-      /\.attachment-lightbox-overlay[^{}]*\{[^}]*backdrop-filter:\s*none/u,
+  it('gives up the blur only where it gives up the transparency too', () => {
+    const transparency = stylesheet.match(
+      /@media \(prefers-reduced-transparency: reduce\) \{\n(?:[^\n]*\n)*?\}/u,
+    )?.[0] ?? null;
+
+    expect(transparency).not.toBeNull();
+    expect(transparency).toContain('backdrop-filter: none;');
+    expect(transparency).toContain('background: var(--av-sys-color-scrim-solid);');
+    expect(stylesheet.match(/\.attachment-lightbox-overlay/gu)).toHaveLength(2);
+  });
+
+  /*
+    The media viewer paints no surface of its own, so every control it draws
+    sits on the overlay over arbitrary window content. While the wash was
+    opaque they could take their contrast from it; at half strength a
+    transparent control is only as legible as whatever happens to be behind it.
+    The document viewer's own header buttons are deliberately not in this list.
+  */
+  it('backs every media-viewer control with its own chip', () => {
+    const chrome = rule(
+      '.attachment-media-close,\n'
+      + '.attachment-media-download,\n'
+      + '.attachment-media-details,\n'
+      + '.attachment-media-expand,\n'
+      + '.attachment-gallery-arrow,\n'
+      + '.attachment-gallery-caption',
     );
+
+    expect(chrome).toContain('background: var(--av-sys-color-surface-default);');
+    expect(chrome).toContain('border: .5px solid var(--av-sys-color-border-highlight);');
+    expect(rule('.attachment-lightbox-action')).toContain('background: transparent;');
+  });
+
+  /*
+    An image with an alpha channel composited against the wash, which was the
+    surface colour in practice. Against the veil it would composite against the
+    live window instead — a transparent PNG with the sidebar showing through it.
+  */
+  it('gives a transparent image the surface to sit on', () => {
+    expect(rule('.attachment-lightbox-content.is-image img'))
+      .toContain('background: var(--av-sys-color-surface-default);');
   });
 });
 
