@@ -89,6 +89,9 @@ function fixture(role: AuthContext["role"] = "owner") {
   const objectStore = seedSandboxObject(objectStores, S, {
     state: "running", stableName: "settings-sandbox", providerSandboxId: "provider-1",
   });
+  // A conversation whose sandbox exists but whose deadline projection has not
+  // reached the parent yet: the parent's list is asynchronous to the sandbox.
+  const unprojected = new Set<string>();
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
@@ -100,7 +103,8 @@ function fixture(role: AuthContext["role"] = "owner") {
       extra: {
         childTerminalDeadlines: async (input: { parentId: string }) => ({
           items: [...objectStores.keys()]
-            .filter((key) => key === input.parentId || key.startsWith(`${input.parentId}:`))
+            .filter((key) => !unprojected.has(key)
+              && (key === input.parentId || key.startsWith(`${input.parentId}:`)))
             .map((key) => ({
               substreamId: key === input.parentId ? "0" : key.slice(input.parentId.length + 1),
               nextTerminalActionAt: "2026-08-13T00:00:00.000Z",
@@ -174,6 +178,7 @@ function fixture(role: AuthContext["role"] = "owner") {
     database,
     objectStore,
     objectStores,
+    unprojected,
     routedStatements,
     env,
     provider,
@@ -364,5 +369,53 @@ describe("Terminal workspace settings", () => {
           sandboxOutcomes: [{ workstreamId: S, title: "Settings", outcome: "quarantined" }],
         },
       });
+  });
+
+  it("settles a side thread's deleted rollback on the side thread's own row", async () => {
+    const { objectStore, objectStores, provider, service } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    const threadStore = seedSandboxObject(objectStores, `${S}:${thread}`, {
+      state: "running", stableName: "settings-sandbox-thread", providerSandboxId: "provider-2",
+    });
+    // Daytona takes the new policy on the main sandbox and refuses it on the
+    // side thread's, then refuses to roll the side thread's back as well.
+    vi.mocked(provider.deleteSandbox).mockResolvedValue(undefined);
+    const applyPolicy = vi.mocked(provider.updateNetworkPolicy);
+    const base = applyPolicy.getMockImplementation()!;
+    applyPolicy.mockImplementation(async (id, domains) => {
+      if (id === "provider-2") throw new Error("provider-2 unreachable");
+      return base(id, domains);
+    });
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+
+    await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
+      .rejects.toMatchObject({
+        status: 502,
+        code: "terminal_policy_verification_failed",
+        details: { sandboxOutcomes: expect.arrayContaining([
+          expect.objectContaining({ workstreamId: S, substreamId: thread, outcome: "deleted" }),
+        ]) },
+      });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-2");
+    // The deletion is recorded on the row that named the sandbox, not on the
+    // main conversation's, which still holds its own, rolled-back sandbox.
+    expect(workstreamObjectGet(threadStore, "SELECT lifecycle_state, sandbox_id, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "failed", sandbox_id: null, failure_code: "policy_rollback_deleted" });
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-1" });
+  });
+
+  it("reaches the main conversation's sandbox before its projection reaches the parent", async () => {
+    const { objectStores, unprojected, provider, service } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    seedSandboxObject(objectStores, `${S}:${thread}`, {
+      state: "running", stableName: "settings-sandbox-thread", providerSandboxId: "provider-2",
+    });
+    unprojected.add(S);
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+    await service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true });
+
+    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-2");
   });
 });

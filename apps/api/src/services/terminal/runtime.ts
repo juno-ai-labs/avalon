@@ -382,7 +382,9 @@ export function createDaytonaTerminalRuntime(
     for (const runId of holdsByCall.values()) {
       if (runId === context.harnessRunId) return;
     }
-    await coordinator.release(context).catch(() => undefined);
+    // The coordinator retries and logs a release that fails; nothing here
+    // turns a finished call's result into a failure.
+    await coordinator.release(context);
   }
 
   /**
