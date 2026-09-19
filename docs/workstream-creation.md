@@ -45,8 +45,10 @@ and composer dock:
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
-  expands to 55px around a title skeleton, the body holds a transcript, and the
-  participant row collapses.
+  expands to 44px around a title skeleton, the body holds a transcript, and the
+  participant row collapses. 44px because that is the row the conversation this
+  becomes actually uses: `.grokbot-workstream-header`, which every conversation
+  renders, takes the screen's header track down from the base 55px.
 
 The launching state deliberately declares no geometry of its own. Because its
 root carries `workstream-screen`, it inherits that screen's dock padding and
@@ -189,6 +191,10 @@ than whichever rejection landed first.
   rule is written under `:not(.is-launching)`. A rule added the other way round —
   styling `.is-launching` directly — will drift from `.workstream-screen` and
   reintroduce a visible jump at the navigation, which no component test can see.
+  The header's height is the single exception, because a grid track sized `auto`
+  cannot be animated: it names the destination's row as a number, and the test
+  that holds it there has to read the row that *applies* to the destination
+  rather than the one underneath it.
 - **`launching` is set in the same commit as the request, and cleared on
   failure.** An optimistic turn stands for a work stream that does not exist; it
   cannot remain on screen next to an error explaining why it never will.
@@ -389,6 +395,32 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-19 — The launching header grows to the row that actually applies
+
+**What changed:** The launching header's height is 44px, the row
+`.grokbot-workstream-header` gives the conversation screen, rather than 55px,
+the base row underneath it. `.workstream-launch-screen > .launch-header` also
+releases the `min-height: 48px` it inherits from the `.workstream-header` class
+it borrows its dressing from.
+
+**Why:** The endpoint had been the base row since before the newer header
+existed, and `min-height` outranked both stated heights anyway — so the header
+never collapsed while composing (the launcher reserved a header's worth of empty
+pane) and sat at 48px while launching against a destination of 44. Those pixels
+were what was left moving at the swap once the optimistic turn was drawn in the
+right place.
+
+**Considered and rejected:** Dropping the shared `.workstream-header` class from
+the launch header, which is also where its padding and border come from; and
+sizing the launching header from the destination at runtime, which is a
+measurement to keep in sync in place of a number the test already pins.
+
+**Consequences:** `app.css.node.test.ts` now asserts the endpoint against
+`.workstream-screen:has(> .grokbot-workstream-header)`. A screen that renders a
+different header, or a header restyled to a different row, will fail there
+rather than showing up as a step at the swap — which is what the old assertion,
+pointed at the base row, allowed for two header generations.
 
 ### 2026-09-17 — Keep grant handoff off ordinary creation
 
