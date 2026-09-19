@@ -414,9 +414,7 @@ describe("post_result", () => {
         harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
         executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
       const { agents } = await new AgentCommunicationService(TEST_ENV, input).list();
-      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently" }]);
-      // A directory, not a status feed: what a teammate is doing is asked of it.
-      expect(agents[0]).not.toHaveProperty("status");
+      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently", status: "executing" }]);
       const address = agentAddressForId(agents[0]!.agentId);
       const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),

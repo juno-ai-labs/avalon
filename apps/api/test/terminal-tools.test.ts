@@ -364,6 +364,17 @@ describe("Terminal file and command tools", () => {
     });
   });
 
+  it("leaves an envelope's paths to its parser rather than the unified header regex", async () => {
+    // A removed SQL comment `-- /tmp/old` is a `--- /tmp/old` line to the
+    // header regex; the envelope's parser, which the runtime runs before any
+    // provider I/O, is what validates the paths it names.
+    const { value } = runtime();
+    const applyPatch = vi.spyOn(value, "applyPatch");
+    const patch = ["*** Begin Patch", "*** Update File: notes.sql", "@@", "--- /tmp/old", "+-- /tmp/new", "*** End Patch"].join("\n");
+    await expect(createTerminalToolExecutors(value).apply_patch({ patch }, context)).resolves.toMatchObject({ summary: "Patched 0 files" });
+    expect(applyPatch).toHaveBeenCalledWith(context, patch);
+  });
+
   it("names the parameter a tool actually has when it refuses a path", async () => {
     const { value } = runtime();
     await expect(createTerminalToolExecutors(value).import_resource({

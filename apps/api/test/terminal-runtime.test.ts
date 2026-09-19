@@ -687,6 +687,28 @@ describe("Daytona Terminal runtime", () => {
     // Every path the patch names is contained before the applier runs.
     expect(commands[0]).toContain("target='/workspace/src/file.txt'");
     expect(commands[0]).toContain("target='/workspace/docs/new.txt'");
+    // A path an `*** Add File:` section would create must not exist yet: the
+    // applier would truncate it and still print `Done!`. The preflight is the
+    // command's own shell, so it runs here against a scratch root: clean until
+    // the destination appears, then exit 54 naming it, while an updated file's
+    // existence is not a collision.
+    const root = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    try {
+      const preflight = commands[0]!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${root}`);
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "src/file.txt"), "hello\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
+      mkdirSync(join(root, "docs"));
+      writeFileSync(join(root, "docs/new.txt"), "kept\n");
+      expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 54, stdout: "docs/new.txt\n" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    outcome = { exitCode: 54, stdout: "docs/new.txt\n", stderr: "" };
+    await expect(runtime.applyPatch(context, patch)).rejects.toMatchObject({
+      code: "patch_does_not_apply",
+      message: "The patch could not be applied: `docs/new.txt` already exists, and `*** Add File:` would replace it. Read it and change it in place, or choose another path.",
+    });
     // The applier reports a rejected hunk on stdout and still exits 0, so
     // `Done!` is the only success; the reason's first line names the class.
     outcome = { exitCode: 0, stdout: "Invalid Context 0:\n hello\n", stderr: "" };

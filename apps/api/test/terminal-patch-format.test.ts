@@ -75,6 +75,21 @@ describe("apply_patch formats", () => {
     expect(() => parsePatch(envelope())).toThrow(expect.objectContaining({ code: "patch_invalid" }));
   });
 
+  it("holds every envelope path to the rules every other Terminal path gets", () => {
+    for (const path of ["dir\\x", "a\0b", "/abs/x", "../x"]) {
+      expect(() => parsePatch(envelope(`*** Add File: ${path}`, "+y"))).toThrow(expect.objectContaining({ code: "path_outside_root" }));
+      expect(() => parsePatch(envelope("*** Update File: a", `*** Move to: ${path}`, "-y"))).toThrow(expect.objectContaining({ code: "path_outside_root" }));
+    }
+    // The refused value is echoed, as it is for a `filePath`.
+    expect(() => parsePatch(envelope("*** Add File: dir\\x", "+y"))).toThrow(expect.objectContaining({ message: expect.stringContaining("`dir\\x`") }));
+    expect(() => parsePatch(envelope("*** Delete File: ./"))).toThrow(expect.objectContaining({ code: "invalid_path" }));
+    // `./` and empty segments drop, so the reported path is the file's own.
+    expect(parsePatch(envelope("*** Update File: ./src/a.ts", "*** Move to: src//b.ts", "-y")).output.files).toEqual([
+      { path: "src/b.ts", previousPath: "src/a.ts", operation: "renamed", additions: 0, deletions: 1 },
+    ]);
+    expect(() => parsePatch("--- a/dir\\x\n+++ b/dir\\x\n@@ -1 +1 @@\n-a\n+b\n")).toThrow(expect.objectContaining({ code: "path_outside_root" }));
+  });
+
   it("still reads a unified diff, and names both formats when it finds neither", () => {
     expect(parsePatch("--- a/x.txt\n+++ b/x.txt\n@@ -1 +1 @@\n-a\n+b\n")).toEqual({
       format: "unified",
