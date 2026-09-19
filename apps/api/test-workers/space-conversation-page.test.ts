@@ -159,6 +159,7 @@ interface ViewerState {
   unseen?: boolean;
   listable?: boolean;
   seenAttentionOrdinal?: number;
+  manualUnreadFromOrdinal?: number | null;
   latestMentionAttentionOrdinal?: number;
 }
 
@@ -173,7 +174,7 @@ function viewerEffect(userId: UserId, overrides: ViewerState = {}): ParentEffect
     unseen: overrides.unseen ?? false,
     listable: overrides.listable ?? true,
     seenAttentionOrdinal: overrides.seenAttentionOrdinal ?? 0,
-    manualUnreadFromOrdinal: null,
+    manualUnreadFromOrdinal: overrides.manualUnreadFromOrdinal ?? null,
     manualUnreadGeneration: 0,
     latestMentionAttentionOrdinal: overrides.latestMentionAttentionOrdinal ?? 0,
   };
@@ -210,6 +211,7 @@ function breakoutCommonEffect(title: string, overrides: {
   scope?: "personal" | "workspace";
   lastActivityAt?: string;
   archivedAt?: string | null;
+  latestAttentionOrdinal?: number;
 } = {}): ConversationEffect {
   return {
     kind: "directory_common",
@@ -222,6 +224,8 @@ function breakoutCommonEffect(title: string, overrides: {
     lastActivityAt: overrides.lastActivityAt ?? "2026-09-19T10:00:00.000Z",
     completedAt: null,
     archivedAt: overrides.archivedAt ?? null,
+    latestAttentionOrdinal: overrides.latestAttentionOrdinal ?? 0,
+    unreadTrackingStartOrdinal: 0,
   };
 }
 
@@ -608,21 +612,48 @@ describe("space dashboard conversation page", () => {
     const spaceId = await reserve("Hiring");
     // Seeded as rows rather than as projections. What is under test is the
     // keyset walk over `SPACE_CHANNEL_PAGE_SIZE`, and reaching that through
-    // the effect pipeline would be 251 Queue round trips to set up a property
-    // about SQL — these are the same rows the pipeline writes, in the same
-    // real storage, written in one transaction.
+    // the effect pipeline would be hundreds of Queue round trips to set up a
+    // property about SQL — these are the same rows the pipeline writes, in the
+    // same real storage, written in one transaction.
     //
-    // The tie at the page boundary is the point of the fixture. Four
-    // conversations share one activity instant across the 250th row, so a
-    // cursor that carried only the timestamp would either repeat the whole tie
-    // or skip past it.
-    const total = 260;
-    const tieStart = 248;
+    // **The fixture is built around one tie that is both cross-kind and
+    // across the page boundary**, because that is the only shape the cursor's
+    // three parts all matter in. Four conversations — two breakouts and two
+    // Channels — share one activity instant, and the page ends inside them. A
+    // cursor carrying only the timestamp would repeat or skip the whole tie; a
+    // cursor without `kind` could not tell the second breakout from the first
+    // Channel, which is the pair the boundary falls between.
+    const channelCount = 260;
+    const tieAt = 248;
+    const tieActivity = 8_750_000;
+    const activityFor = (index: number): number => (
+      index >= tieAt && index < tieAt + 2 ? tieActivity : 9_000_000 - index * 1_000
+    );
+    const channelId = (index: number): string =>
+      `00000000-0000-7000-8000-${String(index).padStart(10, "0")}e1`;
+    const breakoutId = (index: number): string =>
+      `00000000-0000-7000-8000-${String(index).padStart(10, "0")}e2`;
+    // Two breakouts under the first member Channel, at the tie's instant.
+    // Their ids sort *after* the tied Channels' on purpose: `kind` is what
+    // orders a tie, not the id, so a cursor that dropped `kind` would look for
+    // an id above the last breakout's and skip both Channels beneath it.
+    const tieBreakouts = [900, 901];
+    const seeded = [
+      ...Array.from({ length: channelCount }, (_unused, index) => ({
+        kind: "channel" as const,
+        conversationId: channelId(index),
+        activity: activityFor(index),
+        title: `Channel ${String(index).padStart(3, "0")}`,
+      })),
+      ...tieBreakouts.map((index) => ({
+        kind: "breakout" as const,
+        conversationId: breakoutId(index),
+        activity: tieActivity,
+        title: `Breakout ${String(index).padStart(3, "0")}`,
+      })),
+    ];
     await runInDurableObject(workspace(), (_instance, state) => {
-      for (let index = 0; index < total; index += 1) {
-        const id = `00000000-0000-7000-8000-${String(index).padStart(10, "0")}e1`;
-        const inTie = index >= tieStart && index < tieStart + 4;
-        const activity = inTie ? 5_000_000 : 9_000_000 - index * 1_000;
+      for (let index = 0; index < channelCount; index += 1) {
         state.storage.sql.exec(
           `INSERT INTO workspace_workstream_directory
              (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
@@ -636,13 +667,38 @@ describe("space dashboard conversation page", () => {
            VALUES (?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, '', '', 'workspace',
                    'needs_input', NULL, ?, NULL, NULL, NULL, 'ad_hoc', NULL, NULL,
                    NULL, NULL, NULL, 'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
-          id, `event-${index}`, `Channel ${String(index).padStart(3, "0")}`, activity,
+          channelId(index), `event-${index}`, `Channel ${String(index).padStart(3, "0")}`,
+          activityFor(index),
         );
         state.storage.sql.exec(
           `INSERT INTO space_channel_memberships
              (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
            VALUES (?, ?, 'active', 1, 1, 1, NULL)`,
-          spaceId, id,
+          spaceId, channelId(index),
+        );
+      }
+      for (const index of tieBreakouts) {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_breakout_directory
+             (workstream_id, substream_id, authority_generation, waterline, source_event_id,
+              payload_hash, title, description, scope, exact_state, title_status,
+              created_by_user_id, last_activity_at, completed_at, archived_at,
+              latest_attention_ordinal, unread_tracking_start_ordinal,
+              source_created_at, source_updated_at, projected_at)
+           VALUES (?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, '', 'personal',
+                   'needs_input', 'settled', NULL, ?, NULL, NULL, 0, 0, 1, 1, 1)`,
+          channelId(0), breakoutId(index), `breakout-event-${index}`,
+          `Breakout ${String(index).padStart(3, "0")}`, tieActivity,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO workspace_breakout_viewers
+             (workstream_id, substream_id, user_id, authority_generation, waterline,
+              source_event_id, payload_hash, is_participant, unread_count,
+              you_are_mentioned, unseen, listable, seen_attention_ordinal,
+              manual_unread_from_ordinal, manual_unread_generation,
+              latest_mention_attention_ordinal, projected_at)
+           VALUES (?, ?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,
+          channelId(0), breakoutId(index), OWNER, `breakout-viewer-${index}`,
         );
       }
     });
@@ -659,85 +715,169 @@ describe("space dashboard conversation page", () => {
       expect(chunk.items).toHaveLength(SPACE_CHANNEL_PAGE_SIZE);
     }
     expect(cursor).toBeNull();
-    expect(seen).toHaveLength(total);
-    expect(new Set(seen).size).toBe(total);
-    // Activity descending, with the tie broken the way the cursor compares:
-    // kind first, then id — which for four Channels at one instant is id order.
-    const expected = [...Array.from({ length: total }, (_unused, index) => index)]
-      .sort((left, right) => {
-        const activityFor = (index: number) => (
-          index >= tieStart && index < tieStart + 4 ? 5_000_000 : 9_000_000 - index * 1_000
-        );
-        return activityFor(right) - activityFor(left) || left - right;
-      })
-      .map((index) => `Channel ${String(index).padStart(3, "0")}`);
+    expect(seen).toHaveLength(seeded.length);
+    expect(new Set(seen).size).toBe(seeded.length);
+    // Activity descending, then the cursor's own tie-break: kind, then id.
+    // `breakout` sorts before `channel`, so the tie reads as two breakouts and
+    // then two Channels — and the page boundary falls inside it.
+    const expected = [...seeded]
+      .sort((left, right) => (
+        right.activity - left.activity
+        || left.kind.localeCompare(right.kind)
+        || left.conversationId.localeCompare(right.conversationId)
+      ))
+      .map((conversation) => conversation.title);
     expect(seen).toEqual(expected);
+    expect(expected.slice(SPACE_CHANNEL_PAGE_SIZE - 1, SPACE_CHANNEL_PAGE_SIZE + 1))
+      .toEqual(["Breakout 901", `Channel ${String(tieAt).padStart(3, "0")}`]);
   });
 
-  it("given every combination of run state and reader state, then the page and the contracts predicate agree", async () => {
+  /**
+   * The wire status a stored `exact_state` produces, one state per status, so
+   * a walk covers the whole `HarnessStatus` union rather than the states that
+   * happen to be easy to reach.
+   */
+  const stateForStatus: Record<HarnessStatus, string> = {
+    scheduled: "scheduled",
+    running: "running",
+    needs_input: "needs_input",
+    completed: "completed",
+    failed: "failed",
+    stopped: "cancelled",
+    idle: "idle",
+  };
+
+  /**
+   * How a conversation comes to be unread, which is not one thing.
+   *
+   * `conversationNeedsViewer` takes one boolean, and the SQL derives it from
+   * two independent columns: an attention ordinal past what this person has
+   * seen, and a manual "mark as unread" from an ordinal. They are separate
+   * arms of `liveForViewerSql`, so an unread axis with only two values leaves
+   * one of them never true in any test — and a typo in it would list nothing
+   * and break nothing.
+   */
+  const UNREAD_SOURCES = ["read", "activity", "manual"] as const;
+  type UnreadSource = (typeof UNREAD_SOURCES)[number];
+
+  interface WalkCase {
+    harnessStatus: HarnessStatus;
+    unread: UnreadSource;
+    unseen: boolean;
+    youAreMentioned: boolean;
+  }
+
+  function walkCases(): WalkCase[] {
+    const cases: WalkCase[] = [];
+    for (const harnessStatus of HarnessStatusSchema.options) {
+      for (const unread of UNREAD_SOURCES) {
+        for (const unseen of [false, true]) {
+          for (const youAreMentioned of [false, true]) {
+            cases.push({ harnessStatus, unread, unseen, youAreMentioned });
+          }
+        }
+      }
+    }
+    return cases;
+  }
+
+  /**
+   * Walk every combination against one rendering of the predicate.
+   *
+   * `liveForViewerSql` is one text rendered twice, against the Channel aliases
+   * and against the breakout ones, and "rendered from one text" is not the
+   * same as "asked the same question": the aliases are what varies, and an
+   * alias naming the wrong table is exactly the mistake the single text exists
+   * to make impossible and cannot itself catch. So both renderings are walked,
+   * and `publish` is how a case is written into whichever one is under test.
+   */
+  async function walkPredicate(
+    spaceId: SpaceId,
+    publish: (testCase: WalkCase, version: number) => Promise<void>,
+  ): Promise<void> {
+    const cases = walkCases();
+    let version = 1;
+    for (const testCase of cases) {
+      version += 1;
+      await publish(testCase, version);
+      const listed = (await page(spaceId, OWNER)).items;
+      const input = {
+        harnessStatus: testCase.harnessStatus,
+        hasUnread: testCase.unread !== "read",
+        unseen: testCase.unseen,
+        youAreMentioned: testCase.youAreMentioned,
+      };
+      expect({ ...testCase, listed: listed.length === 1 })
+        .toEqual({ ...testCase, listed: conversationNeedsViewer(input) });
+      // When it is listed, the row the page built has to satisfy the predicate
+      // too — otherwise the two could agree on the count while disagreeing
+      // about what the row says, which is the drift the desktop would draw.
+      if (listed[0]) expect(conversationNeedsViewer(listed[0])).toBe(true);
+    }
+    expect(cases).toHaveLength(HarnessStatusSchema.options.length * UNREAD_SOURCES.length * 4);
+  }
+
+  it("given every combination of run state and reader state on a Channel, then the page and the contracts predicate agree", async () => {
     const spaceId = await reserve("Hiring");
     await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
     await place(spaceId, CHANNEL_A);
 
-    // The wire status a stored `exact_state` produces, one state per status, so
-    // the walk covers the whole `HarnessStatus` union rather than the states
-    // that happen to be easy to reach.
-    const stateForStatus: Record<HarnessStatus, string> = {
-      scheduled: "scheduled",
-      running: "running",
-      needs_input: "needs_input",
-      completed: "completed",
-      failed: "failed",
-      stopped: "cancelled",
-      idle: "idle",
-    };
-    let version = 1;
-    let checked = 0;
-    for (const harnessStatus of HarnessStatusSchema.options) {
-      for (let mask = 0; mask < 8; mask += 1) {
-        const hasUnread = (mask & 1) !== 0;
-        const unseen = (mask & 2) !== 0;
-        const youAreMentioned = (mask & 4) !== 0;
-        version += 1;
-        // Written as the columns the mapper reads, so that what is compared is
-        // the two implementations rather than two spellings of one input:
-        // unread is an attention ordinal above the seen waterline, and a
-        // mention is a mention ordinal above the same waterline.
-        await publishChannel(
-          CHANNEL_A,
-          [
-            channelCommonEffect("Roadmap", {
-              state: stateForStatus[harnessStatus],
-              latestAttentionOrdinal: hasUnread ? 5 : 0,
-            }),
-            viewerEffect(OWNER, {
-              unseen,
-              youAreMentioned,
-              latestMentionAttentionOrdinal: youAreMentioned ? 9 : 0,
-              seenAttentionOrdinal: 0,
-            }),
-          ],
-          version,
-        );
-        const listed = (await page(spaceId, OWNER)).items;
-        const expected = conversationNeedsViewer({
-          harnessStatus,
-          hasUnread,
-          unseen,
-          youAreMentioned,
-        });
-        expect({ harnessStatus, hasUnread, unseen, youAreMentioned, listed: listed.length === 1 })
-          .toEqual({ harnessStatus, hasUnread, unseen, youAreMentioned, listed: expected });
-        // When it is listed, the row the page built has to satisfy the
-        // predicate too — otherwise the two could agree on the count while
-        // disagreeing about what the row says, which is the drift the desktop
-        // would then draw.
-        if (listed[0]) expect(conversationNeedsViewer(listed[0])).toBe(true);
-        checked += 1;
-      }
-    }
-    expect(checked).toBe(HarnessStatusSchema.options.length * 8);
+    await walkPredicate(spaceId, async (testCase, version) => {
+      // Written as the columns the mapper reads, so that what is compared is
+      // the two implementations rather than two spellings of one input.
+      await publishChannel(
+        CHANNEL_A,
+        [
+          channelCommonEffect("Roadmap", {
+            state: stateForStatus[testCase.harnessStatus],
+            latestAttentionOrdinal: testCase.unread === "activity" ? 5 : 0,
+          }),
+          viewerEffect(OWNER, {
+            unseen: testCase.unseen,
+            youAreMentioned: testCase.youAreMentioned,
+            latestMentionAttentionOrdinal: testCase.youAreMentioned ? 9 : 0,
+            seenAttentionOrdinal: 0,
+            manualUnreadFromOrdinal: testCase.unread === "manual" ? 3 : null,
+          }),
+        ],
+        version,
+      );
+    });
+  });
+
+  it("given every combination of run state and reader state on a breakout, then the page and the contracts predicate agree", async () => {
+    const spaceId = await reserve("Hiring");
+    await openChannelObject(CHANNEL_A);
+    // The parent Channel is idle and fully read for the whole walk, so the one
+    // row the page can ever hold is the breakout under test.
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+    await place(spaceId, CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Pricing", { state: "idle" }),
+      viewerEffect(OWNER) as ConversationEffect,
+    ]);
+
+    await walkPredicate(spaceId, async (testCase, version) => {
+      await publishBreakout(
+        CHANNEL_A,
+        BREAKOUT_ONE,
+        [
+          breakoutCommonEffect("Pricing", {
+            state: stateForStatus[testCase.harnessStatus],
+            latestAttentionOrdinal: testCase.unread === "activity" ? 5 : 0,
+          }),
+          viewerEffect(OWNER, {
+            unseen: testCase.unseen,
+            youAreMentioned: testCase.youAreMentioned,
+            latestMentionAttentionOrdinal: testCase.youAreMentioned ? 9 : 0,
+            seenAttentionOrdinal: 0,
+            manualUnreadFromOrdinal: testCase.unread === "manual" ? 3 : null,
+          }) as ConversationEffect,
+        ],
+        version,
+      );
+    });
   });
 
   /**
