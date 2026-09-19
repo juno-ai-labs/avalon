@@ -29,6 +29,10 @@ import { z } from "zod";
 
 import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
+import {
+  SpaceDefaultQueueMessageSchema,
+  SpaceIntentResumeQueueMessageSchema,
+} from "../durable-objects/workspace-space-protocol";
 import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
@@ -61,6 +65,7 @@ import {
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
+import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
 
 interface ActivityRow {
@@ -461,6 +466,140 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
     } catch {
       await workspace.recordProjectDefaultTargetFailure(target).catch(() => undefined);
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+  const spaceDefault = SpaceDefaultQueueMessageSchema.safeParse(message.body);
+  if (spaceDefault.success) {
+    const target = spaceDefault.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      target.workspaceId,
+      workspaceDOName(env.AVALON_REGION, target.workspaceId),
+    );
+    let current: boolean;
+    try {
+      current = await workspace.spaceDefaultTargetCurrent(target);
+    } catch (error) {
+      // A retired Organization's default target is never current again.
+      if (!isRetirementRefusal(error)) throw error;
+      message.ack();
+      return;
+    }
+    if (!current) {
+      message.ack();
+      return;
+    }
+    const actorIds = await workspace.spaceDefaultTargetActors(target);
+    if (actorIds.length === 0) {
+      message.ack();
+      return;
+    }
+    const member = await env.DB.prepare(
+      `SELECT user_id, role FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
+          AND user_id IN (${actorIds.map(() => "?").join(",")})
+        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
+    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+      .first<{ user_id: string; role: AuthContext["role"] }>();
+    if (!member) {
+      await workspace.failSpaceDefaultTarget(target);
+      message.ack();
+      return;
+    }
+    const auth: AuthContext = {
+      sessionId: `space-default:${target.spaceId}:${target.kind}:${target.defaultGeneration}`,
+      userId: asUserId(member.user_id),
+      workspaceId: target.workspaceId,
+      region: env.AVALON_REGION,
+      role: member.role,
+      analyticsWorkspaceId: null,
+      principal: "connector",
+    };
+    try {
+      // One handler, two consumers. The staging, the fence, the currency
+      // recheck and the receipt are identical; what a resource and a Sidekick
+      // differ in is the canonical operation that applies them.
+      const workstreams = new WorkstreamService(env, auth);
+      if (target.kind === "resource") await workstreams.attachResource(target.workstreamId, target.targetId);
+      else await workstreams.setSidekickRecommendation(target.workstreamId, target.targetId, true);
+      await workspace.completeSpaceDefaultTarget(target);
+      message.ack();
+    } catch {
+      await workspace.recordSpaceDefaultTargetFailure(target).catch(() => undefined);
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+  const spaceResume = SpaceIntentResumeQueueMessageSchema.safeParse(message.body);
+  if (spaceResume.success) {
+    const intent = spaceResume.data;
+    if (intent.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      intent.workspaceId,
+      workspaceDOName(env.AVALON_REGION, intent.workspaceId),
+    );
+    // The person who staged it, if they are still here. A Space operation is
+    // applied through the Channel's canonical operations, and those authorize
+    // an actor — so a resume needs one, and the requester is the only actor the
+    // original authorization covered.
+    const member = await env.DB.prepare(
+      `SELECT user_id, role FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
+    ).bind(intent.workspaceId, intent.requestedByUserId)
+      .first<{ user_id: string; role: AuthContext["role"] }>();
+    if (!member) {
+      try {
+        await workspace.abandonSpaceIntent({
+          workspaceId: intent.workspaceId,
+          userId: intent.requestedByUserId,
+          operationId: intent.operationId,
+          receipt: "requester_inactive",
+          settled: true,
+        });
+      } catch (error) {
+        if (!isRetirementRefusal(error)) throw error;
+      }
+      message.ack();
+      return;
+    }
+    const auth: AuthContext = {
+      sessionId: `space-intent:${intent.operationId}`,
+      userId: asUserId(member.user_id),
+      workspaceId: intent.workspaceId,
+      region: env.AVALON_REGION,
+      role: member.role,
+      analyticsWorkspaceId: null,
+      principal: "connector",
+    };
+    try {
+      await new SpaceService(env, auth).resumeIntent({
+        operationId: intent.operationId,
+        kind: intent.kind,
+        spaceId: intent.spaceId,
+        workstreamId: intent.workstreamId,
+        spaceRevision: intent.spaceRevision,
+        membershipGeneration: intent.membershipGeneration,
+      });
+      message.ack();
+    } catch (error) {
+      if (isRetirementRefusal(error)) {
+        message.ack();
+        return;
+      }
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }

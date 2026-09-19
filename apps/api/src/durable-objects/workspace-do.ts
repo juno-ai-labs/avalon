@@ -635,6 +635,7 @@ import {
   WorkspaceSpacePresentationRequestSchema,
   WorkspaceSpaceReorderRequestSchema,
   WorkspaceSpaceRequestSchema,
+  WorkspaceSpaceIntentReceiptRequestSchema,
   WorkspaceSpaceReserveRequestSchema,
   type SpaceDefaultQueueMessage,
   type WorkspaceChannelSpacesRequest,
@@ -656,6 +657,7 @@ import {
   type WorkspaceSpacePresentationRequest,
   type WorkspaceSpaceReorderRequest,
   type WorkspaceSpaceRequest,
+  type WorkspaceSpaceIntentReceiptRequest,
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
@@ -6190,10 +6192,60 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [] };
     }
     const space = storage.applyAudience(request);
-    if (space !== false) this.publishSpaceSnapshot();
-    return WorkspaceSpaceMutationResultSchema.parse(space === false
-      ? { ok: false, code: "space_not_found" }
-      : { ok: true, space });
+    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+    // Staged before the member Channels are touched. The service walks them
+    // next, and a request that dies half way through leaves this pending for
+    // the alarm to republish rather than leaving some Channels on the old
+    // audience with nothing left to notice.
+    storage.recordIntent({
+      operationId: request.operationId,
+      kind: "audience",
+      spaceId: request.spaceId,
+      workstreamId: null,
+      spaceRevision: space.revision,
+      membershipGeneration: null,
+      deliveryGeneration: null,
+      requestedByUserId: request.userId,
+      notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+    });
+    this.publishSpaceSnapshot();
+    await this.armNextAlarm();
+    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /**
+   * Record one step of a staged Space operation against its intent.
+   *
+   * Server-to-server, like the default-target settlement RPCs beside it, and
+   * deliberately without the membership recheck every *product* Space RPC
+   * carries. The operations this settles are re-run by the activity consumer
+   * long after the request that staged them is gone, and the person who started
+   * one may by then have left the Organization — refusing the receipt there
+   * would leave the intent pending forever and the alarm republishing it
+   * forever. It grants nothing and reads nothing: the operation id is the whole
+   * address, and every step it settles was already authorized when it was
+   * staged.
+   */
+  async recordSpaceIntentReceipt(input: WorkspaceSpaceIntentReceiptRequest): Promise<{ recorded: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceIntentReceiptRequestSchema, input, "record_space_intent_receipt",
+    );
+    this.assertWorkspace(request.workspaceId);
+    this.spaceStorage().settleIntent(request.operationId, request.receipt, request.settled);
+    return { recorded: true };
+  }
+
+  /** Give up on a staged Space operation nothing can finish. */
+  async abandonSpaceIntent(input: WorkspaceSpaceIntentReceiptRequest): Promise<{ abandoned: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceIntentReceiptRequestSchema, input, "abandon_space_intent",
+    );
+    this.assertWorkspace(request.workspaceId);
+    this.spaceStorage().settleIntent(request.operationId, request.receipt, true);
+    this.spaceStorage().cancelIntent(request.operationId);
+    return { abandoned: true };
   }
 
   async prepareSpaceMembership(input: WorkspaceSpaceMembershipRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
