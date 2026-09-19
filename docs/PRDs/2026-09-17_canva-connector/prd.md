@@ -13,7 +13,7 @@
 ## Summary
 
 A member connects their own Canva account from Settings and, from then on, can
-ask Rally to do design work in a work stream with an authorized audience: find a deck, read what is on it,
+ask Rally to do design work in a work stream: find a deck, read what is on it,
 generate one from a brief, edit it, comment on it, export it, upload an asset.
 The tools come from Canva's hosted MCP server and are never copied into Rally —
 the same pass-through shape Fireflies, Granola, Slack and Notion personal
@@ -208,14 +208,17 @@ already describes: tools under existing authorization, available only to their
 owner, with no new surface, no channel, no global inbox, and no tool-confirmation
 step.
 
-The shared-work-stream audience question is unresolved: Canva's current policy
-requires each recipient's own authentication for Canva-derived outputs. Obtain
-clarification and implement an enforceable audience contract before claiming
-compatibility with every existing shared surface.
+The member requesting Canva content is responsible for sharing it with the work
+stream's participants. Rally applies its ordinary work-stream access controls;
+it does not require each recipient to connect Canva or independently verify their
+Canva access. Personal credentials remain usable only by their owner/run-as
+principal.
 
 ## Decision log
 
-None yet.
+- **2026-09-19 — Sharing is the requesting member's responsibility.** No
+  Canva-specific recipient eligibility check or shared-output approval gate.
+  Existing Rally access controls and personal credential ownership still apply.
 
 ## Key design decisions
 
@@ -329,11 +332,11 @@ desktop.
 - **No `outputSchema` does not remove validation.** Validate fields consumed by
   resources, watch checkpoints, transaction recovery and entitlement notices;
   generic results remain bounded, truncation-flagged and untrusted.
-- **Provider policy is a launch requirement.** Background access needs explicit
-  opt-in and controls. Shared agents cannot use another user's token, and Canva
-  requires each user to authenticate before accessing derived outputs. Clarify
-  shared work-stream and digest compatibility with Canva; membership alone does
-  not settle it. No cross-user cache or assumed delegation exception.
+- **Background access and sharing.** Watches need explicit opt-in and controls.
+  A run uses its principal's own Canva connection. The requester is responsible
+  for sharing resulting content with the work stream; recipients do not need
+  their own Canva authentication to view that output. Digests use Rally's
+  existing visibility rules, with no additional Canva recipient gate.
 - Canva content must not be used for external-model training, evaluation or
   improvement; Brand Kits remain in Canva design workflows. Surface returned
   credit/trial consumption and retain data only for operational need. See
@@ -412,8 +415,9 @@ Turning it off is unsetting the variable.
 10. With `CANVA_CONNECTOR_ENABLED` unset, the connector is absent from the
     catalog and creation is refused.
 11. Watches are off by default, have pause/remove controls, and stop after
-    disconnect. Shared output and digest audiences satisfy the clarified Canva
-    policy; another member's token never substitutes for the caller's authority.
+    disconnect. Shared outputs use normal work-stream permissions and digests use
+    existing visibility rules; another member's token never substitutes for the
+    caller's authority.
 12. Refresh, remote revocation and uncertain commit recovery are exercised;
     malformed provider fields cannot corrupt resource or polling state.
 
