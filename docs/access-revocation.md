@@ -111,6 +111,7 @@ workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [aut
 workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
 workstream             ──▶ WorkstreamDO   ──▶ [substreamIds]
 automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
+space                  ──▶ SpaceDO        ──▶ [substreamIds]   (listChildren; it holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
 ```
@@ -157,6 +158,18 @@ more way to lose a reader: the room removes a participant, a write the room
 makes locally that no membership revocation follows. The room's writer
 publishes a `workstream_automations` hop, and WorkspaceDO names the room's
 automations for it.
+
+A **Space** is the third sibling, and the simplest hop here. It is
+`WorkstreamDO` under a role whose `admitsClientSockets` is false, so it admits
+no client socket and there is nothing on it to close — the hop does not call
+`revokeSocketAccess` at all, because asking would be a subrequest whose answer
+is always empty. What it does hold is a hidden main conversation, an ordinary
+`SubstreamAgent` that *does* hold whatever was opened against it, and only the
+Space can name it. So the hop is `SpaceDO.listChildren` and one `substream`
+message per child, keyed by the Space id as the parent, exactly as an
+automation's conversations are keyed by its own. A Space is enumerated from the
+workspace hop once WorkspaceDO holds the Space directory; until then no product
+path creates one.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in that object's SQL storage, not in D1, so no query the
@@ -385,6 +398,30 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-19 — A Space is a hop that names children and closes nothing
+
+**What changed:** The target union gains `{ scope: "space", spaceId }`, and the
+consumer resolves it through `SPACE_DOS`, calls `listChildren`, and publishes one
+`substream` message per child keyed by the Space id. It does not call
+`revokeSocketAccess`.
+
+**Why:** A Space is `WorkstreamDO` under a role that refuses client socket
+upgrades, so the object itself holds nothing this queue exists to close. Its
+hidden main conversation is an ordinary `SubstreamAgent` and does hold what was
+opened against it, and only the Space knows that conversation exists.
+
+**Considered and rejected:** Reusing the `workstream` hop by passing the Space id
+as a work-stream id. It would resolve a *real object* — a different, empty one in
+`WORKSTREAM_DOS` — rather than failing, leaving the Space's conversation open
+with nothing reporting a problem. Also rejected: calling `revokeSocketAccess`
+anyway for symmetry with the work-stream hop, which buys one subrequest per Space
+per revocation to be told what the role already guarantees.
+
+**Consequences:** Nothing publishes this target yet — no product path creates a
+Space, and the workspace hop enumerates Spaces only once WorkspaceDO holds the
+Space directory. The hop and its fan-out are in place and tested so that the
+release which creates Spaces does not also have to add the walk.
 
 ### 2026-09-16 — Recover membership and grant revocation publication
 
