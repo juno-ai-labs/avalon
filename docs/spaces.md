@@ -267,8 +267,7 @@ is re-recorded, and an Organization nobody remediates re-walks on
 spinning. Leaving the phase at `finalize` instead, which is what this did
 first, made a blocked Organization permanent: nothing else takes a Channel off
 `blocked_json`, so `spacesReady` stayed false and the opening card stayed up
-however the Channel was remediated. `project_effects_pending` is the cutover
-gate the retirement needed and is described under [Operations](#operations).
+however the Channel was remediated.
 
 **What remediating a fence actually means.** The fence is immutable and General
 is Organization-wide, so a fenced Channel can never enter General — adding it
@@ -603,7 +602,7 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones, a fenced personal Channel left personal and named, an interrupted pass making no second General and no second membership, and the refusal to close while a Channel is outside every Space. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
-| `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default invalidated rather than dropped under, the `project_effects_pending` barrier aborting by name with nothing dropped, and an applied default leaving the Channel's own attachment alone. |
+| `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas and the appearance registry. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
@@ -707,7 +706,7 @@ Migration 61 also rebuilds `workspace_retirement_graph` so its `parent_kind`
 CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts —
 through a scratch table. Migration 42 is released and is not edited.
 
-**Migration 62 deletes the eight Project tables**, behind the shutdown barrier
+**Migration 62 deletes the eight Project tables**, after the invalidation
 described under [Operations](#operations) and children-before-parents, because
 `PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
 SQLite. [`projects.md`](projects.md) records what was deleted and what survived
@@ -790,19 +789,27 @@ with the Organization id. The cutover's own progress logs
 stops moving has its reason on the `space_bootstrap` row rather than only in a
 log line.
 
-**The shutdown barrier in front of migration 62.** The PRD makes "zero unsettled
-Project effects" a cutover gate, because a default still queued for delivery is
-work aimed at a Channel whose audience the Space cutover has just changed. Two
-things enforce it. `finalizeSpaceBootstrap` refuses to close an Organization
-with pending Project rows and answers `project_effects_pending`, which is the
-signal to drain the activity Queue and re-force the class. Migration 62 then
-invalidates what it can — pending targets to `terminal` with
-`last_error_code = 'project_retired'`, pending publications to `accepted` — and
-asserts the remainder is zero through a scratch table whose CHECK constraint is
-*named* `project_effects_pending`, so a failure says what was wrong rather than
-`CHECK constraint failed`. The barrier deliberately does not trust the
-invalidation above it: a migration runs inside one `transactionSync`, so an
-abort takes the whole attempt and nothing is dropped.
+**How Project effects are shut down.** The PRD makes "zero unsettled Project
+effects" a cutover gate, because a default still queued for delivery is work
+aimed at a Channel whose audience the Space cutover has just changed. Two
+things meet it, and neither is an assertion. Migration 62 invalidates every
+undelivered row in the same transaction that drops the tables — pending targets
+to `terminal` with `last_error_code = 'project_retired'`, pending publications
+to `accepted` — and the activity consumer keeps a tombstone leg for the
+platform's retry window, acknowledging a message published before the cutover
+with `reason: "projects_retired"` rather than retrying it to the dead-letter
+queue.
+
+**There is no barrier, and the two that shipped could not fire.** Migration 62
+carried a scratch table whose CHECK counted `pending` rows immediately after
+the statements that settled every one of them, so the count was zero by
+construction; `finalizeSpaceBootstrap` carried a matching
+`project_effects_pending` gate that ran after the constructor had already
+dropped the tables. Both are deleted rather than repaired, because nothing is
+owed: PRD non-goal 5 deletes Projects rather than converting them, so a default
+that never reached a Channel is discarded on purpose, and a gate that held
+every Organization's hierarchy closed over it would be protecting work the PRD
+says to drop. [`projects.md`](projects.md) records what went.
 
 **Which builds are still answered.** The sidebar payload and the Channel page
 both gained fields, and a shipped desktop parses them with strict schemas, which
@@ -891,10 +898,10 @@ all, and the phase slot became `finalize`.
 Also rejected: dropping the Project tables and letting a queued default fail on
 a missing table. The durable half of an at-least-once delivery is exactly what
 stops a message still in flight from attaching a resource to a Channel whose
-audience this cutover has just changed, so the migration invalidates what it can
-and then asserts zero through a CHECK constraint it named
-`project_effects_pending` — a generic `CHECK constraint failed` would have cost
-the diagnosis this repository keeps paying for.
+audience this cutover has just changed, so the migration invalidates every
+undelivered row in the transaction that drops them and the consumer keeps a
+tombstone leg. A barrier asserting the remainder is zero was tried and removed:
+it counted rows the statements above it had just settled.
 
 **Consequences:** A future change must keep the creation path settling its Space
 memberships **before** it reserves the Channel's main conversation. Reserving

@@ -1955,32 +1955,6 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Whether a Project effect is still queued for delivery to a Channel.
-   *
-   * The PRD's shutdown barrier, and it lives here rather than with the Project
-   * storage because it outlives it: the migration that retires Projects drops
-   * those tables, and after that this answers false by their absence rather
-   * than by a count. An Organization the retirement migration has not reached
-   * still has them, and a pending row there is work aimed at a Channel whose
-   * audience this cutover has just changed — so it is the one thing that can
-   * hold `complete` back for a reason outside the Space tables.
-   */
-  pendingProjectEffects(): boolean {
-    const present = new Set(this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-      `SELECT name FROM sqlite_schema WHERE type = 'table'
-        AND name IN ('project_default_resource_targets', 'project_default_resource_publications')`,
-    ).toArray().map((row) => row.name));
-    if (present.has("project_default_resource_targets")
-      && this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-        "SELECT 1 AS one FROM project_default_resource_targets WHERE state = 'pending' LIMIT 1",
-      ).toArray().length > 0) return true;
-    return present.has("project_default_resource_publications")
-      && this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-        "SELECT 1 AS one FROM project_default_resource_publications WHERE state = 'pending' LIMIT 1",
-      ).toArray().length > 0;
-  }
-
-  /**
    * Send the cutover back to the pass that re-walks the directory, keeping the
    * retry gate the claim advanced.
    *

@@ -406,12 +406,13 @@ SQL joins.
   `project_workstream_memberships`, `project_default_resources`,
   `project_default_resource_targets` and `project_default_resource_publications`
   — children-before-parents, because `PRAGMA foreign_keys = OFF` is a no-op once
-  a Durable Object event has touched SQLite. The drops sit behind a barrier: the
-  migration settles every pending default target and publication, then asserts
-  the remainder is zero through a scratch table whose CHECK constraint is named
-  `project_effects_pending`, so a failure says what was unsettled rather than
-  `CHECK constraint failed`. A migration runs inside one `transactionSync`, so
-  that abort takes the whole attempt and nothing is dropped. What the Project
+  a Durable Object event has touched SQLite. The same transaction settles every
+  undelivered default first — targets to `terminal` with `project_retired`,
+  publications to `accepted` — so a Queue message still in flight finds nothing
+  current and attaches nothing; the activity consumer's tombstone leg
+  acknowledges it. There is no barrier in front of the drops: an undelivered
+  Project default is discarded on purpose, because Projects are deleted rather
+  than converted. What the Project
   mechanism already delivered to a Channel — an attached resource, a
   recommended Sidekick, an audience — is the Channel's own and survives. See
   [`projects.md`](projects.md).

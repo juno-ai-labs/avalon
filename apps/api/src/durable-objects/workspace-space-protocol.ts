@@ -434,12 +434,12 @@ export type WorkspaceSpaceBootstrapSettleRequest =
 /**
  * Why the cutover did not close, when it did not.
  *
- * `project_effects_pending` is the PRD's shutdown barrier: an Organization
- * cannot report a finished cutover while a Project default is still queued to
- * be delivered to one of its Channels.
+ * Both refusals send the Organization back to the walk, because the walk is
+ * the only thing that changes either fact: `unplaced` is a Channel the pass
+ * has not reached yet, and `blocked` is one it reached and was refused on.
  */
 export const WorkspaceSpaceBootstrapFinalizeResultSchema = z.strictObject({
-  outcome: z.enum(["complete", "blocked", "unplaced", "project_effects_pending"]),
+  outcome: z.enum(["complete", "blocked", "unplaced"]),
 });
 export type WorkspaceSpaceBootstrapFinalizeResult =
   z.infer<typeof WorkspaceSpaceBootstrapFinalizeResultSchema>;

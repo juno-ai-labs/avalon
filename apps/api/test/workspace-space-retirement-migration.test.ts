@@ -1,20 +1,27 @@
 /**
- * The shutdown barrier in front of Project retirement.
+ * What retires a Project's undelivered effects, now that nothing asserts on them.
  *
- * WorkspaceDO migration 62 drops eight tables, and the PRD makes "zero
- * unsettled Project effects" a cutover gate: a default still queued for
- * delivery is work aimed at a Channel whose audience the Space cutover has just
- * changed. So the migration invalidates what it can, asserts that nothing
- * unsettled is left, and only then drops anything.
+ * WorkspaceDO migration 62 drops eight tables. The PRD makes "zero unsettled
+ * Project effects" a cutover gate, and this is what meets it: the migration
+ * settles every pending target and publication in the same transaction that
+ * drops them, and the activity consumer keeps a tombstone leg so a message
+ * published before the cutover is acknowledged rather than retried to the
+ * dead-letter queue. There is no barrier between the two — one shipped, and it
+ * counted rows the statements above it had just settled, so it could only ever
+ * read zero. An undelivered Project default is *dropped*, which is what PRD
+ * non-goal 5 asks for: Projects are deleted rather than converted.
  *
  * Against the checked-in ledger rather than a stub, because what is under test
- * is the statements themselves — a CHECK constraint's name, the order the
- * drops run in, and whether a cascade fires.
+ * is the statements themselves — the order the drops run in, whether a cascade
+ * fires, and whether the settlement happens before either.
  */
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { consumeActivityQueue } from "../src/queues/activity-consumer";
+import type { Env } from "../src/env";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * The version that retires Projects. Bumping it is part of changing it: the
@@ -27,6 +34,7 @@ const PROJECT_ID = "00000000-0000-7000-8000-0000000000d1";
 const RESOURCE_ID = "00000000-0000-7000-8000-0000000000d2";
 const CHANNEL_ID = "00000000-0000-7000-8000-0000000000d3";
 const USER_ID = "00000000-0000-7000-8000-0000000000d4";
+const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000d5";
 
 const PROJECT_TABLES = [
   "projects",
@@ -48,6 +56,7 @@ function openDatabase(): DatabaseSync {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (openDatabases.length > 0) {
     try { openDatabases.pop()?.close(); } catch { /* already closed */ }
   }
@@ -87,8 +96,22 @@ function seedProjectDefault(database: DatabaseSync, targetState: string): void {
   ).run(PROJECT_ID, RESOURCE_ID, CHANNEL_ID, targetState);
 }
 
+/** One Queue message, in the shape the consumer reads it. */
+function queued(body: unknown) {
+  const ack = vi.fn();
+  const retry = vi.fn();
+  const batch = {
+    messages: [{ id: "project", timestamp: new Date(1), body, attempts: 1, ack, retry }],
+    queue: "activity",
+    metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+    retryAll: vi.fn(),
+    ackAll: vi.fn(),
+  } as unknown as MessageBatch<unknown>;
+  return { batch, ack, retry };
+}
+
 describe("WorkspaceDO migration 62", () => {
-  it("given a Project default still queued, when the migration runs, then it is invalidated rather than dropped under", () => {
+  it("given a Project default still queued, when the migration runs, then it is settled in the same transaction that drops it", () => {
     const database = openDatabase();
     apply(database, PROJECT_RETIREMENT_VERSION - 1);
     seedProjectDefault(database, "pending");
@@ -99,43 +122,30 @@ describe("WorkspaceDO migration 62", () => {
        VALUES (?, ?, 1, ?, 1, ?, 'pending', 0, 0, 1, 1, NULL)`,
     ).run(PROJECT_ID, RESOURCE_ID, CHANNEL_ID, USER_ID);
 
-    apply(database, PROJECT_RETIREMENT_VERSION, PROJECT_RETIREMENT_VERSION - 1);
-
-    // The barrier read zero because the invalidation above it settled the row,
-    // which is the order the PRD's "zero unsettled Project effects" gate needs:
-    // the durable half of an at-least-once delivery is what stops a Queue
-    // message still in flight from attaching to a Channel whose audience this
-    // cutover has just changed.
-    for (const table of PROJECT_TABLES) {
-      expect(() => database.exec(`SELECT 1 FROM ${table}`), table).toThrow(/no such table/u);
-    }
-  });
-
-  it("given a target in a state the invalidation does not cover, when the migration runs, then it fails by name and drops nothing", () => {
-    const database = openDatabase();
-    apply(database, PROJECT_RETIREMENT_VERSION - 1);
-    seedProjectDefault(database, "pending");
-    // The failure a future edit would introduce: an invalidation that stops
-    // covering every unsettled row. Simulated by taking the statement out,
-    // because the point of the barrier is that it does not trust the statement
-    // above it.
+    // The statements, stopped after the last settlement and before the first
+    // drop. What the settlement is *for* is a message still in flight: it finds
+    // nothing current and attaches nothing to a Channel whose audience the
+    // Space cutover has just changed.
     const migration = WORKSPACE_DO_SCHEMA_MIGRATIONS
       .find((entry) => entry.version === PROJECT_RETIREMENT_VERSION);
     expect(migration).toBeDefined();
-    const withoutInvalidation = migration!.statements
-      .filter((statement) => !statement.startsWith("UPDATE project_default_resource_targets"));
+    const settlements = migration!.statements.filter((statement) => statement.startsWith("UPDATE "));
+    expect(settlements).toHaveLength(2);
+    for (const statement of settlements) database.exec(statement);
 
-    expect(() => {
-      for (const statement of withoutInvalidation) database.exec(statement);
-    }).toThrow(/project_effects_pending/u);
-
-    // Nothing is dropped: the barrier is in front of every drop, and a real
-    // migration runs inside one `transactionSync`, so the abort takes the
-    // whole attempt with it.
-    expect(database.prepare("SELECT COUNT(*) AS rows FROM projects").get()).toEqual({ rows: 1 });
     expect(database.prepare(
-      "SELECT COUNT(*) AS rows FROM project_default_resource_targets WHERE state = 'pending'",
-    ).get()).toEqual({ rows: 1 });
+      "SELECT state, last_error_code FROM project_default_resource_targets",
+    ).get()).toMatchObject({ state: "terminal", last_error_code: "project_retired" });
+    expect(database.prepare(
+      "SELECT state FROM project_default_resource_publications",
+    ).get()).toMatchObject({ state: "accepted" });
+
+    for (const statement of migration!.statements.filter((statement) => !statement.startsWith("UPDATE "))) {
+      database.exec(statement);
+    }
+    for (const table of PROJECT_TABLES) {
+      expect(() => database.exec(`SELECT 1 FROM ${table}`), table).toThrow(/no such table/u);
+    }
   });
 
   it("given an applied Project default, when the migration runs, then the Channel's own attachment is untouched", () => {
@@ -166,5 +176,38 @@ describe("WorkspaceDO migration 62", () => {
     ).get()).toEqual({ rows: 1 });
     expect(() => database.exec("SELECT 1 FROM project_default_resources"))
       .toThrow(/no such table/u);
+  });
+});
+
+describe("the activity Queue's Project tombstone", () => {
+  it("given a Project default published before the cutover, when it is redelivered, then it is acknowledged rather than retried", async () => {
+    const env: Env = createTestEnv({ AVALON_REGION: "global", APP_ENV: "test" });
+    const { batch, ack, retry } = queued({
+      type: "project_default_resource",
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      projectId: PROJECT_ID,
+      resourceId: RESOURCE_ID,
+      defaultGeneration: 1,
+      workstreamId: CHANNEL_ID,
+      membershipGeneration: 1,
+      requestedByUserId: USER_ID,
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await consumeActivityQueue(batch, env);
+
+    // The whole handler. A retry would reach the same answer on every
+    // redelivery until the message dead-lettered, which is a non-empty
+    // dead-letter queue saying something that is not a failure.
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "project_default_delivery_terminal",
+      workspace_id: WORKSPACE_ID,
+      workstream_id: CHANNEL_ID,
+      outcome: "skipped",
+      reason: "projects_retired",
+    }));
   });
 });
