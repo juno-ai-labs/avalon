@@ -72,7 +72,7 @@ describe('Manage access', () => {
       direct: { scope: 'personal', participantUserIds: [person] },
       spaces: [],
       spaceIds: [],
-    } as unknown as ChannelAccess);
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     expect(await screen.findByText('Only the 1 person in the channel.')).toBeVisible();
