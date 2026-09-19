@@ -16,7 +16,7 @@ import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { compareWorkstreamRecency, formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
-import { moveWithin, orderByStoredIds } from '../lib/personal-order';
+import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
@@ -1516,17 +1516,19 @@ export function Sidebar({
       const order = dragOrder;
       draggingWorkstreamId.current = null;
       if (order === null) return;
-      // `dragend` fires whatever ended the drag. Escape, or a release outside
-      // the pinned list, leaves `dropEffect` at `none` — and the arrangement
-      // built while the pointer passed over other rows must be abandoned, not
-      // saved, or backing out of a drag becomes the same thing as finishing it.
-      // An unchanged arrangement is likewise not worth rewriting every position
-      // for.
-      if (cancelled || order.join() === storedPinnedWorkstreams.map((pinned) => pinned.id).join()) {
+      // `dragend` fires whatever ended the drag, and `committedOrder` holds the
+      // three questions every list here asks at that moment: was it backed out
+      // of, did anything actually move, and — the one that is easy to get
+      // wrong — moved *relative to what the server last confirmed*, which is
+      // `storedPinnedWorkstreams` rather than the list on screen.
+      const committed = committedOrder(
+        order, storedPinnedWorkstreams.map((pinned) => pinned.id), cancelled,
+      );
+      if (committed === null) {
         setDragOrder(null);
         return;
       }
-      void commitPinnedOrder(order);
+      void commitPinnedOrder(committed);
     },
     onMove: (target, direction) => {
       const order = pinnedWorkstreams.map((pinned) => pinned.id);
