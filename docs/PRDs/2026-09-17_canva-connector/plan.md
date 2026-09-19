@@ -53,3 +53,12 @@ DCR is the tested interim identity. Moving to Canva's recommended CIMD requires 
 published metadata document and provider acceptance; it does not remove the
 redirect-approval gate. No provider account identity is inferred from the MCP
 resource URL, and plan eligibility is always decided by Canva.
+
+## Universal availability — 2026-09-19
+
+Removed both availability and loopback environment switches at the product owner's
+request. The default-config OAuth integration test exercises real attempt storage
+and provider discovery/registration with only provider HTTP doubled; omitting the
+native callback makes it fail. Canva was inspected in Settings, onboarding and
+the support page without an API availability switch. The latest main branch was
+merged before release, preserving its single-sentence connector card layout.
