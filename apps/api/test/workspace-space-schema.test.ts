@@ -88,7 +88,6 @@ describe("WorkspaceDO space schema", () => {
       "space_default_targets",
       "space_default_publications",
       "space_bootstrap",
-      "space_bootstrap_receipts",
     ]) expect(tables.has(table)).toBe(true);
     // The scratch table the retirement-graph rebuild carries rows through is
     // dropped by the same migration; one left behind would be a second copy of

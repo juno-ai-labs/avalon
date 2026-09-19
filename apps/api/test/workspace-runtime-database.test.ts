@@ -185,12 +185,11 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "opportunity_provenance_edges",
   "opportunity_provenance_nodes",
   "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
-  // The Space authority's eleven tables. Every one of them is reached through
+  // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // Space is a relationship the Organization owns, not product state a runtime
   // statement names.
   "space_bootstrap",
-  "space_bootstrap_receipts",
   "space_channel_memberships",
   "space_default_publications",
   "space_default_targets",
