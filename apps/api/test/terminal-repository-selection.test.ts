@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { encryptString, sha256Hex } from "../src/lib/crypto";
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import { TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS } from "../src/services/terminal/contract";
 import { createTerminalRepositorySelector } from "../src/services/terminal/repository-selection";
 import {
   createTerminalFinalDiffPreserver,
@@ -587,13 +588,44 @@ describe("Terminal model repository selection", () => {
         repositoryFullName: "acme/widget",
         requiredRemoteAccess: "read_only",
       })).rejects.toThrow("R2 backup failed");
-      expect(provider.startSandbox).toHaveBeenCalledWith("provider-1");
+      // Checkout restores outside `acquire`, so it carries the preparation
+      // budget's own deadline. Unbudgeted it would fall to the Daytona SDK's
+      // 60s default and keep feeding censored samples into the same
+      // `sandbox_start`/`archived` analytics bucket as the budgeted restores.
+      expect(provider.startSandbox).toHaveBeenCalledWith("provider-1", {
+        deadlineAtMs: expect.any(Number),
+      });
       expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
       if (state === "archived") expect(provider.archiveSandbox).toHaveBeenCalledWith("provider-1");
       else expect(provider.archiveSandbox).not.toHaveBeenCalled();
       expect(provider.deleteSandbox).not.toHaveBeenCalled();
     },
   );
+
+  it("bounds the checkout restore by the repository-preparation budget", async () => {
+    const { objectStore, provider, context, selector } = await fixture();
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_workspace
+       (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, last_command_at,
+        created_at, updated_at)
+       VALUES (1, 'daytona', 'archived', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
+    );
+    const preparationStartedAt = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(preparationStartedAt);
+    vi.mocked(provider.runUtilityCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).rejects.toThrow("R2 backup failed");
+
+    expect(provider.startSandbox).toHaveBeenCalledWith("provider-1", {
+      deadlineAtMs: preparationStartedAt + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS,
+    });
+  });
 
   it("fails closed without deleting the sandbox when the harness backup exceeds its limit", async () => {
     const { objectStore, provider, context, selector } = await fixture({ backupResult: "TOO_LARGE 60000000\n" });

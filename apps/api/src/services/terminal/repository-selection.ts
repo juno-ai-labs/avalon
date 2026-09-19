@@ -16,6 +16,7 @@ import {
   emitProductUsageTelemetry,
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
+import { terminalRepositoryPreparationDeadlineAt } from "./contract";
 import type { TerminalSandboxCoordinator } from "./coordinator";
 import type { TerminalSandboxProvider } from "./provider-contract";
 import { createTerminalWorkspaceBackup, type TerminalWorkspaceBackup } from "./lifecycle";
@@ -215,6 +216,11 @@ export function createTerminalRepositorySelector(
         return output("already_selected", null);
       }
 
+      // Checkout's provider-facing work starts here, and its restore below is
+      // bounded by the preparation budget the tool's own deadline reserves for
+      // it — not by the Daytona SDK's default, which is the number this
+      // change exists to remove from every restore path.
+      const preparationStartedAt = Date.now();
       const sandbox = await coordinator.claimMutation(context);
 
       if (await terminal.unsettledTaskCount() > 0) {
@@ -236,7 +242,9 @@ export function createTerminalRepositorySelector(
         };
         try {
           if (sandbox.state === "stopped" || sandbox.state === "archived") {
-            await provider.startSandbox(sandbox.providerSandboxId);
+            await provider.startSandbox(sandbox.providerSandboxId, {
+              deadlineAtMs: terminalRepositoryPreparationDeadlineAt(preparationStartedAt),
+            });
             temporarilyStarted = true;
           } else if (sandbox.state !== "running") {
             throw new TerminalToolError(
