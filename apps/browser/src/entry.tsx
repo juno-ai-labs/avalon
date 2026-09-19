@@ -162,12 +162,12 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     let active = true;
     void browserRequest(destination.region, "/workspace/select", BrowserSessionSchema, { workspaceId: destination.workspaceId })
       .then((selected) => {
-        if (selected.user.id !== session.user.id || selected.workspace?.id !== destination.workspaceId) throw new Error("The workspace session changed. Reload this page.");
+        if (selected.user.id !== session.user.id || selected.workspace?.id !== destination.workspaceId) throw new Error("The organization session changed. Reload this page.");
         if (active) setWorkspaceSession(selected);
       }).catch((cause: unknown) => {
         if (!active) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) setWorkspaceSession(null);
-        setError(cause instanceof Error ? cause.message : "Unable to open this workspace.");
+        setError(cause instanceof Error ? cause.message : "Unable to open this organization.");
       });
     return () => { active = false; };
   // A root-session refresh must also revalidate the workspace relationship,
@@ -255,9 +255,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
         {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
-          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open work stream" : target.substreamId === "0" ? "Open main conversation" : `Open shared substream${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
+          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
           : invitation ? <><p>Accept this invitation using the email address it was sent to.</p><button disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy ? "Joining…" : "Accept invitation"}</button></>
-          : workspaces.length ? <nav aria-label="Workspaces">{workspaces.map((workspace) =>
+          : workspaces.length ? <nav aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="workspace-link" key={workspace.id} href={`/app/workspaces/${region}/${workspace.id}`}>{workspace.name}<span aria-hidden="true">→</span></a>)}</nav>
           : <p>Open the invitation you received to join a shared conversation.</p>}
         <button className="secondary" disabled={busy} onClick={() => { void signOut(); }}>Sign out</button>

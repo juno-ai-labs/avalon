@@ -20,7 +20,7 @@ it("adapts browser metadata to the existing collaboration client without bearer 
   expect(cookieClientSession("global", { ...metadata, workspace: null }).apiBaseUrl).toBe("/regional/global/browser/api/_");
 });
 
-it("refuses an unconfigured deployment or a workspace routed through another deployment", () => {
+it("refuses an unconfigured deployment or an organization routed through another deployment", () => {
   expect(() => cookieClientSession("unknown", metadata)).toThrow();
   expect(() => cookieClientSession("global", { ...metadata, workspace: { ...metadata.workspace!, region: "another" } })).toThrow("deployment does not match");
 });
