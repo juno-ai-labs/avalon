@@ -574,8 +574,9 @@ row may drop are principle 8 in [`agent-tools.md`](agent-tools.md).
 The single reads are declared the same way, as the matching list row plus what
 the read was for: `issues.get` adds the body and the milestone title,
 `pull_requests.get` adds those plus `merged`, `mergeable`, `mergeable_state`,
-`merge_commit_sha`, `merged_by.login` and the counts that describe the change
-— comments, review comments, commits, additions, deletions and changed files — `actions.get_workflow_run` adds the workflow file path, the head commit
+`merge_commit_sha`, `merged_by.login`, `head.repo.full_name` and the counts that
+describe the change — comments, review comments, commits, additions, deletions
+and changed files — `actions.get_workflow_run` adds the workflow file path, the head commit
 and the two actors that differ on a re-run, and `repository.get` adds
 visibility, topics, licence, homepage and the counts. Composing them from the
 list rows rather than declaring them separately is deliberate: a field that
