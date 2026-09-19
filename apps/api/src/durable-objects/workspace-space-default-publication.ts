@@ -2,12 +2,15 @@ import type { Region } from "@rally/contracts/regions";
 
 import { publishFencedTargets } from "./fenced-target-publication";
 import {
+  SpaceBootstrapQueueMessageSchema,
   SpaceDefaultQueueMessageSchema,
   SpaceIntentResumeQueueMessageSchema,
+  type SpaceBootstrapQueueMessage,
   type SpaceDefaultQueueMessage,
   type SpaceIntentResumeQueueMessage,
 } from "./workspace-space-protocol";
 import type {
+  SpaceBootstrapClaim,
   WorkspaceSpaceDefaultPublication,
   WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -22,6 +25,7 @@ export interface SpaceDefaultPublicationStorage {
     now?: number,
   ): void;
   claimIntentResumes(now: number, retryAt: (attempt: number) => number): WorkspaceSpaceIntentClaim[];
+  claimBootstrap(now: number, retryAt: (attempt: number) => number): SpaceBootstrapClaim | null;
 }
 
 export interface SpacePublicationQueue {
@@ -103,6 +107,44 @@ export async function publishSpaceIntentResumes(input: {
       spaceRevision: intent.spaceRevision,
       membershipGeneration: intent.membershipGeneration,
       requestedByUserId: intent.requestedByUserId,
+    }),
+    queue: input.queue,
+    now: input.now,
+    retryAt: input.retryAt,
+  });
+}
+
+/**
+ * Publish the next piece of the one-time Space cutover.
+ *
+ * The same claim/send shape as a default target, and deliberately so: the
+ * cutover has to make progress on an Organization nobody is signed in to, and
+ * the alarm is the only thing that wakes without a request. One claim per
+ * alarm, because the phases are ordered and a page's cursor is only known once
+ * the page before it has been reported.
+ */
+export async function publishSpaceBootstrapWork(input: {
+  storage: SpaceDefaultPublicationStorage;
+  queue: { sendBatch(messages: Array<{ body: SpaceBootstrapQueueMessage }>): Promise<unknown> };
+  workspaceId: string;
+  region: Region;
+  now: number;
+  retryAt: (attempt: number) => number;
+}): Promise<number> {
+  return publishFencedTargets({
+    claim: (now, retryAt) => {
+      const claim = input.storage.claimBootstrap(now, retryAt);
+      return claim === null ? [] : [claim];
+    },
+    // The claim already advanced the gate, and the work settles when the
+    // consumer reports the page rather than when the Queue takes the message.
+    accept: () => undefined,
+    message: (claim) => SpaceBootstrapQueueMessageSchema.parse({
+      type: "space_bootstrap",
+      region: input.region,
+      workspaceId: input.workspaceId,
+      kind: claim.kind,
+      cursor: claim.cursor,
     }),
     queue: input.queue,
     now: input.now,

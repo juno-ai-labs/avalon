@@ -54,6 +54,29 @@ import type {
  */
 export const SPACE_CHANNEL_PAGE_SIZE = 250;
 
+/**
+ * Channels the cutover claims in one page of work.
+ *
+ * Bounds: rows in one `space_bootstrap` Queue message's worth of work, and
+ *   therefore the Channels one consumer invocation places.
+ * Without it: the cutover would claim the whole Organization in one message,
+ *   and an Organization larger than one invocation's budget could never
+ *   finish — each redelivery would restart the same unbounded pass.
+ * Direction: upper bound on Channels per message; the pass continues from the
+ *   cursor on the next alarm.
+ * Trips: nothing visible. The page ends and the cursor continues it.
+ * Derive from: the two ceilings this sits between, and the number is the
+ *   team's to set. A Cloudflare Queue consumer invocation and a WorkspaceDO
+ *   alarm both have to finish the page, and each Channel costs one
+ *   containment preflight, one membership staging, one canonical audience
+ *   operation and one settlement — four cross-object awaits. 50 is a quarter
+ *   of `SPACE_CHANNEL_PAGE_SIZE`, which bounds a read rather than a walk of
+ *   cross-object writes; what a different number buys is fewer alarm wakes
+ *   against a longer invocation, and nobody here has the Organization sizes or
+ *   the per-Channel timings to weigh them.
+ */
+export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
+
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
 
@@ -235,19 +258,28 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   // completes it in a few writes; an existing one is driven through it by the
   // cutover. Both read the same row, so nothing has to ask which kind of
   // Organization it is looking at.
+  // `not_before` and `attempts` are the retry gate the alarm claims on, in the
+  // shape every other staged fan-out in this object uses: the gate advances
+  // *before* the Queue send, so a rejected batch is retried later rather than
+  // spinning the alarm, and a page that is delivered but never reported is
+  // republished rather than lost. Progress clears it, so the next page follows
+  // immediately instead of waiting out a retry interval.
   `CREATE TABLE space_bootstrap (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    phase TEXT NOT NULL CHECK (phase IN ('pending', 'general', 'memberships', 'audience', 'complete')),
+    phase TEXT NOT NULL CHECK (phase IN ('pending', 'general', 'memberships', 'finalize', 'complete')),
     general_space_id TEXT,
     cursor TEXT,
     blocked_json TEXT NOT NULL CHECK (json_valid(blocked_json)),
+    not_before INTEGER NOT NULL,
+    attempts INTEGER NOT NULL CHECK (attempts >= 0),
     started_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0)
   ) STRICT`,
   `INSERT INTO space_bootstrap
-     (id, phase, general_space_id, cursor, blocked_json, started_at, updated_at, completed_at)
-   VALUES (1, 'pending', NULL, NULL, '[]', 0, 0, NULL)`,
+     (id, phase, general_space_id, cursor, blocked_json, not_before, attempts,
+      started_at, updated_at, completed_at)
+   VALUES (1, 'pending', NULL, NULL, '[]', 0, 0, 0, 0, NULL)`,
   `CREATE TABLE space_bootstrap_receipts (
     workstream_id TEXT NOT NULL,
     phase TEXT NOT NULL,
@@ -349,6 +381,32 @@ function decodeChannelCursor(cursor: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** What the cutover's alarm claimed, and what the consumer should do with it. */
+export interface SpaceBootstrapClaim {
+  kind: "general" | "memberships" | "finalize";
+  cursor: string | null;
+}
+
+/** One Channel the cutover has to place, as the Organization already knows it. */
+export interface SpaceBootstrapChannel {
+  workstreamId: string;
+  scope: "personal" | "workspace";
+  archived: boolean;
+  placed: boolean;
+  participantUserIds: string[];
+}
+
+export interface SpaceBootstrapPage {
+  items: SpaceBootstrapChannel[];
+  nextCursor: string | null;
+}
+
+/** A Channel the cutover could not place, and the refusal that stopped it. */
+export interface SpaceBootstrapBlocked {
+  workstreamId: string;
+  code: string;
 }
 
 /** One page of the memberships a Space read is about, before the projection. */
@@ -1684,6 +1742,302 @@ export class WorkspaceSpaceStorage {
     ).toArray()[0]?.space_id ?? null;
   }
 
+  /**
+   * Take the next piece of cutover work, and move its retry gate out of reach.
+   *
+   * One claim at a time, because the phases are ordered and a page's cursor is
+   * only known once the page before it has been reported. The gate advances
+   * before the caller sends anything, exactly as a default target's does: a
+   * rejected Queue batch, or a delivered page whose consumer died, is
+   * republished on a later alarm rather than immediately or never.
+   *
+   * `phase` is the pass that is *running*, so it maps to a message kind
+   * directly. `pending` and `general` both publish `general` because
+   * `ensureGeneral` is idempotent — the second one through is answered with the
+   * Space the first one made.
+   */
+  claimBootstrap(now: number, retryAt: (attempt: number) => number): SpaceBootstrapClaim | null {
+    if (!this.ready()) return null;
+    return this.storage.transactionSync(() => {
+      const row = this.storage.sql.exec<{
+        phase: WorkspaceSpaceBootstrapStatus["phase"];
+        cursor: string | null;
+        not_before: number;
+        attempts: number;
+      } & Record<string, SqlStorageValue>>(
+        "SELECT phase, cursor, not_before, attempts FROM space_bootstrap WHERE id = 1",
+      ).one();
+      if (row.phase === "complete" || row.not_before > now) return null;
+      this.storage.sql.exec(
+        `UPDATE space_bootstrap SET attempts = ?, not_before = ?, updated_at = ?,
+                started_at = CASE WHEN started_at = 0 THEN ? ELSE started_at END
+          WHERE id = 1`,
+        row.attempts + 1,
+        retryAt(row.attempts + 1),
+        now,
+        now,
+      );
+      return {
+        kind: row.phase === "memberships" ? "memberships"
+          : row.phase === "finalize" ? "finalize" : "general",
+        cursor: row.phase === "memberships" ? row.cursor : null,
+      };
+    });
+  }
+
+  /**
+   * Record that a pass moved, and make the next piece of work due now.
+   *
+   * Clearing the gate is the difference between a cutover that walks an
+   * Organization at the speed of its Queue and one that waits out a retry
+   * interval per page. A pass that did *not* move leaves the gate where the
+   * claim put it.
+   */
+  advanceBootstrap(
+    phase: WorkspaceSpaceBootstrapStatus["phase"],
+    cursor: string | null,
+    now = Date.now(),
+  ): void {
+    if (!this.ready()) return;
+    this.storage.sql.exec(
+      `UPDATE space_bootstrap
+          SET phase = ?, cursor = ?, not_before = 0, attempts = 0, updated_at = ?
+        WHERE id = 1 AND phase <> 'complete'`,
+      phase,
+      cursor,
+      now,
+    );
+  }
+
+  nextBootstrapDueAt(): number | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{
+      phase: string;
+      not_before: number;
+    } & Record<string, SqlStorageValue>>(
+      "SELECT phase, not_before FROM space_bootstrap WHERE id = 1",
+    ).toArray().filter((row) => row.phase !== "complete").map((row) => row.not_before)[0] ?? null;
+  }
+
+  /**
+   * One page of the Channels the cutover has to place.
+   *
+   * Active and archived alike, and every one of them with `system_kind IS NULL`:
+   * a system Channel's audience and home belong to the subsystem that writes
+   * it, and the hierarchy invariant is about the Channels a person can see.
+   * Ordered by id so the cursor is the id it stopped at and an interrupted
+   * pass resumes from a row rather than from an offset.
+   *
+   * Everything a placement needs travels with the row, because the alternative
+   * is a cross-object read per Channel to learn what the Organization already
+   * knows: the scope its directory projection carries, whether some Space
+   * already holds it, and the participants who could act on it.
+   */
+  bootstrapPage(cursor: string | null, limit = SPACE_BOOTSTRAP_PAGE_SIZE): SpaceBootstrapPage {
+    if (!this.ready()) return { items: [], nextCursor: null };
+    const rows = this.storage.sql.exec<{
+      workstream_id: string;
+      scope: "personal" | "workspace";
+      archived_at: number | null;
+      placed: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT directory.workstream_id, directory.scope, directory.archived_at,
+              EXISTS (SELECT 1 FROM space_channel_memberships membership
+                       WHERE membership.workstream_id = directory.workstream_id
+                         AND membership.state = 'active') AS placed
+         FROM workspace_workstream_directory directory
+        WHERE directory.system_kind IS NULL
+          AND (? IS NULL OR directory.workstream_id > ?)
+        ORDER BY directory.workstream_id
+        LIMIT ?`,
+      cursor,
+      cursor ?? "",
+      limit + 1,
+    ).toArray();
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    const participants = this.channelParticipants(rows.map((row) => row.workstream_id));
+    return {
+      items: rows.map((row) => ({
+        workstreamId: row.workstream_id,
+        scope: row.scope,
+        archived: row.archived_at !== null,
+        placed: row.placed === 1,
+        participantUserIds: participants.get(row.workstream_id) ?? [],
+      })),
+      nextCursor: hasMore ? (rows.at(-1)?.workstream_id ?? null) : null,
+    };
+  }
+
+  /** The Channels on this page a previous delivery already finished. */
+  bootstrapReceipted(workstreamIds: readonly string[], phase: string): Set<string> {
+    const receipted = new Set<string>();
+    if (!this.ready()) return receipted;
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT workstream_id FROM space_bootstrap_receipts
+          WHERE phase = ? AND workstream_id IN (${chunk.map(() => "?").join(", ")})`,
+        phase,
+        ...chunk,
+      ).toArray()) receipted.add(row.workstream_id);
+    }
+    return receipted;
+  }
+
+  recordBootstrapReceipts(
+    workstreamIds: readonly string[],
+    phase: string,
+    now = Date.now(),
+  ): void {
+    if (!this.ready()) return;
+    for (const workstreamId of workstreamIds) {
+      this.storage.sql.exec(
+        `INSERT INTO space_bootstrap_receipts (workstream_id, phase, completed_at)
+         VALUES (?, ?, ?) ON CONFLICT (workstream_id, phase) DO NOTHING`,
+        workstreamId,
+        phase,
+        now,
+      );
+    }
+  }
+
+  /**
+   * Record a Channel the cutover could not place, and why.
+   *
+   * A blocker is not a failure to retry: an immutable content fence is never
+   * bypassed and never deleted, so the Organization stays where it is until
+   * somebody remediates the Channel. Keyed by Channel so a redelivery of the
+   * same page reports the same blocker once.
+   */
+  recordBootstrapBlocked(
+    blocked: ReadonlyArray<{ workstreamId: string; code: string }>,
+    now = Date.now(),
+  ): void {
+    if (!this.ready() || blocked.length === 0) return;
+    this.storage.transactionSync(() => {
+      const current = this.blockedEntries();
+      const merged = new Map(current.map((entry) => [entry.workstreamId, entry]));
+      for (const entry of blocked) merged.set(entry.workstreamId, entry);
+      this.storage.sql.exec(
+        "UPDATE space_bootstrap SET blocked_json = ?, updated_at = ? WHERE id = 1",
+        JSON.stringify([...merged.values()]),
+        now,
+      );
+    });
+  }
+
+  /** Stop reporting a Channel as blocked once the cutover has placed it. */
+  clearBootstrapBlocked(workstreamIds: readonly string[], now = Date.now()): void {
+    if (!this.ready() || workstreamIds.length === 0) return;
+    this.storage.transactionSync(() => {
+      const cleared = new Set(workstreamIds);
+      const remaining = this.blockedEntries().filter((entry) => !cleared.has(entry.workstreamId));
+      this.storage.sql.exec(
+        "UPDATE space_bootstrap SET blocked_json = ?, updated_at = ? WHERE id = 1",
+        JSON.stringify(remaining),
+        now,
+      );
+    });
+  }
+
+  /**
+   * Whether any Channel is still outside every Space.
+   *
+   * The cutover's gate is this rather than a count of receipts. A Channel
+   * created while the cutover is running is placed by the creation path and has
+   * no receipt, so counting receipts against the directory would leave an
+   * Organization permanently one short of complete.
+   */
+  unplacedChannelExists(): boolean {
+    if (!this.ready()) return false;
+    return this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
+      `SELECT 1 AS one FROM workspace_workstream_directory directory
+        WHERE directory.system_kind IS NULL
+          AND NOT EXISTS (SELECT 1 FROM space_channel_memberships membership
+                           WHERE membership.workstream_id = directory.workstream_id
+                             AND membership.state = 'active')
+        LIMIT 1`,
+    ).toArray().length > 0;
+  }
+
+  /** The Channels the cutover is stuck on, with the reason each one is stuck. */
+  blockedEntries(): SpaceBootstrapBlocked[] {
+    if (!this.ready()) return [];
+    const parsed = JSON.parse(this.storage.sql.exec<{ blocked_json: string } & Record<string, SqlStorageValue>>(
+      "SELECT blocked_json FROM space_bootstrap WHERE id = 1",
+    ).one().blocked_json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => (
+      entry !== null && typeof entry === "object"
+        && typeof (entry as { workstreamId?: unknown }).workstreamId === "string"
+        && typeof (entry as { code?: unknown }).code === "string"
+        ? [entry as SpaceBootstrapBlocked]
+        : []
+    ));
+  }
+
+  /**
+   * Whether a Project effect is still queued for delivery to a Channel.
+   *
+   * The PRD's shutdown barrier, and it lives here rather than with the Project
+   * storage because it outlives it: the migration that retires Projects drops
+   * those tables, and after that this answers false by their absence rather
+   * than by a count. An Organization the retirement migration has not reached
+   * still has them, and a pending row there is work aimed at a Channel whose
+   * audience this cutover has just changed — so it is the one thing that can
+   * hold `complete` back for a reason outside the Space tables.
+   */
+  pendingProjectEffects(): boolean {
+    const present = new Set(this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table'
+        AND name IN ('project_default_resource_targets', 'project_default_resource_publications')`,
+    ).toArray().map((row) => row.name));
+    if (present.has("project_default_resource_targets")
+      && this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
+        "SELECT 1 AS one FROM project_default_resource_targets WHERE state = 'pending' LIMIT 1",
+      ).toArray().length > 0) return true;
+    return present.has("project_default_resource_publications")
+      && this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
+        "SELECT 1 AS one FROM project_default_resource_publications WHERE state = 'pending' LIMIT 1",
+      ).toArray().length > 0;
+  }
+
+  /** Close the cutover, or say why it cannot close yet. */
+  completeBootstrap(now = Date.now()): "complete" | "blocked" | "unplaced" {
+    if (this.blockedEntries().length > 0) return "blocked";
+    if (this.unplacedChannelExists()) return "unplaced";
+    this.storage.sql.exec(
+      `UPDATE space_bootstrap
+          SET phase = 'complete', cursor = NULL, not_before = 0, attempts = 0,
+              completed_at = ?, updated_at = ?
+        WHERE id = 1`,
+      now,
+      now,
+    );
+    this.advanceWaterline(now);
+    return "complete";
+  }
+
+  private channelParticipants(workstreamIds: readonly string[]): Map<string, string[]> {
+    const byChannel = new Map<string, string[]>();
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      for (const row of this.storage.sql.exec<{
+        workstream_id: string;
+        user_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT workstream_id, user_id FROM workspace_workstream_viewers
+          WHERE is_participant = 1 AND workstream_id IN (${chunk.map(() => "?").join(", ")})
+          ORDER BY workstream_id, user_id`,
+        ...chunk,
+      ).toArray()) {
+        const existing = byChannel.get(row.workstream_id);
+        if (existing) existing.push(row.user_id);
+        else byChannel.set(row.workstream_id, [row.user_id]);
+      }
+    }
+    return byChannel;
+  }
+
   bootstrapStatus(): WorkspaceSpaceBootstrapStatus {
     // An object that has not reached migration 61 has not started its cutover
     // either, which is what `pending` says — and `ready: false` is what keeps a
@@ -1695,17 +2049,15 @@ export class WorkspaceSpaceStorage {
     const row = this.storage.sql.exec<{
       phase: WorkspaceSpaceBootstrapStatus["phase"];
       general_space_id: string | null;
-      blocked_json: string;
     } & Record<string, SqlStorageValue>>(
-      "SELECT phase, general_space_id, blocked_json FROM space_bootstrap WHERE id = 1",
+      "SELECT phase, general_space_id FROM space_bootstrap WHERE id = 1",
     ).one();
-    const blocked = JSON.parse(row.blocked_json) as unknown;
     return {
       phase: row.phase,
       generalSpaceId: row.general_space_id === null ? null : asSpaceId(row.general_space_id),
-      blockedWorkstreamIds: Array.isArray(blocked)
-        ? blocked.filter((value): value is string => typeof value === "string").map(asWorkstreamId)
-        : [],
+      // Ids only. The reason each one is stuck is on the row for whoever reads
+      // it with SQL; what a client needs is whether the hierarchy is renderable.
+      blockedWorkstreamIds: this.blockedEntries().map((entry) => asWorkstreamId(entry.workstreamId)),
       ready: row.phase === "complete",
     };
   }
