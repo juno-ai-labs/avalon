@@ -858,6 +858,43 @@ describe("WorkspaceDO space authority", () => {
     });
   });
 
+  it("given a Space reached through a Channel, when that viewer asks for its members, then the page is refused", async () => {
+    const personal = await reserve("Side work", "personal");
+    await publishChannel(CHANNEL_A, null);
+    // The Channel this viewer reaches the Space through, and one they cannot
+    // see at all — which is exactly what an unfiltered membership page would
+    // hand them.
+    await publishPersonalChannel(CHANNEL_B, OWNER);
+    await place(personal, CHANNEL_A);
+    await place(personal, CHANNEL_B);
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toContain(personal);
+
+    // `members` answers the Space's whole membership with no viewer predicate,
+    // because every caller is a walk over the Space that has to reach each of
+    // its Channels. So the gate is `canEdit` rather than "may I see this
+    // Space", which this change made answer yes: there is no viewer-scoped
+    // variant to fall back to, and a walk narrowed to what its caller can see
+    // would half-apply the rest of the Space in silence. `space_access_denied`
+    // rather than `space_not_found`, like every other reach refusal: they are
+    // looking at the row.
+    await expect(workspace().listSpaceMembers({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal,
+    })).resolves.toEqual({ ok: false, code: "space_access_denied" });
+    await expect(workspace().listSpaceMembers({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal, reach: "reaching",
+    })).resolves.toEqual({ ok: false, code: "space_access_denied" });
+
+    // And the Space's own participant still gets both, so the refusal above is
+    // about the reach rather than about an empty Space.
+    await expect(workspace().listSpaceMembers({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
+    })).resolves.toMatchObject({
+      ok: true,
+      members: [{ workstreamId: CHANNEL_A }, { workstreamId: CHANNEL_B }],
+    });
+  });
+
   it("given a Space reached through a Channel, when that viewer arranges it, then the order is written", async () => {
     const personal = await reserve("Side work", "personal");
     const organization = await reserve("Company", "workspace");
