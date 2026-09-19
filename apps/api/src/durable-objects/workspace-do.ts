@@ -628,6 +628,7 @@ import {
   WorkspaceSpaceDefaultRequestSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
@@ -653,6 +654,7 @@ import {
   type WorkspaceSpaceDefaultRequest,
   type WorkspaceSpaceDefaultResult,
   type WorkspaceSpaceDirectoryResult,
+  type WorkspaceSpaceGeneralResult,
   type WorkspaceSpaceListRequest,
   type WorkspaceSpaceMembersRequest,
   type WorkspaceSpaceMembersResult,
@@ -6080,12 +6082,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * rather than two fallbacks. The caller still provisions the object; a
    * `created: true` answer is what tells it to.
    */
-  async ensureGeneralSpace(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceMutationResult & { created?: boolean }> {
+  async ensureGeneralSpace(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceGeneralResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "ensure_general_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [] };
+    if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
     const general = storage.ensureGeneral({
       workspaceId: request.workspaceId,
@@ -6096,14 +6098,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // which for an Organization-wide Space is every active member, and is the
     // answer rather than an assumption.
     if (!general.created && storage.readable(request.userId, general.space.id) === false) {
-      return { ok: false, code: "space_not_found", unreachableUserIds: [] };
+      return { ok: false, code: "space_not_found" };
     }
     storage.noteGeneralSpace(general.space.id);
     if (general.created) this.publishSpaceSnapshot();
-    return {
-      ...WorkspaceSpaceMutationResultSchema.parse({ ok: true, space: general.space }),
+    return WorkspaceSpaceGeneralResultSchema.parse({
+      ok: true,
+      space: general.space,
       created: general.created,
-    };
+    });
   }
 
   async listSpaces(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceDirectoryResult> {

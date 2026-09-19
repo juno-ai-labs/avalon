@@ -75,9 +75,11 @@ import {
  * person typed the text says so, and the default is the honest one.
  */
 type ParsedCreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
-type CreateWorkstreamInput = Omit<ParsedCreateWorkstreamInput, "mentions"> & {
+type CreateWorkstreamInput = Omit<ParsedCreateWorkstreamInput, "mentions" | "spaceIds"> & {
   /** Optional at this internal boundary because the schema fills the empty case. */
   mentions?: ParsedCreateWorkstreamInput["mentions"];
+  /** Optional for the same reason; empty means General, which every connector means. */
+  spaceIds?: ParsedCreateWorkstreamInput["spaceIds"];
   descriptionSource?: "authored" | "derived";
   /**
    * The connector place this work stream is being started from, when there is

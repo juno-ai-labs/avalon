@@ -10,6 +10,7 @@ import {
   SPACE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
   type SpaceChannelPage,
+  type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceSummary,
   type UserId,
@@ -18,7 +19,6 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import type {
   RemainingChannelAudience,
-  SpaceDefaultKind,
   SpaceMember,
   SpaceMembershipReach,
   WorkspaceSpaceAudienceNoteRequest,
