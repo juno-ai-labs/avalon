@@ -283,7 +283,7 @@ export function SpaceSidebarSection({
                       {placements.map((workstream) => (
                         <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}
-                      {unlisted > 0 && <p className="space-sidebar-empty">{space.channelCount} channels; open this space to see all</p>}
+                      {unlisted > 0 && <p className="space-sidebar-empty">{space.channelCount} channel{space.channelCount === 1 ? '' : 's'}; open this space to see all</p>}
                     </SpacePlacementList>)}
                 </SpaceRow>
               );

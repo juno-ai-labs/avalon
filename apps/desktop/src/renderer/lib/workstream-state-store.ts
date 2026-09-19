@@ -52,6 +52,12 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       nextPendingWakeup: workstream.nextPendingWakeup,
       participantUserIds: workstream.participantUserIds,
       participantExtraCount: workstream.participantExtraCount,
+      // Common rather than viewer state: a Channel's Space placements are the
+      // Organization's, not this reader's, and WorkspaceDO republishes the row
+      // after every membership settlement. Without it here, a Channel added to
+      // a Space stays under the Spaces it had until the whole directory is
+      // read again.
+      spaceIds: workstream.spaceIds,
     },
     viewer: {
       readThroughSequenceNumber: workstream.readThroughSequenceNumber,
