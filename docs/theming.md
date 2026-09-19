@@ -232,12 +232,22 @@ than wash it with the surface colour.
 
 **Consequences:** the two values are deliberately the same colour at two
 strengths, so a theme that re-fits `scrim.solid` has to move `veil` with it or
-the pair stops reading as one material. The reduced-motion block still drops the
-blur, which now leaves the backdrop legible rather than hidden — that is the
-trade it was already making and is the place to look if the unblurred backdrop
-reads as busy. The media viewer shares the overlay and keeps its own shadow and
-radius on the image, which is what separates a pale image from the lighter
-backdrop now behind it.
+the pair stops reading as one material. The media viewer shares the overlay and
+keeps its own shadow and radius on the image, which is what separates a pale
+image from the lighter backdrop now behind it.
+
+The `prefers-reduced-motion` override that cancelled this overlay's
+`backdrop-filter` is gone, and the blur now holds for every reader. That
+preference asks for less movement, not less depth, and a static blur does not
+move; the override had also never changed anything on screen, because a 1px blur
+under a `0.98` wash draws nothing — so nothing established was dropped. Against
+the new wash it would have mattered, and in the wrong direction: the one reader
+who asked for calm would have been the only one looking at a sharp, legible
+window through a half-transparent veil. The rejected alternative was to pair the
+override with `scrim.solid`, which keeps that reader on the old covered-window
+behaviour and makes reduced motion a second design of this surface rather than
+the same one. `app.css.node.test.ts` now fails on any rule that takes the blur
+back off, under any query.
 
 ### 2026-09-19 — One hover wash for the whole product
 
