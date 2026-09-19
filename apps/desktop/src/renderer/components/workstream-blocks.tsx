@@ -70,8 +70,7 @@ import { useCopy } from '../lib/use-copy';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
-import { useFaviconApi } from '../lib/favicon-api';
-import type { RallyApi } from '../lib/api';
+import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
@@ -1038,35 +1037,8 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
 const NO_MENTIONS: MessageMention[] = [];
 const EMPTY_DEFINITION_BLOCKS: string[] = [];
 
-function httpHostname(href: string | undefined): string | null {
-  if (!href) return null;
-  try {
-    const url = new URL(href);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname : null;
-  } catch {
-    return null;
-  }
-}
-
-function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string | undefined }): React.JSX.Element | null {
-  const hostname = httpHostname(href);
-  const [source, setSource] = useState<string | null>(null);
-  useEffect(() => {
-    if (!api || !hostname) return;
-    let active = true;
-    let objectUrl: string | null = null;
-    void api.getFavicon(hostname)
-      .then((blob) => {
-        if (!blob || !active) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSource(objectUrl);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [api, hostname]);
+function MarkdownLinkFavicon({ href }: { href: string | undefined }): React.JSX.Element | null {
+  const source = useHostFavicon(href);
   return source
     ? <img alt="" aria-hidden="true" className="markdown-link-favicon" src={source} />
     : <span aria-hidden="true" className="markdown-link-favicon-sentinel" />;
@@ -1144,7 +1116,6 @@ export function MarkdownBody({
    */
   verbatim?: boolean;
 }): React.JSX.Element {
-  const faviconApi = useFaviconApi();
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   // Socket hydration may replace a message with an equivalent object and a
@@ -1218,7 +1189,7 @@ export function MarkdownBody({
               identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >
               {!still && httpHostname(href)
-                ? <><MarkdownLinkFavicon key={href} api={faviconApi} href={href} />{linkChildren}</>
+                ? <><MarkdownLinkFavicon key={href} href={href} />{linkChildren}</>
                 : linkChildren}
             </CitationLink>
           )
@@ -1270,7 +1241,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [faviconApi, glance, renderCode, stableMentions, still, token]);
+  }), [glance, renderCode, stableMentions, still, token]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({
