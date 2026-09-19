@@ -958,20 +958,20 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       resultSchema: RetractSpaceAccessSourceResultSchema,
       now: Date.now(),
       body: () => {
-        // Retracting a source that is already gone converges rather than
-        // refusing: access is live, a source that does not exist grants
-        // nothing, and a retraction reissued under a new operation id after a
-        // crash has to be able to finish.
-        const existing = access.source(request.spaceId);
         // The fence the application and the confirmation run, on the one step
         // that has to carry it here instead. A retract-then-apply deletes the
         // row those two compare against, so an older audience change that
         // reached this Channel behind a newer one would find nothing to be
         // refused by and would then apply its stale roster unfenced.
+        const existing = access.source(request.spaceId);
         if (request.expectedSpaceRevision !== undefined && existing
           && existing.spaceRevision > request.expectedSpaceRevision) {
           return { ok: false as const, code: "space_revision_conflict" as const };
         }
+        // Retracting a source that is already gone converges rather than
+        // refusing: access is live, a source that does not exist grants
+        // nothing, and a retraction reissued under a new operation id after a
+        // crash has to be able to finish.
         const suppliedByDeparting = access.suppliedReaders(request.spaceId);
         const remainingSources = access.sources()
           .filter((source) => source.sourceId !== request.spaceId);
