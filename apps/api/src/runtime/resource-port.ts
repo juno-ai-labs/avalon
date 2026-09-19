@@ -4,10 +4,16 @@ import type { WorkstreamResourceStorage } from "../durable-objects/workstream-re
 import type { Env } from "../env";
 import { createObjectPort, type ObjectPortContract } from "./object-port";
 
-/** Builds a port for one work stream's attachments; injected so callers stay testable. */
+/**
+ * Builds a port for one conversation's attachments; injected so callers stay
+ * testable. No substream means the conversation the run executes in; one
+ * named is answered locally only by that conversation's own object and goes
+ * over the wire from any other, as every object port does.
+ */
 export type ResourcePortFactory = (
   workspaceId: string,
   workstreamId: string,
+  substreamId?: string,
 ) => ResourceObjectPort;
 
 const CONTRACT: ObjectPortContract<WorkstreamResourceStorage, ResourceOperation> = {
@@ -22,8 +28,8 @@ export function createResourcePortFactory(
   env: Env,
   localStorage?: WorkstreamResourceStorage,
 ): ResourcePortFactory {
-  return (workspaceId, workstreamId) =>
-    createResourceObjectPort(env, workspaceId, workstreamId, localStorage);
+  return (workspaceId, workstreamId, substreamId) =>
+    createResourceObjectPort(env, workspaceId, workstreamId, localStorage, substreamId);
 }
 
 /** A Worker-side handle on one work stream's resource attachments. */

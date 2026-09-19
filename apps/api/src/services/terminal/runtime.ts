@@ -55,6 +55,8 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
 const MAXIMUM_PUBLISH_BYTES = 25_000_000;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
+/** An edit's target no longer holds the bytes the edit was computed from. */
+const FILE_CHANGED_EXIT_CODE = 48;
 const FILE_NOT_UTF8_EXIT_CODE = 49;
 const FILE_TOO_LARGE_EXIT_CODE = 50;
 const FILE_LINE_TOO_LARGE_EXIT_CODE = 51;
@@ -322,7 +324,7 @@ function releasingAfterEachCall<T extends object>(
 
 export function createDaytonaTerminalRuntime(
   terminalPort: TerminalPortFactory,
-  coordinator: Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning">,
+  coordinator: Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning" | "holderSubstreamId">,
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
@@ -378,6 +380,7 @@ export function createDaytonaTerminalRuntime(
     holdsByCall.set(context.toolCallId, context.harnessRunId);
   }
   async function releaseAfterCall(context: HarnessToolContext): Promise<void> {
+    endTurn(context);
     if (!holdsByCall.delete(context.toolCallId)) return;
     for (const runId of holdsByCall.values()) {
       if (runId === context.harnessRunId) return;
@@ -385,6 +388,37 @@ export function createDaytonaTerminalRuntime(
     // The coordinator retries and logs a release that fails; nothing here
     // turns a finished call's result into a failure.
     await coordinator.release(context);
+  }
+
+  /**
+   * A run's write calls, one at a time.
+   *
+   * The lease is re-entrant for a run: a claim by the run that already holds
+   * it is answered "held", which is what lets a call's readiness and its own
+   * claim coexist. The harness runs a turn's tool calls in parallel, so
+   * without this two write calls of one run would both be answered "held"
+   * and reach the sandbox at once. The turn is in-process because every call
+   * of a run executes in the isolate that holds this runtime; a sibling run
+   * is kept out by the lease itself. A read takes no turn, as it takes no
+   * lease, and a call that already has the turn keeps it through the reads
+   * it makes on the way.
+   */
+  const turns = new Map<string, Promise<void>>();
+  const turnEndByCall = new Map<string, () => void>();
+  async function takeTurn(context: HarnessToolContext): Promise<void> {
+    if (turnEndByCall.has(context.toolCallId)) return;
+    const previous = turns.get(context.harnessRunId) ?? Promise.resolve();
+    let end!: () => void;
+    const mine = new Promise<void>((resolve) => { end = resolve; });
+    turnEndByCall.set(context.toolCallId, end);
+    turns.set(context.harnessRunId, previous.then(() => mine));
+    await previous;
+  }
+  function endTurn(context: HarnessToolContext): void {
+    const end = turnEndByCall.get(context.toolCallId);
+    if (!end) return;
+    turnEndByCall.delete(context.toolCallId);
+    end();
   }
 
   /**
@@ -453,6 +487,7 @@ export function createDaytonaTerminalRuntime(
     context: HarnessToolContext,
     preparation: TerminalSandboxPreparation | undefined = prepareSandbox,
   ): Promise<AcquiredTerminalSandbox> {
+    await takeTurn(context);
     const sandbox = await ready(context, preparation);
     if (await coordinator.claimForOperation(context, sandbox) === "held") {
       markHeld(context);
@@ -474,15 +509,22 @@ export function createDaytonaTerminalRuntime(
    */
   async function readable(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
     const startedAt = cacheNow();
+    // A readiness still in flight — activation's, usually — is this run
+    // starting the sandbox or preparing its checkout. The row is marked
+    // running before the preparation ends, so it is joined first: a read that
+    // peeked past it would see a checkout half made.
+    const inFlight = acquiredByRun.get(context.harnessRunId);
+    if (inFlight && !settledHandles.has(inFlight)) return ready(context);
     const peeked = await coordinator.peekRunning(context);
     if (peeked) {
       recordTerminalAcquisition({ durationMs: cacheNow() - startedAt, cacheHit: true });
       return peeked;
     }
-    // A readiness still in flight — activation's, usually — is the sandbox
-    // being started; join it rather than starting a second time.
-    const inFlight = acquiredByRun.get(context.harnessRunId);
-    if (inFlight && !settledHandles.has(inFlight)) return ready(context);
+    // A readiness another call of this run started while this one was
+    // peeking is joined rather than evicted; a burst of reads on a sandbox
+    // that is not yet running starts it once.
+    const started = acquiredByRun.get(context.harnessRunId);
+    if (started && !settledHandles.has(started)) return ready(context);
     evict(context);
     return ready(context);
   }
@@ -771,6 +813,7 @@ export function createDaytonaTerminalRuntime(
       // bootstrap's clone and the checkout's replacement would otherwise run
       // against one sandbox at once. A rejected acquisition is exactly what a
       // checkout repairs, so only its end matters here, not its outcome.
+      await takeTurn(context);
       const inFlight = acquiredByRun.get(context.harnessRunId);
       if (inFlight) await inFlight.then(() => undefined, () => undefined);
       acquiredByRun.delete(context.harnessRunId);
@@ -894,8 +937,16 @@ export function createDaytonaTerminalRuntime(
             `temporary=${shellQuote(temporary)}`,
             'trap \'rm -f -- "$temporary"\' EXIT',
             ...(options ? [
+              // An edit replaces the bytes it was computed from and nothing
+              // else: the read that produced them took no lease, so another
+              // run's write may have landed since, and one that has is a
+              // conflict for the model to resolve by reading again.
               "created=0",
               `previous_lines=${lineCount(options.previousText)}`,
+              `expected=${shellQuote(options.previousSha256)}`,
+              `if [ ! -e "$target" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
+              'actual=$(sha256sum -- "$target" | cut -d " " -f 1) || exit 47',
+              `if [ "$actual" != "$expected" ]; then exit ${FILE_CHANGED_EXIT_CODE}; fi`,
             ] : [
               ...containmentCommands(),
               "created=1",
@@ -921,6 +972,13 @@ export function createDaytonaTerminalRuntime(
         throw error;
       }
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      if (result.exitCode === FILE_CHANGED_EXIT_CODE) {
+        throw new TerminalToolError(
+          "file_changed",
+          "The file changed since it was read. Read it again and rebuild the edit from the current text.",
+          { filePath, reason: `Call read_file for ${filePath} again, then rebuild oldString and newString from the current text.` },
+        );
+      }
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with run_command before replacing it.", { filePath });
       }
@@ -1073,6 +1131,7 @@ export function createDaytonaTerminalRuntime(
       const taskAdmitted = await terminal.insertTask({
         taskId: newId(),
         runId: context.harnessRunId,
+        runSubstreamId: coordinator.holderSubstreamId(),
         effectIntentId,
         sandboxGeneration: sandbox.generation,
         sandboxId: sandbox.providerSandboxId,

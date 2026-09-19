@@ -58,8 +58,9 @@ and messages do not replace it with a teammate's credentials. A worker's
 Terminal is its owner's: it uses the sandbox and checkout of the conversation
 that started it, through any further delegation, under a mutation lease held
 per tool call, so a worker's write waits with `sandbox_busy` only while a
-sibling or its owner is mid-call, and its reads never wait
-([`terminal-workspaces.md`](terminal-workspaces.md)).
+sibling or its owner is mid-call, and its reads take no lease, waiting only
+for a sandbox that is not yet running or whose checkout is still being
+prepared ([`terminal-workspaces.md`](terminal-workspaces.md)).
 
 Creation reserves the child and obtains the current generation in one parent RPC.
 Child reservation refuses archived parents. Bootstrap, identity provisioning and

@@ -54,6 +54,7 @@ import {
   testResourcePortFactory,
   testTerminalPortFactory,
   seedToolReceipt,
+  testHarnessRunPort,
 } from "./helpers/durable-authority";
 
 const W = "00000000-0000-4000-8000-000000000011";
@@ -91,7 +92,11 @@ function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
   acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[7],
   prepareSandbox?: NonNullable<Parameters<typeof createDaytonaTerminalRuntime>[6]>,
-  options: { withInstructions?: boolean } = {},
+  options: {
+    withInstructions?: boolean;
+    /** Which conversation the run executes in and which owns the sandbox; the main one for both by default. */
+    scope?: { parentKind: "workstream" | "automation"; runSubstreamId: string; authoritySubstreamId: string };
+  } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
@@ -308,6 +313,7 @@ function fixture(
     undefined,
     false,
     acquisitionObserved,
+    options.scope ? { ...options.scope, runsPort: () => testHarnessRunPort(objectStore) } : undefined,
   );
   return { database, objectStore, files, provider, sandboxState, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
@@ -459,6 +465,107 @@ describe("Daytona Terminal runtime", () => {
       .toEqual({ lifecycle_state: "running", operation_run_id: null });
   });
 
+  it("runs one run's write calls one at a time even when the harness overlaps them", async () => {
+    const { provider, runtime } = fixture();
+    const bytes = new TextEncoder().encode("one\n");
+    let finishFirst!: () => void;
+    vi.mocked(provider.writeFile).mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }));
+    const first = runtime.writeFile(context, "src/a.txt", bytes);
+    await vi.waitFor(() => expect(provider.writeFile).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    const second = runtime.writeFile({ ...context, toolCallId: "call-runtime-overlapping" }, "src/b.txt", bytes);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The lease is the run's, so the second call's claim would be answered
+    // "held"; the turn is what keeps it off the sandbox until the first ends.
+    expect(provider.writeFile).toHaveBeenCalledOnce();
+
+    finishFirst();
+    await expect(first).resolves.toMatchObject({ created: true });
+    await expect(second).resolves.toMatchObject({ created: true });
+    expect(provider.writeFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses an edit whose file changed since it was read", async () => {
+    const { provider, runtime } = fixture();
+    const read = new TextEncoder().encode("hello\n");
+    const digest = await sha256Hex(read);
+    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async (_id, input) => {
+      expect(input.operation).toBe("file.replace");
+      // The replacement is fenced on the digest of what the edit read.
+      expect(input.command).toContain(digest);
+      // A sibling's write landed between the read and this replacement.
+      return { exitCode: 48, stdout: "", stderr: "" };
+    });
+
+    await expect(runtime.writeFile(
+      context, "src/file.txt", new TextEncoder().encode("changed\n"),
+      { previousText: "hello\n", previousSha256: digest },
+    )).rejects.toMatchObject({ code: "file_changed" });
+  });
+
+  it("does not read past this run's own preparation of the checkout", async () => {
+    let finishPreparation!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const { provider, runtime } = fixture(undefined, undefined, prepare);
+    const preparing = runtime.prepare(context);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    // The row already says running; the checkout is not there yet. A read
+    // from this run joins the preparation instead of peeking past it.
+    const read = runtime.readFile({ ...context, toolCallId: "call-runtime-early-read" }, "src/file.txt");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
+
+    finishPreparation();
+    await preparing;
+    await expect(read).resolves.toEqual(new TextEncoder().encode("hello\n"));
+  });
+
+  it("does not let a read use a sandbox made under another principal", async () => {
+    const { provider, runtime, objectStore } = fixture();
+    await runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n"));
+    const otherPrincipal = {
+      ...context,
+      toolCallId: "call-runtime-other-principal",
+      executionPrincipal: { type: "user" as const, userId: asUserId("00000000-0000-4000-8000-0000000000ee") },
+    };
+
+    await runtime.readFile(otherPrincipal, "src/file.txt");
+    // Replaced before it was read, not read: the generation's files were
+    // another principal's, and a read skips the lease but not that check.
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 2 });
+  });
+
+  it("records a background agent's command in its owner's object, which does not hold the agent's run", async () => {
+    const worker = "00000000-0000-4000-8000-000000000077";
+    const workerRun = "00000000-0000-4000-8000-000000000078";
+    const workerEffect = "00000000-0000-4000-8000-000000000079";
+    // A holder from another conversation is live while its lease is, judged
+    // against the instant the command starts, so the two clocks have to agree.
+    const { objectStore, runtime } = fixture({ now: () => new Date() }, undefined, undefined, {
+      scope: { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0" },
+    });
+    // Neither the agent's run nor the receipt the harness planned for this
+    // call is in this object: both live in the agent's own conversation.
+    const agent = { ...context, harnessRunId: workerRun, toolCallId: "call-worker", effectIntentId: workerEffect };
+
+    await expect(runtime.runCommand(agent, { command: "true", timeoutMs: 3_000 })).resolves.toBeDefined();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT run_id, run_substream_id, state FROM terminal_tasks WHERE effect_intent_id = ?",
+      workerEffect,
+    )).toEqual({ run_id: workerRun, run_substream_id: worker, state: "completed" });
+  });
+
+  it("still refuses a command of this object's own run that the harness never planned", async () => {
+    const { objectStore, runtime } = fixture();
+    const unplanned = { ...context, toolCallId: "call-unplanned", effectIntentId: "00000000-0000-4000-8000-000000000080" };
+
+    await expect(runtime.runCommand(unplanned, { command: "true", timeoutMs: 3_000 }))
+      .rejects.toMatchObject({ code: "command_recovery_unavailable" });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+  });
+
   it("reads without the lease while another run holds it, and writes wait", async () => {
     const { objectStore, provider, runtime } = fixture();
     seedWorkstreamRun(objectStore, { id: R2, status: "running",
@@ -472,7 +579,7 @@ describe("Daytona Terminal runtime", () => {
     await vi.waitFor(() => expect(workstreamObjectGet(
       objectStore,
       "SELECT operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ operation_run_id: R2 }));
+    )).toEqual({ operation_run_id: R2 }), { timeout: 5_000 });
 
     await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
     await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toMatchObject({ content: "hello" });
@@ -665,7 +772,7 @@ describe("Daytona Terminal runtime", () => {
       context,
       "src/file.txt",
       new TextEncoder().encode("updated\n"),
-      { previousText: new TextDecoder().decode(bytes!) },
+      { previousText: new TextDecoder().decode(bytes!), previousSha256: await sha256Hex(bytes!) },
     );
 
     expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
@@ -1468,8 +1575,9 @@ describe("Daytona Terminal runtime", () => {
       acquire: vi.fn(() => acquiring),
       claimForOperation: vi.fn(async () => "held" as const),
       release: vi.fn(async () => undefined),
+      holderSubstreamId: () => null,
       peekRunning: vi.fn(async () => null),
-    } satisfies Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning">;
+    } satisfies Pick<TerminalSandboxCoordinator, "acquire" | "claimForOperation" | "release" | "peekRunning" | "holderSubstreamId">;
     const checkedOut: TerminalCheckoutRepositoryOutput = {
       repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
       baseRef: "main", baseSha: "a".repeat(40), headRef: "rally/workstream", remoteAccess: "read_only",
