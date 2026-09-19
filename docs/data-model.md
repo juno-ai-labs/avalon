@@ -1077,6 +1077,30 @@ Substream migration 62 freezes legacy roster writers and records applied
 projection revisions. See [workstream authority](workstream-durable-object.md)
 for handoff and delivery ordering; live migration remains disabled.
 
+## Space-derived Channel access
+
+WorkstreamDO migration 18 makes each Channel the provenance authority for its
+own readers. `workstream_direct_audience` records the Channel's audience on its
+own account, backfilled from `workstream_metadata.scope` — which becomes the
+*effective* audience the moment a Space widens the Channel and can no longer
+answer the question. `workstream_space_access_sources` holds one row per Space
+that reaches the Channel, with the Space revision and membership generation it
+was applied on, and `workstream_space_supplied_readers` holds the readers each
+source *seated*, cascading with it. `workstream_access_operations` receipts
+every access operation on its exact request, in the shape
+`scope_grant_operations` uses. `scope_grants` gains `source_kind` and
+`source_id`; existing rows backfill as `direct` through the defaults, which is
+what they were.
+
+The same statements are `space_do` version 2, because the two ledgers converge
+on one schema and `apps/api/test/space-do-schema.test.ts` is what fails if only
+one of them is written. No regional D1 table is involved: the provenance is
+Channel-local, and the audience it plans is still written by the main
+conversation's scope and participant rows or by the grant ledger. See
+[workstream authority](workstream-durable-object.md) for the union rule and
+[authorization](authorization.md) for what a Space-derived grant does and does
+not reach.
+
 ## Push devices
 
 Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, and

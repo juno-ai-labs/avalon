@@ -159,6 +159,37 @@ scoped as described above: own draft upload/deletion, message publication and
 exact-conversation attachment/detachment are guest-enabled; broader management
 operations remain member-gated.
 
+### Space-derived access
+
+A Channel's readers are the union of one **direct** source — its own scope and
+its own participants — and every **Space** source that currently reaches it. A
+source can only widen: `workspace` anywhere makes the audience
+Organization-wide, and otherwise the readers are the union of every source's
+participants. `apps/api/src/lib/channel-audience.ts` is the only seam allowed to
+derive that union, and WorkstreamDO's migration-18 tables are the only record of
+which source supplied whom ([workstream
+authority](workstream-durable-object.md)).
+
+None of it admits anybody. `resolveScopedAccess` over the grant ledger, or the
+main conversation's scope and participant rows on a Channel that has never been
+shared, remains the whole decision. The provenance answers the question those
+cannot — *why* somebody may read — and therefore what has to be withdrawn when
+one Space stops reaching the Channel and what must not be. Every application
+and every withdrawal goes through the Channel's canonical scope and participant
+operations, so the retained-content containment preflight and its triggers stay
+the one fence and a Channel under grant authority writes a grant exactly as a
+direct share does.
+
+What a Space-derived grant does *not* do is enter the shared scope-grant
+directory. `scope_grants.source_kind` records it, and `ScopeGrantStorage`
+suppresses the directory writer for those rows. The directory is discovery, not
+admission: a Space-derived reader finds the Channel through the Organization's
+Space directory, and a directory row per reader per Channel would make
+General — which holds every Channel in the Organization — publish one row per
+member per Channel into a single flat candidate index. Direct provenance is
+sticky and wins, so a grant the Channel also holds directly stays published and
+stays active when the Space leaves.
+
 ### Invitation admission
 
 [Scoped invitations](scope-invitations.md) use the same current grant policy for
@@ -267,6 +298,14 @@ not a switch controlling which authorization implementation serves the request.
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
   dispatcher can retry without reconstructing permissions from an old payload.
+- A Space supplies one source of a Channel's audience; it never owns it. A
+  reader the direct source or another Space still supplies survives a Space's
+  departure, and the scope narrows only when nothing remaining is
+  Organization-wide.
+- The scope-grant directory is complete for direct grants and deliberately
+  incomplete for Space-derived ones. Anything that treats an absent directory
+  row as absent access is wrong; the candidate index narrows a search, and the
+  owner's authorization read is still what decides.
 
 ## Boundary
 
@@ -412,6 +451,19 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-19 — A Space-derived grant is admission without discovery
+
+Space sources compose with a Channel's direct audience, and the grant a Space
+seats now carries `source_kind = 'space'` and is never published to the shared
+scope-grant directory. That makes this module's candidate index deliberately
+incomplete: it is complete for direct grants only, and an absent row no longer
+means absent access. The reasoning, and the provenance the composition is
+derived from, are in [workstream
+authority](workstream-durable-object.md#changelog) — in short, General holds
+every Channel in the Organization, so publishing a row per Space-derived reader
+per Channel would size one flat index at the Organization times its Channels,
+for discovery the Space directory already provides.
 
 ### 2026-09-16 — Bind shared scopes to the workspace relationship
 
