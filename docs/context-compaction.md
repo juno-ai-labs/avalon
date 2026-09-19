@@ -232,6 +232,7 @@ activity indicator. Scheduling, receipts, and everything else about the run stay
 | Condition | Behavior |
 | --- | --- |
 | Model catalog unavailable | 200,000-token window assumed; compaction still runs on real usage. |
+| Catalog window larger than the endpoint's own input limit | Nothing here notices. The run is sized against the catalog, the request goes out, and the endpoint refuses it. That refusal now fails the run as `context_length_exceeded` rather than as Rally's own defect, which is what makes this condition visible at all — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits). It fired on 2026-09-17 against an Azure deployment accepting 922,000 tokens for a model the catalog reports at 1,050,000; the sizing is unfixed, and fixing it means the deployment's limit has to reach this decision. |
 | Threshold crossed with nothing beneath the system prompt | `context_limit_exceeded` — there is nothing to summarize. |
 | Empty summary completion | Treated as a completion defect and retried by the route plan; a persistent one fails the run rather than storing an empty checkpoint. |
 | Checkpoint persistence fails | Fatal for the run — a compacted context that was not stored would be lost work the next run cannot recover. |
