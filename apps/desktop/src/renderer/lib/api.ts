@@ -77,7 +77,7 @@ import {
   type UpdateOnboardingJourney,
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import {
@@ -632,6 +632,11 @@ export class RallyApi {
   private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+    // On every request rather than on the two that check it: the header says
+    // what this build speaks, the Worker decides where that matters, and a
+    // client that only declared itself on some paths would be a client the next
+    // gate could not place.
+    headers.set(RALLY_HEADERS.CLIENT_CONTRACT, String(CLIENT_CONTRACT_VERSION));
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
     const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
     if (cookie) headers.delete('Authorization');
