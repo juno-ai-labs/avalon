@@ -43,6 +43,7 @@ try {
     stableName,
     workspaceId: "provider-interface-probe",
     workstreamId: randomUUID(),
+    substreamId: "0",
     generation: 1,
     domainAllowList: [],
     environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },

@@ -92,6 +92,7 @@ function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
       reapSettledWorkstreamNotificationIntents: async (input) =>
         reapSettledWorkspaceNotificationIntents(storage, input, Date.now()),
     },
+    dueTerminalSubstreams: async () => [],
   };
 }
 

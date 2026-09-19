@@ -2257,6 +2257,7 @@ describe("Slack ingress maintenance reaps link challenges", () => {
       directory: {
         workstreamScheduleTargets: async () => ({ items: [] }),
       },
+      dueTerminalSubstreams: async () => [],
       notificationIntents: {
         notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
         reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),

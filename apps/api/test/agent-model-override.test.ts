@@ -54,6 +54,7 @@ function scheduleRunnerFor(fixture: Fixture) {
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
     },
+    dueTerminalSubstreams: async () => [],
     notificationIntents: {
       notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
       reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),

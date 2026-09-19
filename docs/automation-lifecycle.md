@@ -548,6 +548,12 @@ with `ConnectorError("unauthorized")`, so a run that outlives a pause or a
 delete stops rather than finishing on stale consent. The
 `rally:sidekicks` drafting plugin is withheld from a run.
 
+A run that loads Terminal gets a sandbox of its own, provisioned fresh under
+the run's conversation and never reopened. The automation projects no Terminal
+deadline for the workspace sweep, so that sandbox is created with Daytona's
+auto-delete set and is retired by the provider alone;
+[`terminal-workspaces.md`](terminal-workspaces.md) owns that mechanism.
+
 The run reports its state the way every conversation does: its
 `directory_common` effect reaches the parent through the child effect leg, and
 `AutomationDO.onChildCommonAggregate` maps the conversation state onto
