@@ -106,7 +106,9 @@ issued link, keyed by the SHA-256 digest of its token, carrying the token's type
 the link addresses. Scoped invitations are its first kind, `inv`; the table is
 shared because a URL that should not describe its subject is a recurring shape.
 Rows are pointers and confer nothing: the authority the payload names still
-decides every question the link leads to.
+decides every question the link leads to. A row with an expiry is dropped by a
+later issue; one without is retained, because a digest-keyed row is reachable
+only by the token that was never stored, so only its minter can delete it.
 [`scope-invitations.md`](scope-invitations.md) owns the invitation kind, and the
 store is `packages/db/src/link-payloads.ts`.
 

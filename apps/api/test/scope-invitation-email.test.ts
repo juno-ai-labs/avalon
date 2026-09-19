@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { readConversationPreview, truncateWords } from "../src/services/conversation-preview";
-import { scopeInvitationEmailParts } from "../src/services/scope-invitation-email";
+import { readConversationPreview, truncateTurn, truncateWords } from "../src/services/conversation-preview";
+import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../src/services/scope-invitation-email";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { seedCanonicalConversationTurn, seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -122,6 +122,34 @@ it("keeps whole words and collapses what a transcript turn carries", () => {
   expect(truncateWords("", 10)).toEqual({ text: "", truncated: false });
 });
 
+it("bounds a turn by bytes as well as words, because one word can be a whole message", () => {
+  // A message with no spaces is one word however long it is.
+  const unbroken = "x".repeat(100_000);
+  const cut = truncateTurn(unbroken, PREVIEW_WORDS, PREVIEW_BYTES);
+  expect(cut.truncated).toBe(true);
+  expect(new TextEncoder().encode(cut.text).length).toBeLessThanOrEqual(PREVIEW_BYTES);
+  // Cut by code point, so a multi-byte character is never split in half.
+  const emoji = truncateTurn("🙂".repeat(50_000), PREVIEW_WORDS, PREVIEW_BYTES);
+  expect(new TextEncoder().encode(emoji.text).length).toBeLessThanOrEqual(PREVIEW_BYTES);
+  expect(emoji.text).toBe("🙂".repeat([...emoji.text].length));
+  expect([...emoji.text].every((character) => character === "🙂")).toBe(true);
+  // Ordinary prose is untouched by the byte ceiling.
+  expect(truncateTurn("a short message", PREVIEW_WORDS, PREVIEW_BYTES)).toEqual({ text: "a short message", truncated: false });
+});
+
+it("stays under Gmail's clipping ceiling on the worst input the preview can carry", () => {
+  // Every turn maximal, and every character the one that escapes longest, which
+  // is the case the byte ceiling is derived from.
+  const maximal = truncateTurn('"'.repeat(PREVIEW_BYTES * 2), PREVIEW_WORDS, PREVIEW_BYTES);
+  const { html, text } = scopeInvitationEmailParts({
+    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
+    preview: { earlier: 14, turns: Array.from({ length: PREVIEW_TURNS }, () => ({ author: "Priya Shah", ...maximal })) },
+  });
+  expect(new TextEncoder().encode(html).length).toBeLessThan(102 * 1024);
+  expect(new TextEncoder().encode(text).length).toBeLessThan(102 * 1024);
+});
+
 let regional: DatabaseSync;
 let objectStore: DatabaseSync;
 beforeEach(() => {
@@ -156,7 +184,7 @@ function seed(texts: string[]) {
 it("reads the end of the conversation, in reading order, with the rest counted", async () => {
   seed(["one", "two", "three", "four", "five", "six", "seven"]);
   expect(await readConversationPreview(environment(), {
-    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100,
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
   })).toEqual({
     earlier: 2,
     turns: [
@@ -172,7 +200,7 @@ it("reads the end of the conversation, in reading order, with the rest counted",
 it("cuts a long turn at the word the caller asked for", async () => {
   seed([Array.from({ length: 150 }, (_, index) => `word${index}`).join(" ")]);
   const read = await readConversationPreview(environment(), {
-    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100,
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
   });
   expect(read?.turns).toHaveLength(1);
   expect(read?.turns[0]?.truncated).toBe(true);
@@ -182,6 +210,6 @@ it("cuts a long turn at the word the caller asked for", async () => {
 
 it("has nothing to preview in a conversation nobody has spoken in", async () => {
   expect(await readConversationPreview(environment(), {
-    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100,
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
   })).toBeNull();
 });

@@ -8,12 +8,12 @@ import { issueScopeInvitationLink, openScopeInvitationCredential, scopeInvitatio
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
-const address = {
+const target = {
   workspaceId: asWorkspaceId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
   parentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   invitationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-  token: "invitation-proof",
 };
+const address = { ...target, token: "invitation-proof" };
 
 let db: DatabaseSync;
 const bindings = () => createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error", DB: sqliteD1(db) });
@@ -22,26 +22,31 @@ const rows = () => db.prepare("SELECT token_hash, type, payload, expires_at FROM
 beforeEach(() => { db = migratedSqliteDatabase(); });
 afterEach(() => { db.close(); });
 
-it("hands back a short token and keeps everything it addresses in the row", async () => {
+it("hands back a short token, and stores where it points without what opens it", async () => {
   const env = bindings();
-  const token = await issueScopeInvitationLink(env, address, null);
+  const token = await issueScopeInvitationLink(env, target, null);
   // Prefix, separator and 256 bits: the token is what guards the row.
   expect(token).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
   expect(scopeInvitationLinkUrl(new URL("https://app.example.test"), token).toString())
     .toBe(`https://app.example.test/invite#${token}`);
-  expect(await openScopeInvitationCredential(env, { link: token })).toEqual(address);
+  // The secret an owner checks is the token the holder presented, not a second
+  // one kept beside the address.
+  expect(await openScopeInvitationCredential(env, { link: token })).toEqual({ ...target, token });
 
   const [row] = rows();
   expect(rows()).toHaveLength(1);
   expect(row).toMatchObject({ type: "inv", expires_at: null, token_hash: await sha256Hex(token) });
-  // A copy of the table is a list of what exists, not a set of working links.
+  // A dump of this table is a list of what exists, not a set of working links:
+  // no token, and nothing that could be replayed as one through the addressed
+  // request body that is still accepted.
   expect(JSON.stringify(row)).not.toContain(token.slice(4));
-  expect(JSON.parse(String(row!.payload))).toEqual(address);
+  expect(JSON.parse(String(row!.payload))).toEqual(target);
+  expect(Object.keys(JSON.parse(String(row!.payload)))).not.toContain("token");
 });
 
 it("refuses a token this deployment never issued, or issued as something else", async () => {
   const env = bindings();
-  const token = await issueScopeInvitationLink(env, address, null);
+  const token = await issueScopeInvitationLink(env, target, null);
   expect(await openScopeInvitationCredential(env, { link: `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}` })).toBeNull();
   expect(await openScopeInvitationCredential(env, { link: `inv_${"A".repeat(43)}` })).toBeNull();
 
@@ -57,15 +62,15 @@ it("refuses a token this deployment never issued, or issued as something else", 
 it("dies with the invitation it addresses, and sweeps the rows that have", async () => {
   const env = bindings();
   const deadline = Date.now() + 600_000;
-  const expiring = await issueScopeInvitationLink(env, address, deadline);
+  const expiring = await issueScopeInvitationLink(env, target, deadline);
   expect(rows()[0]).toMatchObject({ expires_at: new Date(deadline).toISOString() });
-  expect(await openScopeInvitationCredential(env, { link: expiring })).toEqual(address);
+  expect(await openScopeInvitationCredential(env, { link: expiring })).toEqual({ ...target, token: expiring });
 
   db.prepare("UPDATE link_payloads SET expires_at = ?").run(new Date(Date.now() - 1_000).toISOString());
   expect(await openScopeInvitationCredential(env, { link: expiring })).toBeNull();
   // Issuing is what clears them: no schedule, and nothing to remember.
   expect(rows()).toHaveLength(1);
-  await issueScopeInvitationLink(env, address, null);
+  await issueScopeInvitationLink(env, target, null);
   expect(rows().map((row) => row.expires_at)).toEqual([null]);
 });
 
@@ -73,17 +78,23 @@ it("names the field when a payload no longer matches the shape its prefix promis
   const env = bindings();
   const store = sqliteD1(db);
   const kind = defineLinkPayload("inv", z.strictObject({
-    workspaceId: z.string(), parentId: z.string(), invitationId: z.string(), token: z.number(),
+    workspaceId: z.string(), parentId: z.string(), invitationId: z.number(),
   }));
-  await expect(issueLinkPayload(store, kind, address as never))
-    .rejects.toThrow("link_payload_invalid:inv:token:invalid_type");
+  await expect(issueLinkPayload(store, kind, target as never))
+    .rejects.toThrow("link_payload_invalid:inv:invitationId:invalid_type");
 
-  const token = await issueScopeInvitationLink(env, address, null);
-  db.prepare("UPDATE link_payloads SET payload = ?").run(JSON.stringify({ ...address, token: 7 }));
+  const token = await issueScopeInvitationLink(env, target, null);
+  db.prepare("UPDATE link_payloads SET payload = ?").run(JSON.stringify({ ...target, invitationId: 7 }));
   // The row exists, so this deployment wrote it: a deploy that stopped
   // honouring every link of this kind, not one more unreadable token.
   await expect(openScopeInvitationCredential(env, { link: token }))
-    .rejects.toThrow("link_payload_drifted:inv:token:invalid_type");
+    .rejects.toThrow("link_payload_drifted:inv:invitationId:invalid_type");
+
+  // A payload that is no longer JSON is the same kind of drift, and says so
+  // rather than surfacing a parse error the route reports as an internal one.
+  db.prepare("UPDATE link_payloads SET payload = ?").run("{not json");
+  await expect(openScopeInvitationCredential(env, { link: token }))
+    .rejects.toThrow("link_payload_drifted:inv:-root-:invalid_json");
 });
 
 it("passes an addressed credential through for links sent before tokens", async () => {

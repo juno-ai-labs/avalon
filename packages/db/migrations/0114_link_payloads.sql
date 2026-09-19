@@ -13,6 +13,12 @@ CREATE TABLE link_payloads (
   -- Null where the thing the link addresses has no expiry of its own. Rows are
   -- pointers: an expired or missing one refuses the link, and the authority the
   -- payload names still decides everything else.
+  --
+  -- Rows carrying a deadline are swept by later writes. A null one is not, and
+  -- nothing else can reach it either: the row is keyed by a digest of a token
+  -- that is never stored, so only the caller that minted it can delete it, and
+  -- only while it still holds the token. Reclaiming the rest would mean
+  -- deleting on `created_at` age, which is a retention number the team sets.
   expires_at TEXT
 );
 CREATE INDEX link_payloads_expiry ON link_payloads(expires_at);
