@@ -482,6 +482,30 @@ describe('footnote citations', () => {
     expect(pills[1]!.querySelector('img')).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('drops a resolved icon when the same marker is re-pointed at another host', async () => {
+    // The pill holds its position across a re-parse, so a definition that
+    // changes target hands the *same* component a new host. The object URL for
+    // the old one is revoked on the way out: returning it while the new host's
+    // request is in flight — or after it comes back empty — draws a broken
+    // image where the asterisk belongs.
+    const marker = (url: string) => `Margin held.[^mar]\n\n[^mar]: [Margin memo](${url})\n`;
+    faviconApi.getFavicon.mockResolvedValue(new Blob([Uint8Array.from([0x89])], { type: 'image/png' }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:first-host');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+
+    const { rerender } = render(<MarkdownBody citations={context()}>{marker('https://first.example/memo')}</MarkdownBody>);
+    await waitFor(() => expect(document.querySelector('.citation-pill-favicon img')).toHaveAttribute('src', 'blob:first-host'));
+
+    faviconApi.getFavicon.mockResolvedValue(null);
+    rerender(<MarkdownBody citations={context()}>{marker('https://second.example/memo')}</MarkdownBody>);
+
+    await waitFor(() => expect(faviconApi.getFavicon).toHaveBeenCalledWith('second.example'));
+    expect(revoke).toHaveBeenCalledWith('blob:first-host');
+    const pill = document.querySelector('.citation-pill');
+    expect(pill?.querySelector('img')).toBeNull();
+    expect(pill).toHaveTextContent('*');
+  });
+
   it('keeps a still\'s numbered markers rather than fetching icons into a picture', () => {
     // A still is rendered synchronously and photographed; an icon that lands
     // after the shutter is an empty box in the file somebody keeps, and the
