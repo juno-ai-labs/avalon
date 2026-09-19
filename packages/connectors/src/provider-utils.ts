@@ -452,6 +452,136 @@ export function truncateText(value: string, maxChars = 50_000): { text: string; 
   return { text: value.slice(0, maxChars), truncated: true, totalChars };
 }
 
+/**
+ * `truncateText` with the cut made visible to whoever reads the value.
+ *
+ * A bare `truncateText(value, max).text` is indistinguishable from a value that
+ * ended where it ended: the flag saying otherwise is right there in the return
+ * and every caller in this package drops it. A model then reasons off half a
+ * pull-request body, half a review, or half a check-run summary and never
+ * learns there was more, which surfaces later as a confident wrong answer with
+ * nothing in the transcript to explain it. `docs/agent-tools.md` requires the
+ * marker for that reason: a boundary the model can see is one it can work
+ * around by reading the resource directly.
+ */
+export function truncateTextWithMarker(value: string, maxChars: number): string {
+  const { truncated, totalChars } = truncateText(value, maxChars);
+  if (!truncated) return value;
+  // The marker is spent from the budget rather than added to it. A caller that
+  // asked for 12,000 characters and received 12,064 has been handed a limit
+  // that does not limit, and the patch budget exists because something
+  // downstream is counting.
+  const marker = `\n[truncated: ${totalChars} characters exceeds the ${maxChars}-character limit]`;
+  // Degenerate only for a budget shorter than the marker itself, which none of
+  // these are: there the marker is kept and the budget overshot, because a cut
+  // nobody can see is the worse of the two failures.
+  return `${value.slice(0, Math.max(0, maxChars - marker.length))}${marker}`;
+}
+
+/**
+ * The field paths one provider record contributes to a tool result — a declared
+ * row.
+ *
+ * `"state"` keeps a top-level field. `"head.ref"` keeps a nested one and
+ * rebuilds the record around it, so several paths sharing a prefix merge into
+ * one object. `"labels[].name"` keeps one field of every element of an array.
+ */
+export type FieldProjection = readonly string[];
+
+/**
+ * Keep the declared fields of a provider record and drop everything else.
+ *
+ * Adapters in this package bound their tool results by *count* — strings
+ * clamped at tens of thousands of characters, arrays and object keys at a
+ * hundred, recursion at eight levels — and by nothing else, so whatever shape
+ * the provider sent reaches the model. The cost is not hypothetical: a measured
+ * substream spent 5.1 MB of 5.2 MB of model-facing payload on five GitHub list
+ * calls, at roughly 24.5 KB per pull request and 21.3 KB per workflow run,
+ * because each row carried two complete embedded repository records and around
+ * thirty URL templates that nothing downstream reads. Every count-based bound
+ * was inside its limit the whole time. A row is wide, not long, and no cap on
+ * length fixes a width problem.
+ *
+ * Projection is deliberately separate from those clamps rather than replacing
+ * them: this decides what a row *is*, and the clamps stay behind it as the
+ * backstop for a provider field that is declared and enormous, such as a patch
+ * or a body.
+ *
+ * What is present stays present. A declared field the provider sent as `null`
+ * is kept as `null`, at any depth, because `merged_at: null` is the answer to
+ * "was it merged" and an absent key is not. A declared field the provider did
+ * not send at all is absent from the result, because inventing a `null` for it
+ * would claim the provider answered a question it was never asked.
+ */
+export function projectFields(
+  source: Record<string, unknown>,
+  projection: FieldProjection,
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const path of projection) copyProjectedPath(source, projected, path.split("."));
+  return projected;
+}
+
+function copyProjectedPath(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  segments: string[],
+): void {
+  const [segment, ...rest] = segments;
+  if (segment === undefined) return;
+  const mapsElements = segment.endsWith("[]");
+  const key = mapsElements ? segment.slice(0, -2) : segment;
+  // `in` would walk the prototype chain, so a row declaring a field a provider
+  // happens not to send would copy `Object.prototype`'s member of that name
+  // instead of reporting the field as absent.
+  if (!Object.hasOwn(source, key)) return;
+  const value = source[key];
+
+  if (rest.length === 0) {
+    target[key] = value;
+    return;
+  }
+  if (value === null) {
+    target[key] = null;
+    return;
+  }
+
+  if (mapsElements) {
+    if (!Array.isArray(value)) return;
+    const elements = projectedElements(target, key, value.length);
+    for (const [index, element] of value.entries()) {
+      const row = elements[index];
+      if (row && isRecord(element)) copyProjectedPath(element, row, rest);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) return;
+  copyProjectedPath(value, projectedRecord(target, key), rest);
+}
+
+/** The record several paths sharing this prefix all write into. */
+function projectedRecord(target: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = target[key];
+  if (isRecord(existing)) return existing;
+  const created: Record<string, unknown> = {};
+  target[key] = created;
+  return created;
+}
+
+/** One row per source element, so `labels[].name` and `labels[].color` merge. */
+function projectedElements(
+  target: Record<string, unknown>,
+  key: string,
+  length: number,
+): Record<string, unknown>[] {
+  const existing = target[key];
+  if (Array.isArray(existing) && existing.length === length && existing.every(isRecord)) return existing;
+  const created = Array.from({ length }, () => ({}) as Record<string, unknown>);
+  target[key] = created;
+  return created;
+}
+
 export function base64(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
