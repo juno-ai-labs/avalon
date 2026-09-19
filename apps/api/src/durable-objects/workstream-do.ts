@@ -741,7 +741,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * one, which is exact: the record is written the first time a Space reaches
    * this Channel, and until then the effective audience *is* the direct one.
    */
-  private directSource(access: WorkstreamAccessStorage, channel: ObservedChannel): AudienceSource<UserId> {
+  private directSource(access: WorkstreamAccessStorage, channel: ObservedChannel): AudienceSource {
     const supplied = new Set(access.sources().flatMap((source) => access.suppliedReaders(source.sourceId)));
     const recorded = access.directAudience();
     return {
