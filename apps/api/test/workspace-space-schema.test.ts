@@ -103,6 +103,30 @@ describe("WorkspaceDO space schema", () => {
       .toThrow(/CHECK constraint failed/u);
   });
 
+  it("given an intent, when its kind is one no operation stages, then the insert is refused", () => {
+    const database = openDatabase();
+    apply(database, SPACE_SCHEMA_VERSION);
+    const insertIntent = (kind: string): void => {
+      database.prepare(
+        `INSERT INTO space_intents (
+           operation_id, kind, space_id, workstream_id, space_revision,
+           membership_generation, delivery_generation, state, cursor, last_error_code,
+           receipts_json, requested_by_user_id, not_before, attempts, created_at, updated_at
+         ) VALUES (?, ?, ?, NULL, 1, NULL, NULL, 'pending', NULL, NULL, '[]', ?, 0, 0, 1, 1)`,
+      ).run(`${kind}-operation`, kind, SPACE_ID, USER_ID);
+    };
+
+    // The vocabulary is exactly what `recordIntent` stages. A default's
+    // delivery and the cutover each have staging, a retry gate and a consumer
+    // leg of their own, so admitting their names here described rows nothing
+    // could write and a resume branch nothing could reach.
+    for (const kind of ["add", "remove", "audience", "archive", "restore"]) {
+      expect(() => insertIntent(kind)).not.toThrow();
+    }
+    expect(() => insertIntent("default")).toThrow(/CHECK constraint failed/u);
+    expect(() => insertIntent("bootstrap")).toThrow(/CHECK constraint failed/u);
+  });
+
   it("given one General Space, when a second claims the role, then the unique index refuses it", () => {
     const database = openDatabase();
     apply(database, SPACE_SCHEMA_VERSION);
