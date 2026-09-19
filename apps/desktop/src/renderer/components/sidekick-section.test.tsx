@@ -79,13 +79,13 @@ describe('SidekickSection', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
   });
 
-  it('leaves no heading behind for an empty answer or a pending one, and surfaces read failures', () => {
+  it('leaves no heading behind for an empty answer or a pending one, and owns failure copy', () => {
     const { rerender } = renderSection({ items: [] });
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
     rerender(<Tooltip.Provider><SidekickSection /></Tooltip.Provider>);
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
-    rerender(<Tooltip.Provider><SidekickSection items={[]} error="Could not load Sidekicks" /></Tooltip.Provider>);
-    expect(screen.getByText('Could not load Sidekicks')).toBeVisible();
+    rerender(<Tooltip.Provider><SidekickSection items={[]} failure="load" /></Tooltip.Provider>);
+    expect(screen.getByText('Sidekicks couldn’t be loaded.')).toBeVisible();
   });
 
   it('keeps the rows that arrived beside a failure rather than replacing them', () => {
@@ -94,10 +94,32 @@ describe('SidekickSection', () => {
     // loses a list that worked to report a failure about something else.
     renderSection({
       items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
-      error: 'That Sidekick could not be removed.',
+      failure: 'load',
     });
-    expect(screen.getByText('That Sidekick could not be removed.')).toBeVisible();
+    expect(screen.getByText('Some Sidekick information may be out of date.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
+  });
+
+  it('reports a failed removal as the action that failed', () => {
+    renderSection({
+      items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
+      failure: 'remove',
+    });
+    expect(screen.getByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
+  });
+
+  it.each([
+    ['recommend', 'That Sidekick couldn’t be recommended.'],
+    ['unrecommend', 'That Sidekick recommendation couldn’t be removed.'],
+  ] as const)('reports a failed %s action accurately', (failure, copy) => {
+    renderSection({
+      items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
+      failure,
+    });
+    expect(screen.getByText(copy)).toBeVisible();
+    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
   });
 });
 

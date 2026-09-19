@@ -814,6 +814,19 @@ export function WorkspaceSettingsScreen({
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
     },
   });
+  // Promotion and demotion are the same write, so they are the same mutation:
+  // a `promote`/`demote` pair would be two pending states and two error slots
+  // for one field with two values.
+  const setMemberRole = useMutation({
+    mutationFn: (input: { userId: string; role: 'admin' | 'member' }) =>
+      api!.setWorkspaceMemberRole(input.userId, input.role),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+      // The viewer may have just demoted themselves, and `workspace` is where
+      // the role that draws these controls comes from.
+      queryClient.invalidateQueries({ queryKey: ['workspace'] }),
+    ]),
+  });
   const revokeInvitation = useMutation({
     mutationFn: (id: string) => api!.revokeWorkspaceInvitation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
@@ -1310,16 +1323,48 @@ export function WorkspaceSettingsScreen({
                       <span><strong>{member.name}</strong><small>{member.email}</small></span>
                       <div className="settings-member-actions">
                         <Badge className="role-badge">{member.accessClass === 'guest' ? 'Guest' : member.role ?? 'member'}</Badge>
+                        {/*
+                          * Two promotions meet on this row and neither is the
+                          * other: a guest holds no role at all and is made a
+                          * member first, while a member is handed the same
+                          * powers the viewer is using right now. The owner has
+                          * no control beside them either way — their role is
+                          * the one the server refuses to reassign, so drawing a
+                          * button that can only fail is worse than drawing none.
+                          */}
                         {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
                           <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
                             onClick={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
                             Make member
                           </Button>
                         )}
+                        {isAdmin && member.role !== 'owner' && member.status !== 'invited'
+                          && member.accessClass !== 'guest' && (
+                          <Button
+                            // The visible label is the same on every row, which is
+                            // all a sighted reader needs — the row it sits in says
+                            // who it acts on. A screen reader announces the button
+                            // alone, so the accessible name carries the person.
+                            // The email is in it because two people can share a
+                            // display name, and the roster is exactly where that
+                            // collision shows up.
+                            aria-label={member.role === 'admin'
+                              ? `Remove administrator access from ${member.name} (${member.email})`
+                              : `Make ${member.name} (${member.email}) an administrator`}
+                            disabled={setMemberRole.isPending}
+                            onClick={() => setMemberRole.mutate({
+                              userId: member.id,
+                              role: member.role === 'admin' ? 'member' : 'admin',
+                            })}
+                          >
+                            {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+                {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
                   description={`${promotion?.name ?? 'This guest'} will gain normal workspace membership. Existing conversations and contributions stay with their account.`}>
@@ -1349,7 +1394,7 @@ export function WorkspaceSettingsScreen({
                         <span><SettingLabel setting={settings.inviteRole} /></span>
                         <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
                           <option value="member">Member</option>
-                          {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
+                          <option value="admin">Administrator</option>
                         </select>
                       </label>
                       <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">
@@ -1676,6 +1721,13 @@ export function WorkspaceSettingsScreen({
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
+                      // Ashby's personal sign-in has a prerequisite the OAuth redirect cannot
+                      // report: an org that has not opted into Ashby MCP fails provider-side with
+                      // nothing naming the cause. The card is one sentence, so the prerequisite
+                      // rides the button's own tooltip rather than a second paragraph.
+                      const personalConnectPrerequisite = provider.provider === 'ashby'
+                        ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
+                        : undefined;
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -1707,10 +1759,6 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
-                          {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
-                          {provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}
-                          {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}.</p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1737,7 +1785,7 @@ export function WorkspaceSettingsScreen({
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
-                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
+                                  tooltip={`Only you can use this connection; it acts with your provider identity.${provider.provider === 'canva' ? ` ${CANVA_CONNECTION_DISCLOSURE}` : ''}${personalConnectPrerequisite ? ` ${personalConnectPrerequisite}` : ''}${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : PERSONAL_CONNECT_LABEL}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (

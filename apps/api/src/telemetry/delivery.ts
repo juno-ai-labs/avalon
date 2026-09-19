@@ -31,24 +31,25 @@ interface DeliveryDatabaseRow {
 }
 
 async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
-  const tables = [
-    "telemetry_accepted_events",
-    "telemetry_delivery_receipts",
-    "telemetry_crash_access_audit",
-    "telemetry_identity_links",
-    "telemetry_ingest_rate_buckets",
-    "telemetry_onboarding_journeys",
-    "telemetry_profile_jobs",
-    "telemetry_rejection_buckets",
-    "telemetry_replay_audit",
-  ] as const;
+  const tables = {
+    telemetry_accepted_events: "TELEMETRY_DB",
+    telemetry_delivery_receipts: "TELEMETRY_DB",
+    telemetry_replay_audit: "TELEMETRY_DB",
+    telemetry_crash_access_audit: "DB",
+    telemetry_identity_links: "DB",
+    telemetry_ingest_rate_buckets: "DB",
+    telemetry_onboarding_journeys: "DB",
+    telemetry_profile_jobs: "DB",
+    telemetry_rejection_buckets: "DB",
+  } as const;
   let expired = 0;
-  for (const table of tables) {
-    const row = await env.DB.prepare(
+  for (const [table, binding] of Object.entries(tables)) {
+    const db = env[binding];
+    const row = await db.prepare(
       `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
     ).bind(now).first<{ count: number }>();
     expired += row?.count ?? 0;
-    await env.DB.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
+    await db.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
   }
   return expired;
 }
@@ -111,31 +112,37 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   ]);
   if (!captureAllowed && !exceptionAllowed) return summary;
 
-  const pending = await env.DB.prepare(
+  const pending = await env.TELEMETRY_DB.prepare(
     `SELECT e.event_id, e.envelope_json, e.analytics_subject_id, e.workspace_analytics_id,
-            e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id,
-            u.product_analytics_enabled
+            e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id
      FROM telemetry_accepted_events e
-     LEFT JOIN users u ON u.id = e.subject_user_id
      WHERE e.delivery_state IN ('pending', 'retrying')
        AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= ?)
        AND e.delete_at > ?
-       AND (e.subject_user_id IS NULL OR NOT EXISTS (
-         SELECT 1 FROM telemetry_profile_jobs transition
-         WHERE transition.subject_user_id = e.subject_user_id
-           AND transition.job_kind = 'epoch_transition'
-           AND transition.state IN ('pending', 'delivering')
-       ))
      ORDER BY e.accepted_at
      LIMIT 50`,
   ).bind(now.toISOString(), now.toISOString()).all<DeliveryDatabaseRow>();
 
+  // Read transition fences after selecting events, for only this page of subjects.
+  const subjects = await env.DB.prepare(
+    `SELECT u.id, u.product_analytics_enabled, EXISTS (
+       SELECT 1 FROM telemetry_profile_jobs transition
+       WHERE transition.subject_user_id = u.id AND transition.job_kind = 'epoch_transition'
+         AND transition.state IN ('pending', 'delivering')
+     ) AS transition_pending
+     FROM users u WHERE u.id IN (SELECT value FROM json_each(?))`,
+  ).bind(JSON.stringify([...new Set(pending.results.map((row) => row.subject_user_id).filter(Boolean))]))
+    .all<{ id: string; product_analytics_enabled: number; transition_pending: number }>();
+  const preferences = new Map(subjects.results.map((row) => [row.id, row]));
   const eligible: DeliveryDatabaseRow[] = [];
   for (const row of pending.results) {
+    const subject = row.subject_user_id === null ? undefined : preferences.get(row.subject_user_id);
+    if (subject?.transition_pending === 1) continue;
+    row.product_analytics_enabled = subject?.product_analytics_enabled ?? null;
     const parsed = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
     const attributableNonessential = row.subject_user_id !== null && parsed.category !== "essential";
     if (isRetiredMeetingTelemetry(parsed) || (attributableNonessential && row.product_analytics_enabled !== 1)) {
-      await env.DB.prepare(
+      await env.TELEMETRY_DB.prepare(
         "DELETE FROM telemetry_accepted_events WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')",
       ).bind(row.event_id).run();
       summary.suppressed += 1;
@@ -192,7 +199,7 @@ async function applyDestinationResult(
   summary: TelemetryDeliverySummary,
 ): Promise<void> {
   if (result.result === "delivered") {
-    await env.DB.batch(rows.map((row) => env.DB.prepare(
+    await env.TELEMETRY_DB.batch(rows.map((row) => env.TELEMETRY_DB.prepare(
       `UPDATE telemetry_accepted_events
        SET delivery_state = 'delivered', delivered_at = ?, attempt_count = attempt_count + 1,
            next_attempt_at = NULL, terminal_code = NULL
@@ -202,7 +209,7 @@ async function applyDestinationResult(
     return;
   }
   if (result.result === "terminal") {
-    await env.DB.batch(rows.map((row) => env.DB.prepare(
+    await env.TELEMETRY_DB.batch(rows.map((row) => env.TELEMETRY_DB.prepare(
       `UPDATE telemetry_accepted_events
        SET delivery_state = 'terminal', attempt_count = attempt_count + 1,
            next_attempt_at = NULL, terminal_code = 'destination_rejected'
@@ -212,10 +219,10 @@ async function applyDestinationResult(
     return;
   }
 
-  await env.DB.batch(rows.map((row) => {
+  await env.TELEMETRY_DB.batch(rows.map((row) => {
     const delay = result.retryAfterMs ?? backoffMs(row.attempt_count);
     const next = new Date(Math.min(Date.parse(row.delete_at), now.getTime() + delay));
-    return env.DB.prepare(
+    return env.TELEMETRY_DB.prepare(
       `UPDATE telemetry_accepted_events
        SET delivery_state = 'retrying', attempt_count = attempt_count + 1,
            next_attempt_at = ?, terminal_code = NULL

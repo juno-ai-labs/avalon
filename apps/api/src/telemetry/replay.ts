@@ -35,13 +35,15 @@ export async function replayTelemetryEvent(
 ): Promise<{ result: ReplayResultCode; eventId: string }> {
   const request = ReplayInputSchema.parse(input);
   const now = new Date();
-  const row = await env.DB.prepare(
-    `SELECT e.route, e.envelope_json, e.subject_user_id, e.delivery_state, e.delete_at,
-            u.product_analytics_enabled
+  const row = await env.TELEMETRY_DB.prepare(
+    `SELECT e.route, e.envelope_json, e.subject_user_id, e.delivery_state, e.delete_at
      FROM telemetry_accepted_events e
-     LEFT JOIN users u ON u.id = e.subject_user_id
      WHERE e.event_id = ?`,
   ).bind(request.eventId).first<ReplayRow>();
+
+  if (row) row.product_analytics_enabled = row.subject_user_id === null ? null : (await env.DB.prepare(
+    "SELECT product_analytics_enabled FROM users WHERE id = ?",
+  ).bind(row.subject_user_id).first<{ product_analytics_enabled: number }>())?.product_analytics_enabled ?? null;
 
   let result: ReplayResultCode;
   if (principal.role !== 'security') result = 'denied';
@@ -60,7 +62,7 @@ export async function replayTelemetryEvent(
     }
   }
 
-  const audit = env.DB.prepare(
+  const audit = env.TELEMETRY_DB.prepare(
     `INSERT INTO telemetry_replay_audit
       (id, event_id, operator_id, reason_code, result_code, original_delete_at, created_at, delete_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -70,8 +72,8 @@ export async function replayTelemetryEvent(
     new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
   );
   if (result === 'requeued') {
-    await env.DB.batch([
-      env.DB.prepare(
+    await env.TELEMETRY_DB.batch([
+      env.TELEMETRY_DB.prepare(
         `UPDATE telemetry_accepted_events
          SET delivery_state = 'pending', next_attempt_at = NULL, terminal_code = NULL
          WHERE event_id = ? AND route = ? AND delivery_state = 'terminal' AND delete_at > ?`,

@@ -12,7 +12,7 @@ Data Catalog.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/telemetry.ts` | Closed event, source, context, and property contracts shared by backend and clients. |
-| `apps/api/src/telemetry/collector.ts` | Validates consent and route, commits the canonical regional D1 row, then best-effort enqueues its pointer. |
+| `apps/api/src/telemetry/collector.ts` | Validates consent and route, commits the canonical `TELEMETRY_DB` row, then best-effort enqueues its pointer. |
 | `apps/api/src/services/analytics-lakehouse.ts` | Builds pointers, recovers pending outbox rows, verifies the canonical row, and maps all accepted metadata to the analytical record. |
 | `apps/api/src/queues/analytics-lakehouse-consumer.ts` | Applies queue poison/misroute policy and sends valid Global rows through `ANALYTICS_LAKEHOUSE`. |
 | `packages/db/migrations/0095_analytics_events_lakehouse_outbox.sql` | Adds the Global lakehouse delivery state to the existing acceptance outbox; historical rows remain ineligible. |
@@ -118,7 +118,7 @@ sink, and migration rather than editing a deployed schema.
 ## Security and trust model
 
 Queue messages contain opaque IDs and a hash, not the envelope. The consumer
-does not trust either: it reads the regional D1 source, checks route/hash, and
+does not trust either: it reads the `TELEMETRY_DB` source, checks route/hash, and
 revalidates the telemetry schema. Analytical rows carry random analytics
 identities and content-free registered properties. Production queries require a
 dedicated responder token and responses stay in an ignored scratch directory;

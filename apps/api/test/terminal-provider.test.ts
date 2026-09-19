@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createDaytonaTerminalProvider,
@@ -236,6 +236,7 @@ describe("Daytona Terminal provider", () => {
       stableName: "avalon-ws-stream",
       workspaceId: "workspace-1",
       workstreamId: "stream-1",
+      substreamId: "0",
       generation: 1,
       domainAllowList: ["github.com", "*.npmjs.org"],
       environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
@@ -262,6 +263,7 @@ describe("Daytona Terminal provider", () => {
       labels: {
         "rally.workspace": "workspace-1",
         "rally.workstream": "stream-1",
+        "rally.substream": "0",
         "rally.generation": "1",
       },
     }, { timeout: 60 });
@@ -286,6 +288,46 @@ describe("Daytona Terminal provider", () => {
       undefined,
       undefined,
       120,
+    );
+  });
+
+  it("asks Daytona to delete a sandbox after it stops only when the caller sets a retention", async () => {
+    const created = { id: "sandbox-1", name: "avalon-run", state: "started" };
+    const observed = {
+      ...created,
+      domainAllowList: "github.com",
+      refreshData: vi.fn(async () => undefined),
+      process: {
+        executeCommand: vi.fn()
+          .mockResolvedValue({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=sqlite3,gh,pnpm,tsx\nbash:ok\n" }),
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(async () => ({})),
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const create = vi.fn(async () => created);
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported",
+      apiKey: "secret",
+      apiUrl: "https://app.daytona.io/api",
+      target: "us",
+      snapshot: "daytona-small",
+      emergencyDisabled: false,
+    }, vi.fn(() => ({ create, get: vi.fn(async () => observed) })));
+
+    await provider.createSandbox({
+      stableName: "avalon-run",
+      workspaceId: "workspace-1",
+      workstreamId: "sidekick-1",
+      substreamId: "run-1",
+      generation: 1,
+      domainAllowList: ["github.com"],
+      environment: {},
+      autoDeleteAfterStoppedMinutes: 43_200,
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ autoStopInterval: 15, autoDeleteInterval: 43_200 }),
+      { timeout: 60 },
     );
   });
 
@@ -319,7 +361,7 @@ describe("Daytona Terminal provider", () => {
     }), { now, observe: (measurement) => measurements.push(measurement) });
 
     const created = await provider.createSandbox({
-      stableName: sandbox.name, workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: sandbox.name, workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await provider.prepareSandbox!(created.id, ["github.com"]);
@@ -364,7 +406,7 @@ describe("Daytona Terminal provider", () => {
     });
 
     await expect(provider.createSandbox({
-      stableName: "avalon-failed", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-failed", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: [], environment: {},
     })).rejects.toThrow("provider detail must not enter analytics");
     expect(measurements).toEqual([{
@@ -397,7 +439,7 @@ describe("Daytona Terminal provider", () => {
     }));
 
     const createdSnapshot = await provider.createSandbox({
-      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await expect(provider.prepareSandbox!(createdSnapshot.id, ["github.com"]))
@@ -427,12 +469,85 @@ describe("Daytona Terminal provider", () => {
     }));
 
     const createdSnapshot = await provider.createSandbox({
-      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await expect(provider.prepareSandbox!(createdSnapshot.id, ["github.com"]))
       .rejects.toMatchObject({ name: "TerminalSandboxInitializationError" });
     expect(remove).toHaveBeenCalledWith(60, true);
+  });
+
+  describe("deadline conversion", () => {
+    // Installed and restored in hooks rather than the test body, per
+    // docs/testing.md: a restore a throwing assertion can skip is not a
+    // restore, and this one spans every case below.
+    const WALL_CLOCK_BASE = 1_000_000_000_000;
+    let wallClock = WALL_CLOCK_BASE;
+
+    beforeEach(() => {
+      wallClock = WALL_CLOCK_BASE;
+      vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const deadlineProvider = (get: () => Promise<unknown>) => createDaytonaTerminalProvider({
+      capability: "supported",
+      apiKey: "secret",
+      apiUrl: "https://app.daytona.io/api",
+      target: "us",
+      snapshot: "snapshot",
+      emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(get) }) as never);
+
+    it("charges its own sandbox lookup against the caller's deadline", async () => {
+      const sandbox = {
+        id: "sandbox-1",
+        name: "avalon-ws-stream",
+        state: "stopped",
+        domainAllowList: "github.com",
+        start: vi.fn(async () => undefined),
+        recover: vi.fn(async () => undefined),
+      };
+      // The lookup ahead of the SDK call is a provider round trip, and the
+      // time it takes is the caller's deadline being spent. A wait computed
+      // before it would let the restore outlive the deadline by this much.
+      const provider = deadlineProvider(async () => {
+        wallClock += 20_000;
+        return sandbox;
+      });
+
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 90_000 });
+
+      expect(sandbox.start).toHaveBeenCalledWith(70);
+    });
+
+    it("rounds a deadline down to Daytona's seconds and never asks it to wait forever", async () => {
+      const sandbox = {
+        id: "sandbox-1",
+        name: "avalon-ws-stream",
+        state: "stopped",
+        domainAllowList: "github.com",
+        start: vi.fn(async () => undefined),
+        recover: vi.fn(async () => undefined),
+      };
+      const provider = deadlineProvider(async () => sandbox);
+
+      // Down, not up: 94.5s left may not become a 95s wait, or the wait
+      // outlives the instant it was given.
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 94_500 });
+      await provider.recoverSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE + 94_500 });
+      // A deadline already reached still sends the start, so the next tool
+      // call finds a restore that has at least been requested. Zero is the one
+      // value that must not reach the SDK: it reads it as "wait forever".
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE });
+      await provider.startSandbox("sandbox-1", { deadlineAtMs: WALL_CLOCK_BASE - 30_000 });
+
+      expect(sandbox.start.mock.calls).toEqual([[94], [1], [1]]);
+      expect(sandbox.recover).toHaveBeenCalledWith(94);
+    });
   });
 
   it("looks up ambiguous creates by stable name and delegates explicit lifecycle changes", async () => {
@@ -471,7 +586,9 @@ describe("Daytona Terminal provider", () => {
     await provider.deleteSandbox("sandbox-1");
 
     expect(get).toHaveBeenCalledWith("avalon-ws-stream");
-    expect(sandbox.start).toHaveBeenCalledWith(60);
+    // No caller budget leaves the SDK's own default wait in place, which is
+    // what the lifecycle alarm and repository checkout want.
+    expect(sandbox.start).toHaveBeenCalledWith(undefined);
     expect(sandbox.stop).toHaveBeenCalledWith(60);
     expect(sandbox.archive).toHaveBeenCalledOnce();
     expect(sandbox.updateNetworkSettings).toHaveBeenCalledWith({ domainAllowList: "pypi.org,*.pythonhosted.org" });
@@ -490,7 +607,7 @@ describe("Daytona Terminal provider", () => {
     }, () => ({ create, get: vi.fn(async () => sandbox) }));
     await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ state: "failed", recoverable: true });
     await provider.recoverSandbox("sandbox-1");
-    expect(sandbox.recover).toHaveBeenCalledWith(60);
+    expect(sandbox.recover).toHaveBeenCalledWith(undefined);
     await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ id: "sandbox-1", state: "running" });
     expect(create).not.toHaveBeenCalled();
   });

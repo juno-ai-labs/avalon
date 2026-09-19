@@ -42,6 +42,8 @@ import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery
 
 export interface Env {
   DB: D1Database;
+  TELEMETRY_DB: D1Database;
+  AUDIT_DB: D1Database;
   /** Shared, content-free routing authority available to both product regions. */
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
@@ -382,6 +384,8 @@ const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
+  TELEMETRY_DB: binding<D1Database>(),
+  AUDIT_DB: binding<D1Database>(),
   PLATFORM_DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),

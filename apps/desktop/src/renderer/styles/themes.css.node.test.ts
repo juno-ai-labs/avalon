@@ -314,7 +314,7 @@ describe('token references', () => {
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
-    '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
+    '--av-cmp-sidebar-width',
     // Deliberately outside the `--av-` namespace, unlike its neighbour above:
     // `--av-cmp-sidebar-width` is a registry token a theme may set and is here
     // only because the resize handle also writes it inline, while this one is
@@ -340,6 +340,24 @@ describe('token references', () => {
     // so they interpolate as lengths; a theme has no opinion about them.
     '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',
     '--turn-bubble-radius',
+    // The one hover wash, spelled as a paint layer so it composites over a
+    // control's own surface instead of replacing it. It is derived from
+    // `sys.color.state.hover`, which the registry does declare; a theme sets
+    // the colour and this states how it is applied, which is not a theme's to
+    // choose.
+    '--hover-layer',
+    // Markdown's paint, named as a group on `.markdown-body` and re-pointed by
+    // a surface that fills itself — the person's bubble, whose fill is
+    // near-black or a profile colour and whose ink is whichever absolute one
+    // the palette picked for it. The defaults below are the appearance's own
+    // tokens; what a theme has no opinion about is which of them a surface
+    // that paints itself should be using instead, which is why these are the
+    // stylesheet's rather than the registry's.
+    '--markdown-ink', '--markdown-ink-strong', '--markdown-ink-quiet',
+    '--markdown-ink-muted', '--markdown-ink-faint', '--markdown-wash',
+    '--markdown-surface', '--markdown-rule', '--markdown-quote-bar',
+    '--markdown-border', '--markdown-link', '--markdown-link-hover',
+    '--markdown-mark', '--markdown-scrollbar-thumb',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads
     // light on a dark or profile-coloured bubble and dark on a light card. A

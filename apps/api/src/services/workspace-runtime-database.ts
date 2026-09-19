@@ -152,7 +152,7 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
 }));
 
 /**
- * Identity, tenancy, and routing tables that only the regional database has.
+ * Identity, tenancy, routing, and audit tables held outside WorkspaceDO.
  *
  * WorkspaceDO holds product state and nothing else, so a statement that names
  * one of these alongside a local table is asking two databases one question.
@@ -169,17 +169,17 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
  * `no such table: workspace_members` on every Slack run-outcome delivery in
  * production rather than as anything naming the boundary it crossed.
  */
-const WORKSPACE_REGIONAL_ONLY_TABLES = [
+const WORKSPACE_EXTERNAL_TABLES = [
   "users",
   "workspaces",
   "workspace_members",
   "workspace_invitations",
   "sessions",
-  "audit_events",
+  "audit_events", // AUDIT_DB remains a separate authority after regional retirement.
   "platform_workspace_bindings",
 ] as const;
 
-const WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS = WORKSPACE_REGIONAL_ONLY_TABLES.map((table) => ({
+const WORKSPACE_EXTERNAL_TABLE_PATTERNS = WORKSPACE_EXTERNAL_TABLES.map((table) => ({
   table,
   // The boundaries keep each name to itself: `workspaces` would otherwise
   // match inside `workspace_members`, and `sessions` inside
@@ -222,7 +222,7 @@ function localStatement(sql: string): boolean {
   // lacks rather than the boundary the query crossed, which is how one sat in
   // production being retried. Refusing it at the router says which table put
   // the statement on the wrong side.
-  const regionalTable = WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS
+  const regionalTable = WORKSPACE_EXTERNAL_TABLE_PATTERNS
     .find(({ pattern }) => pattern.test(sql))?.table;
   if (regionalTable) {
     throw new Error(`workspace_runtime_cross_authority_statement:${regionalTable}`);

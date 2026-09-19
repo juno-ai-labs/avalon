@@ -214,7 +214,8 @@ describe('socket-first work-stream open', () => {
     const boot = recoveryBoot();
     const report = vi.spyOn(desktopBridge(), 'reportTelemetryProductIntent').mockResolvedValue(undefined);
     const mutation = action === 'make_public' ? api.setWorkstreamScope : action === 'rename' ? api.renameWorkstream : api.archiveWorkstream;
-    mutation.mockRejectedValueOnce(null).mockResolvedValue({ ...boot, scope: action === 'make_public' ? 'workspace' : 'personal' });
+    const diagnostic = `INTERNAL ROUTER RESPONSE: ${action} route does not exist`;
+    mutation.mockRejectedValueOnce(new Error(diagnostic)).mockResolvedValue({ ...boot, scope: action === 'make_public' ? 'workspace' : 'personal' });
     renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
@@ -223,7 +224,10 @@ describe('socket-first work-stream open', () => {
     await mainMenu(label);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
-    await screen.findByText(action === 'make_public' ? 'The work stream could not be made public.' : `That work stream could not be ${action === 'rename' ? 'renamed' : 'archived'}.`);
+    await screen.findByText(action === 'make_public'
+      ? 'The work stream couldn’t be made public. Try again.'
+      : `The work stream couldn’t be ${action === 'rename' ? 'renamed' : 'archived'}. Try again.`);
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(report.mock.calls.filter(([event]) => event.kind === 'workstream_action_completed')).toHaveLength(0);
     if (action === 'make_public') {
       fireEvent.click(screen.getByRole('button', { name: 'Close' }));
@@ -387,7 +391,8 @@ describe('socket-first work-stream open', () => {
     Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true });
     log.scrollTop = 400;
     fireEvent.scroll(log);
-    expect(await screen.findByText('Newer gap unavailable')).toBeInTheDocument();
+    expect(await screen.findByText('Newer messages couldn’t be loaded. Try again.')).toBeInTheDocument();
+    expect(screen.queryByText('Newer gap unavailable')).not.toBeInTheDocument();
     expect(loadTranscriptRange).toHaveBeenCalledWith(expect.objectContaining({
       range: { startInclusive: 11, endExclusive: 30 },
     }));
@@ -637,14 +642,16 @@ describe('socket-first work-stream open', () => {
     api.prepareSubstream.mockResolvedValue({
       operationId: 'op', substreamId: '00000000-0000-7000-8000-000000000674', title: 'New substream', context: { parts: [] },
     });
-    api.confirmSubstream.mockRejectedValue(new Error('The substream could not be created.'));
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: substream route does not exist';
+    api.confirmSubstream.mockRejectedValue(new Error(diagnostic));
     api.cancelSubstream.mockResolvedValue(undefined);
     openConversation(1);
     fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
     const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await screen.findByText('The substream could not be created.');
+    await screen.findByText('The substream couldn’t be created. Try again.');
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.cancelSubstream).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel new substream' }));
@@ -658,7 +665,8 @@ describe('socket-first work-stream open', () => {
     // A retry that minted fresh ids would reserve a second child and say the
     // same message twice; under the same ids both halves resume.
     api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
-    api.confirmSubstream.mockRejectedValueOnce(new Error('The connection was lost.'));
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: confirmation route does not exist';
+    api.confirmSubstream.mockRejectedValueOnce(new Error(diagnostic));
     api.confirmSubstream.mockResolvedValue({
       substreamId: childId,
       title: 'Look at the invoice',
@@ -669,7 +677,8 @@ describe('socket-first work-stream open', () => {
     const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await screen.findByText('The connection was lost.');
+    await screen.findByText('The substream couldn’t be created. Try again.');
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
 
     fireEvent.keyDown(await screen.findByRole('textbox', { name: 'What should this substream work on?' }), { key: 'Enter' });
     await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalledTimes(2));
@@ -681,14 +690,16 @@ describe('socket-first work-stream open', () => {
   });
 
   it('puts the message back in the composer when the substream could not be created', async () => {
-    api.prepareSubstream.mockRejectedValue(new Error('The context could not be prepared.'));
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: preparation route does not exist';
+    api.prepareSubstream.mockRejectedValue(new Error(diagnostic));
     openConversation(1);
     fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
     const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    expect(await screen.findByText('The context could not be prepared.')).toBeInTheDocument();
+    expect(await screen.findByText('The substream couldn’t be created. Try again.')).toBeInTheDocument();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this substream work on?' }))
       .toHaveValue('Look at the invoice'));
     expect(api.confirmSubstream).not.toHaveBeenCalled();
@@ -879,7 +890,8 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add and mention' }));
     if (refused) {
-      expect(await screen.findByText('Parent access required')).toBeInTheDocument();
+      expect(await screen.findByText('The message couldn’t be sent. Try again.')).toBeInTheDocument();
+      expect(screen.queryByText('Parent access required')).not.toBeInTheDocument();
       expect(createMessage).not.toHaveBeenCalled();
       expect(composer).toHaveValue('Please ask @New member to review.');
     } else {
@@ -1042,7 +1054,8 @@ describe('socket-first work-stream open', () => {
 
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to main conversation' }));
-    expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
+    expect(await screen.findByText('That participant couldn’t be added.')).toBeInTheDocument();
+    expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
@@ -1051,8 +1064,9 @@ describe('socket-first work-stream open', () => {
     });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
 
-    expect(await screen.findByText('Adam cannot remove Katherine')).toBeInTheDocument();
-    expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
+    expect(await screen.findByText('That participant couldn’t be removed.')).toBeInTheDocument();
+    expect(screen.queryByText('Adam cannot remove Katherine')).not.toBeInTheDocument();
+    expect(screen.queryByText('That participant couldn’t be added.')).not.toBeInTheDocument();
   });
 
   it('keeps the participant dialog open after an add so another person can be added', async () => {

@@ -18,7 +18,16 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
   pendingConnectorOAuth: null as null | Record<string, unknown>,
   reconnectConnection: vi.fn(),
-  session: { workspace: { id: 'workspace-one', region: 'global', role: 'owner' as 'owner' | 'admin' | 'member' } },
+  // `workspaceRole` is what the card actually gates on: the role served by
+  // `GET /workspace`, not the one stamped on the desktop session, because a
+  // role changes while somebody is signed in and the session's copy does not
+  // move until its token rotates. The session still carries one so the
+  // placeholder path is exercised.
+  session: {
+    user: { id: 'user-one', name: 'Ada', email: 'ada@example.com', timezone: 'America/Los_Angeles' },
+    workspace: { id: 'workspace-one', name: 'Rally', region: 'global', timezone: 'America/Los_Angeles', role: 'member' as 'owner' | 'admin' | 'member' },
+  },
+  workspaceRole: 'owner' as 'owner' | 'admin' | 'member',
   setPendingConnectorOAuth: vi.fn(),
   startProviderConnection: vi.fn(),
 }));
@@ -28,6 +37,19 @@ vi.mock('../lib/collaboration-session', () => ({
     api: {
       getAvailableConnectorTypes: mocks.getAvailableConnectorTypes,
       getConnectorOAuthAttempt: mocks.getConnectorOAuthAttempt,
+      getWorkspace: async () => ({
+        id: 'workspace-one',
+        name: 'Rally',
+        region: 'global',
+        timezone: 'America/Los_Angeles',
+        currentUser: {
+          id: 'user-one',
+          name: 'Ada',
+          email: 'ada@example.com',
+          timezone: 'America/Los_Angeles',
+          role: mocks.workspaceRole,
+        },
+      }),
       reconnectConnection: mocks.reconnectConnection,
       startProviderConnection: mocks.startProviderConnection,
     },
@@ -45,7 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.pendingConnectorOAuth = null;
   mocks.setupEnabled = true;
-  mocks.session.workspace.role = 'owner';
+  mocks.workspaceRole = 'owner';
   mocks.getAvailableConnectorTypes.mockResolvedValue(['google', 'github', 'granola', 'linear', 'notion', 'slack']);
   mocks.getConnectorOAuthAttempt.mockResolvedValue({ status: 'pending' });
   mocks.startProviderConnection.mockResolvedValue({
@@ -248,7 +270,7 @@ describe('connector connection resolution', () => {
   });
 
   it('disables workspace OAuth for members', async () => {
-    mocks.session.workspace.role = 'member';
+    mocks.workspaceRole = 'member';
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -259,5 +281,29 @@ describe('connector connection resolution', () => {
     );
 
     expect(await screen.findByRole('button', { name: 'Admin required' })).toBeDisabled();
+  });
+
+  /**
+   * The flow this gate exists for, and the one it used to get wrong.
+   *
+   * Somebody is promoted to administrator precisely so they can connect a
+   * workspace account. The session they are holding still says `member` and
+   * will keep saying it until its access token rotates; the served workspace
+   * says `admin` on the next read. The card has to believe the second one.
+   */
+  it('lets an administrator promoted mid-session connect a workspace account', async () => {
+    mocks.workspaceRole = 'admin';
+    expect(mocks.session.workspace.role).toBe('member');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[]}>
+          <ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'workspace' }} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Connect Slack' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Admin required' })).not.toBeInTheDocument();
   });
 });

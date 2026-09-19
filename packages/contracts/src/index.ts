@@ -153,6 +153,19 @@ export const HarnessFailureCodeSchema = z.enum([
   // not be persisted. This is an Avalon recovery problem, not a provider fault.
   "run_state_persistence_failed",
   "context_limit_exceeded",
+  // The endpoint refused the prompt as longer than it accepts. Distinct from
+  // `context_limit_exceeded`, which is Rally's own accounting saying a run
+  // cannot be made to fit: this one is Rally believing it fits and the
+  // endpoint disagreeing, which is the only way the two can be told apart and
+  // is the difference between a compaction defect and a window Rally has
+  // wrong. The deployment's limit is the authority and it is not always the
+  // catalog's: a run died on 2026-09-17 sized from OpenRouter's 1,050,000-token
+  // figure against an Azure deployment that accepts 922,000, and the request
+  // error came back as `harness_execution_failed` — Rally's own defect, no
+  // remedy, "copy the request ID for support" — when the reason was in the 400
+  // body the whole time. The name is the endpoint's own machine code so an
+  // operator grepping what the provider said finds the run that got it.
+  "context_length_exceeded",
   "tool_surface_too_large",
   "ambiguous_external_write",
   // Every route candidate answered with a transport fault the provider owns —
@@ -263,6 +276,17 @@ export const AgentModelRoutingSchema = z.object({
 export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
 
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
+/**
+ * The roles an administrator may hand to somebody else.
+ *
+ * One schema for both ways a role is assigned — the role carried on an
+ * invitation, and the role set on a membership that already exists — because
+ * they are the same decision made at two moments, and a second enum is how the
+ * two drift. `owner` is deliberately not in it: the founding membership is the
+ * one role nobody may grant, and transferring it is a different operation
+ * nobody has asked for.
+ */
+export const AssignableMemberRoleSchema = z.enum(["admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
@@ -307,7 +331,11 @@ export const WorkspaceMemberSchema = z.object({
 }).refine((member) => member.accessClass === "guest" ? member.role === null : member.role !== null,
 { message: "Guests have no workspace role; members require a role" });
 
-export const WorkspaceInvitationRoleSchema = z.enum(["admin", "member"]);
+export const WorkspaceInvitationRoleSchema = AssignableMemberRoleSchema;
+/** Set the role of a membership that already exists. */
+export const UpdateWorkspaceMemberRoleRequestSchema = z.object({
+  role: AssignableMemberRoleSchema
+});
 export const WorkspaceInvitationStatusSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
 export const WorkspaceInvitationSchema = z.object({
   id: IdSchema,
@@ -3483,6 +3511,8 @@ export type WorkspaceAttention = z.infer<typeof WorkspaceAttentionSchema>;
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
+export type AssignableMemberRole = z.infer<typeof AssignableMemberRoleSchema>;
+export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type ProductFeatureFlagKey = z.infer<typeof ProductFeatureFlagKeySchema>;
 export type ProductFeatureFlagFanoutMessage = z.infer<typeof ProductFeatureFlagFanoutMessageSchema>;

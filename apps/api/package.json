@@ -24,7 +24,7 @@
     "terminal:build-snapshot": "tsx scripts/build-terminal-snapshot.ts",
     "terminal:verify-provider-interface": "tsx scripts/verify-terminal-provider-interface.ts",
     "terminal:verify-provider": "tsx scripts/verify-terminal-provider.ts",
-    "db:migrate": "node ../../scripts/migrate-d1.mjs && pnpm db:platform:migrate",
+    "db:migrate": "node ../../scripts/migrate-d1.mjs && pnpm db:platform:migrate && pnpm db:observability:migrate",
     "db:migrate:remote": "node ../../scripts/migrate-d1.mjs --remote --region global",
     "db:migrate:remote:list": "node ../../scripts/migrate-d1.mjs --remote --list --region global",
     "db:platform:migrate": "wrangler d1 migrations apply PLATFORM_DB --local --persist-to .wrangler/state/global --config platform.wrangler.jsonc",
@@ -32,7 +32,9 @@
     "db:platform:migrate:remote:list": "wrangler d1 migrations list PLATFORM_DB --remote --config platform.wrangler.jsonc",
     "db:seed": "node ../../scripts/seed-local-region.mjs global",
     "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.global.jsonc && wrangler deploy --config wrangler.terminal.global.jsonc && wrangler deploy --config wrangler.telemetry.global.jsonc && wrangler deploy --config wrangler.pricing.global.jsonc && wrangler deploy --config .wrangler.lakehouses.global.json",
-    "build:ashby": "wrangler deploy --dry-run --config wrangler.ashby.global.jsonc --outfile dist-ashby/worker.bundle && wrangler check startup --worker dist-ashby/worker.bundle --outfile dist-ashby/startup.cpuprofile && node ../../scripts/check-connector-startup-boundary.mjs"
+    "build:ashby": "wrangler deploy --dry-run --config wrangler.ashby.global.jsonc --outfile dist-ashby/worker.bundle && wrangler check startup --worker dist-ashby/worker.bundle --outfile dist-ashby/startup.cpuprofile && node ../../scripts/check-connector-startup-boundary.mjs",
+    "db:observability:migrate": "wrangler d1 migrations apply TELEMETRY_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc && wrangler d1 migrations apply AUDIT_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc",
+    "db:observability:migrate:remote": "wrangler d1 migrations apply TELEMETRY_DB --remote --config wrangler.global.jsonc && wrangler d1 migrations apply AUDIT_DB --remote --config wrangler.global.jsonc"
   },
   "dependencies": {
     "@rally/agent-harness": "workspace:*",

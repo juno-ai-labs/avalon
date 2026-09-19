@@ -256,7 +256,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 3, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 3, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       provider,
       readGateway,
       undefined,
@@ -265,7 +265,7 @@ describe("Terminal repository publication", () => {
     const bootstrapCommand = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     // After the checkout, isolated from `set -e`, reporting only.
     expect(bootstrapCommand.indexOf(".git/info/exclude")).toBeLessThan(bootstrapCommand.indexOf("( set +e; python3 -c '"));
-    expect(bootstrapCommand).toMatch(/'\/workspace' 'report' '0' '\[\]' '__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__' 'AGENTS\.md' \) \|\| true$/u);
+    expect(bootstrapCommand).toMatch(/'\/workspace' '0' '\[\]' '__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__' 'AGENTS\.md' \) \|\| true$/u);
     expect(ledger.pendingDeliveries().map((delivery) => [delivery.block.blockId, delivery.block.sourceGeneration, delivery.block.content]))
       .toEqual([["AGENTS.md", 3, "root rules\n"]]);
     expect(failures).toEqual([]);
@@ -282,7 +282,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       provider,
       readGateway,
     )).resolves.toMatchObject({ repositoryFullName: "owner/repo", baseSha: BASE, headRef: HEAD_REF, outcome: "cloned" });
@@ -340,7 +340,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       provider,
       gateway,
     )).rejects.toMatchObject({ code: "repository_access_revoked" });
@@ -366,7 +366,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       provider,
       gateway,
     )).resolves.toMatchObject({ outcome: "refreshed" });
@@ -396,7 +396,7 @@ describe("Terminal repository publication", () => {
     await bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       provider,
       gateway,
     );
@@ -448,7 +448,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
+      authorityFingerprint: "authority", networkRevision: 1,
     }, provider)).resolves.toEqual({
       repository: "owner/repo", baseRef: "main", headRef: HEAD_REF, commitSha: HEAD,
       publishedSha: HEAD, outcome: "created",
@@ -497,7 +497,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
+      authorityFingerprint: "authority", networkRevision: 1,
     }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
     expect(publicationPushes(provider)).toHaveLength(1);
     expect(workstreamObjectGet(
@@ -519,7 +519,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(unreceipted, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
+      authorityFingerprint: "authority", networkRevision: 1,
     }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
     // The receipt is what makes a publication replayable. Without it nothing
     // may reach GitHub, or a retry opens a second pull request.
@@ -545,7 +545,7 @@ describe("Terminal repository publication", () => {
     await expect(createTerminalRepositoryPublisher(failed.env, failed.gateway).publishBranchAndPr(
       failed.context,
       { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       failed.provider,
     )).rejects.toThrow(`Trusted Git publication failed at ${stage} with exit code 1`);
     expect(publicationPushes(failed.provider)).toEqual([["sandbox", expect.objectContaining({
@@ -588,7 +588,7 @@ describe("Terminal repository publication", () => {
     const publication = createTerminalRepositoryPublisher(scenario.env, scenario.gateway).publishBranchAndPr(
       scenario.context,
       { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       scenario.provider,
     );
     if (expectedStage) {
@@ -617,7 +617,7 @@ describe("Terminal repository publication", () => {
     const publisher = createTerminalRepositoryPublisher(env, gateway);
     const sandbox = {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running" as const,
-      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
+      authorityFingerprint: "authority", networkRevision: 1,
     };
 
     await publisher.publishBranchAndPr(context, { title: "Ship it", body: "First commit" }, sandbox, provider);
@@ -681,7 +681,7 @@ describe("Terminal repository publication", () => {
     vi.mocked(dirty.provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 0, stdout: " M src/app.ts\n", stderr: "" });
     await expect(createTerminalRepositoryPublisher(dirty.env, dirty.gateway).publishBranchAndPr(
       dirty.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       dirty.provider,
     )).rejects.toMatchObject({ code: "working_tree_dirty", message: expect.stringContaining("commit") });
   });
@@ -706,7 +706,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(readOnly.env, readOnly.gateway).publishBranchAndPr(
       readOnly.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       readOnly.provider,
     )).rejects.toMatchObject({
       code: "repository_remote_read_only",
@@ -729,7 +729,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(workflow.env, workflow.gateway).publishBranchAndPr(
       workflow.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       workflow.provider,
     )).rejects.toMatchObject({
       code: "publication_policy_denied",
@@ -752,7 +752,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(removed.env, removed.gateway).publishBranchAndPr(
       removed.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       removed.provider,
     )).rejects.toMatchObject({ code: "publication_not_authorized", message: expect.stringContaining("no longer belongs") });
     expect(removed.gateway.mintWriteToken).not.toHaveBeenCalled();

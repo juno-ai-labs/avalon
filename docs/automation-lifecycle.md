@@ -168,6 +168,16 @@ from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
 still on its way, as the artifact section beside it is; a failure is the one
 thing it shows beside whichever rows did arrive rather than instead of them.
+Read and action failures remain distinct: a partial read says the list may be
+out of date, while refused local removal, recommendation, and recommendation
+removal each name the action that failed and stay visible until the next
+Sidekick-management interaction. That interaction clears only a
+settled failure: a removal or attachment still in flight remains observed and
+keeps its controls pending, so reopening management cannot permit a duplicate
+request or discard the eventual result. The lazy management-options query
+belongs only to the picker and never changes the list's state. Those states and
+the picker’s load/attach failures are stable Rally-owned copy; raw API,
+transport and provider messages never become sidebar text.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
@@ -316,7 +326,7 @@ The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 `index-DfPT5G9o.css`. Its 80px tiles are centered with an 8px gap, 60px
 artwork, 6px artwork-to-caption gap, 6px/4px top/bottom tile padding,
 4px horizontal tile padding, and 10px corners. Captions use 11px type,
-16px line height, and .005em tracking. Hover and selected fills use `--av-cmp-row-background-hover` and
+16px line height, and .005em tracking. Hover and selected fills use `--av-sys-color-state-hover` and
 `--av-cmp-row-background-selected`; icons use `--av-sys-color-text-on-inverse`.
 These preserve the reference proportions while following light and dark appearance. The outer 8px/12px plus inner 6px block
 padding becomes 14px/18px on our strip. One tile can grow to fit a caption
@@ -537,6 +547,12 @@ Before every provider write, `assertRunAuthorityStillValid` asks the parent
 with `ConnectorError("unauthorized")`, so a run that outlives a pause or a
 delete stops rather than finishing on stale consent. The
 `rally:sidekicks` drafting plugin is withheld from a run.
+
+A run that loads Terminal gets a sandbox of its own, provisioned fresh under
+the run's conversation and never reopened. The automation projects no Terminal
+deadline for the workspace sweep, so that sandbox is created with Daytona's
+auto-delete set and is retired by the provider alone;
+[`terminal-workspaces.md`](terminal-workspaces.md) owns that mechanism.
 
 The run reports its state the way every conversation does: its
 `directory_common` effect reaches the parent through the child effect leg, and

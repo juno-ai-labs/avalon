@@ -854,15 +854,23 @@ export function testSubstreamAgentsBinding(
 ): DurableObjectNamespace {
   const objectStoreMode = isWorkstreamObjectStore(database);
   const stores = options.objectStores ?? new Map<string, DatabaseSync>();
-  const storeFor = (workstreamId: string, workspaceId: string): DatabaseSync => {
+  /**
+   * One store per conversation object: the main conversation's under the
+   * work stream's own id, as every caller keyed it before conversations had
+   * objects of their own, and any other conversation's under
+   * `<workstreamId>:<substreamId>`, which is what a test that gives a side
+   * thread its own sandbox seeds.
+   */
+  const storeFor = (workstreamId: string, workspaceId: string, substreamId = "0"): DatabaseSync => {
     if (objectStoreMode) {
       seedWorkstreamObjectRoot(database, { workstreamId, workspaceId });
       return database;
     }
-    let store = stores.get(workstreamId);
+    const key = substreamId === "0" ? workstreamId : `${workstreamId}:${substreamId}`;
+    let store = stores.get(key);
     if (!store) {
       store = testWorkstreamObjectStore();
-      stores.set(workstreamId, store);
+      stores.set(key, store);
     }
     seedWorkstreamObjectRoot(store, { workstreamId, workspaceId });
     return store;
@@ -894,10 +902,11 @@ export function testSubstreamAgentsBinding(
     executeTerminalOperation: vi.fn((input: {
       workspaceId: string;
       workstreamId: string;
+      substreamId?: string;
       operation: string;
       args: unknown[];
     }) => {
-      const store = storeFor(input.workstreamId, input.workspaceId);
+      const store = storeFor(input.workstreamId, input.workspaceId, input.substreamId);
       const storage = createCloudflareTestBinding<DurableObjectStorage>({
         getAlarm: async () => null,
         setAlarm: async () => undefined,
@@ -966,10 +975,11 @@ export function testSubstreamAgentsBinding(
     executeHarnessRunOperation: vi.fn(async (input: {
       workspaceId: string;
       workstreamId: string;
+      substreamId?: string;
       operation: string;
       args: unknown[];
     }) => {
-      const store = storeFor(input.workstreamId, input.workspaceId);
+      const store = storeFor(input.workstreamId, input.workspaceId, input.substreamId);
       const storage = new WorkstreamHarnessRunStorage(
         createCloudflareTestBinding<DurableObjectStorage>({
           getAlarm: async () => null,
