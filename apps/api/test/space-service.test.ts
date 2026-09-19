@@ -37,6 +37,7 @@ function summary(overrides: Record<string, unknown> = {}) {
     status: "active",
     systemRole: null,
     revision: 3,
+    reach: "participant" as const,
     participants: [{ userId: OWNER }, { userId: MEMBER }],
     channelCount: 1,
     defaultResourceIds: [],

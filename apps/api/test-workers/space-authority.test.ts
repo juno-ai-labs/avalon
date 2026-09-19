@@ -695,30 +695,227 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
-  it("given a Channel in a personal Space, when another member reads it, then that Space is not named", async () => {
+  it("given a Channel in a personal Space, when another member can read it, then that Space is named to them", async () => {
     const personal = await reserve("Side work", "personal");
     const organization = await reserve("Company", "workspace");
     await publishChannel(CHANNEL_A, null);
     await place(personal, CHANNEL_A);
     await place(organization, CHANNEL_A);
 
-    // The ids ride a *Channel*, which several people read. A personal Space's
-    // id on somebody else's row is the existence of a private Space — and,
-    // through `channelCount`, how much is in it — leaking to a reader who
-    // cannot see it.
+    // The third way a Space becomes visible. The ids ride a *Channel*, which
+    // several people read, and this member can read this one — so the Space it
+    // is placed in is named to them, and the Channel is drawn under the Space
+    // it actually lives in rather than in a flat list of homeless rows.
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [personal, organization].sort() });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: MEMBER, workstreamId: CHANNEL_A,
-    })).resolves.toEqual({ spaceIds: [organization] });
+    })).resolves.toEqual({ spaceIds: [personal, organization].sort() });
 
     // And on the directory row itself, which is where a client reads them.
     const { socket, sidebar } = await connectViewer(MEMBER, "cf14");
     expect(sidebar.workstreams.items).toMatchObject([
-      { id: CHANNEL_A, spaceIds: [organization] },
+      { id: CHANNEL_A, spaceIds: [personal, organization].sort() },
     ]);
     socket.close();
+  });
+
+  it("given a personal Space, when its only Channel is one a member cannot read, then it stays unnamed", async () => {
+    const reachable = await reserve("Side work", "personal");
+    const hidden = await reserve("Private plans", "personal");
+    await publishChannel(CHANNEL_A, null);
+    await publishPersonalChannel(CHANNEL_B, OWNER);
+    await place(reachable, CHANNEL_A);
+    await place(hidden, CHANNEL_B);
+
+    // The clause is about a Channel this viewer can *see*, and the Channel
+    // predicate is the Channel directory's own. Without that half every
+    // personal Space in the Organization would be named to everybody, which is
+    // a longer list of private things than the one this change is about.
+    const directory = (await spaceDirectories(MEMBER)).active.items;
+    expect(directory.map((item) => item.id)).toEqual([reachable]);
+    expect(directory[0]).toMatchObject({ reach: "through_channel" });
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: hidden,
+    })).resolves.toMatchObject({ ok: false, code: "space_not_found" });
+  });
+
+  it("given a Space reached through a Channel, when its summary is read, then it carries the mark and nothing else", async () => {
+    const personal = await reserve("Side work", "personal");
+    await publishChannel(CHANNEL_A, null);
+    await publishPersonalChannel(CHANNEL_B, OWNER);
+    await place(personal, CHANNEL_A);
+    await place(personal, CHANNEL_B);
+    await workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal, kind: "resource", targetId: RESOURCE_ID,
+    });
+
+    const owner = await workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
+    });
+    expect(owner).toMatchObject({
+      ok: true,
+      space: {
+        reach: "participant",
+        name: "Side work",
+        participants: [{ userId: OWNER }],
+        defaultResourceIds: [RESOURCE_ID],
+        channelCount: 2,
+      },
+    });
+
+    // The disclosure is the mark, the name and the lifecycle. Who is in the
+    // Space and what it hands down are not, and the count is this viewer's:
+    // the Organization's would be the size of a participants-only Space.
+    const other = await workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal,
+    });
+    expect(other).toMatchObject({
+      ok: true,
+      space: {
+        reach: "through_channel",
+        name: "Side work",
+        iconKey: "briefcase",
+        colorKey: "blue",
+        scope: "personal",
+        status: "active",
+        participants: [],
+        defaultResourceIds: [],
+        defaultSidekickIds: [],
+        channelCount: 1,
+      },
+    });
+  });
+
+  it("given a Space reached through a Channel, when the viewer's socket connects, then the snapshot names its reach", async () => {
+    const personal = await reserve("Side work", "personal");
+    const organization = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(personal, CHANNEL_A);
+
+    // Space state rides the socket and nowhere else, so this is the read every
+    // surface actually decides from — the reach has to be on it, per Space,
+    // or the sidebar cannot tell the row it may write on from the one it may
+    // not.
+    expect((await spaceDirectories(MEMBER)).active.items).toMatchObject([
+      { id: personal, reach: "through_channel" },
+      { id: organization, reach: "organization" },
+    ]);
+    expect((await spaceDirectories(OWNER)).active.items).toMatchObject([
+      { id: personal, reach: "participant" },
+      { id: organization, reach: "participant" },
+    ]);
+  });
+
+  it("given a Space reached through a Channel, when that viewer writes on it, then every write is refused by name", async () => {
+    const personal = await reserve("Side work", "personal");
+    const elsewhere = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(personal, CHANNEL_A);
+    await place(elsewhere, CHANNEL_A);
+
+    const asMember = { workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal };
+    // `space_access_denied` rather than `space_not_found`: they are looking at
+    // the row. Every operation kind, because each of these used to be gated on
+    // "may I see this Space" alone, and that question now answers yes.
+    const refusals = await Promise.all([
+      workspace().noteSpacePresentation({
+        ...asMember, presentation: { name: "Theirs now", iconKey: "star", colorKey: "red" },
+      }),
+      workspace().noteSpaceAudience({
+        ...asMember,
+        operationId: crypto.randomUUID(),
+        audience: { scope: "workspace", participantUserIds: [MEMBER] },
+      }),
+      workspace().prepareSpaceMembership({ ...asMember, workstreamId: CHANNEL_B }),
+      workspace().finalizeSpaceMembership({
+        ...asMember, workstreamId: CHANNEL_B, spaceRevision: 1, membershipGeneration: 1,
+      }),
+      workspace().prepareSpaceMembershipRemoval({
+        ...asMember,
+        workstreamId: CHANNEL_A,
+        remainingAudience: { scope: "workspace", participantUserIds: [OWNER] },
+      }),
+      workspace().prepareSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
+      workspace().finalizeSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
+      workspace().restoreSpace({ ...asMember, operationId: crypto.randomUUID() }),
+      workspace().addSpaceDefault({ ...asMember, kind: "resource", targetId: RESOURCE_ID }),
+      workspace().removeSpaceDefault({ ...asMember, kind: "resource", targetId: RESOURCE_ID }),
+    ]);
+    for (const refusal of refusals) {
+      expect(refusal).toMatchObject({ ok: false, code: "space_access_denied" });
+    }
+    await expect(workspace().cancelSpaceReservation(asMember)).resolves.toEqual({ cancelled: false });
+
+    // Nothing moved: the Space is as its own participant left it.
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
+    })).resolves.toMatchObject({
+      ok: true,
+      space: { name: "Side work", scope: "personal", status: "active", revision: 1 },
+    });
+  });
+
+  it("given a Space reached through a Channel, when that viewer arranges it, then the order is written", async () => {
+    const personal = await reserve("Side work", "personal");
+    const organization = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(personal, CHANNEL_A);
+    await place(personal, CHANNEL_B);
+    // The read is what gives this viewer their order rows for both Spaces.
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([personal, organization]);
+
+    // An arrangement is this person's own view preference, read by nobody
+    // else, so it is the one write a `through_channel` reach does not refuse:
+    // the row is in their sidebar and the Channels under it are theirs to
+    // read.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      order: { container: { kind: "organization" }, itemIds: [organization, personal] },
+    })).resolves.toMatchObject({ ok: true });
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      order: { container: { kind: "space", id: personal }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_B, CHANNEL_A] } });
+
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([organization, personal]);
+    expect(storedItemIds(await personalOrder(MEMBER), "space", personal))
+      .toEqual([CHANNEL_B, CHANNEL_A]);
+  });
+
+  it("given a Space reached through a Channel, when it is archived, then that viewer is handed neither list", async () => {
+    const personal = await reserve("Side work", "personal");
+    const elsewhere = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(personal, CHANNEL_A);
+    await place(elsewhere, CHANNEL_A);
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([personal, elsewhere]);
+
+    await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal, operationId: crypto.randomUUID(),
+    });
+    await workspace().finalizeSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal, operationId: crypto.randomUUID(),
+    });
+
+    // An archive stages every membership out of `active` before it commits, so
+    // nobody reaches an archived Space through a Channel in it — and no
+    // surface draws a Channel under an archived Space, so there would be
+    // nothing for its mark and name to explain. Its own participant keeps it
+    // in the inactive list, which is what the restore control is drawn from.
+    const forMember = await spaceDirectories(MEMBER);
+    expect(forMember.active.items.map((item) => item.id)).toEqual([elsewhere]);
+    expect(forMember.inactive.items).toEqual([]);
+    expect((await spaceDirectories(OWNER)).inactive.items)
+      .toMatchObject([{ id: personal, reach: "participant" }]);
   });
 
   it("given an open socket, when a Channel is placed, then its row is pushed with the placement", async () => {
