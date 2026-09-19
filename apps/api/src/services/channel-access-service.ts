@@ -639,5 +639,8 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
       return new ApiError(409, code, "This Organization is still being prepared");
     case "space_access_denied":
       return new ApiError(403, code, "You cannot change this Space");
+    case "space_conversation_unreachable":
+      return new ApiError(409, code,
+        `“${channelTitle}” could not be asked whether this audience may read it`);
   }
 }
