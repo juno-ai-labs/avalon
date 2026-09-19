@@ -80,6 +80,22 @@ interface SpaceSidebarSectionProps {
   ordering: PersonalOrder;
   onRestore: (spaceId: string) => Promise<void>;
   /**
+   * The Organization's Channel list is paged, and an expanded Space is the one
+   * surface that can say the page in hand is not enough.
+   *
+   * The sidebar's own trigger is the nav's scroll, which reached the end of the
+   * time-grouped list of every Channel. That list is gone for a member, so
+   * their nav is short and the scroll rarely gets near the bottom: a Space
+   * holding 60 Channels would list the 43 that happened to be on page one and
+   * offer no way to ask for the rest. `channelCount` is the Organization's
+   * count rather than this viewer's, so "short" is not proof anything is
+   * missing — but it is enough to keep asking while pages remain, and pages
+   * running out is what stops it.
+   */
+  hasMoreChannels: boolean;
+  loadingMoreChannels: boolean;
+  onLoadMoreChannels?: (() => void) | undefined;
+  /**
    * Placements use the same row the rest of the sidebar does — and, inside an
    * expanded Space, the same drag the pinned list uses.
    */
@@ -113,6 +129,9 @@ export function SpaceSidebarSection({
   onReorder,
   ordering,
   onRestore,
+  hasMoreChannels,
+  loadingMoreChannels,
+  onLoadMoreChannels,
   renderWorkstream,
 }: SpaceSidebarSectionProps): React.JSX.Element {
   const location = useLocation();
@@ -171,6 +190,26 @@ export function SpaceSidebarSection({
       return next;
     });
   }, [openSpaceId]);
+
+  /** Whether this Space's placements are drawn, which is the route unless a reader said otherwise. */
+  const isOpen = (space: SpaceSummary): boolean =>
+    expansion[space.id] ?? (location.pathname === `/spaces/${space.id}`
+      || location.pathname.startsWith(`/spaces/${space.id}/`));
+  // An expanded Space listing fewer Channels than the Organization says it
+  // holds. Not proof that a page is missing — the count is not viewer-scoped —
+  // and it does not have to be: what it costs is asking for a page that turns
+  // out to hold nothing for this Space, and what stops it is running out of
+  // pages rather than the count ever being reached.
+  const expandedShortOfPages = ordered.some((space) => isOpen(space)
+    && workstreams.filter((workstream) => workstream.spaceIds.includes(space.id)).length
+      < space.channelCount);
+  useEffect(() => {
+    // Guarded on the in-flight flag as well as on the cursor: each page that
+    // arrives runs this again, and without it the same page would be asked for
+    // once per render until the first answer landed.
+    if (!expandedShortOfPages || !hasMoreChannels || loadingMoreChannels) return;
+    onLoadMoreChannels?.();
+  }, [expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
 
   const closeCreate = (): void => {
     if (saving) return;
@@ -289,7 +328,7 @@ export function SpaceSidebarSection({
             {ordered.map((space, index) => {
               const destination = `/spaces/${space.id}`;
               const active = location.pathname === destination || location.pathname.startsWith(`${destination}/`);
-              const isExpanded = expansion[space.id] ?? active;
+              const isExpanded = isOpen(space);
               // Recency is the natural order of a placement list, and the
               // arrangement this person committed goes in front of it: a
               // Channel they never dragged keeps moving up as it is used, and
