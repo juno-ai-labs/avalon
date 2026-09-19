@@ -260,13 +260,17 @@ to hold once the pointer leaves and the wash is deliberately too light for that.
 still draw hover from `cmp.row.background-selected`, so a hover in either still
 carries a selection's weight. The 2026-09-11 entry below raised this and pointed
 them at `cmp.row.background-hover`, which this change retires; the fill they
-want now is `sys.color.state.hover`. The collapsed sidebar's search pill is a
-second one: it rests on `cmp.control.background-quiet` and hovers on the wash,
-which are the same value, so it has no hover feedback. It had none before this
-change either — both sides read `cmp.row.background-hover` — so the split is
-faithful rather than a regression, but it is the case the two tokens were
-separated to make visible, and it wants the two-step the composer's round tools
-take.
+want now is `sys.color.state.hover`. 
+`cmp.control.background-quiet` and `sys.color.state.hover` hold the same value
+today, so a control that rests on the first and hovers on the second gets its
+step from the wash being *layered* over the resting fill, not from the two
+numbers differing. That is worth knowing before either is re-fitted: review of
+this change twice read the shared value as meaning those controls have no hover
+feedback at all, which was true only of the revision that substituted the wash
+instead of layering it. The agent question's Skip button is the case to check —
+it rests on the quiet fill and takes `.button`'s hover. The collapsed sidebar's
+search pill is not, despite looking like it: `app.css` resets it to
+`transparent` in the compact rail, so it never rested on the quiet fill there.
 
 ### 2026-09-18 — Share theme presentation between desktop and browser
 
