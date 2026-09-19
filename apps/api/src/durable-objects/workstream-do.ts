@@ -2970,6 +2970,57 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * what carries the revocation onward is the consumer's business, not this
    * object's.
    */
+  /**
+   * Drop the sockets this object can no longer admit, and say whose they were.
+   *
+   * The narrowing counterpart of `revokeSocketAccess`. A work stream that
+   * stops being Organization-wide takes access from every member who is not a
+   * participant, which is a set nobody outside can enumerate and nobody wants
+   * to publish one message per name for. What is enumerable is who is holding
+   * a socket right now, and only this object knows that — so it re-asks its
+   * own admission question per holder and answers with the ones it refused.
+   *
+   * Re-asking is not the polling `docs/access-revocation.md` rules out: this
+   * runs once, because the audience it is about was just written, and it is
+   * the same `authorizeViewer` a reconnect would run. A holder whose answer
+   * cannot be trusted is closed rather than spared, for the reason
+   * `revocationClosesSocket` gives — that costs a reconnect, where sparing
+   * keeps a reader reading a room that no longer admits them.
+   */
+  async revokeNarrowedAudienceAccess(input: { workspaceId: string; parentId: string }): Promise<{ closedUserIds: string[] }> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }),
+      input, "workstream_audience_narrowed");
+    this.assertParent(request.workspaceId, request.parentId);
+    const holders = new Map<string, Array<{ socket: WebSocket; attachment: WorkstreamSocketAttachment }>>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readSocketAttachment(socket);
+      if (!attachment) continue;
+      holders.set(attachment.userId, [...holders.get(attachment.userId) ?? [], { socket, attachment }]);
+    }
+    const closedUserIds: string[] = [];
+    for (const [userId, sockets] of holders) {
+      const viewer = await this.authorizeViewer({
+        workspaceId: request.workspaceId, parentId: request.parentId, userId: UserIdSchema.parse(userId),
+      });
+      if (viewer.authorized) continue;
+      closedUserIds.push(userId);
+      for (const held of sockets) {
+        try {
+          held.socket.serializeAttachment({ ...held.attachment, subscribed: false });
+        } catch {
+          // An unreadable attachment already fails the broadcast filter.
+        }
+        try {
+          held.socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+        } catch {
+          // Already closing; the runtime owns the rest of the teardown.
+        }
+      }
+    }
+    return { closedUserIds };
+  }
+
   async revokeSocketAccess(
     revocation: SocketAccessRevocation,
   ): Promise<{ substreamIds: string[] }> {

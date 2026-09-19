@@ -7,6 +7,7 @@ import {
   type SpaceErrorCode,
   type SpaceScope,
   type UserId,
+  type WorkspaceId,
   type WorkstreamDetail,
 } from "@rally/contracts";
 
@@ -378,7 +379,10 @@ export class ChannelAccessService {
     for (const userId of plan.seatUserIds) {
       await client.addParticipant(userId, { spaceSourceId: spaceId });
     }
-    if (plan.narrowScope) await client.update({ scope: "personal" });
+    if (plan.narrowScope) {
+      await client.update({ scope: "personal" });
+      await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), workstreamId);
+    }
     for (const userId of plan.removeUserIds) {
       await client.removeParticipant(userId, { spaceSourceId: spaceId });
       // The room closes its own sockets for somebody it removed. The
@@ -394,6 +398,35 @@ export class ChannelAccessService {
       });
     }
   }
+}
+
+/**
+ * Announce that a Channel stopped admitting the whole Organization.
+ *
+ * The narrowing counterpart of the removal every participant write already
+ * publishes, and it exists for the same reason: the room closes sockets for
+ * somebody it was *told* about, and nothing tells it that the audience it just
+ * took no longer covers whoever is reading. Whoever writes the fact publishes
+ * it, in the same request.
+ *
+ * It names nobody. The readers a narrowing drops are every member who is not a
+ * participant, which is the Organization; the hop asks the room which of them
+ * still has a socket open, which is the only part of that set anybody can act
+ * on. Shared by both narrowings — a Space's retraction and the Channel's own
+ * scope change — so there is one announcement rather than two that can drift.
+ */
+export async function publishChannelNarrowing(
+  env: Env,
+  workspaceId: WorkspaceId,
+  workstreamId: string,
+): Promise<void> {
+  await publishAccessRevocation(env, {
+    reason: "workstream_participant_removed",
+    workspaceId,
+    userId: null,
+    sessionId: null,
+    target: { scope: "workstream_audience_narrowed", workstreamId },
+  });
 }
 
 /** One refusal per closed code, each naming the Channel it is about. */

@@ -49,15 +49,48 @@ import {
  */
 export async function applyAccessRevocation(env: Env, message: AccessRevocationMessage): Promise<void> {
   const workspaceId = asWorkspaceId(message.workspaceId);
-  const revocation: SocketAccessRevocation = {
+  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
+  const target = message.target;
+  const carried = {
     reason: message.reason,
     workspaceId: message.workspaceId,
-    userId: message.userId,
     sessionId: message.sessionId,
     ...(message.membershipIncarnation ? { membershipIncarnation:message.membershipIncarnation } : {}),
   };
-  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
-  const target = message.target;
+
+  if (target.scope === "workstream_audience_narrowed") {
+    // The one hop that arrives without a name. The room closes what it can no
+    // longer admit and answers with whose sockets those were; from there each
+    // one is an ordinary per-user revocation, which is what reaches the
+    // substreams and the automations the room owns. Nobody holding a socket
+    // means nobody to publish for — the members who lost access and were not
+    // connected have nothing open to close.
+    const workstream = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSTREAM_DOS,
+      workspaceId,
+      workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(target.workstreamId)),
+      placementAffinity,
+    );
+    const { closedUserIds = [] } = await workstream.revokeNarrowedAudienceAccess({
+      workspaceId,
+      parentId: target.workstreamId,
+    });
+    await publishDescendantRevocations(env, closedUserIds.flatMap((userId) => [
+      descendantRevocation({ ...carried, userId }, { scope: "workstream", workstreamId: target.workstreamId }),
+      descendantRevocation({ ...carried, userId },
+        { scope: "workstream_automations", workstreamId: target.workstreamId }),
+    ]));
+    return;
+  }
+
+  // Every other target is about one person, and the schema has already
+  // refused a message that lost them. Named rather than asserted non-null, so
+  // a future target added without a hop says which field it is missing.
+  if (message.userId === null) {
+    throw new Error(`access_revocation_user_required:${target.scope}`);
+  }
+  const revocation: SocketAccessRevocation = { ...carried, userId: message.userId };
 
   if (target.scope === "workspace") {
     const workspace = await durableObjectStubForWorkspace(
