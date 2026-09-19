@@ -23,7 +23,7 @@ import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
-import { useProjectDirectories } from '../lib/use-project-directories';
+import { useSpaceDirectories } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
@@ -182,9 +182,19 @@ function ParticipantPicker({
   );
 }
 
-export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Workspace; projectId?: string }): React.JSX.Element {
-  const routeProjectId = useParams<{ projectId: string }>().projectId;
-  const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
+export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspace; spaceId?: string }): React.JSX.Element {
+  const routeSpaceId = useParams<{ spaceId: string }>().spaceId;
+  const owningSpaceId = spaceId === 'route' ? routeSpaceId : spaceId;
+  /**
+   * The Spaces this Channel is being started in.
+   *
+   * A list rather than one id because a Channel belongs to as many Spaces as it
+   * was put in, and the creation contract's field is `spaceIds`. Today only the
+   * Space dashboard and the sidebar row's plus reach this screen, so it is
+   * never more than one — but a screen that held a single id would have to be
+   * rewritten by whoever adds the second way in.
+   */
+  const owningSpaceIds = owningSpaceId === undefined ? [] : [owningSpaceId];
   const { api } = useAppSession();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -195,7 +205,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
   const workspaceDraftKey = newWorkstreamDraftKey(workspace.region, workspace.id);
-  const draftKey = owningProjectId ? `${workspaceDraftKey}:project:${owningProjectId}` : workspaceDraftKey;
+  const draftKey = owningSpaceIds.length > 0 ? `${workspaceDraftKey}:space:${owningSpaceIds.join(',')}` : workspaceDraftKey;
   const {
     text: message,
     setText: setMessage,
@@ -233,7 +243,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  const { active: projects } = useProjectDirectories();
+  const { active: spaces } = useSpaceDirectories();
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
   const recipientCandidates = useMemo(() => {
     const normalized = recipientQuery.trim().toLocaleLowerCase();
@@ -278,21 +288,21 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       return;
     }
   }, [location.pathname, returnTo, navigate]);
-  const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
-  const personalProjectParticipantIds = useMemo(() => new Set(
-    owningProject?.scope === 'personal'
-      ? owningProject.participants
-        .filter((participant) => participant.state === 'active')
-        .map((participant) => participant.userId)
+  const owningSpace = spaces.data?.items.find((space) => owningSpaceIds.includes(space.id));
+  // A personal Space decides who is in its Channels, so the picker is replaced
+  // by the Space's own roster rather than offered alongside it.
+  const personalSpaceParticipantIds = useMemo(() => new Set(
+    owningSpace?.scope === 'personal'
+      ? owningSpace.participants.map((participant) => participant.userId as string)
       : [],
-  ), [owningProject]);
+  ), [owningSpace]);
   useEffect(() => {
-    if (owningProject?.scope !== 'personal') return;
+    if (owningSpace?.scope !== 'personal') return;
     setSelectedMembers((members.data ?? []).filter((member) => (
-      member.id !== workspace.currentUser.id && personalProjectParticipantIds.has(member.id)
+      member.id !== workspace.currentUser.id && personalSpaceParticipantIds.has(member.id)
     )));
     setPickerOpen(false);
-  }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
+  }, [members.data, owningSpace?.scope, personalSpaceParticipantIds, workspace.currentUser.id]);
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -312,8 +322,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         attachmentCount: input.attachmentIds.length,
         openingMessageLength: input.openingMessage.length,
       });
+      // The Space this Channel is being started in is deliberately not sent:
+      // `WorkstreamCreationFieldsSchema` still carries `projectId` and has no
+      // `spaceIds`, and the creation paths that place a new Channel — in the
+      // named Space, or in General when none was named — are Phase 4 and Phase 5
+      // of the Spaces plan. Sending the old field would name an authority that
+      // no longer exists.
       return trace.step('create_request', () => api!.createWorkstream({
-        ...(owningProjectId ? { projectId: owningProjectId } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
@@ -547,11 +562,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     }
     : null;
 
-  if (owningProjectId && projects.data === undefined) {
-    return <LoadingState label="Opening project…" />;
+  if (owningSpaceIds.length > 0 && spaces.data === undefined) {
+    return <LoadingState label="Opening space…" />;
   }
-  if (owningProjectId && !owningProject) {
-    return <EmptyState title="Project not found" description="It may have been archived or you may no longer have access." />;
+  if (owningSpaceIds.length > 0 && !owningSpace) {
+    return <EmptyState title="Space not found" description="It may have been archived or you may no longer have access." />;
   }
 
   return (
@@ -562,12 +577,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
        and remounting it would break the hand-off into two separate objects. */
     <div className={clsx(
       'workstream-launch-screen',
-      owningProjectId === undefined && 'new-chat-screen',
+      owningSpaceIds.length === 0 && 'new-chat-screen',
       launching && 'workstream-screen is-launching',
     )}>
       {!launching && <div className="screen-drag-strip window-drag" />}
       <header className="launch-header workstream-header window-drag">
-        {!launching && owningProjectId === undefined && (
+        {!launching && owningSpaceIds.length === 0 && (
           <div className="new-chat-recipient-bar window-no-drag">
             <span className="new-chat-to-label">To:</span>
             <div className="new-chat-recipient-input-shell">
@@ -640,7 +655,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             </div>
           </div>
         )}
-        {!launching && owningProjectId === undefined && recipientPickerOpen && (
+        {!launching && owningSpaceIds.length === 0 && recipientPickerOpen && (
           <div
             aria-label="People"
             className="new-chat-recipient-results window-no-drag"
@@ -710,12 +725,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new channel</h2>
-        {!launching && owningProjectId === undefined && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
+        {!launching && owningSpaceIds.length === 0 && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
           if (!open) setSearchParams((params) => { params.delete('import'); return params; }, { replace: true, state: location.state });
         }} />}
-        {owningProjectId !== undefined && <div className="launch-modifiers">
+        {owningSpaceIds.length > 0 && <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Channel participants">
-            {owningProject?.scope === 'personal' ? (
+            {owningSpace?.scope === 'personal' ? (
               <Tooltip.Root delayDuration={300}>
                 <Tooltip.Trigger asChild>
                   <span className="participant-modifier">
@@ -732,7 +747,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                     side="top"
                     sideOffset={6}
                   >
-                    Participants are managed by the project
+                    Participants are managed by the space
                     <Tooltip.Arrow className="tooltip-arrow" />
                   </Tooltip.Content>
                 </Tooltip.Portal>
@@ -758,10 +773,10 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         <div
           className="composer-stack"
           onFocusCapture={() => {
-            if (owningProjectId === undefined) setRecipientPickerOpen(false);
+            if (owningSpaceIds.length === 0) setRecipientPickerOpen(false);
           }}
           onPointerDown={() => {
-            if (owningProjectId === undefined) setRecipientPickerOpen(false);
+            if (owningSpaceIds.length === 0) setRecipientPickerOpen(false);
           }}
         >
           {visibleCandidates.length > 0 && (
@@ -822,13 +837,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             // write the empty value it is being shown back over the draft it is
             // hiding, and lose it.
             onValueChange={(value) => { updateMessage(value); setTooLong(false); }}
-            placeholder={owningProjectId === undefined
+            placeholder={owningSpaceIds.length === 0
               ? selectedMembers.length > 0
                 ? `Message ${selectedMembers.map((member) => member.name).join(', ')}`
                 : 'Message organization'
               : 'Describe a task or ask a question…'}
             ref={textareaRef}
-            rows={owningProjectId === undefined ? 1 : 2}
+            rows={owningSpaceIds.length === 0 ? 1 : 2}
             shouldSubmitOnEnter={() => mentionQuery === null}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
             submitLabel="Create channel"
@@ -843,7 +858,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this channel with yourself.</p>}
       </section>
 
-      {owningProjectId !== undefined && owningProject?.scope !== 'personal' && <ParticipantPicker
+      {owningSpaceIds.length > 0 && owningSpace?.scope !== 'personal' && <ParticipantPicker
         currentUser={workspace.currentUser}
         members={activeMembers}
         onOpenChange={setPickerOpen}
