@@ -1,6 +1,6 @@
 import { SPACE_ROLE } from "./conversation-parent-role";
-import { applyRetirementGate, retiredObjectResponse } from "./object-retirement";
-import { WorkstreamDO } from "./workstream-do";
+import { applyRetirementGate } from "./object-retirement";
+import { WORKSTREAM_RETIREMENT_POLICY, WorkstreamDO } from "./workstream-do";
 
 import type { Env } from "../env";
 
@@ -25,22 +25,15 @@ export class SpaceDO extends WorkstreamDO {
 }
 
 /**
- * The same policy `WorkstreamDO` declares, declared again.
+ * The same policy object `WorkstreamDO` registers, registered again for this
+ * class.
  *
- * Retirement dispositions are resolved per instance from the class's own
- * prototype, so a subclass that declares nothing is a class that opted out:
- * every gated door would answer before the tombstone read and a retired Space
- * would keep serving. The gate wraps each method where it is *defined*, so
- * these wrappers are already installed by `WorkstreamDO`'s call — what this one
- * adds is the entry that says how `SpaceDO` classifies them.
+ * Not redundant, and not a second copy. A disposition resolves up the prototype
+ * chain, so every door `SpaceDO` inherits is already classified — what this call
+ * adds is the wrapping of any method `SpaceDO` comes to define *itself*. The
+ * class defines none today, which is exactly the shape in which the omission
+ * would be invisible: an override added later would be the one function on this
+ * object with no tombstone check in front of it, and a retired Space would go on
+ * serving through it.
  */
-applyRetirementGate(SpaceDO, {
-  drop: {
-    canReadWorkstream: () => false,
-    fetch: () => retiredObjectResponse(),
-    webSocketMessage: () => Promise.resolve(),
-    webSocketClose: () => Promise.resolve(),
-    webSocketError: () => Promise.resolve(),
-    alarm: () => Promise.resolve(),
-  },
-});
+applyRetirementGate(SpaceDO, WORKSTREAM_RETIREMENT_POLICY);
