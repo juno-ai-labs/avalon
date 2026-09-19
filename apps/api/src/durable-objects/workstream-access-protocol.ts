@@ -161,6 +161,18 @@ export type ConfirmSpaceAccessSourceResult = z.infer<typeof ConfirmSpaceAccessSo
 export const RetractSpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
   operationId: IdSchema,
+  /**
+   * The Space revision this retraction was staged against, when the caller has
+   * one.
+   *
+   * An audience change converges by retract-then-apply, and the retraction
+   * *deletes* the source row the application and its confirmation fence on — so
+   * without this an older interleaved change finds no row to be refused by and
+   * installs a stale roster unfenced. Optional because a membership removal and
+   * an archive withdraw a source rather than replace it: there is no newer
+   * application for them to lose a race with.
+   */
+  expectedSpaceRevision: z.number().int().positive().optional(),
   channel: ObservedChannelSchema,
 });
 export type RetractSpaceAccessSourceRequest = z.infer<typeof RetractSpaceAccessSourceRequestSchema>;
