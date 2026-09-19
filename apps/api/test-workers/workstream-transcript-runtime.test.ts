@@ -761,7 +761,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         executionPrincipal: { type: "user", userId: USER_ID },
         reason: "user_message",
       });
-      await runInDurableObject(stub, async (_instance, state) => {
+      await runInDurableObject(stub, async (instance, state) => {
         seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
         const transcript = new WorkstreamTranscriptStorage(state.storage);
         await transcript.commitBindTransition({
@@ -813,12 +813,21 @@ describe("work-stream transcript on workerd SQLite", () => {
           expectedBindStateRevision: 1,
           now,
         });
-        // A real run holds an attempt, and the residual receipt sweep selects
-        // on it: a fixture without one is not a run this code ever sees.
+        // A real run holds an attempt, and two things select on it: the
+        // residual receipt sweep, and the settlement's check that this isolate
+        // still owns the attempt it is about to fence a receipt write with. The
+        // owner is therefore the object's own, not a string of the test's
+        // choosing — a fixture with an invented owner is not a run this code
+        // ever sees, and would quietly take the stand-down path instead.
         runs.claimAttempt({
           runId: RUN_ID,
           attemptId: ATTEMPT_ID,
-          owner: `${OWNER}:attempt`,
+          owner: (instance as unknown as {
+            harnessAttemptOwner: (
+              input: { substreamId: string | null; harnessRunId: string },
+              attemptId: string,
+            ) => string;
+          }).harnessAttemptOwner({ substreamId: "0", harnessRunId: RUN_ID }, ATTEMPT_ID),
           leaseSeconds: 60,
           lifecycleEventId: "wedge-test-attempt-claimed",
           now,
@@ -1149,6 +1158,70 @@ describe("work-stream transcript on workerd SQLite", () => {
             WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
           RUN_ID,
         ).one().count).toBe(1);
+      });
+    });
+
+    /**
+     * The deferral branch, which exists so that a settlement this run cannot do
+     * becomes a slow recovery rather than a silent wedge.
+     *
+     * Its selector is a caught error, so review's point stands: nothing else
+     * here executes it, and a rename at either throw site would send the throw
+     * on to `drainLoopToCompletion` as a plain `substream_loop_drain_failed` —
+     * the invisible hot retry this whole change removes. The attempt lease is
+     * cleared to reach it, which is exactly what `settleInterruptedToolBatchForFailure`
+     * stands down on.
+     */
+    it("leaves the loop executing when the batch cannot be settled by this run", async () => {
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      await wedgeLoop(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        // No attempt owner this isolate can prove, so the settlement declines
+        // rather than fencing a receipt write against a row that vouches for
+        // itself.
+        state.storage.sql.exec(
+          `UPDATE runs SET lease_owner = 'taken-over-by-someone-else', updated_at = ?
+            WHERE run_id = ?`,
+          Date.now(),
+          RUN_ID,
+        );
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = 1, revision = revision + 1,
+                  updated_at = MAX(updated_at, ?) WHERE id = 1`,
+          Date.now(),
+        );
+
+        const resident = instance as unknown as {
+          executeAgentRun: (input: WorkstreamWorkflowInput) => Promise<unknown>;
+          drainPersistentLoop: (ownsDrain: () => boolean) => Promise<void>;
+        };
+        resident.executeAgentRun = () =>
+          Promise.reject(new Error("tool_receipt_persistence_failed"));
+
+        // The deferral returns rather than throwing: a throw here is the
+        // regression the typed error exists to prevent.
+        await expect(resident.drainPersistentLoop(() => true)).resolves.toBeUndefined();
+      });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage);
+        // Nothing was settled and nothing was released: the batch is still
+        // owed, and the run is still the only thing that can be asked for it.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).not.toBeNull();
+        expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({
+          status: "executing",
+          active_execution_id: RUN_ID,
+        });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminalized_at: number | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toMatchObject({ status: "running", terminalized_at: null });
       });
     });
 

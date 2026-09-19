@@ -309,6 +309,53 @@ export interface PendingInputActivationOutcome {
   receiptRunId: string;
 }
 
+/**
+ * The one spelling of a loop release refused for an unsettled tool batch.
+ *
+ * `drainPersistentLoop` selects its deferral branch on this, so a free-floating
+ * message literal at each of the two throw sites was a rename away from
+ * reverting the whole change: the catch would stop matching, the throw would
+ * escape as a plain `substream_loop_drain_failed`, and the loop would be back
+ * to the invisible hot retry this exists to remove.
+ */
+export const UNSETTLED_TOOL_BATCH_ERROR_CODE = "substream_loop_has_unsettled_tool_batch";
+
+/**
+ * A loop release refused because the projection still owes Bind tool results.
+ *
+ * Carries what `unsettledToolBatchBlockingRelease` already computed. Both call
+ * sites used to throw that away and leave an operator a bare code, which is the
+ * defect [`naming-a-schema-failure.md`](../../../../docs/naming-a-schema-failure.md)
+ * exists to stop: the turn and the number of withheld calls are the difference
+ * between "a batch is stuck" and knowing which one.
+ */
+export class UnsettledToolBatchError extends Error {
+  readonly code = UNSETTLED_TOOL_BATCH_ERROR_CODE;
+  readonly turnId: string;
+  readonly modelTurnIndex: number;
+  readonly withheldCallCount: number;
+
+  constructor(batch: PendingBindToolBatch) {
+    super(UNSETTLED_TOOL_BATCH_ERROR_CODE);
+    this.name = "UnsettledToolBatchError";
+    this.turnId = batch.turnId;
+    this.modelTurnIndex = batch.modelTurnIndex;
+    this.withheldCallCount = batch.calls.length;
+  }
+}
+
+/**
+ * Whether a caught throw is that refusal.
+ *
+ * The message arm is not a second literal: it is the same constant, and it is
+ * what makes this survive an object-port hop, which flattens a typed error to a
+ * bare `Error` carrying only its message.
+ */
+export function isUnsettledToolBatchError(error: unknown): error is Error {
+  return error instanceof UnsettledToolBatchError
+    || (error instanceof Error && error.message === UNSETTLED_TOOL_BATCH_ERROR_CODE);
+}
+
 export interface TranscriptExecutionFence {
   executionId: string;
   executionEpoch: number;

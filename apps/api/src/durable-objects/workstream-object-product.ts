@@ -112,6 +112,7 @@ import {
   type PendingInputAttachmentDescriptor,
   type PendingInputDeliveryEffectInput,
   type PreparedParticipantMessage,
+  UnsettledToolBatchError,
 } from "./workstream-transcript-storage";
 import {
   AdmitExternalMessageInputSchema,
@@ -5402,9 +5403,8 @@ export class WorkstreamObjectProductService {
         // expires and `claimPersistentLoopExecution` hands it to
         // `recoverInterruptedToolBatch`, the path written for exactly this and
         // reachable only while the run has not terminalized.
-        if (this.transcript.unsettledToolBatchBlockingRelease(execution.loopId)) {
-          throw new Error("substream_loop_has_unsettled_tool_batch");
-        }
+        const withheld = this.transcript.unsettledToolBatchBlockingRelease(execution.loopId);
+        if (withheld) throw new UnsettledToolBatchError(withheld);
         const changed = sql.exec<{ run_id: string }>(
           `UPDATE runs SET status = 'failed', terminal_reason = 'failed', error_json = ?,
                   completed_at = ?, terminalized_at = ?, updated_at = ?
