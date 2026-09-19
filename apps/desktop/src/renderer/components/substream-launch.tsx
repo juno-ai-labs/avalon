@@ -246,7 +246,14 @@ export function SubstreamLaunchSurface({
       <div className="launch-transcript-layer transcript-scroll">
         <ConnectingCardSlot>{connecting}</ConnectingCardSlot>
         <div className="transcript-column substream-launch-column">
-          {draft.provenance.length > 0 && (
+          {/* Only while somebody is still composing. What is being branched
+              from is a fact about writing this substream rather than about the
+              substream, and from the submit keystroke this column holds what
+              the created child holds: leaving the turns in it — collapsing,
+              faded, or inert — leaves the opening turn displaced by whatever
+              height they still have, and creation can finish before any
+              transition does. */}
+          {launching === null && draft.provenance.length > 0 && (
             <section aria-label="Branching from" className="substream-branch-context">
               {draft.provenance.map((message) => (
                 <MessageBlock
