@@ -975,9 +975,22 @@ afterwards.
 
 ## Changelog
 
-### 2026-09-19 — Every Channel gets a home, and Projects are deleted
+### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 
-**What changed:** The hierarchy became true of every Channel rather than of the
+**What changed:** Migration 61 adds the Space directory and viewer projections,
+per-person order, many-to-many Channel memberships with staged generations, the
+kind-keyed default registry with its generation-fenced targets and
+publications, the staged operation intents, the bootstrap state, and a rebuilt
+retirement graph that admits `parent_kind = 'space'`. `SpaceService` orders the
+three authorities, `/spaces` exposes the mutations, and `/projects/*` answers
+`410 client_update_required`. Every product request on a conversation carries
+the parent kind its caller expects, so a Space id cannot be used as a Channel
+address; every Space read in WorkspaceDO goes through `WorkspaceSpaceStorage`,
+which answers empty state on an Organization the cutover has not reached; and
+the workspace socket's Space payload is shaped for the viewer's relationship as
+well as for their visibility.
+
+The hierarchy became true of every Channel rather than of the
 ones somebody placed. `WorkstreamCreationFields` carries `spaceIds` in place of
 `projectId`, and a Channel created without one lands in General;
 `SpaceService.ensureGeneral` reserves *and* provisions in one place. A one-time
@@ -995,7 +1008,42 @@ and publisher, every Project RPC, the Project snapshot topic and the Project
 alarm phase go with them. A pre-cutover browser build is answered
 `426 client_update_required` on the two surfaces whose payloads changed.
 
-**Why:** Every invariant in this document is written about *every* Channel in
+The Projects sidebar section, screen, routes, API methods and
+cache slice are replaced by the **Spaces** section, the `/spaces/:spaceId`
+dashboard, **Add to space**, **Manage access**, and a local cache slice at
+version 3. `spaceIds` joins the common half of `workspace_workstream_state`.
+Every Space refusal on every surface goes through one copy table; the shell
+decides once whether a session has Space navigation at all, and hands the
+sidebar no directory when it does not.
+
+Two read-only audits of the branch — one on every Queue-versus-RPC
+decision it made, one on its whole scope — and a latency audit of four request
+paths then closed the findings that were defects rather than preferences. The
+member walks behind `updateAudience`, `archive` and `restore` are paged and
+carry their cursor on the intent; `restore` stages an intent of its own;
+`space_intents` gains `last_error_code`; the narrowing publication's refusal is
+acted on rather than dropped; the containment tri-state is read the same way on
+both paths, with `space_conversation_unreachable` naming the second negative;
+the intent vocabulary is narrowed to the five kinds that are staged; the two
+Space list RPCs nothing called are deleted; and the Slack ingress path reserves
+its Channel's parent authority before placing it.
+
+**Why:** The PRD's design decision 3 — the Organization owns the relationship —
+is not a preference. Two of the three invariants this module exists to hold
+("every Channel has a home", "every remaining reader can still find it") are
+questions neither the Space nor the Channel can answer alone, so they have to be
+asked of the object that sees both.
+
+Design decision 4 is the other half. On `main`, WorkstreamDO's grant ledger only
+becomes a Channel's admission authority after its first share; every other
+Channel is still admitted from the scope and participant rows its main
+conversation holds. Recording Space sources only in the grant ledger would have
+granted nothing on most Channels. So a Space source is *provenance* in
+WorkstreamDO, and applying it goes back through the Channel's canonical scope
+and participant operations — which is where the retained-content containment
+preflight and its SQL triggers already are.
+
+Every invariant in this document is written about *every* Channel in
 the Organization, and until this change none of them held for a Channel nobody
 had dragged anywhere. The PRD required the fleet migration to finish without
 relying on user access, which is why the cutover hangs off the migration
@@ -1045,56 +1093,7 @@ drops a sidebar carrying fields it has never heard of. iOS and the main process
 decode with schemas that ignore unknown keys, so a blanket gate would have
 broken working clients to protect them from a problem they do not have.
 
-**Considered and rejected:** A separate `audience` pass in the cutover, after
-the memberships, to widen each placed Channel. There is nothing for it to do —
-applying General's Organization-wide source *is* the widening, through
-`ChannelAccessService` and the Channel's own canonical operation — and running
-it second would have meant every fenced Channel was first given a membership and
-then found to be unplaceable. The containment preflight moved in front of the
-placement instead, so a fenced Channel gets no membership row and no mutation at
-all, and the phase slot became `finalize`.
-
-Also rejected: repairing the Project shutdown barrier rather than deleting it.
-It asserted that no `pending` Project row was left, counted immediately after
-the two statements that settled every one of them, so it read zero by
-construction; `finalizeSpaceBootstrap`'s matching `project_effects_pending`
-gate ran after the constructor had already dropped the tables. Making either
-one work would have held an Organization's whole hierarchy closed over
-undelivered Project defaults that PRD non-goal 5 discards on purpose.
-
-Also rejected: dropping the Project tables and letting a queued default fail on
-a missing table. The durable half of an at-least-once delivery is exactly what
-stops a message still in flight from attaching a resource to a Channel whose
-audience this cutover has just changed, so the migration invalidates every
-undelivered row in the transaction that drops them and the consumer keeps a
-tombstone leg. A barrier asserting the remainder is zero was tried and removed:
-it counted rows the statements above it had just settled.
-
-**Consequences:** A future change must keep the creation path settling its Space
-memberships **before** it reserves the Channel's main conversation. Reserving
-arms the parent's recovery alarm, and that alarm delivers the deferred
-provisional directory row itself if it wins the race, so a settlement after it
-publishes a Channel that is Organization-wide and in no Space — which is what
-`space-creation.test.ts` found and now pins. A future change must also keep
-`memberships` unreachable except from a `preflight` that recorded nothing, and
-keep both re-walks on the claim's retry gate rather than clearing it: an
-Organization nobody remediates re-walks about once a minute, and zeroing the
-gate would turn that into a spin. Two known gaps stay open: the cutover has no
-operator-facing remediation beyond **Add to space** and SQL on the
-`space_bootstrap` row, and `"projects"` remains in `WORKSPACE_SYNC_TOPICS` as a
-rolling-deploy affordance for clients whose exhaustive maps still name it.
-
-### 2026-09-19 — The desktop draws the hierarchy, and a row stops claiming to know an audience
-
-**What changed:** The Projects sidebar section, screen, routes, API methods and
-cache slice are replaced by the **Spaces** section, the `/spaces/:spaceId`
-dashboard, **Add to space**, **Manage access**, and a local cache slice at
-version 3. `spaceIds` joins the common half of `workspace_workstream_state`.
-Every Space refusal on every surface goes through one copy table; the shell
-decides once whether a session has Space navigation at all, and hands the
-sidebar no directory when it does not.
-
-**Why:** A Channel's readers are now the union of its own scope and every active
+A Channel's readers are now the union of its own scope and every active
 Space that holds it, so **Make private** could no longer describe what it did.
 The dialog that replaces it reads the sources and says — including the case the
 PRD names explicitly, where an Organization-wide Space keeps a Channel public
@@ -1111,16 +1110,6 @@ withheld wherever there is nothing to place into: a guest session, an
 Organization still opening, a system Channel. Drawing a control that can only
 fail teaches a reader that Rally's controls are suggestions.
 
-**Considered and rejected:** Keeping a direct **Make public to organization** on
-the row beside a new **Manage access**. It reads as the smaller change and it is
-the one that lies: on a Channel already public through a Space, a row-level
-scope toggle describes an audience change that has already happened. Also
-rejected: placing a Channel from the launcher by calling `POST /spaces/:id/channels`
-after the create. The PRD requires a named Space to be established with the
-Channel or the creation to fail without publishing one, and a follow-up call is
-neither — so the launcher plumbs `spaceIds` and sends no Space until the
-creation contract carries one.
-
 Walking the acceptance flows in a real window found the other half of that
 claim missing. `spaceIds` reached the client and the client threw it away: a
 placement that implies no audience change republishes the Channel row at the
@@ -1132,46 +1121,50 @@ an empty participant pile at a pinned waterline. The dashboard's paginated
 Channel page had the same gap from the other side and is refetched when the
 Space snapshot's `channelCount` moves.
 
-**Consequences:** `WorkstreamCreationFieldsSchema` still carries `projectId` and
-has no `spaceIds`, so a Channel started from a Space is not yet placed in it;
-that is Phase 4's. `GET /spaces/:id/channels` answers with bare ids, so the
-dashboard can name only the Channels already in this device's page of the
-directory and says nothing about the rest — `channelCount` is not viewer-scoped
-and cannot stand in for them. The archive refusal carries no list either, so the
-confirmation says a sole-member Channel has to move first without naming it
-until the server adds `channelIds` to its details. A version 2 local-cache row
-is dropped rather than migrated: it holds Channel rows written before `spaceIds`
-existed, and a Channel in no Space is a state no surface may render.
+The audits' own verdict was that the branch is proportionate and its
+mechanisms are right, so what follows is the short list of places where a
+mechanism was not carried all the way through.
 
-### 2026-09-19 — WorkspaceDO becomes the Space authority, and a Space reaches a Channel only through the Channel's own operations
+**The member walks had no page.** `WorkspaceSpaceStorage.members()` answered
+every member Channel in one read while the Channel page beside it is capped, and
+each member costs several cross-object awaits — so a Space past roughly a
+thousand Channels had an audience change, an archive or a restore that could not
+finish, and `resumeIntent` re-read the same uncapped list from the top, redoing
+the same prefix on every republish and dying in the same place. The page bound
+is `SPACE_BOOTSTRAP_PAGE_SIZE` rather than a new number, because a member walk's
+per-Channel cost is the same several-hops shape that bound was derived against;
+one walk function serves the request path and the resume, because a request and
+its resume that walked differently would be two implementations of one
+convergence and the resume is the one nobody watches. A Space under the ceiling
+still settles inside the request exactly as it did.
 
-**What changed:** Migration 61 adds the Space directory and viewer projections,
-per-person order, many-to-many Channel memberships with staged generations, the
-kind-keyed default registry with its generation-fenced targets and
-publications, the staged operation intents, the bootstrap state, and a rebuilt
-retirement graph that admits `parent_kind = 'space'`. `SpaceService` orders the
-three authorities, `/spaces` exposes the mutations, and `/projects/*` answers
-`410 client_update_required`. Every product request on a conversation carries
-the parent kind its caller expects, so a Space id cannot be used as a Channel
-address; every Space read in WorkspaceDO goes through `WorkspaceSpaceStorage`,
-which answers empty state on an Organization the cutover has not reached; and
-the workspace socket's Space payload is shaped for the viewer's relationship as
-well as for their visibility.
+**`restore` staged nothing**, so a restore that died mid-fan-out left the Space
+active in every sidebar with half its member Channels holding no source from it,
+and `resumeIntent` abandoned it by name. It was the one Space operation whose
+half-finished state had no terminal outcome.
 
-**Why:** The PRD's design decision 3 — the Organization owns the relationship —
-is not a preference. Two of the three invariants this module exists to hold
-("every Channel has a home", "every remaining reader can still find it") are
-questions neither the Space nor the Channel can answer alone, so they have to be
-asked of the object that sees both.
+**An intent had no durable reason.** The sibling `space_default_targets` has
+carried `last_error_code` all along, and an intent's only account of why a resume
+kept failing was a log line — so whoever found the unsettled row had the fact
+without the reason, which is what
+[`naming-a-schema-failure.md`](naming-a-schema-failure.md) exists to stop.
 
-Design decision 4 is the other half. On `main`, WorkstreamDO's grant ledger only
-becomes a Channel's admission authority after its first share; every other
-Channel is still admitted from the scope and participant rows its main
-conversation holds. Recording Space sources only in the grant ledger would have
-granted nothing on most Channels. So a Space source is *provenance* in
-WorkstreamDO, and applying it goes back through the Channel's canonical scope
-and participant operations — which is where the retained-content containment
-preflight and its SQL triggers already are.
+**A settled placement left a wake behind it.** `finalizeSpaceMembership`
+re-derived the alarm only when the settlement staged a default of its own, so
+every ordinary Channel creation left one WorkspaceDO wake thirty seconds later
+that found nothing due. `armNextAlarm` is an exact re-derive and deletes the
+alarm when nothing is left, so the settle — the event that removed the reason to
+wake — is exactly where it belongs.
+
+**The Slack path could never take the fast path.** It provisioned the
+conversation and placed immediately, and a placement addresses the Channel's own
+`WorkstreamDO`, which learns the Channel exists from an effect that arrives
+later — so `applySpaceAccessSource` was refused `conversation_parent_missing`
+every time. That is not a lost placement: a refusal reopens the cutover by
+design, so each Slack creation took `spacesReady` away from the whole
+Organization and put every member's sidebar behind the opening card until the
+walk caught up. It now reserves the parent first, which is the coordinator's own
+ordering, and defers its directory delivery until the placement has landed.
 
 **Considered and rejected:** Deriving a staged operation's identity from state
 that the operation itself moves. The archive settled its intent at
@@ -1217,6 +1210,71 @@ recheck and the receipt are identical to a resource's; only the canonical
 operation that applies them differs, so `kind` rides on the row and the message
 and there is one mechanism.
 
+A separate `audience` pass in the cutover, after
+the memberships, to widen each placed Channel. There is nothing for it to do —
+applying General's Organization-wide source *is* the widening, through
+`ChannelAccessService` and the Channel's own canonical operation — and running
+it second would have meant every fenced Channel was first given a membership and
+then found to be unplaceable. The containment preflight moved in front of the
+placement instead, so a fenced Channel gets no membership row and no mutation at
+all, and the phase slot became `finalize`.
+
+Also rejected: repairing the Project shutdown barrier rather than deleting it.
+It asserted that no `pending` Project row was left, counted immediately after
+the two statements that settled every one of them, so it read zero by
+construction; `finalizeSpaceBootstrap`'s matching `project_effects_pending`
+gate ran after the constructor had already dropped the tables. Making either
+one work would have held an Organization's whole hierarchy closed over
+undelivered Project defaults that PRD non-goal 5 discards on purpose.
+
+Also rejected: dropping the Project tables and letting a queued default fail on
+a missing table. The durable half of an at-least-once delivery is exactly what
+stops a message still in flight from attaching a resource to a Channel whose
+audience this cutover has just changed, so the migration invalidates every
+undelivered row in the transaction that drops them and the consumer keeps a
+tombstone leg. A barrier asserting the remainder is zero was tried and removed:
+it counted rows the statements above it had just settled.
+
+Keeping a direct **Make public to organization** on
+the row beside a new **Manage access**. It reads as the smaller change and it is
+the one that lies: on a Channel already public through a Space, a row-level
+scope toggle describes an audience change that has already happened. Also
+rejected: placing a Channel from the launcher by calling `POST /spaces/:id/channels`
+after the create. The PRD requires a named Space to be established with the
+Channel or the creation to fail without publishing one, and a follow-up call is
+neither — so the launcher plumbs `spaceIds` and sends no Space until the
+creation contract carries one.
+
+Staging the paged walks as per-Channel rows through
+`publishFencedTargets`, the way a default target is delivered. It is the
+mechanism already here and it changes the operation's semantics: an audience
+change, an archive and a restore would become always-asynchronous, where today a
+Space under the ceiling settles inside the request that asked for it and the
+caller learns the outcome. The cursor on the intent keeps both — synchronous
+under the ceiling, resumable past it — and adds no table.
+
+A `failed` state and an attempt ceiling for an intent. The rule that moves a
+default target to `terminal` is a named non-retryable condition rather than a
+count, and the intent's mirror of that condition already ends it by name. A
+state with no rule that moves anything into it would be dead vocabulary, and a
+ceiling is a decision to abandon a half-applied audience change — the team's to
+make, not this change's.
+
+A durable gate for the direct narrowing path in `WorkstreamService.update`. At
+`66fef78` that path published no revocation at all and nothing durable gated
+anything, so the branch's ungated publish is a pre-existing gap it improves on
+rather than a regression; building an intent for it is a change with a table
+behind it. The gap is recorded in
+[`access-revocation.md`](access-revocation.md), which owns it, and among this
+document's known limits.
+
+Keeping the per-Channel `recordReceipt` rows for the paged walks. `receipts_json`
+is rewritten whole by `json_insert`, so a receipt per member Channel cost O(N²)
+bytes in one row and one extra hop into the single-threaded WorkspaceDO per
+Channel — for something no resume ever reads, because a resume reads the cursor.
+The single-Channel `add` and `remove` intents keep theirs: they have one step,
+and the receipt is it.
+
 **Consequences:** A Channel's `spaceIds` and the `channelSpaces` answer are
 shaped per viewer, which costs one query per socket on
 `publishWorkstreamState` where it used to cost one per publication. The
@@ -1240,5 +1298,49 @@ and `spacesReady`. Both socket payloads are parsed by strict schemas in shipped
 clients, so this is a coordinated cutover rather than an additive field: the
 PRD's rollout has the client deploy after the fleet gate, and older clients
 receive the update-required refusal.
+
+A future change must keep the creation path settling its Space
+memberships **before** it reserves the Channel's main conversation. Reserving
+arms the parent's recovery alarm, and that alarm delivers the deferred
+provisional directory row itself if it wins the race, so a settlement after it
+publishes a Channel that is Organization-wide and in no Space — which is what
+`space-creation.test.ts` found and now pins. A future change must also keep
+`memberships` unreachable except from a `preflight` that recorded nothing, and
+keep both re-walks on the claim's retry gate rather than clearing it: an
+Organization nobody remediates re-walks about once a minute, and zeroing the
+gate would turn that into a spin. Two known gaps stay open: the cutover has no
+operator-facing remediation beyond **Add to space** and SQL on the
+`space_bootstrap` row, and `"projects"` remains in `WORKSPACE_SYNC_TOPICS` as a
+rolling-deploy affordance for clients whose exhaustive maps still name it.
+
+Three limits the desktop work shipped with were closed later
+in this same pull request, and are recorded because the reasoning behind each is
+still the reasoning that has to hold: `WorkstreamCreationFieldsSchema` carries
+`spaceIds` rather than `projectId`, so a Channel started from a Space is placed
+in it by the creation contract rather than by a follow-up call;
+`GET /spaces/:id/channels` answers Channel rows rather than bare ids, because
+`channelCount` is not viewer-scoped and cannot stand in for the Channels a
+device has not paged; and the archive refusal carries the Channels that blocked
+it, so the confirmation names the sole-member Channel that has to move rather
+than describing one. A version 2 local-cache row
+is dropped rather than migrated: it holds Channel rows written before `spaceIds`
+existed, and a Channel in no Space is a state no surface may render.
+
+A future change must keep `finalizeSpaceMembership`
+re-deriving the alarm unconditionally, and must keep any new connector creation
+path reserving the Channel's parent authority before it places the Channel —
+polling for the parent's directory row is what the development seed route does,
+and it is acceptable there only because that route is development-only.
+Narrowing a SQLite CHECK after migration 61 ships needs the table rebuild the
+retirement graph already does, so the intent vocabulary is fixed in place now
+rather than later; the dead `unsupported_${kind}` branch is the exhaustiveness
+check that makes a sixth kind fail to compile instead of being abandoned by name
+in production. An intent that can never settle republishes on the alarm's
+backoff cap forever, one dead-letter message per cycle: what that costs, and
+what deciding a ceiling would need, is in "Numbers handed to the team" above.
+The latency audit's three remaining suggestions — collapsing the creation's
+provenance apply and confirm into one RPC, deferring the Slack path's inline
+placement, and the replay path using the full `addChannel` — are decisions for
+the team and were deliberately not taken here.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.

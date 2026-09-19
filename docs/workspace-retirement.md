@@ -432,40 +432,29 @@ telemetry roles.
 
 ## Changelog
 
-### 2026-09-19 — Spaces are enumerated, and the walk knows which namespace to ask
-
-**What changed:** `beginWorkspaceRetirement` writes a `parent_kind = 'space'`
-node for every Space in the Organization, archived ones included, and
-`retireWorkspaceGraph` resolves a `space` node through `spaceDOName` against the
-work-stream namespace. That closes the gap the entry below named as known.
-
-**Why:** The widened CHECK admitted a kind nothing produced, so an Organization
-with Spaces still reported complete with every `SpaceDO` open and answering — a
-retirement that is not one. A Space is `WorkstreamDO` under a role and lives in
-the same namespace, so the only thing the walk needed was the right object
-*name*; the children-before-parents order already handles its hidden main
-conversation, because a Space is the same class.
-
-**Considered and rejected:** Enumerating only active Spaces, on the reading that
-an archived Space is already closed. It is not: archiving is a product state
-that leaves the object and its conversation intact, and a graph that skipped
-them would have moved the gap rather than closed it.
-
-**Consequences:** An Organization's node count now scales with its Spaces as
-well as its Channels and Sidekicks. Nothing else changes — a Space node is
-retired, receipted and resumed exactly like a Channel node.
-
-### 2026-09-19 — The graph admits a third parent kind, and gets a changelog heading
+### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
 
 **What changed:** `workspace_retirement_graph`'s `parent_kind` CHECK admits
 `'space'` beside `'workstream'` and `'automation'`, rebuilt in WorkspaceDO
 migration 61. The table is carried through a scratch table rather than
 re-derived, and this heading now sits over the entries below it.
 
+`beginWorkspaceRetirement` writes a `parent_kind = 'space'`
+node for every Space in the Organization, archived ones included, and
+`retireWorkspaceGraph` resolves a `space` node through `spaceDOName` against the
+work-stream namespace. That closes the gap the entry below named as known.
+
 **Why:** A Space is a conversation parent with a hidden main conversation and
 children of its own, so Organization retirement has to reach it — and the
 retirement graph is where a walk records what it has left to close. The CHECK
 was written when there were two kinds and nothing could produce a third.
+
+The widened CHECK admitted a kind nothing produced, so an Organization
+with Spaces still reported complete with every `SpaceDO` open and answering — a
+retirement that is not one. A Space is `WorkstreamDO` under a role and lives in
+the same namespace, so the only thing the walk needed was the right object
+*name*; the children-before-parents order already handles its hidden main
+conversation, because a Space is the same class.
 
 **Considered and rejected:** Re-deriving the graph from the directories during
 the rebuild. It is fewer statements and it loses the only thing the table
@@ -474,6 +463,11 @@ the graph is captured *before* the workspace tombstone precisely because the
 directories refuse afterwards. A rebuild that re-derived it would un-retire
 whatever the last pass finished, and a walk resumed after an interruption would
 close those children a second time.
+
+Enumerating only active Spaces, on the reading that
+an archived Space is already closed. It is not: archiving is a product state
+that leaves the object and its conversation intact, and a graph that skipped
+them would have moved the gap rather than closed it.
 
 **Consequences:** The widened CHECK is all that lands here. Nothing enumerates
 Spaces into the graph yet — `beginWorkspaceRetirement` still walks
@@ -487,6 +481,10 @@ The entries below predate this heading and were filed, structurally, under
 **Open questions**. They are the record of how retirement came to work the way
 it does; what is *not* recorded anywhere is why the original CHECK named exactly
 two kinds, and that reasoning has not been reconstructed here.
+
+An Organization's node count now scales with its Spaces as
+well as its Channels and Sidekicks. Nothing else changes — a Space node is
+retired, receipted and resumed exactly like a Channel node.
 
 ### 2026-09-08 — The walk stamps the demo register
 
