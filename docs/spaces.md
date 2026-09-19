@@ -130,7 +130,12 @@ Changing a Space's audience is preflight, accept, converge.
 
 Every member Channel is asked first, through the read-only
 `previewAudienceContainment` RPC, whether its retained content would still be
-contained. Widening cannot be undone — somebody may have read — so discovering a
+contained. That RPC is a tri-state and only `true` admits: `false` is the
+content fence, and `null` is the object saying it is not that Channel's main
+conversation — which means the question was never asked. The request path
+refuses a `null` with `space_conversation_unreachable` and the cutover with
+`space_bootstrap_conversation_unreachable`: one reading, two names, because the
+cutover records a blocker on a row and the request answers a person. Widening cannot be undone — somebody may have read — so discovering a
 fence on the fourth Channel after three are already wider is not a failure
 anybody can recover from. The preflight is an early-out and not the fence: the
 fence is the canonical operations, which run the same predicate inside the
@@ -571,7 +576,7 @@ Organization membership and access class only.
 ## Failure modes and limits
 
 A malformed input fails strict contract parsing at the object boundary. Every
-refusal is one of the ten closed `SpaceErrorCode` values, which is the code a
+refusal is one of the eleven closed `SpaceErrorCode` values, which is the code a
 route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
 `spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler

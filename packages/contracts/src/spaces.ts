@@ -313,7 +313,7 @@ export type SpaceRefusalDetails = z.infer<typeof SpaceRefusalDetailsSchema>;
  *
  * Closed, and closed for the reason `docs/naming-a-schema-failure.md` gives: a
  * refusal that reaches a log, an operator, or the far side of an RPC hop has to
- * name what it rejected. A generic `space_error` would make the ten distinct
+ * name what it rejected. A generic `space_error` would make the eleven distinct
  * remediations below indistinguishable in a log line.
  */
 export const SpaceErrorCodeSchema = z.enum([
@@ -337,5 +337,19 @@ export const SpaceErrorCodeSchema = z.enum([
   "space_revision_conflict",
   /** The Organization has not finished creating General and placing its Channels. */
   "space_bootstrap_pending",
+  /**
+   * A member Channel's own conversation could not answer, so the question was
+   * never asked.
+   *
+   * Distinct from `space_membership_content_fence`, which is the same RPC
+   * saying *no*. `previewAudienceContainment` is a tri-state — `true`, `false`,
+   * or `null` when the object it reached is not that Channel's main
+   * conversation — and the two negatives need different remediations: a fence
+   * is a decision about content, an unreachable conversation is a Channel whose
+   * authority is missing or mis-addressed. The cutover has always read them
+   * apart, under `space_bootstrap_conversation_unreachable`; this is the
+   * request path's half of the same reading.
+   */
+  "space_conversation_unreachable",
 ]);
 export type SpaceErrorCode = z.infer<typeof SpaceErrorCodeSchema>;

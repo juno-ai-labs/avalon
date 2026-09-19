@@ -41,6 +41,7 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   space_default_audience_mismatch: 'Everyone who can read the channel must be able to use that resource or Sidekick.',
   space_revision_conflict: 'The space changed while this was being applied. Try again.',
   space_bootstrap_pending: 'Rally is still opening this organization. Try again in a moment.',
+  space_conversation_unreachable: 'One of the channels couldn’t be reached to check whether the new audience may read it. Try again in a moment.',
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
 };
 
