@@ -1683,31 +1683,49 @@ describe('markdown paint', () => {
   });
 
   /**
-   * And the highlighter's palette with it, which is the half that cannot be
-   * seen from this file alone.
+   * The half the name comparison above cannot see: that an element rule reads
+   * the group at all.
    *
-   * `markdownCodeTheme` hands `prism-react-renderer` inline styles naming the
-   * `syntax` group, so a code fence in a message is painted for the
-   * appearance's own code surface rather than for the bubble it is on: in the
-   * light appearance `syntax-plain` is near-black, and a pasted fence on a
-   * near-black bubble was black on black. A role added to that theme has to be
-   * re-pointed here too, and the compiler cannot say so.
+   * Comparing declared names says nothing about what the elements consume, so
+   * reverting `.markdown-inline-code` to `background: var(--av-ref-color-neutral-4)`
+   * — the literal bug this change exists to fix — passes every other test in
+   * this file. What makes a paint follow its surface is naming a `--markdown-*`
+   * property, and that is what this scans for.
+   *
+   * The exemptions are the two kinds of paint that deliberately do not follow a
+   * surface, and each has to be argued rather than added: the fenced block,
+   * which takes the whole group back to the appearance because its highlighter
+   * and its diagrams are resolved from the root, and a failure notice, whose
+   * colour is a meaning rather than a shade. Anything else reaching for an
+   * `--av-*` colour inside this group is the bug coming back.
    */
-  it('re-points every syntax role the highlighter names', () => {
-    const highlighter = readFileSync(
-      resolve(process.cwd(), 'src/renderer/components/workstream-blocks.tsx'),
-      'utf8',
-    );
-    const named = new Set(
-      [...highlighter.matchAll(/--av-sys-color-syntax-[a-z-]+/gu)].map((match) => match[0]),
-    );
-    const bubble = rule('.human-message-bubble .markdown-body') ?? '';
-    const repointed = new Set(
-      [...bubble.matchAll(/(--av-sys-color-syntax-[a-z-]+)\s*:/gu)].map((match) => match[1]!),
-    );
+  it('paints every markdown element through the group, not from a token', () => {
+    const EXEMPT = [
+      // Re-points the group back to the appearance, which is the whole point of
+      // it; `markdown-rendering.md` holds the argument.
+      '.markdown-body .markdown-code-block',
+      // `danger-soft` is what "this did not render" means, on any surface.
+      '.markdown-mermaid-error',
+    ];
+    // A citation card and a mention chip are components that happen to be
+    // rendered inside a markdown body, not markdown elements: they carry their
+    // own semantic paint wherever they appear, and the chip already has the
+    // `currentColor` rule a filled bubble needs.
+    const COMPONENT = /\.(citation|mention|connector)-/u;
+    const MARKDOWN = /^(\.markdown-body\b|\.markdown-(inline-code|code-block|code-language|table-scroll)\b)/u;
 
-    expect(named.size).toBeGreaterThan(0);
-    expect([...named].filter((name) => !repointed.has(name))).toEqual([]);
+    const offenders = preludes()
+      .filter((prelude) => prelude.split(',').some((selector) => MARKDOWN.test(selector.trim())))
+      .filter((prelude) => !EXEMPT.some((exempt) => prelude.startsWith(exempt)))
+      .filter((prelude) => !COMPONENT.test(prelude))
+      .filter((prelude) => {
+        const declarations = (rule(prelude) ?? '')
+          .split(';')
+          .filter((declaration) => /(?:^|\s)(?:color|background|background-color|border[a-z-]*color|accent-color|fill)\s*:/u.test(declaration));
+        return declarations.some((declaration) => /var\(--av-[a-z0-9-]*color/u.test(declaration));
+      });
+
+    expect(offenders).toEqual([]);
   });
 });
 
