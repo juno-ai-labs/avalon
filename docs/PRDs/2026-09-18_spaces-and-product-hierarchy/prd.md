@@ -647,11 +647,12 @@ in `MARKER_PRECEDENCE`. Hidden conversations stay reachable from the sidebar
 under their Space and from search.
 
 The predicate is defined once, as `conversationNeedsViewer` in
-`@rally/contracts`, over the four summary fields; the desktop calls it where it
-draws and WorkspaceDO's page query mirrors it in SQL. **The SQL is the
-authority**, because it decides the page. A workerd test walks every
-combination of the four inputs and asserts the two agree; that test is what
-keeps them equal.
+`@rally/contracts`, over the four summary fields, and WorkspaceDO's page query
+mirrors it in SQL. **The SQL is the authority**, because it decides the page;
+the contracts function is the definition it is held to, and nothing on the
+client calls it — the desktop draws the rows the server already filtered. A
+workerd test walks every combination of the four inputs and asserts the two
+agree; that test is what keeps them equal.
 
 A breakout reaches the Organization through the pipeline a Channel already has
 — its own `directory_common` and `directory_user` projections, forwarded over
