@@ -134,6 +134,20 @@ describe("retracting one audience source", () => {
     })).toEqual({ narrowScope: true, seatUserIds: [alice, bob, carol], removeUserIds: [] });
   });
 
+  it("given a reader a direct removal took out, when their Space survives, then it seats them again", () => {
+    // Access is the live union, so a reader a surviving source still lists is a
+    // reader whatever the roster says. Skipping them here would let a direct
+    // removal narrow one Space's audience on one Channel, which is the thing
+    // "sources compose without one narrowing another" rules out — the way to
+    // take `carol` out is to take her out of the Space.
+    expect(audienceSourceRetractionPlan({
+      direct: { scope: "personal", participantUserIds: [alice] },
+      remainingSources: [source("space-b", "personal", [carol])],
+      currentReaders: { scope: "personal", userIds: [alice, bob] },
+      suppliedByDeparting: [bob],
+    })).toEqual({ narrowScope: false, seatUserIds: [carol], removeUserIds: [bob] });
+  });
+
   it("given a reader no source supplied, when one is retracted, then they are left alone", () => {
     // Only the provenance is a candidate for removal. `bob` is a reader the
     // direct source does not list either — somebody named in a message — and a

@@ -103,14 +103,23 @@ export interface AudienceSourceRetraction<TUser extends string = string> {
   /** Whether the Channel stops being Organization-wide. */
   narrowScope: boolean;
   /**
-   * Readers a surviving source supplies who are not provably seated yet.
+   * Readers a surviving source supplies who are not seated yet.
    *
-   * Empty except when {@link AudienceSourceRetraction.narrowScope} is set. A
+   * Usually only when {@link AudienceSourceRetraction.narrowScope} is set: a
    * source applied while the Channel was Organization-wide seated nobody —
    * everybody could already read — so the readers it supplies exist only as
    * its own participant list until the audience stops being Organization-wide.
    * Seating them is what keeps a narrowing from revoking access that another
    * source still provides.
+   *
+   * But **not only then**, and deliberately. Access is the live union of the
+   * sources that reach the Channel, so a reader a surviving source still lists
+   * is a reader, whatever the roster currently says — including somebody a
+   * direct removal took out while their Space went on supplying them. That
+   * source's roster re-asserts itself here rather than a direct removal
+   * narrowing it, because narrowing a Space's audience from one Channel is
+   * exactly what "sources compose without one narrowing another" rules out;
+   * the way to take that reader out is to take them out of the Space.
    */
   seatUserIds: TUser[];
   /** Readers only the departing source supplied. */

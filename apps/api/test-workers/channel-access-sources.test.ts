@@ -328,7 +328,29 @@ describe("a Channel's Space access sources", () => {
     expect(await channel().setDirectScope({ ...address, scope: "personal", operationId: crypto.randomUUID() }))
       .toEqual({ ok: false, code: "channel_scope_locked_by_space" });
     expect(await channel().setDirectScope({ ...address, scope: "workspace", operationId: crypto.randomUUID() }))
-      .toEqual({ ok: true, previousScope: "personal" });
+      .toEqual({ ok: true, previousScope: "personal", previousObserved: true });
+  });
+
+  it("given a scope change the canonical update refused, when it is restored, then the record is unestablished again", async () => {
+    // Nothing has established this Channel's own audience: the row is still
+    // the migration's backfill, which for an object created after it ran is a
+    // guess. The failed change and its restore have to leave it that way.
+    expect(await channel().setDirectScope({ ...address, scope: "workspace", operationId: crypto.randomUUID() }))
+      .toEqual({ ok: true, previousScope: "personal", previousObserved: false });
+    expect(await channel().setDirectScope({
+      ...address, scope: "personal", observed: false, operationId: crypto.randomUUID(),
+    })).toEqual({ ok: true, previousScope: "workspace", previousObserved: true });
+
+    // Which is what lets the first Space to reach it seed the real value. A
+    // restore that marked the row observed would leave the Channel recorded as
+    // private although it was Organization-wide, and the next retraction would
+    // narrow a Channel that was never private.
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
+      channel: organizationWide([OWNER]),
+    });
+    expect(await channel().readAccessSources({ ...address, channel: organizationWide([OWNER, READER]) }))
+      .toMatchObject({ direct: { scope: "workspace" } });
   });
 
   it("given an attribution whose source was withdrawn first, when it runs, then it is refused by name", async () => {
@@ -358,7 +380,7 @@ describe("a Channel's Space access sources", () => {
       channel: organizationWide([OWNER]),
     });
     expect(await channel().setDirectScope({ ...address, scope: "personal", operationId: crypto.randomUUID() }))
-      .toEqual({ ok: true, previousScope: "workspace" });
+      .toEqual({ ok: true, previousScope: "workspace", previousObserved: true });
 
     expect(await channel().confirmSpaceAccessSource({
       ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
