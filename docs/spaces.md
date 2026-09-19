@@ -619,6 +619,30 @@ naming the Space and both revisions in the log. A resume that fails for any
 other reason names its reason too, rather than being retried in silence until it
 reaches the dead-letter queue with nothing on it.
 
+**A resume reads the Space as its requester, so it refuses a requester whose
+reach has degraded.** Every branch re-applies this Space's audience to member
+Channels, and the roster it applies comes off `SpaceSummary` — which is
+[that person's view of the Space](#who-may-see-a-space-and-why). Somebody taken
+out of a Space between staging an operation and its resume still reaches it
+through a Channel placed in it, so the read that used to refuse them now
+answers `through_channel`, whose participant list is empty by design: the walk
+would withdraw every reader the Space supplies, seat nobody, and settle itself
+as a success. `resumeIntent` therefore refuses a reach that is not editable
+before any branch runs, settling the intent `requester_reach_lost` with that
+code on the row and a `space_intent_resume_abandoned` line from the consumer.
+It is terminal for the reason `requester_inactive` is: no later delivery gives
+the requester their reach back. The roster read is fenced a second time at the
+point of use, so a future consumer that hands a summary's `participants` to
+`applySpaceSource` fails by name instead of revoking access quietly. The `add`
+branch's revision guard is not that fence — a viewer projection flips
+`is_participant` without touching `revision`.
+
+Two settlements end an intent without doing its work, and both are named:
+`requester_inactive`, written by the consumer when the requester has left the
+Organization, and `requester_reach_lost`. Every other way a resume gives up —
+missing fences, a superseded add — is named to the consumer as well, which is
+what writes the log line.
+
 ### Reads
 
 Space state comes down the workspace socket, not over HTTP, and there is no
@@ -1399,7 +1423,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
-| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. |
+| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. And the resume whose requester has been taken out of the Space since staging it: refused `requester_reach_lost`, with every member Channel still seating the readers the Space supplied and nothing left to retry. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
@@ -1811,6 +1835,21 @@ fact a device cannot derive, so every device pays one cold launch;
 names a refusal now lives at two depths: a future Space write that reaches the
 Space's own object before WorkspaceDO has to go through `SpaceService.editable`
 or it will be answered `workstream_not_found` by the wrong authority.
+
+**Found in review, in the half of the audit this change nearly missed.** Every
+*write* gate that `canRead` used to serve was re-narrowed; what was left were
+the server-side consumers of the widened *read*, which went on treating a
+now-viewer-scoped answer as the Organization's fact. `SpaceService.resumeIntent`
+was the one that mattered: it reads the Space as the person who staged the
+intent, and a requester taken out of the Space in the meantime now reads
+`through_channel` — so the audience and restore walks re-applied an empty
+roster, withdrew every reader the Space supplied from every member Channel, and
+settled the intent as a success. It is now refused by name,
+`requester_reach_lost`, terminal the way `requester_inactive` is, with the
+roster read fenced a second time where it is used so the next consumer fails
+loudly instead. The change that widened the read is what created this: before
+it, that same read refused the requester and the resume failed where somebody
+would see it.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
