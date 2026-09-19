@@ -370,6 +370,8 @@ sign-in enablement. Keep their origins identical and include shared desktop code
 in browser deployment triggers. The public entry check is not an authenticated
 end-to-end guest test.
 
+PR: [#843](https://github.com/juno-ai-labs/avalon/pull/843).
+
 
 ### 2026-09-17 — Add a browser entry over ordinary regional sessions
 
