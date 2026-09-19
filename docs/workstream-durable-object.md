@@ -359,7 +359,9 @@ feed, never runs an agent in it, and never lists its grants.
 
 So `SpaceDO` **is** `WorkstreamDO`, constructed with a different
 `ConversationParentRole` (`durable-objects/conversation-parent-role.ts`) and
-overriding nothing:
+overriding nothing. Every field of that interface is a behavior the base class
+reads; none of it is advisory, so a field added without a reader is not a
+description of a difference that exists:
 
 | Role field | `WORKSTREAM_ROLE` | `SPACE_ROLE` |
 | --- | --- | --- |
