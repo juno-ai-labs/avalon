@@ -60,8 +60,9 @@ export function workspaceSyncTopicsForMutation(
     || pathname.startsWith("/automation-templates")
   ) return ["automations", "workstream_directory"];
   if (pathname.startsWith("/notes")) return ["notes", "resources"];
-  // Project mutations publish their viewer-shaped state directly from
-  // WorkspaceDO. A generic invalidation here would make the desktop fetch it.
+  // Retired. Every `/projects` request is answered `410` by a route that
+  // reads nothing and writes nothing, so there is no state for an
+  // invalidation to be about.
   if (pathname.startsWith("/projects")) return [];
   if (pathname.startsWith("/resources")) return ["resources", "workstream_directory"];
   if (pathname.startsWith("/work-opportunities")) {

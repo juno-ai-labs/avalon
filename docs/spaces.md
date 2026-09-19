@@ -14,8 +14,10 @@ hidden main conversation holds its participants and resources exactly as a
 Channel's does. What makes it a Space is that nothing in the product opens that
 conversation — no feed, no transcript, no agent loop, no search result.
 
-Spaces replace [Projects](projects.md). This document describes the Space
-authority, its service, and the routes over them; the product design is in
+Spaces replace [Projects](projects.md), which WorkspaceDO migration 62 has
+deleted. This document describes the Space authority, its service, the one-time
+cutover that gave every existing Organization its hierarchy, and the routes over
+them; the product design is in
 [the Spaces PRD](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md).
 
 ## Where the code lives
@@ -23,15 +25,17 @@ authority, its service, and the routes over them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including the `SPACE_CHANNEL_PAGE_SIZE` page bound. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, and the two alarm phases. |
-| `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher both the Project and the Space default publishers call. |
-| `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and unsettled intent resumes. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 62, which retires Projects. |
+| `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
+| `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's three arguments to it: default targets, unsettled intent resumes, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
 | `apps/api/src/services/channel-access-service.ts` | The one seam a Space reaches a Channel's audience through. `docs/spaces.md` never writes an audience itself. |
+| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the one connector creation path that places its own Channel. |
+| `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
-| `apps/api/src/queues/activity-consumer.ts` | The `space_default` and `space_intent_resume` handlers. |
+| `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, **New space**, restore, and the Organization-opening card. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
@@ -181,11 +185,89 @@ and each is a retry of another, so the second one through is the ordinary path
 rather than the exception.
 
 **It reserves; it does not provision.** Opening the object is the caller's, the
-way it is for any other reservation, and nothing in this phase calls it: the
-cutover and the creation paths that need General are Phase 4 and Phase 5 of
-[the plan](PRDs/2026-09-18_spaces-and-product-hierarchy/plan.md). A caller that
-reserves General without then provisioning its object leaves a Space in every
-member's sidebar that answers nothing, exactly as a cancelled `create` would.
+way it is for any other reservation — a caller that reserves General without then
+provisioning it leaves a Space in every member's sidebar that answers nothing,
+exactly as a cancelled `create` would. `SpaceService.ensureGeneral` is the one
+caller that does both: it reserves, provisions **only** when the reservation
+says `created`, and cancels the reservation if provisioning fails. Everything
+that needs General — the cutover, a Channel created without a Space, a new
+Organization, the connector path — goes through it, so the two steps are never
+half-done by somebody re-deriving them.
+
+### The cutover
+
+Every Organization that predates Spaces has to end up with a hierarchy, and
+**the PRD requires the fleet migration to finish without relying on user
+access**. So nothing about this hangs off a request. `space_bootstrap` is one
+row per Organization, seeded `pending` by migration 61 and driven by the
+WorkspaceDO alarm: the migration tracker's forced pass wakes every object, the
+alarm claims one page of work, and the activity Queue carries it to
+`SpaceBootstrapService`.
+
+The phases are ordered, and the alarm claims exactly one at a time because a
+page's cursor is only known once the page before it has been reported:
+`pending` → `general` (make the Organization's General Space) → `memberships`
+(walk the Channel directory in pages, placing each Channel in General) →
+`finalize` (close the cutover, or say why it cannot) → `complete`. `not_before`
+and `attempts` are the same retry gate every other staged fan-out in this object
+uses — advanced *before* the send, cleared by progress — so a rejected batch is
+retried rather than spinning the alarm, and a page delivered but never reported
+is republished rather than lost. `space_bootstrap_receipts` is what makes a
+redelivery cost nothing: a Channel some Space already holds is receipted and
+skipped, which covers both a replayed page and a Channel the ordinary creation
+path placed while the cutover was running.
+
+**The cutover acts as a person, per Channel.** The audience change a placement
+implies goes through the Channel's canonical scope operation, which authorizes
+an actor — and a personal Channel admits only its own participants. So each
+placement runs as one of *that Channel's* active participants; an
+Organization-wide Channel is acted on by the Organization's driver, chosen
+owners-first from active members. A Channel with no active participant left is
+recorded as blocked with `space_bootstrap_no_active_actor` rather than forced,
+because there is nobody the disclosure could honestly be attributed to.
+
+**A blocker is not a retry.** A personal Channel is asked
+`previewAudienceContainment` *before* anything is staged, because General is
+Organization-wide and placing a Channel there is the widening. A Channel whose
+retained content the Organization may not read keeps its own audience, gets no
+membership row and no mutation at all, and is recorded as blocked with
+`space_membership_content_fence`. The PRD is explicit that the cutover never
+deletes or bypasses those fences, so the Organization stays short of `complete`
+until somebody remediates it — which is the point: `spacesReady` stays false,
+the operator sees the Channel id on the row, and the fence is a product decision
+rather than a migration's to make.
+
+`finalizeSpaceBootstrap` is the close, and it refuses three ways. `blocked`
+leaves the phase at `finalize` for the retry gate to republish. `unplaced` — a
+Channel that arrived after the walk passed its id, which a late directory
+projection can do — sends the phase back to `general` so the walk runs again
+rather than the Organization waiting forever. `project_effects_pending` is the
+cutover gate the retirement needed and is described under
+[Operations](#operations).
+
+Two paths place a Channel outside a page, and both are the same step a page
+would take. `openGeneralSpaceForNewWorkspace` runs inline on the path that
+initializes a new WorkspaceDO: the alarm would get there within a Queue round
+trip, but the first session inside that window would be shown the
+Organization-opening card for an Organization that has nothing to open. It is
+best effort on purpose — a Space failure must not cost somebody the Organization
+they just created, and the alarm is the backstop running the same code.
+`placeConnectorChannelInGeneral` covers the one creation path that does not go
+through the creation coordinator: the Slack agent opens a Channel for a Slack
+member with no Rally identity and provisions the conversation itself.
+
+### A Channel's first Space
+
+Creation is the other half of "every Channel belongs to at least one Space", and
+it is the half that has to hold for every Channel made after the cutover.
+`WorkstreamCreationFields` carries `spaceIds`, defaulted to empty, and empty
+means General: the creation coordinator resolves it, stages a membership per
+Space, and **settles them before the Channel's main conversation is reserved**.
+Reserving one arms the parent's recovery alarm, which delivers the deferred
+provisional directory row itself if it wins the race with the coordinator, so a
+settlement any later could publish a Channel that is Organization-wide and in no
+Space at all. [`workstream-creation.md`](workstream-creation.md) owns the
+ordering and the audience the named Spaces imply.
 
 ### Resuming an interrupted operation
 
@@ -242,6 +324,15 @@ every Space *write* is refused by name with `space_bootstrap_pending`.
 The two exceptions are paginated and therefore cannot ride the socket: a Space's
 member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 (`GET /workstreams/:id/access`).
+
+`GET /spaces/:id/channels` answers **Channels**, not ids. WorkspaceDO pages the
+membership rows for their ids and then projects those ids through the same
+directory select and mapper the sidebar's own list uses, chunked against the
+bound-parameter ceiling, so a Space page and a sidebar row are the same shape
+built by the same code rather than two projections that can drift. The
+visibility predicate travels with it: a row is answered only if the Channel is
+Organization-wide or the viewer is one of its participants, which is what keeps
+a Space page from being a way to enumerate Channels the viewer cannot open.
 
 ### The desktop surfaces
 
@@ -416,6 +507,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | --- | --- | --- | --- |
 | `SPACE_CHANNEL_PAGE_SIZE` | 250 | Rows in one `GET /spaces/:id/channels` answer, and therefore one RPC result and one HTTP body. | Round trips against bytes per answer, weighed against the Organization sizes nobody here has. |
 | `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
+| `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels the cutover claims in one Queue message, and therefore the Channels one consumer invocation places. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 
 Both are lower bounds rather than budgets, and both are transcriptions rather
 than measurements — the sections below say what each was transcribed from.
@@ -437,6 +529,19 @@ this fires and nothing is published at all. The arithmetic the team needs: how
 long the slowest healthy operation takes end to end (an audience change walks
 every member Channel) against how long a half-applied audience may persist.
 
+**`SPACE_BOOTSTRAP_PAGE_SIZE` is 50, and the number is the team's to set.**
+Without it the cutover would claim the whole Organization in one message, and an
+Organization larger than one invocation's budget could never finish — each
+redelivery would restart the same unbounded pass. Nothing is visible when it
+trips: the page ends and the cursor continues it on the next alarm. It sits
+between two ceilings, a Queue consumer invocation and a WorkspaceDO alarm, and
+each Channel costs four cross-object awaits — one containment preflight, one
+membership staging, one canonical audience operation, one settlement. 50 is a
+quarter of `SPACE_CHANNEL_PAGE_SIZE`, which bounds a *read* rather than a walk
+of cross-object writes; what a different number buys is fewer alarm wakes
+against a longer invocation, and nobody here has the Organization sizes or the
+per-Channel timings to weigh them.
+
 There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
 hand down. Those are product decisions and are not invented here.
@@ -455,7 +560,11 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
-| `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — and that a rejected send leaves its rows pending. |
+| `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
+| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones, a fenced personal Channel left personal and named, an interrupted pass making no second General and no second membership, and the refusal to close while a Channel is outside every Space. |
+| `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
+| `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default invalidated rather than dropped under, the `project_effects_pending` barrier aborting by name with nothing dropped, and an applied default leaving the Channel's own attachment alone. |
+| `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas and the appearance registry. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the blocked-archive copy, General's protections, and that one refusal appears once. |
@@ -469,8 +578,22 @@ pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-bootstrap.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-creation.test.ts
+pnpm --filter @rally/api exec vitest run test/workspace-space-retirement-migration.test.ts
+pnpm --filter @rally/api exec vitest run test/client-contract.test.ts
 pnpm --filter @rally/contracts test -- spaces.test.ts
 ```
+
+The two new workerd files are there for the same reason the archive fan-out is.
+The cutover's fence case needs the Channel's own authority and its
+conversation's containment trigger, and the creation ordering property needs a
+real recovery alarm — a double would be asserting on its own configuration in
+both. `workspace-space-retirement-migration.test.ts` is Node because what is
+under test is the checked-in statements themselves: a CHECK constraint's name,
+the order the drops run in, and whether a cascade fires. It runs with
+`PRAGMA foreign_keys = ON`, because the drops are ordered children-before-parents
+precisely on the fact that a Durable Object event cannot turn them off.
 
 The workerd fixture uses its own workspace id literal and `beforeEach(reset)`,
 so object storage is clean per case while object *names* are still shared across
@@ -513,15 +636,27 @@ the caller's operation id, carrying its kind, its three nullable fences, its
 receipts, and the retry gate the alarm claims on.
 
 `space_defaults`, `space_default_targets` and `space_default_publications`
-mirror the Project trio with a `kind` column and the same generation fences; the
-target and publication rows share a key so their insertion is one transaction
-and publication can resume after a failed send. `space_bootstrap` and
-`space_bootstrap_receipts` are seeded `pending` for every Organization and
-driven by the cutover.
+carry a `kind` column and the same generation fences; the target and publication
+rows share a key so their insertion is one transaction and publication can
+resume after a failed send.
+
+`space_bootstrap` is the singleton cutover row, seeded `pending` for every
+Organization: the phase (`pending`, `general`, `memberships`, `finalize`,
+`complete`), General's id once it exists, the walk's cursor, the blocked
+Channels as JSON, and `not_before`/`attempts` — the retry gate the alarm claims
+on, advanced before the send and cleared by progress.
+`space_bootstrap_receipts` is `(workstream_id, phase)`, which is what makes a
+redelivered page cost nothing.
 
 Migration 61 also rebuilds `workspace_retirement_graph` so its `parent_kind`
 CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts —
 through a scratch table. Migration 42 is released and is not edited.
+
+**Migration 62 deletes the eight Project tables**, behind the shutdown barrier
+described under [Operations](#operations) and children-before-parents, because
+`PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
+SQLite. [`projects.md`](projects.md) records what was deleted and what survived
+it.
 
 ## Regional impact
 
@@ -585,10 +720,47 @@ rather than from here.
 
 ## Operations
 
-Migration 61 is visible through the existing Durable Object migration tracker.
-The two alarm phases are `space_default_publish` and `space_intent_resume`;
-their failures log `space_default_publication_failed` and
-`space_intent_resume_publication_failed` with the Organization id.
+Migrations 61 and 62 are visible through the existing Durable Object migration
+tracker, and **the tracker's forced pass is what starts the cutover**: it wakes
+every WorkspaceDO, and the alarm armed by construction claims the first page.
+[`runbook.md`](runbook.md) holds the operator sequence — force the class, watch
+`spaceBootstrapStatus`, remediate blockers, confirm an empty dead-letter queue.
+
+The three alarm phases are `space_default_publish`, `space_bootstrap` and
+`space_intent_resume`; their failures log `space_default_publication_failed`,
+`space_bootstrap_publication_failed` and `space_intent_resume_publication_failed`
+with the Organization id. The cutover's own progress logs
+`space_bootstrap_general_ready`, `space_bootstrap_channels_blocked`,
+`space_bootstrap_not_ready` and `space_bootstrap_complete`; an Organization that
+stops moving has its reason on the `space_bootstrap` row rather than only in a
+log line.
+
+**The shutdown barrier in front of migration 62.** The PRD makes "zero unsettled
+Project effects" a cutover gate, because a default still queued for delivery is
+work aimed at a Channel whose audience the Space cutover has just changed. Two
+things enforce it. `finalizeSpaceBootstrap` refuses to close an Organization
+with pending Project rows and answers `project_effects_pending`, which is the
+signal to drain the activity Queue and re-force the class. Migration 62 then
+invalidates what it can — pending targets to `terminal` with
+`last_error_code = 'project_retired'`, pending publications to `accepted` — and
+asserts the remainder is zero through a scratch table whose CHECK constraint is
+*named* `project_effects_pending`, so a failure says what was wrong rather than
+`CHECK constraint failed`. The barrier deliberately does not trust the
+invalidation above it: a migration runs inside one `transactionSync`, so an
+abort takes the whole attempt and nothing is dropped.
+
+**Which builds are still answered.** The sidebar payload and the Channel page
+both gained fields, and a shipped desktop parses them with strict schemas, which
+reject an object carrying a field they have never heard of rather than ignoring
+it. `GET /workstreams` and `GET /workspace/socket` therefore answer a build that
+declares no current contract with `426 client_update_required` — the two
+surfaces the changed payloads travel on, rather than a middleware, so a build
+that cannot render the sidebar can still be signed in, still post a message, and
+still be told to update. The discriminator is the `Origin` header: a request
+carrying one is a browser context, which is the desktop renderer, which is the
+only client whose decoders are strict. `x-rally-client-contract` carries the
+version, and `MINIMUM_SERVED_CLIENT_CONTRACT` in
+`packages/contracts/src/http-headers.ts` is what raising the floor means.
 
 The engineering MCP reaches a Space through `list_spaces` and `run_space_sql`,
 both fenced on `workspace_space_directory` rather than on naming the object — see
@@ -604,6 +776,75 @@ Space id and `diagnosticErrorCode`, and a default target's `last_error_code`
 holds the same word for whoever reads the row afterwards.
 
 ## Changelog
+
+### 2026-09-19 — Every Channel gets a home, and Projects are deleted
+
+**What changed:** The hierarchy became true of every Channel rather than of the
+ones somebody placed. `WorkstreamCreationFields` carries `spaceIds` in place of
+`projectId`, and a Channel created without one lands in General;
+`SpaceService.ensureGeneral` reserves *and* provisions in one place. A one-time
+cutover — `space_bootstrap`, a WorkspaceDO alarm phase, an activity-Queue
+handler and `SpaceBootstrapService` — walks every existing Organization's
+Channel directory in pages of 50 and places each Channel in General, acting as
+one of that Channel's own participants. A new Organization opens General inline,
+and the one connector path that provisions its own Channel places it the same
+way. `GET /spaces/:id/channels` answers Channel rows instead of bare ids, and
+the archive refusal now carries the Channels that blocked it. WorkspaceDO
+migration 62 deletes the eight Project tables behind a named shutdown barrier,
+and `ProjectService`, the Project storage, protocol and publisher, every Project
+RPC, the Project snapshot topic and the Project alarm phase go with them. A
+pre-cutover browser build is answered `426 client_update_required` on the two
+surfaces whose payloads changed.
+
+**Why:** Every invariant in this document is written about *every* Channel in
+the Organization, and until this change none of them held for a Channel nobody
+had dragged anywhere. The PRD required the fleet migration to finish without
+relying on user access, which is why the cutover hangs off the migration
+tracker's forced pass and the alarm rather than off a request — an Organization
+whose members never sign in still has to end up with a hierarchy.
+
+The cutover acts as a person per Channel because the canonical scope operation
+authorizes an actor and a personal Channel admits only its own participants;
+inventing an authority that could place a Channel nobody can act on would have
+been inventing a way to disclose one. And it never bypasses a content fence,
+which is why an Organization can end the pass *incomplete*: a Channel whose
+retained content the Organization may not read stays personal and holds
+`spacesReady` false until somebody decides, which is a product decision rather
+than a migration's.
+
+The `426` gate needed a discriminator and no version signal existed. A request
+with an `Origin` is a browser context, which is the desktop renderer, which is
+the only client whose payload schemas are strict and therefore the only one that
+drops a sidebar carrying fields it has never heard of. iOS and the main process
+decode with schemas that ignore unknown keys, so a blanket gate would have
+broken working clients to protect them from a problem they do not have.
+
+**Considered and rejected:** A separate `audience` pass in the cutover, after
+the memberships, to widen each placed Channel. There is nothing for it to do —
+applying General's Organization-wide source *is* the widening, through
+`ChannelAccessService` and the Channel's own canonical operation — and running
+it second would have meant every fenced Channel was first given a membership and
+then found to be unplaceable. The containment preflight moved in front of the
+placement instead, so a fenced Channel gets no membership row and no mutation at
+all, and the phase slot became `finalize`.
+
+Also rejected: dropping the Project tables and letting a queued default fail on
+a missing table. The durable half of an at-least-once delivery is exactly what
+stops a message still in flight from attaching a resource to a Channel whose
+audience this cutover has just changed, so the migration invalidates what it can
+and then asserts zero through a CHECK constraint it named
+`project_effects_pending` — a generic `CHECK constraint failed` would have cost
+the diagnosis this repository keeps paying for.
+
+**Consequences:** A future change must keep the creation path settling its Space
+memberships **before** it reserves the Channel's main conversation. Reserving
+arms the parent's recovery alarm, and that alarm delivers the deferred
+provisional directory row itself if it wins the race, so a settlement after it
+publishes a Channel that is Organization-wide and in no Space — which is what
+`space-creation.test.ts` found and now pins. Two known gaps stay open: the
+cutover has no operator-facing remediation beyond SQL on the `space_bootstrap`
+row, and `"projects"` remains in `WORKSPACE_SYNC_TOPICS` as a rolling-deploy
+affordance for clients whose exhaustive maps still name it.
 
 ### 2026-09-19 — The desktop draws the hierarchy, and a row stops claiming to know an audience
 
