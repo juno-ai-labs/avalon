@@ -28,21 +28,15 @@ export interface TerminalSnapshotResources {
 }
 
 /**
- * What every sandbox built from the Rally-owned snapshot is given.
+ * What every sandbox built from the Rally-owned snapshot is given: cores, then
+ * GiB, then GiB.
  *
- * Daytona fixes a snapshot's size when it is built — the snapshots API offers
- * create, activate, deactivate and remove, and nothing that resizes one — and a
- * sandbox created from a snapshot inherits it, because `resources` exists only
- * on the SDK's create-from-image parameters. So this is the one place the size
- * can be set without giving up the prebuilt image.
- *
- * Passing nothing left the snapshot on Daytona's default 1 vCPU / 1 GiB / 3 GiB,
- * which is what every build through `rally-terminal-20260914-0610` ran on. These
- * numbers are the team's, and match Daytona's own `daytona-medium` shape.
- *
- * Checked in for the same reason as the base image above, and one more: the
- * weekly rebuild builds from this file, so a size set in a GitHub variable
- * instead is a size the next adoption pull request silently reverts.
+ * The team's numbers, matching the `daytona-medium` preset in Daytona's
+ * published snapshot sizes, read 2026-09-19 (`daytona-small`, the default a
+ * build that passes no resources gets, is 1 / 1 / 3). Checked in rather than
+ * configured because the weekly rebuild builds from this file; why a snapshot is
+ * the only place this can be set is in
+ * `docs/terminal-workspaces.md`, under the owned snapshot and its weekly rebuild.
  */
 export const TERMINAL_SNAPSHOT_RESOURCES: TerminalSnapshotResources = { cpu: 2, memory: 4, disk: 8 };
 

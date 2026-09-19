@@ -81,10 +81,12 @@ const created = await daytona.snapshot.create(
   { onLogs: (line: string) => process.stdout.write(`${line}\n`) },
 );
 
-// Refuses — and deletes — a snapshot Daytona did not build at the requested
-// size. `terminal-snapshot-acceptance.ts` holds the decision so it can be tested
-// against a stubbed delete; this script stays the thin executable part.
-await acceptBuiltTerminalSnapshot(created, () => daytona.snapshot.delete(created));
+// Refuses — and deletes — a snapshot Daytona built smaller than requested, and
+// hands back any field it rounded up so this log says so.
+const surplus = await acceptBuiltTerminalSnapshot(created, () => daytona.snapshot.delete(created));
+for (const field of surplus) {
+  process.stdout.write(`Daytona built ${created.name} larger than Rally requested: ${field}\n`);
+}
 
 process.stdout.write(
   `\nBuilt Terminal snapshot ${created.name} (id ${created.id}, state ${created.state}, `
