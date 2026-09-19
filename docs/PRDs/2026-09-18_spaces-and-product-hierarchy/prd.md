@@ -332,7 +332,10 @@ Channel belongs to at least one Space, so the hierarchy above it already says
 where each Channel lives; a second list of the same rows ordered by time was the
 same sidebar twice, and the reader had to decide each time which of the two they
 were meant to be reading. The group headings go with it, and their **Mark all as
-read** / **Archive all** actions go with the headings.
+read** / **Archive all** actions go with the headings. One line of that list's
+copy stays: a member with no Channels at all is still told **No channels yet**,
+under the Spaces, because the alternative is a sidebar that has stopped talking
+rather than one that is empty.
 
 Every Channel stays reachable. A member can read a Channel whose only Spaces are
 ones they cannot see — someone else's personal Space, which **Manage access**
