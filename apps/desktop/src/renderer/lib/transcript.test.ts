@@ -3511,10 +3511,10 @@ describe('agent messages as counted rows', () => {
   it('counts outbound sends on their own row and leaves the rest of the plugin alone', () => {
     const grouped = groupPluginToolMessages([
       sendRow('send-one', 'send_message'),
-      row('start', {
+      row('list', {
         messageType: 'tool_event',
         toolEvent: {
-          id: 'start', toolCallId: 'start', name: 'start_agent', status: 'completed',
+          id: 'list', toolCallId: 'list', name: 'list_agents', status: 'completed',
           durationMs: 900, pluginId: 'avalon:agents', pluginName: 'Background agents',
         },
       }),
@@ -3531,7 +3531,7 @@ describe('agent messages as counted rows', () => {
     // number beside it would be the second `send_message` spent rather than
     // the messages it carried.
     expect(grouped[0]!.pluginActivity?.durationMs).toBeNull();
-    // `start_agent` really is the reader using a plugin, and keeps its time.
+    // `list_agents` really is the reader using a plugin, and keeps its time.
     expect(grouped[1]!.pluginActivity?.icon).toBe('background-agents');
     expect(grouped[1]!.pluginActivity?.durationMs).toBe(900);
   });
@@ -3611,5 +3611,87 @@ describe('agent messages as counted rows', () => {
     // missing spans as unknown time would drop this drawer to a bare "Worked"
     // every time a teammate answered mid-run.
     expect(accordion?.workAccordion?.durationMs).toBe(4_000);
+  });
+});
+
+describe('a background worker starting and ending', () => {
+  const createdAt = '2026-09-19T12:00:00.000Z';
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt,
+    ...extra,
+  });
+  const startRow = (id: string, status: 'completed' | 'failed' | 'ambiguous'): Message => row(id, {
+    messageType: 'tool_event',
+    toolEvent: {
+      id, toolCallId: id, name: 'start_agent', status, durationMs: 700,
+      pluginId: 'avalon:agents', pluginName: 'Background agents',
+    },
+  });
+  const noticeTurn = (seq: number, id: string, notice: string | null, text: string) => ({
+    transcriptSequence: seq, turnId: id, entryKind: 'conversation' as const,
+    actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+    createdAtUtc: createdAt, revision: 1, activityId: null,
+    blocks: [{
+      type: 'text' as const, blockId: `${id}:text:0`, blockIndex: 0, text, streaming: false,
+      messageType: 'system' as const,
+      structuredContent: {
+        kind: 'agent_message',
+        teamId: 'workstream/workstream-one/0',
+        messageId: `0199${seq}`,
+        senderAgentId: `workstream/workstream-one/${seq}`,
+        attachmentIds: [],
+        ...(notice ? { notice } : {}),
+      },
+    }],
+  });
+
+  it('counts started workers, and leaves a start that started nothing on the plugin row', () => {
+    const grouped = groupPluginToolMessages([
+      startRow('start-one', 'completed'),
+      startRow('start-two', 'ambiguous'),
+      startRow('start-failed', 'failed'),
+    ]).filter((message) => message.pluginActivity);
+
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '2 background agents started',
+      'Used Background agents',
+    ]);
+    // Rally did reach for the plugin; what it did not do is start a worker.
+    expect(grouped[1]!.pluginActivity?.icon).toBe('background-agents');
+  });
+
+  it('separates the host notices from a teammate\'s own messages', () => {
+    const turns = [
+      noticeTurn(1, 't1', null, 'Here is what I found.'),
+      noticeTurn(2, 't2', 'finished_without_reply', 'Agent Prospector finished without replying.'),
+      noticeTurn(3, 't3', 'failed', 'Agent failed due to harness_execution_failed.'),
+    ];
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'notices', snapshotThrough: 3, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
+        covered: { startInclusive: 1, endExclusive: 4 }, turns, activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const grouped = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    // Three rows, not one of three messages: an outcome the reader may act on
+    // must not be counted away inside a teammate's traffic.
+    expect(grouped.map((message) => message.pluginActivity?.completedVerb)).toEqual([
+      '1 message from a background agent',
+      '1 background agent finished without replying',
+      '1 background agent failed',
+    ]);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual([
+      'agent-messages', 'agent-finished', 'agent-failed',
+    ]);
   });
 });

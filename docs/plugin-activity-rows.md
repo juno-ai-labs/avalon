@@ -151,18 +151,55 @@ other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
 row and uses Tabler's **stack-backward** glyph for `start_agent`,
 `list_agents`, `stop_agent`, `sidekicks_list` and `create_sidekick`.
 
-Its other two tools are not on that row. `send_message` and `reply_to_message`
-have a subject of their own — a message to a teammate, not a plugin Rally
-reached for — and they group as **messages sent to a background agent**,
-keyed on the wire name through `isAgentMessageSendWireName` ahead of the plugin
-lookup. A teammate's message arriving here is the matching row in the other
-direction: a `system` block whose structured content is
-`AGENT_MESSAGE_CONTENT_KIND` becomes **messages from a background agent**
-rather than the clamped note it used to be. Both wear Tabler's **mail-ai**
-glyph, because the mechanism is the mail rather than the agents, and both are
-counted rather than timed — see [the row itself](#the-row-itself). The two
-constants live in `@rally/contracts` for the reason
-`isConnectorConnectionCardWireName` does: a rename that reached only one side
+Three of its tools are not on that row, because their subject is a message or a
+worker rather than a plugin Rally reached for. All three are counted rather than
+timed — see [the row itself](#the-row-itself) — and all three are keyed on the
+wire name, ahead of the plugin lookup:
+
+| Tool | Row | Glyph |
+| --- | --- | --- |
+| `send_message`, `reply_to_message` | **messages sent to a background agent** | **mail-ai** |
+| `start_agent` | **background agents started** | **stack-backward** |
+
+A `start_agent` that failed started nothing and is not one of the workers that
+row counts, so it falls back to the Background agents plugin row, which says
+only that Rally used the plugin and is still true. An `ambiguous` one counts,
+for the reason the host counts it as a handoff: a write whose confirmation was
+lost most likely landed, and reporting the worker as never started would invite
+the reader to conclude the work was dropped.
+
+Three more rows come in the other direction, from a `system` block whose
+structured content is `AGENT_MESSAGE_CONTENT_KIND`. Which one it is depends on
+`agentMessageNotice`:
+
+| Notice | Row | Glyph |
+| --- | --- | --- |
+| none — a teammate's own message | **messages from a background agent** | **mail-ai** |
+| `finished_without_reply` | **background agents finished without replying** | **circle-check** |
+| `failed` | **background agents failed** | **alert-triangle** |
+
+The two notices are written by the host on a run's behalf rather than by a
+model, and they travel the ordinary delivery path, so before `notice` existed
+nothing here could tell them from a teammate's message: all three collapsed into
+one "3 messages from a background agent" row, which buried the only two ends of
+a worker's life the transcript records inside its ordinary traffic. They wear
+marks of their own rather than the mail one because a reader may have to act on
+either.
+
+**There is no row for a worker that finished normally, and nothing to build one
+from.** The host writes a notice only when a run fails or ends without a word:
+a run that replied has already said it is done, in the message that *is* the
+"messages from a background agent" row. A row claiming to be general completion
+would be silent for exactly the workers that did their job. Making one would
+mean emitting a host notice on every completion, which is a model-visible
+message in the owner's conversation and therefore an inference cost and an
+agent-behaviour change, not a rendering decision —
+[`agent-communication.md`](agent-communication.md) owns that call.
+
+The constants behind all of this live in `@rally/contracts` for the reason
+`isConnectorConnectionCardWireName` does, and because both sides need them: the
+API asks whether a run handed off before telling its owner the run said nothing,
+and the client asks which row a call belongs to. A rename reaching one side only
 would silently drop the row.
 
 Custom MCP activity carries its host-authored `connectorType` independently
@@ -679,7 +716,7 @@ screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
-### 2026-09-19 — A message to or from a background agent is a counted row
+### 2026-09-19 — A background agent's messages and its two ends are counted rows
 
 **What changed:** A message from a background agent no longer renders as a
 clamped system note in the feed. It joins this column as a `plugin_activity`
@@ -691,6 +728,17 @@ both stop closing the plugin run around them, because a message arriving is not
 something a person read. `PluginGroup` gained `countPhrase` and
 `PluginActivityData` gained `count`; `AGENT_MESSAGE_CONTENT_KIND` and
 `isAgentMessageSendWireName` are in `@rally/contracts`.
+
+The worker's own life got rows too: `start_agent` reads "2 background agents
+started", and the host's two settlement notices — which travelled the ordinary
+message path and were therefore indistinguishable from a teammate's own message
+— now carry `AgentExchangeSchema.notice` and read "1 background agent finished
+without replying" and "1 background agent failed", on a circle-check and an
+alert-triangle. Without that tag all three collapsed into one "3 messages from a
+background agent" row. The API's `AGENT_MESSAGE_TOOL_NAMES` and
+`AGENT_HANDOFF_TOOL_NAMES` moved to `@rally/contracts` and are re-exported from
+their old home: the client needs the same lists, and two copies of them lasted
+one week.
 
 **Why:** Four background agents on one question put four walls of
 agent-to-agent prose into the feed. Every one of them was written for another
@@ -719,10 +767,22 @@ recipient on the outbound one, and a row that said "agents" in one direction
 and "a background agent" in the other would read as a distinction the feed does
 not draw.
 
+Also rejected: a general "background agent finished" row. Only two endings
+reach the transcript, because the host deliberately writes no notice for a run
+that replied — its message is the completion. A row that said "finished" would
+be silent for exactly the workers that did their job, so the label says
+"finished without replying", which is what the underlying fact is. Emitting a
+notice on every completion would fix the gap and is not a rendering decision:
+each notice is a model-visible message in the owner's conversation, so it costs
+inference and changes how the owner behaves. [`agent-communication.md`](agent-communication.md)
+owns that call.
+
 **Consequences:** The message body is unreachable from the feed. Any group
 given a `countPhrase` must leave `durationMs` null, or the row will print a
 number its own phrase contradicts, and must accept that `foldedStretchTotal`
-attributes it no time at all.
+attributes it no time at all. A message stored before `notice` existed reads as
+a teammate's message, which is what it was indistinguishable from anyway; only
+new notices get the two outcome rows.
 
 ### 2026-09-15 — Local official marks for brands the catalog does not ship
 
