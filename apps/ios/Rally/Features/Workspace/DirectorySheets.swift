@@ -10,7 +10,7 @@ struct SearchSheet: View {
         NavigationStack {
             List {
                 if model.searchHits.isEmpty {
-                    ContentUnavailableView("Search this workspace", systemImage: "magnifyingglass", description: Text("Messages, links, and files Rally can see."))
+                    ContentUnavailableView("Search this organization", systemImage: "magnifyingglass", description: Text("Messages, links, and files Rally can see."))
                         .listRowBackground(Color.clear)
                 } else {
                     ForEach(model.searchHits) { hit in
@@ -79,13 +79,13 @@ struct InspectorSheet: View {
         NavigationStack {
             List {
                 if let stream = model.currentWorkstream {
-                    Section("Work stream") {
+                    Section("Channel") {
                         LabeledContent("Title", value: stream.title)
                         if let email = stream.emailAddress {
                             LabeledContent("Email", value: email)
                         }
-                        LabeledContent("Visibility", value: stream.scope == "workspace" ? "Workspace" : "Private")
-                        Button(stream.scope == "workspace" ? "Make private" : "Make public to workspace") {
+                        LabeledContent("Visibility", value: stream.scope == "workspace" ? "Organization" : "Private")
+                        Button(stream.scope == "workspace" ? "Make private" : "Make public to organization") {
                             Task { await model.setScope(stream, scope: stream.scope == "workspace" ? "personal" : "workspace") }
                         }
                     }
@@ -112,7 +112,7 @@ struct InspectorSheet: View {
                         }
                     }
                 } else {
-                    ContentUnavailableView("Open a work stream", systemImage: "info.circle", description: Text("Details, people, and resources show up here."))
+                    ContentUnavailableView("Open a channel", systemImage: "info.circle", description: Text("Details, people, and resources show up here."))
                         .listRowBackground(colors.canvas)
                 }
             }

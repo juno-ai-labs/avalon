@@ -55,7 +55,7 @@ struct SettingsScreen: View {
                         LabeledContent("Email", value: user.email)
                     }
                     if let workspace = model.workspaceSession?.workspace {
-                        LabeledContent("Workspace", value: workspace.name)
+                        LabeledContent("Organization", value: workspace.name)
                         LabeledContent("Region", value: workspace.region.displayName)
                         LabeledContent("Default timezone", value: workspace.timezone)
                     }
@@ -79,13 +79,13 @@ struct SettingsScreen: View {
                             .font(RallyType.caption())
                             .foregroundStyle(colors.textSecondary)
                     } else {
-                        Text("Digest schedule loads with the workspace.")
+                        Text("Digest schedule loads with the organization.")
                             .font(RallyType.caption())
                             .foregroundStyle(colors.textSecondary)
                     }
                 }
 
-                Section("Workspace members") {
+                Section("Organization members") {
                     ForEach(model.members) { member in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(member.name)
@@ -105,7 +105,7 @@ struct SettingsScreen: View {
                 }
 
                 Section("Connections") {
-                    Text("Connector OAuth, GitHub repository access, custom MCP, inbound webhooks, and Terminal network policy stay on the Mac. This phone uses whatever the workspace already connected.")
+                    Text("Connector OAuth, GitHub repository access, custom MCP, inbound webhooks, and Terminal network policy stay on the Mac. This phone uses whatever the organization already connected.")
                         .font(RallyType.caption())
                         .foregroundStyle(colors.textSecondary)
                 }
@@ -124,15 +124,15 @@ struct SettingsScreen: View {
                         .foregroundStyle(colors.textSecondary)
                 }
 
-                Section("Workspace") {
-                    Button("Leave this workspace", role: .destructive) {
+                Section("Organization") {
+                    Button("Leave this organization", role: .destructive) {
                         confirmLeave = true
                     }
                     .disabled(model.workspaceSession?.workspace == nil)
                 }
 
                 Section("Account deletion") {
-                    Text("Rally has no member-facing account-erasure API yet. Deleting your account on this device leaves the current workspace, signs you out, and removes tokens from the Keychain. Operator erasure of identity and workspace data is requested at the privacy address.")
+                    Text("Rally has no member-facing account-erasure API yet. Deleting your account on this device leaves the current organization, signs you out, and removes tokens from the Keychain. Operator erasure of identity and organization data is requested at the privacy address.")
                         .font(RallyType.caption())
                         .foregroundStyle(colors.textSecondary)
                     Button("Delete account on this device", role: .destructive) {
@@ -176,7 +176,7 @@ struct SettingsScreen: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .confirmationDialog("Leave this workspace?", isPresented: $confirmLeave, titleVisibility: .visible) {
+            .confirmationDialog("Leave this organization?", isPresented: $confirmLeave, titleVisibility: .visible) {
                 Button("Leave", role: .destructive) {
                     Task {
                         await model.leaveCurrentWorkspace()
@@ -185,7 +185,7 @@ struct SettingsScreen: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("You will stop seeing this workspace on this device. Work already in it stays with the remaining members.")
+                Text("You will stop seeing this organization on this device. Work already in it stays with the remaining members.")
             }
             .confirmationDialog("Delete account on this device?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete on this device", role: .destructive) {
@@ -196,7 +196,7 @@ struct SettingsScreen: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This signs you out of Rally on this iPhone. It does not erase the workspace for other members. Use Request data deletion for operator erasure.")
+                Text("This signs you out of Rally on this iPhone. It does not erase the organization for other members. Use Request data deletion for operator erasure.")
             }
         }
     }
