@@ -104,8 +104,12 @@ export function createTerminalProviderRpcClient(
       : undefined;
     return {
       ...(observeRequest ? {
+        // Awaited, not fired: the contract lets a caller report asynchronously,
+        // and dropping its promise here would resolve the RPC callback early
+        // and reintroduce the very race this per-call delivery exists to close
+        // — with any rejection becoming an unhandled one on the way.
         observeRequest: bindToTerminalToolTrace(async (measurement) => {
-          observeRequest(measurement);
+          await observeRequest(measurement);
         }),
       } : {}),
       ...(assertSubmissionAuthority ? {

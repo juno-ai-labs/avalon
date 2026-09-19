@@ -173,6 +173,33 @@ describe("Terminal provider Service Binding RPC protocol", () => {
     expect(trace.providerRequestCount).toBe(2);
   });
 
+  /**
+   * A caller may report asynchronously — the contract is
+   * `void | Promise<void>` — and dropping that promise resolves the RPC
+   * callback early, which puts the measurement back in a race with the result
+   * of its own call.
+   */
+  it("waits for an asynchronous observer before the provider call returns", async () => {
+    const trace = createTerminalToolTrace({
+      toolName: "run_command",
+      toolCallId: "call-async",
+      toolInvocationId: null,
+    });
+    const provider = createTerminalProviderRpcClient(binding, CONFIGURATION, {
+      observeRequest: async (measurement: TerminalProviderRequestMeasurement) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        recordTerminalProviderRequest(measurement);
+      },
+    });
+
+    await withTerminalToolTrace(trace, async () => {
+      await provider.getSandbox("sandbox-async");
+      expect(currentTerminalToolTrace()?.providerOperationCount).toBe(2);
+    });
+
+    expect(trace.providerDurationMs).toBe(24);
+  });
+
   it("attributes a request to the concurrent tool call that issued it", async () => {
     const provider = createTerminalProviderRpcClient(binding, CONFIGURATION, {
       observeRequest: recordTerminalProviderRequest,
