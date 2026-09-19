@@ -863,8 +863,10 @@ from a script. [`spaces.md`](spaces.md) owns the mechanism; this is the
 sequence.
 
 **What is being moved.** WorkspaceDO migration 61 seeds a `space_bootstrap` row
-`pending` in every Organization, and migration 62 deletes the Project tables
-behind a barrier. Waking a WorkspaceDO applies both and arms its alarm, which
+`pending` in every Organization, and migration 62 settles every undelivered
+Project effect and then deletes the Project tables — there is no barrier in
+front of the drops, for the reason step 4 gives. Waking a WorkspaceDO applies
+both and arms its alarm, which
 claims the first page of cutover work; from there the activity Queue carries
 each page to a consumer that places one page of Channels in General. Nobody has
 to be signed in.
