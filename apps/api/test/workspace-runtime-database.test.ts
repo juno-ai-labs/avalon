@@ -191,6 +191,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   // statement names.
   "space_bootstrap",
   "space_channel_memberships",
+  "space_conversation_state",
+  "space_conversation_viewer_state",
   "space_default_publications",
   "space_default_targets",
   "space_defaults",
@@ -204,6 +206,12 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "work_opportunity_user_states",
   "workspace_activity_event_targets",
   "workspace_activity_events",
+  // The breakout directory's two. Read by the Space conversation page and
+  // written by the directory handoff, both inside the object; a runtime
+  // statement naming a breakout would be a surface listing one, and nothing
+  // outside a Space dashboard lists one at all.
+  "workspace_breakout_directory",
+  "workspace_breakout_viewers",
   "workspace_batch_dispatch_targets",
   "workspace_batch_dispatches",
   "workspace_container_order",
