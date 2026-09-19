@@ -158,6 +158,16 @@ and cost every person a cold, empty sidebar, which is the more expensive of the
 two by a wide margin. The rule the slice is under is unchanged — the version
 moves when the shape changes in a way `parse` *cannot* absorb.
 
+That absorption is the one claim the decision rests on, so
+`workspace-directory-cache.test.ts` writes a row at the slice's *own* version
+with no `ordering` key and asserts it hydrates with an empty arrangement.
+Written at version 3 rather than an older one deliberately: an older version
+never reaches `parse` at all, so a test that used one would pass on the version
+gate and prove nothing about the shape. Requiring the key makes it fail, which
+is what somebody tightening `parseCachedDirectory` later needs it to do — the
+alternative is every person on the branch getting a cold, empty sidebar on their
+next launch with nothing failing.
+
 `spacesReady` is deliberately **not** on the row. It is the Organization's
 current cutover state rather than something the device last saw, and a
 remembered `true` would paint a hierarchy the next connect may contradict; the
