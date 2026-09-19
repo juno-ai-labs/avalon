@@ -585,9 +585,10 @@ error a rejected input produced.
 ## Fixtures
 
 Fixtures are scanned like source. A ticket or token fixture must not look like
-the real thing: an `eyJ`-prefixed literal trips the Gitleaks `jwt` rule, and that
-gate runs over the full history rather than the diff, so it fails for everyone
-afterwards. `test-workers/socket-subprotocol-runtime.test.ts` keeps the
+the real thing: an `eyJ`-prefixed literal trips the Gitleaks `jwt` rule and fails
+the `secrets` gate on the pull request that adds it. The scan reads commits
+rather than the working tree, so deleting the fixture in a later commit does not
+clear it — the branch's history has to be rewritten. `test-workers/socket-subprotocol-runtime.test.ts` keeps the
 dot-separated base64url shape without the header for exactly this reason.
 
 Ids stay UUIDv7-shaped — `00000000-0000-7000-8000-…` — wherever production uses

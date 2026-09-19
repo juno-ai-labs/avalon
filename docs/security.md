@@ -937,13 +937,15 @@ does not own the subsystems on either side of them:
 - **A packaged helper carrying a restricted `com.apple.developer.*` entitlement is
   killed by AMFI only after the app reaches another machine.** The release verifier
   exists because that failure is invisible on the build host.
-- **A credential-shaped string on any branch fails the `secrets` CI job
-  everywhere.** The job checks out with `fetch-depth: 0`, so the history it scans
-  spans every branch: the gate goes red on `main` and on every open pull request,
-  including one that has never been merged and never will be. Because the scan
-  reads commits rather than the working tree, editing the file afterwards does not
-  clear it — only rewriting that branch's history does, which is the fix to reach
-  for first.
+- **A credential-shaped string fails the `secrets` CI job for the pull request
+  that adds it, and deleting it later does not clear it.** The scan reads
+  commits, not the working tree, so a fixture that was committed and then
+  removed is still in the range; rewriting the branch's history is the fix to
+  reach for. It used to be worse: the scan spanned every branch the checkout
+  fetched, so one such string went red on every open pull request at once. The
+  range is now the pull request's own commits, and the limit that remains is the
+  other side of that — a secret already on the base branch is not re-reported,
+  because it was this gate's to catch on the pull request that carried it.
 - **One documented dependency advisory is accepted.** As of August 2026 the package
   audit still reports
   [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) against
@@ -1014,13 +1016,13 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 ### 2026-09-19 — The secret gate scans the pull request, not the repository
 
 **What changed:** the `secrets` job passes
-`--log-opts="$HEAD_SHA --not <base tip>"` to `gitleaks detect`, so it scans the
-commits the pull request adds to its base branch. It prefers the base branch's
-live tip over the base SHA recorded when the event fired, and falls back to that
-SHA if the remote-tracking ref is somehow absent. `fetch-depth: 0`
-stays, because the range needs both sides. `scripts/ci-workflow.test.mjs` fails
-if the range or the full history goes away, or if a second Gitleaks invocation
-appears beside the scoped one.
+`--log-opts="$HEAD_SHA --not origin/$BASE_REF $BASE_SHA"` to `gitleaks detect`,
+so it scans the commits the pull request adds to its base branch. Both sides of
+that branch are excluded — its live tip and the SHA recorded when the event
+fired — and the range is resolved with `git rev-list` before the scan runs.
+`fetch-depth: 0` stays, because the range needs both sides.
+`scripts/ci-workflow.test.mjs` fails if either exclusion, the range check, the
+full history or the single invocation goes away.
 
 **Why:** `detect` with no range walks every ref the checkout fetched, and
 `fetch-depth: 0` fetches all of them. A credential-shaped test fixture pushed to
@@ -1035,6 +1037,19 @@ It is the fix this document already argues against, and it treats one instance
 of a structural problem — the next branch would do it again. Also rejected:
 scanning `git log` from the merge commit, which walks the base branch's whole
 history again and reintroduces exactly what this removes.
+
+**Two ways this range can be got wrong, both found in review and both fixed
+here.** Excluding only one side of the base branch leaves a hole at each end: the
+live tip alone misses a base branch force-pushed past the recorded SHA, and the
+recorded SHA alone misses a finding that lands on the base branch afterwards and
+is then merged in — either one puts base commits back in the range, which is the
+original bug. And `gitleaks detect` **exits 0 when git rejects its range**: it
+logs `stderr is not empty` and reports "no leaks found", so a stale variable or a
+missing ref would have turned a required security check green. `git rev-list`
+resolves the range first, and a gate that cannot work out its own scope now fails
+loudly rather than passing silently. An earlier revision of this change had a
+fallback to the recorded SHA when the remote-tracking ref was missing; excluding
+both sides unconditionally leaves it nothing to do.
 
 **Consequences:** a finding on the base branch is no longer re-reported on every
 pull request, which is the point, and also the cost: a secret that is already on
