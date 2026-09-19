@@ -53,9 +53,12 @@ are not a presentation contract. In particular, never render `error.message`
 in persistent navigation, sidebar, or inspector chrome. Those surfaces combine
 many independent requests and remain visible after the action that failed, so a
 server sentence there looks like product content and can outlive its context.
-The scoped ESLint rule over sidebar and rail production modules enforces this
-boundary. Sidebar/rail filenames join that scope automatically; presentation
-modules with another name must be listed when they become part of those surfaces.
+The scoped `rally/no-diagnostic-message-in-presentation` ESLint rule enforces
+this boundary over the registered sidebar, rail, and adapter modules. It rejects
+diagnostic `.message` reads, destructuring, `String(error)`, and
+`error.toString()` while allowing domain objects whose fields happen to be named
+`message`. Sidebar/rail filenames join that scope automatically; presentation
+modules with another name must be added to the registry and its scope test.
 
 ## Construct Zod object modes directly
 
@@ -124,8 +127,8 @@ JavaScript module imports.
 ### 2026-09-18 — Sidebar presentation owns failure language
 
 **What changed:** Sidebar and inspector boundaries now carry semantic failure
-states, and a scoped lint rule rejects reads of raw diagnostic `.message`
-properties in their production modules.
+states, and `rally/no-diagnostic-message-in-presentation` rejects direct and
+common conversions of diagnostic errors into copy in their production modules.
 
 **Why:** A router 404 sentence reached the Sidekicks rail as if it were Rally
 copy. The same exception-to-string pattern existed in adjacent navigation,
@@ -135,9 +138,9 @@ project, work-stream action, picker, and resource surfaces.
 unsafe default for the next unknown response. A repository-wide ban would also
 reject legitimate diagnostic handling outside presentation.
 
-**Consequences:** Rail components own stable copy for each action. New
-sidebar/rail modules join the lint scope by filename, while lower layers remain
-free to retain rich errors for diagnosis.
+**Consequences:** Rail components own stable copy for each action. The guarded
+file registry has an executable scope test; new nonstandard adapter names must
+be added there, while lower layers remain free to retain rich errors for diagnosis.
 
 ### 2026-09-01 — Cold API schema families construct on first use
 

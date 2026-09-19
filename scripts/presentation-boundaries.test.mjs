@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Linter } from "eslint";
+import { ESLint, Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { noDiagnosticMessageInPresentationRule } from "./eslint-rules/presentation-boundaries.mjs";
 
@@ -24,10 +24,35 @@ test("presentation surfaces cannot read raw diagnostic messages", () => {
   for (const source of [
     `const copy = error.message;`,
     `const copy = error["message"];`,
-    `return <InlineError>{failure.message}</InlineError>;`,
+    `const { message } = error;`,
+    `const { message: copy } = requestError;`,
+    `const { "message": copy } = error;`,
+    `const copy = String(error);`,
+    `const copy = requestError.toString();`,
+    `const copy = query.error.message;`,
   ]) {
     assert.equal(lint(source).length, 1, source);
   }
 
-  assert.deepEqual(lint(`return <InlineError>{failureCopy[failure]}</InlineError>;`), []);
+  for (const source of [
+    `return <InlineError>{failureCopy[failure]}</InlineError>;`,
+    `return <p>{overlay.message}</p>;`,
+    `const { message } = overlay;`,
+  ]) {
+    assert.deepEqual(lint(source), [], source);
+  }
+});
+
+test("the configured presentation scope includes every adapter that supplies guarded UI", async () => {
+  const eslint = new ESLint({ overrideConfigFile: "eslint.config.mjs" });
+  for (const file of [
+    "apps/browser/src/conversation.tsx",
+    "apps/desktop/src/renderer/components/sidekick-section.tsx",
+    "apps/desktop/src/renderer/screens/conversation-surface.tsx",
+    "apps/desktop/src/renderer/screens/workstream.tsx",
+    "packages/ui/src/components/sidekick-section.tsx",
+  ]) {
+    const config = await eslint.calculateConfigForFile(file);
+    assert.equal(config.rules["rally/no-diagnostic-message-in-presentation"][0], 2, file);
+  }
 });

@@ -93,6 +93,16 @@ describe('InspectorRail details', () => {
     });
   });
 
+  it.each([
+    ['watch', 'The resource watch couldn’t be updated.'],
+    ['detach', 'The resource couldn’t be archived.'],
+    ['refresh', 'The resource couldn’t be refreshed.'],
+    ['attach', 'The resource couldn’t be added.'],
+  ] as const)('owns stable copy for a %s failure', (failure, copy) => {
+    render(<Tooltip.Provider><InspectorRail failure={failure} workstream={workstream} /></Tooltip.Provider>);
+    expect(screen.getByText(copy)).toBeVisible();
+  });
+
   it('steps the stored width from the handle standing beside the rail', () => {
     // jsdom has no CSS layout; supply the geometry of the shared CSS probe,
     // not a second implementation of the responsive-width formula.

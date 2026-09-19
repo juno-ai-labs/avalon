@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { SidekickSection, type SidekickRow } from './sidekick-section';
+import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import { Archive, Copy, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconPlus, IconShare2 } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
@@ -56,7 +56,7 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksFailed, addSidekick, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -82,7 +82,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
    * section above it does.
    */
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksFailed?: boolean | undefined;
+  sidekickFailure?: SidekickSectionFailure | undefined;
   addSidekick?: React.ReactNode;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
@@ -291,7 +291,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
-        <SidekickSection items={sidekicks} failed={sidekicksFailed} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
+        <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
         {addSidekick}
       </div>
       <div className="sidebar-collapse-footer">
