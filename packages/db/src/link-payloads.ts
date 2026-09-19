@@ -43,9 +43,15 @@ function token(prefix: string): string {
  * Writes the payload and returns the token that reads it back.
  *
  * `expiresAt` is an ISO timestamp the row dies at, for a link whose subject has
- * an expiry of its own; null keeps the row until whatever it points at refuses
- * it. Issuing also drops rows that are already past their own deadline, so the
- * table is swept by the writes that grow it rather than by a schedule.
+ * an expiry of its own. Issuing also drops rows already past their own deadline,
+ * so rows that carry one are swept by the writes that grow the table rather than
+ * by a schedule nobody owns.
+ *
+ * **A row issued with `expiresAt: null` is never swept.** Nothing here can know
+ * that the thing it addresses has been accepted, revoked or forgotten, so such a
+ * row is retained until its issuer discards it by token. Reclaiming the rest
+ * would mean deleting on `created_at` age, and that age is a retention number
+ * the team sets rather than one this file invents.
  */
 export async function issueLinkPayload<Schema extends z.ZodType>(
   db: D1DatabaseLike,
@@ -68,6 +74,23 @@ export async function issueLinkPayload<Schema extends z.ZodType>(
 }
 
 /**
+ * Drops rows by the tokens that read them, for a caller that minted a link and
+ * then did not send it.
+ *
+ * This is the only way a row is reclaimed before its own deadline, and it works
+ * only here: a token is never stored, so nothing that holds the payload alone —
+ * not the thing the link addresses, not a later revocation of it — can find the
+ * row again. A caller that mints speculatively therefore owns cleaning up, for
+ * as long as it still holds the token it minted.
+ */
+export async function discardLinkPayloads(db: D1DatabaseLike, tokens: string[]): Promise<void> {
+  if (tokens.length === 0) return;
+  const digests = await Promise.all(tokens.map((presented) => sha256Hex(presented)));
+  await db.prepare(`DELETE FROM link_payloads WHERE token_hash IN (${digests.map(() => '?').join(', ')})`)
+    .bind(...digests).run();
+}
+
+/**
  * What a token stands for, or null when this deployment cannot say.
  *
  * Null covers a token of another kind, one edited in transit, one this region
@@ -85,11 +108,18 @@ export async function openLinkPayload<Schema extends z.ZodType>(
     WHERE token_hash = ? AND type = ? AND (expires_at IS NULL OR expires_at > ?)`)
     .bind(await sha256Hex(presented), kind.prefix, now.toISOString()).first<{ payload: string }>();
   if (!row) return null;
-  const parsed = kind.schema.safeParse(JSON.parse(row.payload));
-  if (parsed.success) return parsed.data;
-  // The row exists, so this deployment wrote it: the shape this prefix promises
-  // has drifted from the shape it was written with. Reporting that as one more
+  // The row exists, so this deployment wrote it: whatever is wrong with it is
+  // drift on our side, not a forged token. Reporting either as one more
   // unreadable token would hide a deploy that stopped honouring every link of
-  // this kind already in an inbox.
+  // this kind already in an inbox — so a payload that is no longer JSON is
+  // named the same way a payload that no longer fits its schema is.
+  let stored: unknown;
+  try {
+    stored = JSON.parse(row.payload);
+  } catch {
+    throw new Error(codeShaped(`link_payload_drifted:${kind.prefix}:-root-:invalid_json`));
+  }
+  const parsed = kind.schema.safeParse(stored);
+  if (parsed.success) return parsed.data;
   throw new Error(codeShaped(`link_payload_drifted:${kind.prefix}:${describeZodIssues(parsed.error)}`));
 }

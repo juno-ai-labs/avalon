@@ -1,24 +1,32 @@
 import { z } from "zod";
 import { IdSchema, WorkspaceIdSchema, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { ScopeInvitationDescriptionSchema, type ScopeInvitationCredential } from "@rally/contracts/scope-grants";
-import { defineLinkPayload, issueLinkPayload, openLinkPayload } from "@rally/db/link-payloads";
+import { defineLinkPayload, discardLinkPayloads, issueLinkPayload, openLinkPayload } from "@rally/db/link-payloads";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workstreamDOName } from "../durable-objects/names";
 
 /**
- * Everything the emailed link used to spell out in its fragment, now behind one
- * token.
+ * Where the emailed link points, and nothing else.
  *
  * The recipient was never the audience for any of it: which workspace, which
  * work stream and which invitation are the *server's* routing, and publishing
  * them told a forwarded-to stranger the shape of a team they have no access to.
- * Only the secret was ever a credential, and it is no less of one in a row.
+ *
+ * **The acceptance secret is deliberately not in here.** The token that reads
+ * this row *is* that secret — the owner holds its HMAC, this table holds its
+ * SHA-256 — so no copy of either store carries anything a holder could present.
+ * An earlier revision stored a second secret beside these three fields, which
+ * made a dump of this table a set of working invitations through the addressed
+ * request body that is still accepted.
  */
 const SCOPE_INVITATION_LINK = defineLinkPayload("inv", z.strictObject({
-  workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema, token: z.string().min(1),
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
 }));
-export type ScopeInvitationAddress = z.infer<typeof SCOPE_INVITATION_LINK.schema>;
+export type ScopeInvitationTarget = z.infer<typeof SCOPE_INVITATION_LINK.schema>;
+
+/** Where an invitation is, and the secret presented for it: one address, however the recipient's link spelled it. */
+export type ScopeInvitationAddress = ScopeInvitationTarget & { token: string };
 
 /** One sentence for every unusable invitation: an unreadable token tells its holder no less and no more than a revoked one. */
 export const UNAVAILABLE_INVITATION = "This invitation is unavailable. Ask the sender for a new invitation.";
@@ -31,10 +39,20 @@ type LinkStore = Pick<Env, "DB">;
  * expiring invitation does not leave a row behind that outlives it.
  */
 export function issueScopeInvitationLink(
-  env: LinkStore, address: ScopeInvitationAddress, expiresAt: number | null,
+  env: LinkStore, target: ScopeInvitationTarget, expiresAt: number | null,
 ): Promise<string> {
-  return issueLinkPayload(env.DB, SCOPE_INVITATION_LINK, address,
+  return issueLinkPayload(env.DB, SCOPE_INVITATION_LINK, target,
     { expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString() });
+}
+
+/**
+ * Drops links that were minted for an invitation this deployment then did not
+ * record. Only the minting call can do this — a row is reachable by its token
+ * alone — so a creation that mints before it commits cleans up after itself
+ * rather than leaving a row nothing will ever resolve or sweep.
+ */
+export function discardScopeInvitationLinks(env: LinkStore, tokens: string[]): Promise<void> {
+  return discardLinkPayloads(env.DB, tokens);
 }
 
 /** The whole fragment, so nothing beside the token names a parameter the recipient could read as a setting. */
@@ -54,7 +72,10 @@ export async function openScopeInvitationCredential(
   env: LinkStore, credential: ScopeInvitationCredential,
 ): Promise<ScopeInvitationAddress | null> {
   if (!("link" in credential)) return credential;
-  return openLinkPayload(env.DB, SCOPE_INVITATION_LINK, credential.link);
+  const target = await openLinkPayload(env.DB, SCOPE_INVITATION_LINK, credential.link);
+  // The token the holder presented is the secret the owner checks. Reading the
+  // row proves only which invitation they are asking about.
+  return target && { ...target, token: credential.link };
 }
 
 export function workstreamStub(env: Env, workspaceId: string, parentId: string) {

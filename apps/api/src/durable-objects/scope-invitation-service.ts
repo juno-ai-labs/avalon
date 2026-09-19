@@ -4,26 +4,17 @@ import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvi
   DescribeScopeInvitationSchema, ScopeInvitationDescriptionSchema,
   type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationDescription, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { Env } from "../env";
-import { encryptString, decryptString, randomToken, hmacSha256, timingSafeEqualText } from "../lib/crypto";
+import { encryptString, decryptString, hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
-import { issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
-import { scopeInvitationEmailParts } from "../services/scope-invitation-email";
+import { discardScopeInvitationLinks, issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
+import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../services/scope-invitation-email";
+import { ObjectPortError } from "../runtime/object-port";
 import { logStructuredEvent } from "../observability/logger";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
-
-/**
- * How much of the conversation the invitation email shows.
- *
- * The product owner asked for five turns at a hundred words each: enough for a
- * recipient to recognize the work, short enough that a long thread does not
- * arrive in their mailbox.
- */
-const PREVIEW_TURNS = 5;
-const PREVIEW_WORDS = 100;
 
 const SealedSchema = z.strictObject({ ciphertext: z.string(), iv: z.string() });
 /** `html` is optional for one reason: an invitation recorded before this email had an HTML part still delivers. */
@@ -95,35 +86,70 @@ export class ScopeInvitationService {
     // One read for every recipient of this operation: they are offered the same
     // scope, so they are told the same thing about it.
     const [introduction, offered] = await Promise.all([this.introduction(request), this.offered(request.targets)]);
-    const prepared = await Promise.all([...new Set(request.emails)].map(async (email) => {
-      const id = uuidV7(), token = randomToken();
+    const minted = await Promise.all([...new Set(request.emails)].map(async (email) => {
+      const id = uuidV7();
       // Before the sharing checks and the transaction below, with every other
       // external await. A denied or replayed creation therefore leaves a row
       // addressing an invitation that never existed: inert, since opening it
       // reaches an owner that has no such invitation to offer.
-      const link = scopeInvitationLinkUrl(origin, await issueScopeInvitationLink(this.env,
-        { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id, token },
-        request.expiresAt));
+      //
+      // The token this returns is the invitation's acceptance secret as well as
+      // the link's: the owner keeps its HMAC and the row keeps its digest, so
+      // neither store holds anything a holder could present.
+      const token = await issueScopeInvitationLink(this.env,
+        { workspaceId: request.workspaceId, parentId: request.parentId, invitationId: id }, request.expiresAt);
+      const link = scopeInvitationLinkUrl(origin, token);
       const delivery = { recipientEmail: email, ...scopeInvitationEmailParts({
         ...introduction, ...offered, recipientEmail: email, link: link.toString() }) };
-      return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
+      return { token, record: { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         tokenHash: await this.tokenHash(id, token),
-        deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) };
+        deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) } };
     }));
     const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
     // All external awaits precede local sharing checks and the transaction.
-    if (!actor || !this.canShare(request.targets, actor)) return denied("sharing_required");
-    if (!this.targetsReady(request.targets)) return denied("migration_pending");
+    const outcome = this.record(request, actor, minted.map((invitation) => invitation.record));
+    // A denial, a replay and a conflict each leave rows addressing invitations
+    // that were never recorded. They are inert, but a row with no expiry is
+    // swept by nothing and reachable only by the token in hand right here, so
+    // the path that orphans them is the only one that can take them back.
+    if (!outcome.committed) await this.discard(request, minted.map((invitation) => invitation.token));
+    return outcome.result;
+  }
+
+  /**
+   * The local half of a creation: sharing, replay and coverage, then the
+   * transaction. Split out so its caller can tell a creation that recorded the
+   * links it minted from one that did not, which is not something the result
+   * says — a replayed operation reports the invitations of the first attempt.
+   */
+  private record(request: z.infer<typeof CreateScopeInvitationsSchema>, actor: WorkspaceRelationship | null,
+    prepared: Parameters<ScopeInvitationStorage["create"]>[2]): { result: ScopeInvitationResult; committed: boolean } {
+    const not = (result: ScopeInvitationResult) => ({ result, committed: false });
+    if (!actor || !this.canShare(request.targets, actor)) return not(denied("sharing_required"));
+    if (!this.targetsReady(request.targets)) return not(denied("migration_pending"));
     try {
       const existing = this.invitations.operation(request);
-      if (existing) return { status: "created", invitations: existing };
+      if (existing) return not({ status: "created", invitations: existing });
     } catch (error) {
-      if (error instanceof ScopeInvitationOperationConflict) return denied("operation_conflict");
+      if (error instanceof ScopeInvitationOperationConflict) return not(denied("operation_conflict"));
       throw error;
     }
-    if (request.completeWorkstream && !this.coverageMatches(request)) return denied("scope_changed");
-    if (request.expiresAt !== null && request.expiresAt <= Date.now()) return denied("invitation_unavailable");
-    return { status: "created", invitations: this.invitations.create(request, actor.incarnation, prepared) };
+    if (request.completeWorkstream && !this.coverageMatches(request)) return not(denied("scope_changed"));
+    if (request.expiresAt !== null && request.expiresAt <= Date.now()) return not(denied("invitation_unavailable"));
+    return { result: { status: "created", invitations: this.invitations.create(request, actor.incarnation, prepared) },
+      committed: true };
+  }
+
+  /** Reclaiming a link is housekeeping: a creation that was already denied is not failed over it. */
+  private async discard(request: z.infer<typeof CreateScopeInvitationsSchema>, tokens: string[]): Promise<void> {
+    try {
+      await discardScopeInvitationLinks(this.env, tokens);
+    } catch (error) {
+      logStructuredEvent(this.env, "warn", "scope_invitation_link_discard_failed", {
+        workspace_id: request.workspaceId, workstream_id: request.parentId,
+        error_name: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
   }
 
   async accept(input: z.infer<typeof AcceptScopeInvitationSchema>): Promise<ScopeInvitationResult> {
@@ -171,14 +197,20 @@ export class ScopeInvitationService {
   /**
    * The invited mailbox, for a recipient who is not signed in yet and whose
    * link no longer spells out who it was addressed to. The secret is checked
-   * first and on the same terms as acceptance: an invitation id alone, or one
-   * whose invitation has since been revoked or expired, releases nothing.
+   * first: an invitation id alone releases nothing.
+   *
+   * Expiry is checked here rather than through {@link usable}, which admits an
+   * accepted invitation whatever its deadline so that acceptance stays
+   * replayable for the person who already holds the grant. Replaying an
+   * acceptance is idempotence; releasing a mailbox is a disclosure, and a
+   * deadline that has passed ends it.
    */
   async describe(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
     const request = DescribeScopeInvitationSchema.parse(input);
     const current = this.invitations.read(request.invitationId);
     const presented = await this.tokenHash(request.invitationId, request.token);
-    if (!current || !timingSafeEqualText(current.tokenHash, presented) || !this.usable(current)) {
+    const expired = current !== null && current.summary.expiresAt !== null && current.summary.expiresAt <= Date.now();
+    if (!current || !timingSafeEqualText(current.tokenHash, presented) || expired || !this.usable(current)) {
       return ScopeInvitationDescriptionSchema.parse({ status: "denied", reason: "invitation_unavailable" });
     }
     return ScopeInvitationDescriptionSchema.parse({ status: "ready", email: current.summary.email });
@@ -216,6 +248,11 @@ export class ScopeInvitationService {
     logStructuredEvent(this.env, "warn", event, {
       workspace_id: workspaceId, workstream_id: parentId, substream_id: substreamId,
       error_name: error instanceof Error ? error.name : "UnknownError",
+      // Every port failure is one class, so the name alone cannot tell an
+      // unprovisioned object from a misrouted stub from a drifted protocol.
+      // Nothing rendered here can fail an invitation, which makes this log the
+      // only evidence that the preview stopped rendering at all.
+      error_code: error instanceof ObjectPortError ? error.code : null,
     });
   }
 
@@ -237,14 +274,17 @@ export class ScopeInvitationService {
     const target = targets[0];
     if (!target) return { conversationTitle: null, preview: null };
     const substreamId = target.kind === "workstream" ? "0" : target.substreamId;
-    const conversationTitle = substreamId === "0"
-      ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM workstream_metadata WHERE id = 1").toArray()[0]?.title ?? null
-      : this.storage.sql.exec<{ title: string | null }>("SELECT title FROM conversation_children WHERE substream_id = ?", substreamId)
-        .toArray()[0]?.title ?? null;
+    let conversationTitle: string | null = null;
     try {
+      // Inside the guard with the transcript read: a local read that fails is
+      // still only a title, and an invitation must not fail for want of one.
+      conversationTitle = substreamId === "0"
+        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM workstream_metadata WHERE id = 1").toArray()[0]?.title ?? null
+        : this.storage.sql.exec<{ title: string | null }>("SELECT title FROM conversation_children WHERE substream_id = ?", substreamId)
+          .toArray()[0]?.title ?? null;
       return { conversationTitle, preview: await readConversationPreview(this.env, {
         workspaceId: target.workspaceId, parentId: target.parentId, substreamId,
-        turns: PREVIEW_TURNS, words: PREVIEW_WORDS,
+        turns: PREVIEW_TURNS, words: PREVIEW_WORDS, bytes: PREVIEW_BYTES,
       }) };
     } catch (error) {
       this.previewFailed("scope_invitation_preview_failed", target.workspaceId, target.parentId, substreamId, error);
