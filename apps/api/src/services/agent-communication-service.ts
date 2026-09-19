@@ -2,8 +2,8 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { Preparation } from "./harness-preparation";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId,
-  asUserId, asWorkstreamId, type AgentId, type StartAgentInput,
-  type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
+  asUserId, asWorkstreamId, type AgentId, type AgentMessageResult, type StartAgentInput,
+  type StartAgentResult, type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import type { Env } from "../env";
@@ -81,7 +81,7 @@ export class AgentCommunicationService {
     return attachmentIds;
   }
 
-  async start(args: StartAgentInput, context: HarnessToolContext) {
+  async start(args: StartAgentInput, context: HarnessToolContext): Promise<StartAgentResult> {
     const source = await this.conversation(this.senderId);
     if ((await source.agentRuntimeInfo())?.status === "stopped") throw new AgentCommunicationError("agent_origin_stopped");
     await this.validateAttachments(args.attachmentIds);
@@ -139,7 +139,7 @@ export class AgentCommunicationService {
     };
   }
 
-  async send(args: SendAgentMessageInput | ReplyToAgentMessageInput, context: HarnessToolContext) {
+  async send(args: SendAgentMessageInput | ReplyToAgentMessageInput, context: HarnessToolContext): Promise<AgentMessageResult> {
     const delivered = "agentId" in args
       ? await (async () => {
         const teamId = await this.team();
@@ -274,10 +274,10 @@ export class AgentCommunicationService {
           && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) return null;
         throw error;
       }
-      // A directory, not a status feed: the way to learn what a teammate is
-      // doing is to message it, and the way to wait for one is to finish.
+      // `status` says whether a teammate is still running, which a message
+      // cannot ask without resuming it. The way to wait for one is to finish.
       const runtime = await (await this.conversation(agentId)).agentRuntimeInfo();
-      return runtime ? { agentId, name: runtime.name, description: runtime.description } : null;
+      return runtime ? { agentId, name: runtime.name, description: runtime.description, status: runtime.status } : null;
     }));
     return { agents: agents.filter((agent) => agent !== null) };
   }
