@@ -312,10 +312,14 @@ export interface IdentityAuthContext {
    * preparing, and the objects verify that member's current membership the
    * same way (`docs/demo-workspaces.md`).
    *
-   * Only server code constructs either value — connector ingress the first,
-   * the seeder the second. The auth middleware builds its context from
-   * verified token claims and never sets it, so a client cannot claim a
-   * non-session path from outside.
+   * The Space cutover's driver is the third construction of `"connector"`, and
+   * for the same reason: it runs with nobody signed in, so its `sessionId` is a
+   * correlation value and the objects verify the member it acts as against
+   * current membership (`docs/spaces.md`).
+   *
+   * Only server code constructs either value. The auth middleware builds its
+   * context from verified token claims and never sets it, so a client cannot
+   * claim a non-session path from outside.
    */
   principal?: "connector" | "demo_seed";
   /**
