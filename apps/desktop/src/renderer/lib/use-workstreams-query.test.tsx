@@ -51,6 +51,7 @@ function summary(id: string, title: string): WorkstreamSummary {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
   } satisfies WorkstreamSummary;
 }
 

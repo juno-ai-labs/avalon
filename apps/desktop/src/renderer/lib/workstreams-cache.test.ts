@@ -33,6 +33,7 @@ function summary(): WorkstreamSummary {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-08-12T12:00:00.000Z',
   };
 }

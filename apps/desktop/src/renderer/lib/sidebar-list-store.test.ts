@@ -1,10 +1,10 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  applyVersionedProjectSnapshot,
+  applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
-import type { ProjectSnapshot } from '@rally/contracts';
+import type { SpaceSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
 
 function automation(id: string): AutomationSummary {
@@ -45,20 +45,39 @@ describe('applyVersionedSidebarList', () => {
     expect(applyVersionedSidebarList(queryClient, 'automations', 6, [automation('c')])).toBe(true);
   });
 
-  it('keeps a late project snapshot from replacing a newer directory', () => {
+  it('keeps a late space snapshot from replacing a newer directory', () => {
     const queryClient = new QueryClient();
     const newer = {
       active: { waterline: 8, items: [] },
       inactive: { waterline: 8, items: [] },
-    } satisfies ProjectSnapshot;
+    } satisfies SpaceSnapshot;
     const older = {
       active: { waterline: 7, items: [] },
       inactive: { waterline: 7, items: [] },
-    } satisfies ProjectSnapshot;
+    } satisfies SpaceSnapshot;
 
-    expect(applyVersionedProjectSnapshot(queryClient, newer)).toBe(true);
-    expect(applyVersionedProjectSnapshot(queryClient, older)).toBe(false);
-    expect(queryClient.getQueryData(['projects'])).toEqual(newer.active);
-    expect(queryClient.getQueryData(['projects-inactive'])).toEqual(newer.inactive);
+    expect(applyVersionedSpaceSnapshot(queryClient, newer, true)).toBe(true);
+    expect(applyVersionedSpaceSnapshot(queryClient, older, true)).toBe(false);
+    expect(queryClient.getQueryData(['spaces'])).toEqual(newer.active);
+    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual(newer.inactive);
+  });
+
+  // `spacesReady` has no ledger of its own: a write can be the write that
+  // finishes the cutover, so it is only ever as current as the snapshot it
+  // arrived with. An older payload must not put the opening state back.
+  it('does not let an older snapshot reinstate the organization-opening state', () => {
+    const queryClient = new QueryClient();
+    const ready = {
+      active: { waterline: 8, items: [] },
+      inactive: { waterline: 8, items: [] },
+    } satisfies SpaceSnapshot;
+    const opening = {
+      active: { waterline: 7, items: [] },
+      inactive: { waterline: 7, items: [] },
+    } satisfies SpaceSnapshot;
+
+    applyVersionedSpaceSnapshot(queryClient, ready, true);
+    expect(applyVersionedSpaceSnapshot(queryClient, opening, false)).toBe(false);
+    expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
   });
 });

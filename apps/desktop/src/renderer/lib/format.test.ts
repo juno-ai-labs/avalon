@@ -35,6 +35,7 @@ function stream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
   };
 }
 
