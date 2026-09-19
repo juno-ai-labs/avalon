@@ -3639,6 +3639,28 @@ pre {
 .citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-text-default) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
 .citation-pill { cursor: pointer; }
 .citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); }
+/* A web source wears the site's own favicon instead of the asterisk. At one
+   character an asterisk can only say "a source is here"; the icon says which
+   site before anyone has hovered, and it is the mark this app already draws in
+   front of a link, so the two readings of one destination agree.
+
+   It does not keep the asterisk pill's plate. That plate is built around a
+   glyph — a tint to find it by, and a 0.32em raise that lifts a low-sitting
+   asterisk to where a marker belongs. An icon needs neither: it carries its own
+   colour and its own edges, a tint behind it reads as a second object, and it
+   belongs on the baseline where the link icon sits. The hover tint is the one
+   part kept, because a marker this quiet still has to show it can be clicked.
+
+   Two rules here are load-bearing rather than decorative. `line-height: 0`
+   keeps the button exactly as tall as the icon, and the `.markdown-body`
+   qualifier is what beats the block-image rule further down this file, whose
+   `margin: var(--space-4) 0` otherwise puts 18px above and below an icon
+   sitting inside a sentence — which does not merely misplace the marker, it
+   grows the line box of every line in the paragraph. `.markdown-link-favicon`
+   is qualified for the same reason. */
+.citation-pill-favicon { background: transparent; border-color: transparent; font-size: inherit; line-height: 0; padding: 1px; vertical-align: -0.08em; }
+.citation-pill-favicon:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent); }
+.markdown-body .citation-pill-favicon img { border-radius: 2px; display: block; height: 0.85em; margin: 0; max-width: none; object-fit: contain; width: 0.85em; }
 /* Pending and resolved pills share geometry so resolution does not shift
    the sentence. An invisible asterisk gives the shimmer its exact glyph width
    in the active font, without estimating a digit width. The background paints
