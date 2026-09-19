@@ -1,7 +1,8 @@
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { SpaceSummarySchema, type ClientSession } from '@rally/contracts';
+import { SpaceSummarySchema } from '@rally/contracts';
+import type { ClientSession } from '@rally/contracts/client-session';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
