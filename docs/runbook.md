@@ -178,11 +178,11 @@ rather than from the Workers: `DAYTONA_API_KEY` as an environment secret, and
 `DAYTONA_API_URL`, `DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
 `TERMINAL_PROBE_PRIVATE_DNS_URL` as environment variables; the job fails at its
 first step naming whichever is absent. The base image and the sandbox size (2 vCPU / 4 GiB / 8 GiB,
-`TERMINAL_SNAPSHOT_RESOURCES`) are pinned in
-`apps/api/src/services/terminal/snapshot-manifest.ts`; a
-`TERMINAL_SNAPSHOT_BASE_IMAGE` variable overrides the image for a one-off build,
-while the size can only change through a rebuild, because Daytona fixes it when
-the snapshot is built and a sandbox inherits it. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
+`TERMINAL_SNAPSHOT_RESOURCES`) are both pinned in
+`apps/api/src/services/terminal/snapshot-manifest.ts`, and both reach production
+only through a rebuild and its adoption pull request. The image has an escape
+hatch for a one-off build, the `TERMINAL_SNAPSHOT_BASE_IMAGE` variable; the size
+has none, so changing it is a commit. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
 and pull-requests write on this repository, so the adoption pull request it
 opens runs CI; without it GitHub starts no workflows for that pull request and
 the step summary says so. The two probe endpoints are Rally's own on
