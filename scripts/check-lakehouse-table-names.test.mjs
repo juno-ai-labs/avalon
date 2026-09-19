@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -71,6 +74,33 @@ test("catches a quoted identifier, which slips past a bare-word match", () => {
   assert.deepEqual(misqualifiedReferences('FROM "avalon"."llm_inference"\n', INFERENCE), []);
 });
 
+/** A quoting style the check cannot see is a wrong table that passes. */
+test("catches the dialect quoting styles too", () => {
+  assert.equal(misqualifiedReferences("FROM `rally`.`llm_inference`\n", INFERENCE).length, 1);
+  assert.equal(misqualifiedReferences("FROM [rally].[llm_inference]\n", INFERENCE).length, 1);
+  assert.deepEqual(misqualifiedReferences("FROM `avalon`.`llm_inference`\n", INFERENCE), []);
+});
+
+/**
+ * A wrapped query is still a query. Matching line by line could not see one,
+ * which made the check bypassable by ordinary SQL formatting.
+ */
+test("catches a reference split across lines, and reports where it starts", () => {
+  const found = misqualifiedReferences(
+    ["SELECT captured_at", "FROM", "  llm_inference", "WHERE 1 = 1"].join("\n"),
+    INFERENCE,
+  );
+
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 2);
+  assert.equal(found[0].found, "llm_inference");
+  assert.equal(
+    misqualifiedReferences("FROM rally\n  .llm_inference\n", INFERENCE).length,
+    1,
+  );
+  assert.deepEqual(misqualifiedReferences("FROM avalon\n  .llm_inference\n", INFERENCE), []);
+});
+
 /**
  * R2 SQL is backed by an Iceberg catalog, whose namespace names are
  * case-sensitive, so a differently-cased qualifier names a table that does not
@@ -98,6 +128,42 @@ test("reads the namespace and table from the checked-in manifests", async () => 
     tables.map((table) => `${table.namespace}.${table.table}`),
     ["avalon.analytics_events", "avalon.llm_inference"],
   );
+});
+
+/**
+ * Drives `check()` end to end: manifest discovery, the document walk, and the
+ * reported shape. Asserting only that the real `docs/` tree comes back empty
+ * would pass just as well if the walk silently found no files at all.
+ */
+test("check() walks a tree and reports the offending file, line and names", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lakehouse-check-"));
+  try {
+    await mkdir(join(root, "docs", "nested"), { recursive: true });
+    await mkdir(join(root, "config"), { recursive: true });
+    await writeFile(
+      join(root, "config", "inference-lakehouse.json"),
+      JSON.stringify({ namespace: "avalon", table: "llm_inference" }),
+    );
+    await writeFile(
+      join(root, "docs", "clean.md"),
+      "SELECT 1\nFROM avalon.llm_inference\n",
+    );
+    await writeFile(
+      join(root, "docs", "nested", "broken.md"),
+      "# Runbook\n\nSELECT 1\nFROM rally.llm_inference\n",
+    );
+
+    assert.deepEqual(await check(join(root, "docs"), join(root, "config")), [{
+      file: join(root, "docs", "nested", "broken.md"),
+      line: 4,
+      text: "FROM rally.llm_inference",
+      found: "rally.llm_inference",
+      expected: "avalon.llm_inference",
+      manifest: join(root, "config", "inference-lakehouse.json"),
+    }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("the repository's own documents pass", async () => {

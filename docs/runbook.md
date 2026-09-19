@@ -1526,7 +1526,15 @@ Writes are non-blocking and must never be awaited or allowed to change a run's
 durable outcome.
 
 Queries must weight every aggregate by `_sample_interval`. This seven-day view
-is the starting point for deciding whether a run ceiling is warranted:
+is the starting point for deciding whether a run ceiling is warranted.
+
+**`p95_cost_cents` is trustworthy only from 2026-09-19.** It reads the harness
+run total, which summed a per-attempt cost that was `0` on every OpenRouter
+call until the request began asking OpenRouter for usage accounting — so an
+OpenRouter-heavy cohort reads near zero before that date and its real spend
+after. Do not set a ceiling from a window that spans it. The same caveat and
+its cause are in
+[Inspecting a run's raw inference](#inspecting-a-runs-raw-inference).
 
 ```sql
 SELECT
@@ -1691,8 +1699,7 @@ guessing. The table and bucket names in this runbook remain repository-owned:
 `config/inference-lakehouse.json` declares the Data Catalog namespace and
 table, and `pnpm docs:check` fails when a query here names anything else. It
 does, because all three queries here once named the product instead of the
-namespace, and the table they asked for did not exist. They were found during
-an incident rather than before one.
+namespace, and the table they asked for did not exist.
 Start with the narrow typed columns and time window below; selecting every JSON
 column across an unbounded table is both an unnecessary exposure of customer
 content and an unnecessary scan.

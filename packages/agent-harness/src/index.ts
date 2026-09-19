@@ -1995,12 +1995,16 @@ function providerUsageNumber(usage: Record<string, number> | null, key: string):
 }
 
 /**
- * OpenRouter reports `cost` in dollars. Kept beside the token readers so a
- * structured call accounts for its spend the same way a streamed one does;
- * structured calls carried no cost field at all, which hid every classifier,
- * extraction, and repair call from spend reporting.
+ * The one reader of provider-reported spend, in cents; `cost` arrives in
+ * dollars. It returns `undefined` rather than `0` when the provider said
+ * nothing, because those are different facts and the whole point of the
+ * column is that they stay different — a caller that needs a number for
+ * arithmetic applies its own default. Exported so the streamed path shares
+ * it: two implementations of `usage.cost * 100` differing only in their
+ * default is how one surface came to report a structural zero beside real
+ * measurements.
  */
-function providerCostCents(usage: Record<string, number> | null): number | undefined {
+export function providerCostCents(usage: Record<string, number> | null): number | undefined {
   const dollars = usage?.cost;
   return typeof dollars === "number" && Number.isFinite(dollars) ? dollars * 100 : undefined;
 }

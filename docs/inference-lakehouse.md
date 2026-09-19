@@ -263,7 +263,12 @@ request and terminal attempt. A failed attempt's `error` column holds one
 — a gateway's HTML, a proxy's plain text — records `detail` alone, which is the
 case where the body is the only account of the failure there is.
 
-`cost_microusd` is what the provider billed, not an estimate Rally computed.
+`cost_microusd` is what the provider billed, not an estimate Rally computed,
+and it is **absent rather than zero** when the provider reported nothing —
+`providerCostCents` in `@rally/agent-harness` is the one reader, and it
+returns `undefined` so that "not reported" and "free" stay different facts in
+the column. A run's own running total defaults to zero because it is
+arithmetic; do not let that default reach a row.
 OpenRouter reports `usage.cost` only when the request carries `usage: {
 "include": true }`, so every OpenRouter chat request sends it —
 `serializeOpenRouterChatRequest` adds it after the SDK serializer, which has no
@@ -608,6 +613,11 @@ route and the wrong one for billing a call: the average is hourly and the
 provider a route actually landed on is decided per request, so the number would
 disagree with the invoice and there would be no way to tell which was wrong.
 Asking OpenRouter costs one request field.
+
+**Also:** the streamed path read cost through a second implementation whose
+default was `0`, so an attempt the provider did not price wrote a structural
+zero next to real measurements — the same ambiguity, on the column this change
+exists to make trustworthy. The two readers are now one.
 
 **Consequences:** `cost_microusd` becomes comparable across providers and
 across streamed and structured calls, and any series spanning this change has
