@@ -62,7 +62,9 @@ interface WorkspaceDouble {
 function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDouble {
   return {
     spaceSummary: vi.fn(async () => ({ ok: true, space: summary() })),
-    listSpaceMembers: vi.fn(async () => ({ ok: true, workstreamIds: [CHANNEL_ID] })),
+    listSpaceMembers: vi.fn(async () => ({
+      ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }],
+    })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
     cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
@@ -250,7 +252,13 @@ describe("SpaceService lifecycle fan-out", () => {
       }),
       listSpaceMembers: vi.fn(async (input: { reach?: string }) => {
         log.push(`members:${input.reach}`);
-        return { ok: true, workstreamIds: [CHANNEL_ID, SECOND_CHANNEL_ID] };
+        return {
+          ok: true,
+          members: [
+            { workstreamId: CHANNEL_ID, membershipGeneration: 4 },
+            { workstreamId: SECOND_CHANNEL_ID, membershipGeneration: 2 },
+          ],
+        };
       }),
       finalizeSpaceArchive: vi.fn(async () => {
         log.push("finalize");
@@ -278,6 +286,35 @@ describe("SpaceService lifecycle fan-out", () => {
 
 });
 
+describe("SpaceService restore", () => {
+  it("given an archived Space, when it is restored, then its memberships return before the source does", async () => {
+    const log: string[] = [];
+    const workspace = workspaceDouble({
+      restoreSpace: vi.fn(async () => {
+        log.push("restore");
+        return { ok: true, space: summary({ revision: 7 }) };
+      }),
+      listSpaceMembers: vi.fn(async (input: { reach?: string }) => {
+        log.push(`members:${input.reach}`);
+        return { ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 6 }] };
+      }),
+    });
+    const channels = channelDoubles(log);
+
+    await new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).restore(SPACE_ID);
+
+    // The memberships come back first — the archive is what took them out —
+    // and the members are read *after* the restore, so each application is
+    // fenced on the generation that restore advanced the row to rather than on
+    // a literal.
+    expect(log).toEqual(["restore", "members:active", `apply:${CHANNEL_ID}:6`]);
+    expect(channels.room.applySpaceAccessSource)
+      .toHaveBeenCalledWith(expect.objectContaining({ spaceRevision: 7, membershipGeneration: 6 }));
+  });
+});
+
 describe("SpaceService intent resumption", () => {
   it("given a superseded audience intent, when it resumes, then it converges on the current Space", async () => {
     const log: string[] = [];
@@ -285,7 +322,9 @@ describe("SpaceService intent resumption", () => {
       // The Space has moved since the intent was staged: a later audience
       // change accepted while this one was half way through its walk.
       spaceSummary: vi.fn(async () => ({ ok: true, space: summary({ revision: 9 }) })),
-      listSpaceMembers: vi.fn(async () => ({ ok: true, workstreamIds: [CHANNEL_ID] })),
+      listSpaceMembers: vi.fn(async () => ({
+        ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }],
+      })),
       recordSpaceIntentReceipt: vi.fn(async (input: { receipt: string }) => {
         log.push(`receipt:${input.receipt}`);
         return { recorded: true };
@@ -310,7 +349,7 @@ describe("SpaceService intent resumption", () => {
     // is also what fences it against the newer change's own walk.
     expect(log).toEqual([
       `retract:${CHANNEL_ID}`,
-      `apply:${CHANNEL_ID}:1`,
+      `apply:${CHANNEL_ID}:4`,
       "receipt:audience_superseded",
     ]);
     expect(channels.room.retractSpaceAccessSource)
