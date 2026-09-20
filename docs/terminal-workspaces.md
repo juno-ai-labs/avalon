@@ -171,8 +171,19 @@ session. A linked run cannot use an interrupted accepted command's sandbox until
 Rally has stopped the whole sandbox and restarted it; deleting or failing to
 find the named session is not process-quiescence evidence. A pre-acceptance
 `planned` or `submitting` task instead retires the provider sandbox and advances
-the generation. All other incomplete writes keep the harness's fail-closed ambiguity
-behavior. The model receives one final result; provider observation is never a
+the generation.
+
+Three other Terminal writes are re-enterable after an interruption, and each
+earns it differently. `publish_branch_and_pr` reattaches to the publication its
+run recorded. `checkout_repository` converges: it never reads the effect
+identity, and re-entry re-selects the same repository at the same access, so an
+interrupted replacement is repaired by finishing it. `publish_resource` can do
+neither — it resolves a document by `(work stream, published path)`, which says
+what is published there now rather than what this attempt published — so it
+carries a `reconcileEffect` that reads the `resource_versions` ledger, and the
+host runs the executor only when that ledger proves the attempt is absent. Every
+remaining incomplete write keeps the harness's fail-closed ambiguity behaviour.
+[`agent-harness.md`](agent-harness.md) owns the repair walk itself. The model receives one final result; provider observation is never a
 tool. The SubstreamAgent stores the task, command hash,
 deadline, exit, termination reason, output byte counts, and bounded head/tail.
 Output beyond the inline allowance is also published as a generated log

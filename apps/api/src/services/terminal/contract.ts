@@ -295,12 +295,15 @@ export const TERMINAL_TOOL_DEFINITIONS = TERMINAL_TOOL_NAMES.map((name) => defin
  * The Terminal writes the host may run again over an interrupted attempt's
  * receipt, instead of declaring the outcome unknowable.
  *
- * Each one earns its place in its executor rather than by category.
- * `run_command` reattaches to the `terminal_tasks` row its `effect_intent_id`
- * names. `checkout_repository` and `publish_branch_and_pr` reconcile against
- * the branch and pull request their run already recorded. Those three resolve
- * their effect from the receipt, so re-entering them is both the question and
- * the answer.
+ * Each one earns its place in its executor rather than by category, and not
+ * all three by the same route. `run_command` **reattaches**: it resolves the
+ * `terminal_tasks` row its `effect_intent_id` names before doing anything.
+ * `publish_branch_and_pr` does the same against the publication its run
+ * recorded. `checkout_repository` **converges** instead — it never reads
+ * `effect_intent_id`, and re-entering it re-selects the same repository at the
+ * same access, because the recorded input fully determines the end state; an
+ * interrupted replacement is repaired by finishing it, which is what its test
+ * asserts.
  *
  * `publish_resource` is here on a different footing, and the distinction is
  * the one that makes this list safe rather than convenient. Its executor
