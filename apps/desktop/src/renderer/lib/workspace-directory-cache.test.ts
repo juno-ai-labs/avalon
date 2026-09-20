@@ -51,6 +51,7 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
     automations: [automation],
     spaces: { waterline: 3, items: [] },
     inactiveSpaces: { waterline: 3, items: [] },
+    ordering: [],
     ...overrides,
   };
 }
@@ -106,6 +107,30 @@ describe('organization directory cache', () => {
 
     expect(await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY)).toBeNull();
     await expect(hydrateWorkspaceDirectory(new QueryClient(), scope, () => true)).resolves.toBe(false);
+  });
+
+  /**
+   * The whole reason this slice is not at version 4.
+   *
+   * The arrangement was added to the directory row without bumping the version,
+   * on the argument that a row written without the key still reads: absorbing
+   * the absence costs one launch drawn in the natural order, and bumping would
+   * cost every person a cold, empty sidebar to avoid it. Written at the slice's
+   * own version, so it is `parseCachedDirectory` being asked rather than the
+   * version gate in front of it.
+   */
+  it('hydrates a directory row written before the ordering existed', async () => {
+    const raw = defineLocalCacheSlice<unknown>({ kind: 'directory', version: 3, parse: (value) => value });
+    const { workstreams, automations, spaces, inactiveSpaces } = directory();
+    await raw.write(scope, DIRECTORY_CACHE_KEY, { workstreams, automations, spaces, inactiveSpaces });
+    const queryClient = new QueryClient();
+
+    await expect(hydrateWorkspaceDirectory(queryClient, scope, () => true)).resolves.toBe(true);
+
+    expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual([summary()]);
+    // Read as "this person has arranged nothing", which is what every list then
+    // draws in its natural order until the socket says otherwise.
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([]);
   });
 
   it('keeps one page of the flat list, however many pages the sidebar has loaded', async () => {

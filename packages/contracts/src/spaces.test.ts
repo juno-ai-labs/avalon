@@ -7,7 +7,10 @@ import {
 } from "./projects";
 import {
   ChannelAccessSourcesSchema,
+  ContainerOrderSchema,
   CreateSpaceRequestSchema,
+  OrderedContainerKindSchema,
+  PersonalOrderSchema,
   PALETTE_INK,
   PALETTE_KEYS,
   PALETTE_RETIRED,
@@ -142,6 +145,54 @@ describe("space contracts", () => {
       direct: { scope: "personal", participantUserIds: [USER_ID] },
       spaces: [{ scope: "workspace", participantUserIds: [USER_ID] }],
     }).success).toBe(false);
+  });
+
+  it("given one container's order, when it is parsed, then the container names both halves of its address", () => {
+    expect(ContainerOrderSchema.safeParse({
+      container: { kind: "space", id: SPACE_ID },
+      itemIds: [CHANNEL_ID],
+    }).success).toBe(true);
+    // The kind alone is not an address for these two: a request that named only
+    // the kind could not say *which* Space's Channels it was arranging.
+    expect(ContainerOrderSchema.safeParse({ container: { kind: "space" }, itemIds: [] }).success)
+      .toBe(false);
+    expect(ContainerOrderSchema.safeParse({ container: { kind: "channel" }, itemIds: [] }).success)
+      .toBe(false);
+    // And for the Organization the kind *is* the whole address: a request is
+    // already addressed to one Organization, so an id here would be a second
+    // answer to a settled question — one the authority ignored on the way in
+    // and echoed on the way out, which is what sent the desktop's cache to a
+    // key nothing would read back.
+    expect(ContainerOrderSchema.safeParse({ container: { kind: "organization" }, itemIds: [] }).success)
+      .toBe(true);
+    expect(ContainerOrderSchema.safeParse({
+      container: { kind: "organization", id: SPACE_ID },
+      itemIds: [],
+    }).success).toBe(false);
+    // Exactly the three lists the product lets a person arrange.
+    expect([...OrderedContainerKindSchema.options])
+      .toEqual(["organization", "space", "channel"]);
+    expect(ContainerOrderSchema.safeParse({
+      container: { kind: "workstream", id: SPACE_ID },
+      itemIds: [],
+    }).success).toBe(false);
+    // An empty list is a person who dragged every item out of an order, not a
+    // malformed request: it is how the last stored arrangement is cleared.
+    expect(ContainerOrderSchema.safeParse({
+      container: { kind: "channel", id: CHANNEL_ID },
+      itemIds: [],
+    }).success).toBe(true);
+  });
+
+  it("given a person's whole ordering, when it is parsed, then each entry carries its own container", () => {
+    expect(PersonalOrderSchema.safeParse([
+      { container: { kind: "organization" }, itemIds: [SPACE_ID] },
+      { container: { kind: "space", id: SPACE_ID }, itemIds: [CHANNEL_ID] },
+    ]).success).toBe(true);
+    // A list rather than a map keyed by container, because the key is a pair
+    // wherever a kind has an id: a map would have to encode it into a string
+    // each reader parses back.
+    expect(PersonalOrderSchema.safeParse({ [SPACE_ID]: [CHANNEL_ID] }).success).toBe(false);
   });
 
   it("given the refusal vocabulary, when a code is read, then it is one of the twelve the authority can produce", () => {

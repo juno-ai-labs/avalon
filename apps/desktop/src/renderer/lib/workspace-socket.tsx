@@ -37,6 +37,7 @@ import {
   SPACES_QUERY_KEY,
   INACTIVE_SPACES_QUERY_KEY,
   SPACES_READY_QUERY_KEY,
+  PERSONAL_ORDER_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
@@ -239,6 +240,7 @@ export function WorkspaceSocketProvider({
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
+      PERSONAL_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
@@ -363,7 +365,15 @@ export function WorkspaceSocketProvider({
       // a payload from a server that predates the cutover describes an
       // Organization that was never going to open, not one still opening.
       if (sidebar.spaces) {
-        applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.spacesReady ?? true);
+        applyVersionedSpaceSnapshot(
+          queryClient,
+          sidebar.spaces,
+          // Optional beside `spaces` and for the same reason: a payload from a
+          // server without the ordering describes lists with no hand
+          // arrangement, which is what an empty one draws.
+          sidebar.ordering ?? [],
+          sidebar.spacesReady ?? true,
+        );
       }
       directoryLive = true;
       // The directory is the bound on the conversation cache: a conversation
@@ -584,6 +594,7 @@ export function WorkspaceSocketProvider({
             applyVersionedSpaceSnapshot(
               queryClient,
               spaceSnapshot.data.spaces,
+              spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
             );
             return;

@@ -47,6 +47,30 @@ function channel(id: string, title: string, lastActivityAt: string, ...spaceIds:
   return { id, title, lastActivityAt, spaceIds } as WorkstreamSummary;
 }
 
+/**
+ * jsdom implements no `DataTransfer`, and the Spaces drag reads two of its
+ * fields: `types`, which is how a Space row tells a Channel's drag passing
+ * through it from its own, and `dropEffect`, which is how `dragend` tells a
+ * release the list took from one backed out of.
+ */
+function spaceTransfer(dropEffect: 'move' | 'none' = 'move'): {
+  dropEffect: string; effectAllowed: string; types: string[];
+  setData: (type: string, value: string) => void; getData: (type: string) => string;
+} {
+  const data = new Map<string, string>();
+  const transfer = {
+    dropEffect,
+    effectAllowed: '',
+    types: [] as string[],
+    setData: (type: string, value: string) => {
+      data.set(type, value);
+      if (!transfer.types.includes(type)) transfer.types.push(type);
+    },
+    getData: (type: string) => data.get(type) ?? '',
+  };
+  return transfer;
+}
+
 function Location(): React.JSX.Element {
   return <output data-testid="location">{useLocation().pathname}</output>;
 }
@@ -56,13 +80,16 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
     <Tooltip.Provider>
       <MemoryRouter initialEntries={['/workstreams/new']}>
         <SpaceSidebarSection
+          hasMoreChannels={false}
           inactiveSpaces={[]}
           loading={false}
+          loadingMoreChannels={false}
           onAddChannel={async () => undefined}
           onCreate={async () => hiring}
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           onRetry={() => undefined}
+          ordering={[]}
           outOfDate={false}
           ready
           renderWorkstream={(workstream) => (
@@ -87,8 +114,10 @@ function CreateFlowHarness({
   return (
     <>
       <SpaceSidebarSection
+        hasMoreChannels={false}
         inactiveSpaces={[]}
         loading={false}
+        loadingMoreChannels={false}
         onAddChannel={async () => undefined}
         onCreate={async (input) => {
           const created = await onCreate(input);
@@ -98,6 +127,7 @@ function CreateFlowHarness({
         onReorder={async () => undefined}
         onRestore={async () => undefined}
         onRetry={() => undefined}
+        ordering={[]}
         outOfDate={false}
         ready
         renderWorkstream={(workstream) => (
@@ -160,13 +190,16 @@ describe('the Spaces sidebar section', () => {
       <Tooltip.Provider>
         <MemoryRouter initialEntries={[`/spaces/${hiring.id}`]}>
           <SpaceSidebarSection
+            hasMoreChannels={false}
             inactiveSpaces={[]}
             loading={false}
+            loadingMoreChannels={false}
             onAddChannel={async () => undefined}
             onCreate={async () => hiring}
             onReorder={async () => undefined}
             onRestore={async () => undefined}
             onRetry={() => undefined}
+            ordering={[]}
             outOfDate={false}
             ready
             renderWorkstream={(workstream) => (
@@ -279,7 +312,61 @@ describe('the Spaces sidebar section', () => {
 
     fireEvent.keyDown(screen.getByRole('link', { name: /Second/u }), { altKey: true, key: 'ArrowUp' });
 
-    await waitFor(() => expect(onReorder).toHaveBeenCalledWith([second.id, first.id]));
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
+      container: { kind: 'organization' },
+      itemIds: [second.id, first.id],
+    }));
+  });
+
+  // The pointer's half of the same gesture. The keyboard test below it moves
+  // one row by one step; this one is what a reader actually does, and it is the
+  // one that can be fooled into comparing the arrangement it just built with
+  // itself and concluding nothing moved.
+  it('given two spaces, when one is dragged above the other, then the new order is saved', async () => {
+    const onReorder = vi.fn(async () => undefined);
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'First');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
+    renderSection({ spaces: [first, second], onReorder });
+
+    // jsdom implements no `DataTransfer`, and this drag needs two of its
+    // fields: `types`, which is how a Space row tells a Channel's drag from
+    // its own, and `dropEffect`, which is how `dragend` tells a release the
+    // list took from one backed out of.
+    const dataTransfer = spaceTransfer();
+    const rows = screen.getAllByRole('link').map((link) => link.closest('.space-sidebar-item')!);
+    fireEvent.dragStart(rows[1]!, { dataTransfer });
+    fireEvent.dragEnter(rows[0]!, { dataTransfer });
+    fireEvent.dragEnd(rows[1]!, { dataTransfer });
+
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
+      container: { kind: 'organization' },
+      itemIds: [second.id, first.id],
+    }));
+  });
+
+  /**
+   * The third meaning of the gesture, and the one the Spaces list used to get
+   * wrong: a reader who starts dragging, passes over three rows and thinks
+   * better of it. Backing out of a drag must not be the same thing as
+   * finishing one — this list persists to every session the person has open.
+   */
+  it('given a drag backed out of, when it ends, then nothing is saved', async () => {
+    const onReorder = vi.fn(async () => undefined);
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'First');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
+    renderSection({ spaces: [first, second], onReorder });
+
+    const dataTransfer = spaceTransfer();
+    const rows = screen.getAllByRole('link').map((link) => link.closest('.space-sidebar-item')!);
+    fireEvent.dragStart(rows[1]!, { dataTransfer });
+    fireEvent.dragEnter(rows[0]!, { dataTransfer });
+    // Escape leaves the drag with no accepted drop, which the browser reports
+    // as `none`.
+    fireEvent.dragEnd(rows[1]!, { dataTransfer: { ...dataTransfer, dropEffect: 'none' } });
+
+    await waitFor(() => expect(screen.getAllByRole('link').map((link) => link.textContent))
+      .toEqual([expect.stringContaining('First'), expect.stringContaining('Second')]));
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it('given fixed server order, when saving a reorder fails, then the section explains why the row snapped back', async () => {
@@ -319,6 +406,46 @@ describe('the Spaces sidebar section', () => {
 
     expect(screen.queryByText('No channels')).not.toBeInTheDocument();
     expect(screen.queryByText(/open this space to see all/u)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The sidebar's own page trigger was the nav's scroll reaching the end of the
+   * time-grouped list of every Channel, and that list is gone for a member. An
+   * expanded Space is what is left that can tell the sidebar it is holding less
+   * than the Organization says exists.
+   */
+  it('given an expanded space short of its channels, when pages remain, then the next one is asked for', async () => {
+    const onLoadMoreChannels = vi.fn();
+    renderSection({
+      hasMoreChannels: true,
+      onLoadMoreChannels,
+      spaces: [space(hiring.id, 'Hiring', { channelCount: 3 })],
+      workstreams: [channel('00000000-0000-7000-8000-0000000000e1', 'Only one', '2026-08-27T01:00:00.000Z', hiring.id)],
+    });
+    // Collapsed, the Space is drawing nothing and is not short of anything.
+    expect(onLoadMoreChannels).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+
+    await waitFor(() => expect(onLoadMoreChannels).toHaveBeenCalled());
+  });
+
+  // The count is the Organization's rather than this viewer's, so a Space can
+  // be permanently "short" of Channels this person may not read. Running out of
+  // pages is what stops the asking; the count being reached is not.
+  it('given no pages left, when an expanded space is still short, then nothing is asked for', async () => {
+    const onLoadMoreChannels = vi.fn();
+    renderSection({
+      hasMoreChannels: false,
+      onLoadMoreChannels,
+      spaces: [space(hiring.id, 'Hiring', { channelCount: 3 })],
+      workstreams: [channel('00000000-0000-7000-8000-0000000000e1', 'Only one', '2026-08-27T01:00:00.000Z', hiring.id)],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Only one' })).toBeVisible());
+    expect(onLoadMoreChannels).not.toHaveBeenCalled();
   });
 
   it('given a dragged channel, when it is dropped on a space, then membership is requested', async () => {

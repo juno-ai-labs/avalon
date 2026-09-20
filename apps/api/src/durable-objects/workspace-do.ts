@@ -93,6 +93,7 @@ import {
   type AutomationSummary,
   type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
+  type PersonalOrder,
   type SpaceErrorCode,
   type SpaceSnapshot,
   type Workstream,
@@ -589,7 +590,7 @@ import {
   WorkspaceSpaceBootstrapPageSchema,
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapSettleRequestSchema,
-  WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceContainerOrderResultSchema,
   WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
@@ -600,7 +601,7 @@ import {
   WorkspaceSpaceMembershipSettleRequestSchema,
   WorkspaceSpaceMutationResultSchema,
   WorkspaceSpacePresentationRequestSchema,
-  WorkspaceSpaceReorderRequestSchema,
+  WorkspaceContainerOrderRequestSchema,
   WorkspaceSpaceRequestSchema,
   WorkspaceSpaceIntentFailureRequestSchema,
   WorkspaceSpaceIntentReceiptRequestSchema,
@@ -619,7 +620,7 @@ import {
   type WorkspaceSpaceBootstrapFinalizeResult,
   type WorkspaceSpaceBootstrapPage,
   type WorkspaceSpaceBootstrapSettleRequest,
-  type WorkspaceSpaceDirectoryResult,
+  type WorkspaceContainerOrderResult,
   type WorkspaceSpaceGeneralResult,
   type WorkspaceSpaceListRequest,
   type WorkspaceSpaceMembersRequest,
@@ -630,7 +631,7 @@ import {
   type WorkspaceSpaceMembershipSettleRequest,
   type WorkspaceSpaceMutationResult,
   type WorkspaceSpacePresentationRequest,
-  type WorkspaceSpaceReorderRequest,
+  type WorkspaceContainerOrderRequest,
   type WorkspaceSpaceRequest,
   type WorkspaceSpaceIntentFailureRequest,
   type WorkspaceSpaceIntentReceiptRequest,
@@ -5837,17 +5838,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  async reorderSpaces(input: WorkspaceSpaceReorderRequest): Promise<WorkspaceSpaceDirectoryResult> {
+  /**
+   * Put one container's items in the order this person asked for.
+   *
+   * One RPC for the Organization's Spaces, a Space's Channels and a Channel's
+   * Breakouts, because the authority's job is identical for all three — check
+   * who is asking, keep the items that belong in that container, write the
+   * positions — and only the middle step differs by kind. Three RPCs would have
+   * been three membership rechecks and three republications to keep in step.
+   *
+   * The refusal is the one every Space write takes: an active non-guest member
+   * of this Organization. A Breakout's order is not a Space fact, but it is
+   * kept behind the same gate on purpose — the rows live in this object, they
+   * ride the Space snapshot, and a second authorization rule for one of three
+   * kinds is a second thing to get wrong.
+   *
+   * The republication is what makes the order the *person's* rather than the
+   * window's: every socket this member holds is re-sent their whole ordering,
+   * so a second window follows a drag made in the first without a reload. It
+   * goes to those sockets and no others. An arrangement is one person's view
+   * preference and no part of it is visible to anybody else, while a snapshot
+   * costs a `list()` transaction and a full directory serialization per socket
+   * — so an Organization-wide fan-out would charge every member for it, and a
+   * held Alt+Arrow would charge them once per step.
+   *
+   * The Organization-wide waterline still advances, because there is one and
+   * these rows are behind it. That is what the actor's *other* sessions test
+   * the snapshot against, and a snapshot they had already passed is one they
+   * would drop. Everybody else re-applies a directory that did not change for
+   * them the next time anything at all republishes — which is a comparison,
+   * not a redraw, and is the price of one waterline rather than one per person.
+   */
+  async reorderContainer(input: WorkspaceContainerOrderRequest): Promise<WorkspaceContainerOrderResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceReorderRequestSchema, input, "reorder_spaces");
+    const request = parseRpcInput(WorkspaceContainerOrderRequestSchema, input, "reorder_container");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
-    const result = WorkspaceSpaceDirectoryResultSchema.parse({
+    const result = WorkspaceContainerOrderResultSchema.parse({
       ok: true,
-      directory: this.spaceStorage().reorder(request.userId, request.order.spaceIds),
+      order: this.spaceStorage().writeOrder(request.workspaceId, request.userId, request.order),
     });
-    this.publishSpaceSnapshot();
+    this.publishSpaceSnapshot(request.userId);
     return result;
   }
 
@@ -6229,7 +6261,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
-    const space = storage.restore(request.userId, request.spaceId);
+    const space = storage.restore(request.workspaceId, request.userId, request.spaceId);
     if (space === false) {
       return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
@@ -11173,14 +11205,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `spacesReady` rides along because a Space write can be the write that
    * finishes the cutover — a client holding `false` would otherwise keep
    * showing the Organization-opening state until it reconnected.
+   *
+   * `onlyUserId` narrows the audience to one person's own sessions, for a write
+   * that changed nothing anybody else can see. Everything here is per viewer
+   * and costs a `list()` transaction plus a full directory serialization per
+   * socket, so a change to one person's view preference published to all of
+   * them is that work times the Organization — for a snapshot identical to the
+   * one every other person already holds.
    */
-  private publishSpaceSnapshot(): void {
+  private publishSpaceSnapshot(onlyUserId?: string): void {
     const occurredAt = new Date().toISOString();
     // An open workspace socket is the authorization. Access revocation closes
     // it through the one shared revocation path; do not add a D1 read here.
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
+      if (onlyUserId !== undefined && attachment.userId !== onlyUserId) continue;
       try {
         socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
           type: "workspace_space_snapshot",
@@ -11212,17 +11252,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private spacesFor(attachment: WorkspaceSocketAttachment): {
     spaces: SpaceSnapshot;
+    ordering: PersonalOrder;
     spacesReady: boolean;
   } {
     if (attachment.accessClass === "guest") {
       return {
         spaces: { active: { waterline: 0, items: [] }, inactive: { waterline: 0, items: [] } },
+        ordering: [],
         spacesReady: true,
       };
     }
     const spaces = this.spaceStorage();
+    // `list` first, and not for tidiness: it is the read that gives a newly
+    // visible Space its row in the Organization's order, so a read of the
+    // orders taken ahead of it would answer without the Space the directory
+    // beside it is about to carry.
+    const active = spaces.list(attachment.workspaceId, attachment.userId);
     return {
-      spaces: { active: spaces.list(attachment.userId), inactive: spaces.listInactive(attachment.userId) },
+      spaces: { active, inactive: spaces.listInactive(attachment.userId) },
+      ordering: spaces.readOrders(attachment.userId),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

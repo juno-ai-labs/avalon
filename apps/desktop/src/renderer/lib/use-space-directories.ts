@@ -1,7 +1,8 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import type { SpaceDirectory } from '@rally/contracts';
+import type { PersonalOrder, SpaceDirectory } from '@rally/contracts';
 import {
   INACTIVE_SPACES_QUERY_KEY,
+  PERSONAL_ORDER_QUERY_KEY,
   SPACES_QUERY_KEY,
   SPACES_READY_QUERY_KEY,
 } from './sidebar-list-store';
@@ -47,4 +48,23 @@ export function useSpacesReady(): boolean {
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   }).data ?? true;
+}
+
+/**
+ * Every list this person has arranged by hand, as the workspace socket last
+ * delivered it.
+ *
+ * Empty until a payload arrives, and empty for a guest, who is sent no Space
+ * state at all — which draws every list in its natural order rather than
+ * leaving a surface waiting for an answer that is not coming.
+ */
+export function usePersonalOrder(): PersonalOrder {
+  return useQuery<PersonalOrder>({
+    queryKey: PERSONAL_ORDER_QUERY_KEY,
+    queryFn: () => {
+      throw new Error('personal-order is pushed by the organization socket, never fetched');
+    },
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  }).data ?? [];
 }

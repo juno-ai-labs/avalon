@@ -3,7 +3,9 @@ import clsx from 'clsx';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
+  type ContainerOrder,
   type CreateSpaceRequest,
+  type PersonalOrder,
   type SpaceColorKey,
   type SpaceIconKey,
   type SpaceSummary,
@@ -13,10 +15,12 @@ import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/compone
 import { SPACE_SCOPE_OPTIONS } from '@rally/ui/components/space-dashboard';
 
 import { compareWorkstreamRecency } from '../lib/format';
+import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import type { WorkstreamRowDrag } from './sidebar';
 import type { WorkstreamSummary } from '../lib/types';
 
 /**
@@ -32,6 +36,7 @@ import type { WorkstreamSummary } from '../lib/types';
  */
 const spaceSectionFallbackCopy = {
   reorder: 'Spaces couldn’t be reordered.',
+  reorder_channels: 'The channels in that space couldn’t be reordered.',
   add_channel: 'That channel couldn’t be added to the space.',
 } as const;
 
@@ -69,10 +74,32 @@ interface SpaceSidebarSectionProps {
   onRetry: () => void;
   onCreate: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannel: (spaceId: string, workstreamId: string) => Promise<void>;
-  onReorder: (spaceIds: string[]) => Promise<void>;
+  /** One write for both lists this section arranges; see {@link ContainerOrder}. */
+  onReorder: (order: ContainerOrder) => Promise<void>;
+  /** Every list this person has arranged, including the two drawn here. */
+  ordering: PersonalOrder;
   onRestore: (spaceId: string) => Promise<void>;
-  /** Placements use the same row the rest of the sidebar does. */
-  renderWorkstream: (workstream: WorkstreamSummary) => ReactNode;
+  /**
+   * The Organization's Channel list is paged, and an expanded Space is the one
+   * surface that can say the page in hand is not enough.
+   *
+   * The sidebar's own trigger is the nav's scroll, which reached the end of the
+   * time-grouped list of every Channel. That list is gone for a member, so
+   * their nav is short and the scroll rarely gets near the bottom: a Space
+   * holding 60 Channels would list the 43 that happened to be on page one and
+   * offer no way to ask for the rest. `channelCount` is the Organization's
+   * count rather than this viewer's, so "short" is not proof anything is
+   * missing — but it is enough to keep asking while pages remain, and pages
+   * running out is what stops it.
+   */
+  hasMoreChannels: boolean;
+  loadingMoreChannels: boolean;
+  onLoadMoreChannels?: (() => void) | undefined;
+  /**
+   * Placements use the same row the rest of the sidebar does — and, inside an
+   * expanded Space, the same drag the pinned list uses.
+   */
+  renderWorkstream: (workstream: WorkstreamSummary, drag?: WorkstreamRowDrag) => ReactNode;
 }
 
 /**
@@ -100,7 +127,11 @@ export function SpaceSidebarSection({
   onCreate,
   onAddChannel,
   onReorder,
+  ordering,
   onRestore,
+  hasMoreChannels,
+  loadingMoreChannels,
+  onLoadMoreChannels,
   renderWorkstream,
 }: SpaceSidebarSectionProps): React.JSX.Element {
   const location = useLocation();
@@ -122,9 +153,36 @@ export function SpaceSidebarSection({
   const [sectionFailure, setSectionFailure] = useState<string | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
-  const ordered = dragOrder
-    ? dragOrder.flatMap((id) => spaces.find((space) => space.id === id) ?? [])
-    : spaces;
+  /**
+   * The arrangement a Channel drag is building inside one Space's placements,
+   * and which Space's it is.
+   *
+   * `dropped` is what tells a reorder from a placement. `dragend` fires on the
+   * row the drag started from wherever it ended, so without it a Channel
+   * dragged out of this Space onto another would also commit the arrangement
+   * the pointer happened to build inside this list on its way out.
+   */
+  const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; ids: string[] } | null>(null);
+  const placementDrag = useRef<{ spaceId: string; workstreamId: string; dropped: boolean } | null>(null);
+  const spaceContainer = { kind: 'organization' as const };
+  // The Space directory arrives already sorted by these same rows, and is
+  // arranged here anyway: it is what makes a drag something this component can
+  // show before the server has answered, and what makes all three hand-ordered
+  // lists one rule rather than one rule and one convention.
+  const storedSpaces = orderByStoredIds(
+    spaces,
+    storedOrderFor(ordering, spaceContainer),
+    (space) => space.id,
+  );
+  const storedSpaceIds = storedSpaces.map((space) => space.id);
+  // Two orders, and the difference between them is what a drop commits: the
+  // one the server last confirmed, and the one the pointer is building on top
+  // of it. Comparing a finished drag against the second would compare it with
+  // itself and conclude nothing moved. The rule is applied once — running it
+  // again over its own output is idempotent and reads as a second rule.
+  const ordered = dragOrder === null
+    ? storedSpaces
+    : orderByStoredIds(spaces, dragOrder, (space) => space.id);
   const openSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   // Opening a Space's dashboard expands its row even if it was collapsed by
   // hand the last time it was open: the exception was about that visit.
@@ -136,6 +194,26 @@ export function SpaceSidebarSection({
       return next;
     });
   }, [openSpaceId]);
+
+  /** Whether this Space's placements are drawn, which is the route unless a reader said otherwise. */
+  const isOpen = (space: SpaceSummary): boolean =>
+    expansion[space.id] ?? (location.pathname === `/spaces/${space.id}`
+      || location.pathname.startsWith(`/spaces/${space.id}/`));
+  // An expanded Space listing fewer Channels than the Organization says it
+  // holds. Not proof that a page is missing — the count is not viewer-scoped —
+  // and it does not have to be: what it costs is asking for a page that turns
+  // out to hold nothing for this Space, and what stops it is running out of
+  // pages rather than the count ever being reached.
+  const expandedShortOfPages = ordered.some((space) => isOpen(space)
+    && workstreams.filter((workstream) => workstream.spaceIds.includes(space.id)).length
+      < space.channelCount);
+  useEffect(() => {
+    // Guarded on the in-flight flag as well as on the cursor: each page that
+    // arrives runs this again, and without it the same page would be asked for
+    // once per render until the first answer landed.
+    if (!expandedShortOfPages || !hasMoreChannels || loadingMoreChannels) return;
+    onLoadMoreChannels?.();
+  }, [expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
 
   const closeCreate = (): void => {
     if (saving) return;
@@ -162,20 +240,38 @@ export function SpaceSidebarSection({
     }
   };
 
-  const move = (ids: string[], id: string, position: number): string[] => {
-    const rest = ids.filter((candidate) => candidate !== id);
-    return [...rest.slice(0, position), id, ...rest.slice(position)];
-  };
-
   const commit = async (ids: string[]): Promise<void> => {
     setDragOrder(ids);
     setSectionFailure(null);
     try {
-      await onReorder(ids);
+      await onReorder({ container: spaceContainer, itemIds: ids });
     } catch (cause) {
+      // The arrangement is dropped rather than kept: the section then shows
+      // what the server actually holds, which is what this person's other
+      // windows are showing.
       setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder));
     } finally {
-      setDragOrder(null);
+      // Only while this call's arrangement is the one on screen. Two moves in
+      // quick succession overlap — two Alt+Arrows on a focused row is one
+      // gesture to a reader — and clearing unconditionally would flash the
+      // list back to an order the second has already moved past.
+      setDragOrder((current) => current === ids ? null : current);
+    }
+  };
+
+  const commitPlacements = async (spaceId: string, ids: string[]): Promise<void> => {
+    setPlacementOrder({ spaceId, ids });
+    setSectionFailure(null);
+    try {
+      await onReorder({ container: { kind: 'space', id: spaceId }, itemIds: ids });
+    } catch (cause) {
+      setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder_channels));
+    } finally {
+      // Only while this call's arrangement is the one on screen. Two moves in
+      // quick succession overlap, and clearing unconditionally would snap the
+      // list back to an order the second has already moved past.
+      setPlacementOrder((current) =>
+        current?.spaceId === spaceId && current.ids === ids ? null : current);
     }
   };
 
@@ -184,7 +280,30 @@ export function SpaceSidebarSection({
 
   return (
     <>
-      <section aria-labelledby="spaces-heading" className="sidebar-section spaces-section">
+      {/*
+        The whole section is the drop target, heading included — the rule the
+        pinned list is already under. A release anywhere a reader would call
+        "inside the list they are arranging" has to count as a drop, because
+        `dragend` now reads a release nothing accepted as a cancellation: the
+        gap between two rows, or the strip of heading above the first one,
+        would otherwise throw the arrangement away. A Channel released on a
+        Space is the other gesture and is claimed by that row, which stops the
+        event before it reaches here.
+      */}
+      <section
+        // On the section rather than on the list `div` under it, which has no
+        // role: a description hung on a `generic` element is one a screen
+        // reader is free to ignore, and a `<section>` with a name is a
+        // `region`. The pinned section says its own hint the same way.
+        aria-describedby="spaces-reorder-help"
+        aria-labelledby="spaces-heading"
+        className="sidebar-section spaces-section"
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={(event) => event.preventDefault()}
+      >
         <div className="sidebar-section-heading">
           <h2 id="spaces-heading">Spaces</h2>
           {/* Nothing to create into while the Organization is still opening;
@@ -204,8 +323,15 @@ export function SpaceSidebarSection({
         ) : spaces.length === 0 ? (
           <p className="sidebar-empty">No spaces yet</p>
         ) : (
-          <div aria-describedby="spaces-reorder-help" className="sidebar-list">
-            <p className="sr-only" id="spaces-reorder-help">Hold Alt and press the up or down arrow to reorder spaces.</p>
+          <div className="sidebar-list">
+            {/* Said once for the whole section rather than on every row: as a
+                per-row description it lands inside each link's accessible
+                name, so somebody arrowing through hears the instruction again
+                before every title. Both lists here are arranged the same way,
+                so it is one sentence about both. */}
+            <p className="sr-only" id="spaces-reorder-help">
+              Hold Alt and press the up or down arrow to move a space, or a channel within its space.
+            </p>
             {outOfDate && (
               <div className="space-sidebar-stale">
                 <p role="status">These spaces may be out of date.</p>
@@ -215,25 +341,111 @@ export function SpaceSidebarSection({
             {ordered.map((space, index) => {
               const destination = `/spaces/${space.id}`;
               const active = location.pathname === destination || location.pathname.startsWith(`${destination}/`);
-              const isExpanded = expansion[space.id] ?? active;
-              const placements = workstreams
+              const isExpanded = isOpen(space);
+              // Recency is the natural order of a placement list, and the
+              // arrangement this person committed goes in front of it: a
+              // Channel they never dragged keeps moving up as it is used, and
+              // one they did stays where they put it.
+              const natural = workstreams
                 .filter((workstream) => workstream.spaceIds.includes(space.id))
                 .sort(compareWorkstreamRecency);
+              // Two orders, and the difference between them is what a drop
+              // commits: the one the server last confirmed, and the one the
+              // pointer is building on top of it. Comparing a finished drag
+              // against the second would compare it with itself and conclude
+              // nothing moved. The rule is applied once — running it again
+              // over its own output is idempotent and reads as a second rule.
+              const storedPlacements = orderByStoredIds(
+                natural,
+                storedOrderFor(ordering, { kind: 'space', id: space.id }),
+                (workstream) => workstream.id,
+              );
+              const stored = storedPlacements.map((workstream) => workstream.id);
+              const placements = placementOrder?.spaceId === space.id
+                ? orderByStoredIds(natural, placementOrder.ids, (workstream) => workstream.id)
+                : storedPlacements;
+              const placementIds = placements.map((workstream) => workstream.id);
+              const placementRowDrag = (
+                workstream: WorkstreamSummary,
+                placementIndex: number,
+              ): WorkstreamRowDrag => ({
+                dragging: placementDrag.current?.workstreamId === workstream.id
+                  && placementDrag.current.spaceId === space.id
+                  && placementOrder?.spaceId === space.id,
+                position: `In ${space.name}, ${placementIndex + 1} of ${placements.length}.`,
+                onDragStart: (target) => {
+                  placementDrag.current = { spaceId: space.id, workstreamId: target.id, dropped: false };
+                  setPlacementOrder({ spaceId: space.id, ids: placementIds });
+                },
+                onDragOver: (targetId) => {
+                  const current = placementDrag.current;
+                  // Only a Channel that belongs to *this* list moves rows in
+                  // it. One arriving from another Space is a placement being
+                  // dropped here, and rearranging this list under it would
+                  // leave an order built around a row that is not in it.
+                  if (current === null || current.spaceId !== space.id) return;
+                  if (current.workstreamId === targetId) return;
+                  setPlacementOrder((held) => {
+                    const ids = held?.spaceId === space.id ? held.ids : placementIds;
+                    const targetPosition = ids.indexOf(targetId);
+                    if (targetPosition < 0 || ids.indexOf(current.workstreamId) === targetPosition) {
+                      return held;
+                    }
+                    return { spaceId: space.id, ids: moveWithin(ids, current.workstreamId, targetPosition) };
+                  });
+                },
+                onDrop: () => {
+                  const current = placementDrag.current;
+                  if (current === null || current.spaceId !== space.id) return false;
+                  placementDrag.current = { ...current, dropped: true };
+                  return true;
+                },
+                onDragEnd: (cancelled) => {
+                  const current = placementDrag.current;
+                  const held = placementOrder?.spaceId === space.id ? placementOrder.ids : null;
+                  placementDrag.current = null;
+                  if (held === null) return;
+                  // A release outside this list is the other meaning of the
+                  // same gesture — put this Channel in that Space — and the
+                  // Space row underneath has already taken it. Escape is the
+                  // third: backing out of a drag must not be the same thing as
+                  // finishing it.
+                  const committed = committedOrder(
+                    held, stored, cancelled || current?.dropped !== true,
+                  );
+                  if (committed === null) {
+                    setPlacementOrder(null);
+                    return;
+                  }
+                  void commitPlacements(space.id, committed);
+                },
+                onMove: (target, direction) => {
+                  const from = placementIds.indexOf(target.id);
+                  const to = from + direction;
+                  if (from < 0 || to < 0 || to >= placementIds.length) return;
+                  void commitPlacements(space.id, moveWithin(placementIds, target.id, to));
+                },
+              });
               return (
                 <SpaceRow
                   active={active}
                   drag={{
-                    onDragEnd: () => {
-                      const ids = dragOrder ?? spaces.map((item) => item.id);
+                    // Escape, or a release outside the section, must not be the
+                    // same thing as finishing the drag: the arrangement built
+                    // while the pointer crossed the other rows is abandoned
+                    // rather than persisted to every one of this person's
+                    // sessions.
+                    onDragEnd: (cancelled) => {
+                      const committed = committedOrder(dragOrder, storedSpaceIds, cancelled);
                       dragging.current = null;
-                      if (ids.join() !== spaces.map((item) => item.id).join()) void commit(ids);
+                      if (committed) void commit(committed);
                       else setDragOrder(null);
                     },
                     onDragEnter: (event) => {
                       event.preventDefault();
                       const dragged = dragging.current;
                       if (!dragged || dragged === space.id) return;
-                      setDragOrder((current) => move(current ?? spaces.map((item) => item.id), dragged, index));
+                      setDragOrder((current) => moveWithin(current ?? ordered.map((item) => item.id), dragged, index));
                     },
                     onDragStart: (event) => {
                       // A Channel dragged out of this Space's placement list
@@ -244,7 +456,7 @@ export function SpaceSidebarSection({
                       // came from.
                       if (event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)) return;
                       dragging.current = space.id;
-                      setDragOrder(spaces.map((item) => item.id));
+                      setDragOrder(ordered.map((item) => item.id));
                       event.dataTransfer.effectAllowed = 'move';
                       event.dataTransfer.setData('application/x-rally-space-id', space.id);
                     },
@@ -255,6 +467,22 @@ export function SpaceSidebarSection({
                       event.stopPropagation();
                       dragging.current = null;
                       setSectionFailure(null);
+                      // The two meanings of one gesture, told apart by where
+                      // the Channel already is: a release inside the list it
+                      // is in is a reorder, which the rows have already
+                      // handled and whose event never reaches here, and a
+                      // release anywhere else on a Space is a placement. A
+                      // Channel dropped on a Space it is already in is neither
+                      // — it is a drag that changed nothing.
+                      //
+                      // `placementIds` is what this device has loaded, so a
+                      // Channel already in the Space but outside that page
+                      // falls through and is added again. That costs a round
+                      // trip and nothing else: `prepareMembership` answers an
+                      // already-active membership with its own generation
+                      // rather than staging a second, and an order write
+                      // merges rather than replacing.
+                      if (placementIds.includes(workstreamId)) return;
                       void onAddChannel(space.id, workstreamId).catch((cause: unknown) => {
                         setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.add_channel));
                       });
@@ -283,8 +511,8 @@ export function SpaceSidebarSection({
                     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
                     event.preventDefault();
                     const to = event.key === 'ArrowUp' ? index - 1 : index + 1;
-                    if (to < 0 || to >= spaces.length) return;
-                    void commit(move(spaces.map((item) => item.id), space.id, to));
+                    if (to < 0 || to >= ordered.length) return;
+                    void commit(moveWithin(ordered.map((item) => item.id), space.id, to));
                   }}
                   onToggleExpanded={() => setOpen(space.id, !isExpanded)}
                   space={space}
@@ -298,8 +526,10 @@ export function SpaceSidebarSection({
                   {isExpanded && (placements.length === 0 && space.channelCount === 0
                     ? <p className="space-sidebar-empty">No channels</p>
                     : <SpacePlacementList spaceId={space.id}>
-                      {placements.map((workstream) => (
-                        <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
+                      {placements.map((workstream, placementIndex) => (
+                        <Fragment key={workstream.id}>
+                          {renderWorkstream(workstream, placementRowDrag(workstream, placementIndex))}
+                        </Fragment>
                       ))}
                     </SpacePlacementList>)}
                 </SpaceRow>

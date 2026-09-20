@@ -1,5 +1,7 @@
-import type { SpaceSnapshot } from '@rally/contracts';
+import type { ContainerOrder, PersonalOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
+
+import { sameContainer } from './personal-order';
 import type { AutomationSummary } from './types';
 
 /**
@@ -40,6 +42,18 @@ export const INACTIVE_SPACES_QUERY_KEY = ['spaces-inactive'] as const;
  * permanently opening.
  */
 export const SPACES_READY_QUERY_KEY = ['spaces-ready'] as const;
+
+/**
+ * Every list this viewer has arranged by hand, whatever contains it.
+ *
+ * One entry rather than one per container, because it arrives as one field on
+ * the same payload the Space directories do and is applied under the same
+ * waterline: three cache entries filled from one message would be three things
+ * a stale message could half-apply. The surfaces read a missing answer as an
+ * empty ordering, which draws every list in its natural order — what a client
+ * talking to a server without this field should show.
+ */
+export const PERSONAL_ORDER_QUERY_KEY = ['personal-order'] as const;
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -103,6 +117,10 @@ export function applyVersionedSidebarList<K extends SidebarList>(
  * client that applied them separately could render a Space in both lists or in
  * neither.
  *
+ * The ordering rides with it for the same reason and under the same test: a
+ * write can be the write that moved it, and an older payload must not put the
+ * previous arrangement back over a newer one.
+ *
  * `spacesReady` rides with the snapshot rather than having a ledger of its own.
  * A write can be the write that finishes the cutover, so the flag is only ever
  * as current as the snapshot it arrived with, and applying it under the same
@@ -112,6 +130,7 @@ export function applyVersionedSidebarList<K extends SidebarList>(
 export function applyVersionedSpaceSnapshot(
   queryClient: QueryClient,
   snapshot: SpaceSnapshot,
+  ordering: PersonalOrder,
   spacesReady: boolean,
 ): boolean {
   pinWaterlineLedger(queryClient);
@@ -125,8 +144,27 @@ export function applyVersionedSpaceSnapshot(
   );
   queryClient.setQueryData(SPACES_QUERY_KEY, snapshot.active);
   queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
+  queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, ordering);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
+}
+
+/**
+ * Put one container's newly written order in place without waiting for the
+ * snapshot that carries it.
+ *
+ * The write answers with what the authority actually stored, and that answer is
+ * the same state the republished snapshot is about to bring — so applying it
+ * here is what keeps a dropped drag order from flashing the old arrangement in
+ * the frame between the response and the socket message. It moves no waterline,
+ * because it is not a snapshot: the republication that follows still applies
+ * over it, and an older one is still refused.
+ */
+export function applyContainerOrder(queryClient: QueryClient, order: ContainerOrder): void {
+  queryClient.setQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY, (current = []) => [
+    ...current.filter((entry) => !sameContainer(entry.container, order.container)),
+    order,
+  ]);
 }
 
 /**
