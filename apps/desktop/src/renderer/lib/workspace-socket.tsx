@@ -117,6 +117,8 @@ export interface WorkstreamPage {
 export interface SidebarConnect {
   generation: number;
   nextCursor: string | null;
+  /** This connection has delivered Space authority, not only the compatible sidebar fields. */
+  spacesLive: boolean;
 }
 
 /**
@@ -428,6 +430,7 @@ export function WorkspaceSocketProvider({
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
+        spacesLive: sidebar.spaces !== undefined,
       }));
       return unaccountedFor && !wholeDirectory;
     };
@@ -485,6 +488,10 @@ export function WorkspaceSocketProvider({
           if (stopped || socket !== next) return;
           socketTelemetry.connected(attempt);
           attempt = 0;
+          // A new transport has not inherited the prior one's Space snapshot.
+          // Keep cached rows visible, but withhold writes until this subscribe
+          // response (or a later Space push) establishes current authority.
+          setSidebarConnect((current) => current ? { ...current, spacesLive: false } : current);
           setState('connected');
           next.send(JSON.stringify({
             type: 'subscribe',
@@ -635,6 +642,7 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
             );
+            setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
             return;
           }
           const spaceConversations = safeParseSocketEvent(
