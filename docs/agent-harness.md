@@ -1285,7 +1285,7 @@ proof.
 | `apps/api/test/workstream-tool-receipt-storage.test.ts` | `admit`'s decisions against real migrations, including `resume_write` for an unsettled `provider_key` write and the two guards that keep it narrow: the declared class, and the admitted provider key. |
 | `apps/api/test/terminal-command-recovery.test.ts` | That re-entry follows `HarnessTool.reenterable` rather than a tool name, re-enters over the receipt's own effect identity, re-submits a `provider_key` write under the key it was admitted with, and consults `reconcileEffect` first — running the executor only on `not_landed`. |
 | `apps/api/test/terminal-resource-bridge.test.ts` | The publication reconciler against real WorkspaceDO resource schema and its capture triggers: a publication this run made in the window, one that predates it, one revised away by a later run, another run's revision inside the window, and a path never published. |
-| `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. |
+| `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. Also the repair that holds no lease, which settles `no_repair_lease` rather than asking a question it could not record the answer to. |
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
@@ -1479,7 +1479,21 @@ before it runs anything. `beforeToolCall` does that on every ordinary dispatch
 and the repair path bypasses the hook entirely, so it calls
 `assertRunAuthorityStillValid` itself; without it a principal who lost
 membership between the interruption and the repair would still have their write
-executed. Next, a `null` idempotency class — an
+executed.
+
+Re-entry also needs a *lease*, not just the fence a settlement runs under, and
+the two are separate parameters because one caller has only the fence. The
+loop-failure settlement path reconstructs an owner rather than minting a lease,
+deliberately — handing a lease back to `ToolReceiptStorage#fence` would be
+asking the row to vouch for itself, since that fence compares what it is given
+against the same row it read. That is enough to settle a receipt and not enough
+to hold a claim open while a tool runs, so a repair without a lease leaves an
+interrupted write ambiguous with `no_repair_lease` rather than obtaining an
+answer it has no claim to record. The reason is named rather than folded into
+the bare code because "nobody asked" and "the question failed" are different
+repairs and only one is worth chasing.
+
+Next, a `null` idempotency class — an
 unparseable plan, or a receipt written before the class was read back — is
 treated as `record_before_execute`, the class that assumes least. A `completed`
 or `failed` receipt is never re-entered: the first has a durable result to
