@@ -165,6 +165,14 @@ export function SpaceSidebarSection({
   const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; ids: string[] } | null>(null);
   const placementDrag = useRef<{ spaceId: string; workstreamId: string; dropped: boolean } | null>(null);
   const spaceContainer = { kind: 'organization' as const };
+  // Restoring a Space is a write, so the list offers only the ones this person
+  // could actually restore. An archive stages every membership out of `active`
+  // before it commits, so today nothing reaches this list by the third
+  // visibility clause — but `listInactive` renders the predicate anyway so a
+  // change to what an archive stages carries, and if one ever does, a row here
+  // is a control that can only fail: `canEdit` refuses the restore, which is
+  // the case removed from every other Space surface in this file.
+  const restorableSpaces = inactiveSpaces.filter((space) => space.reach !== 'through_channel');
   // The Space directory arrives already sorted by these same rows, and is
   // arranged here anyway: it is what makes a drag something this component can
   // show before the server has answered, and what makes all three hand-ordered
@@ -533,10 +541,15 @@ export function SpaceSidebarSection({
                 >
                   {/* The sidebar holds one page of the Organization's
                       Channels, so an expansion can list fewer than the Space
-                      has. The count is not viewer-scoped and cannot be shown
-                      as a number, but it is enough to keep a Space that holds
-                      Channels this device has not loaded from claiming to be
-                      empty. */}
+                      has. The count is read for its zero and nothing else: it
+                      keeps a Space holding Channels this device has not loaded
+                      from claiming to be empty. It is the Organization's count
+                      for a Space this person is in — a number they have no
+                      business being shown, because it may exceed the rows they
+                      can see — and this viewer's own for one they reach
+                      through a Channel in it, where it is never zero at all.
+                      Two readings of one number, and neither is a number worth
+                      drawing. */}
                   {isExpanded && (placements.length === 0 && space.channelCount === 0
                     ? <p className="space-sidebar-empty">No channels</p>
                     : <SpacePlacementList spaceId={space.id}>
@@ -555,7 +568,7 @@ export function SpaceSidebarSection({
       </section>
       <Modal
         footer={<>
-          {inactiveSpaces.length > 0 && <Button disabled={saving} onClick={() => { closeCreate(); setRecoveryOpen(true); }}>Restore archived space</Button>}
+          {restorableSpaces.length > 0 && <Button disabled={saving} onClick={() => { closeCreate(); setRecoveryOpen(true); }}>Restore archived space</Button>}
           <Button disabled={saving} onClick={closeCreate}>Cancel</Button>
           <Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create space</Button>
         </>}
@@ -587,7 +600,7 @@ export function SpaceSidebarSection({
         open={recoveryOpen}
         title="Restore archived space"
       >
-        <div className="space-recovery-list">{inactiveSpaces.map((space) => (
+        <div className="space-recovery-list">{restorableSpaces.map((space) => (
           <Button key={space.id} onClick={() => {
             setModalFailure(null);
             void onRestore(space.id)

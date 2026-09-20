@@ -630,8 +630,12 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
         `Everyone who can read “${channelTitle}” must be able to use this resource`);
     case "space_bootstrap_pending":
       return new ApiError(409, code, "This Organization is still being prepared");
+    // The Space half of this table's one code that answers a read as well as a
+    // write: a guest or a removed member is refused seeing a Space by the same
+    // gate that refuses somebody reaching one through a Channel in it changing
+    // it. The sentence has to be true of both.
     case "space_access_denied":
-      return new ApiError(403, code, "You cannot change this Space");
+      return new ApiError(403, code, "Your access to that space does not allow this");
     case "space_conversation_unreachable":
       return new ApiError(409, code,
         `“${channelTitle}” could not be asked whether this audience may read it`);
