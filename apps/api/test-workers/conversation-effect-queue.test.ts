@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationEffectEnvelopeSchema,
   EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+  ParentEffectEnvelopeSchema,
   asAutomationId,
   asSubstreamId,
   asUserId,
@@ -109,6 +110,10 @@ function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableO
 interface QueueGate {
   /** While true the object's producer refuses, so its drain defers rows instead of deleting them. */
   parked: boolean;
+}
+
+interface TestableWorkstreamDO {
+  applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void;
 }
 
 /**
@@ -326,30 +331,13 @@ describe("a conversation object's outbox", () => {
 describe("a parent with two children", () => {
   it("retains private child unread locally without publishing it into Main's directory", async () => {
     const parent = workstreamStub(SIBLING_WORKSTREAM_ID);
-    await parkEffectQueue(parent);
     const reserve = {
       workspaceId: WORKSPACE_ID,
       parentId: SIBLING_WORKSTREAM_ID,
       createdByUserId: USER_ID,
       authorityGeneration: 1,
     };
-    await parent.reserveChild({
-      ...reserve,
-      substreamId: asSubstreamId("0"),
-      kind: "main",
-      directory: {
-        title: "Two children",
-        description: "",
-        scope: "personal",
-        systemKind: null,
-        emailAddress: null,
-        titleStatus: "settled",
-        createdAt: "2026-09-01T12:00:00.000Z",
-      },
-    });
-    await parent.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
-
-    const result = await consumeEffectBodies(env, [
+    const childEffects = [
       childEnvelope({
         parentKind: "workstream",
         parentId: SIBLING_WORKSTREAM_ID,
@@ -364,31 +352,71 @@ describe("a parent with two children", () => {
         sourceVersion: 1,
         effect: viewerEffect(3),
       }),
-    ]);
-    expect(result).toEqual({ acked: 2, retried: 0 });
+    ];
+
+    // Reserve, apply, and capture in one object invocation. Returning between
+    // those steps lets the alarm legitimately drain one projection into the
+    // test Queue before the assertion can read it, which made this test race
+    // the behavior it was trying to inspect. The Queue consumer and the real
+    // alarm drain are covered above; this case is about which rows the parent
+    // publishes for Main and a Breakout.
+    const queued = await runInDurableObject(parent, async (instance, state) => {
+      await instance.reserveChild({
+        ...reserve,
+        substreamId: asSubstreamId("0"),
+        kind: "main",
+        directory: {
+          title: "Two children",
+          description: "",
+          scope: "personal",
+          systemKind: null,
+          emailAddress: null,
+          titleStatus: "settled",
+          createdAt: "2026-09-01T12:00:00.000Z",
+        },
+      });
+      await instance.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
+      const testable = instance as unknown as TestableWorkstreamDO;
+      for (const envelope of childEffects) testable.applyChildEnvelope(envelope.substreamId, envelope);
+      const rows = state.storage.sql.exec<{ message_id: string; payload_json: string }>(
+        `SELECT message_id, payload_json FROM durable_outbox
+          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
+          ORDER BY CASE json_extract(payload_json, '$.effect.kind')
+                     WHEN 'directory_common' THEN 0
+                     WHEN 'directory_user' THEN 1
+                     ELSE 2
+                   END,
+                   created_at, message_id`,
+      ).toArray();
+      for (const row of rows) {
+        state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
+      }
+      return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+    });
 
     const perChild = await runInDurableObject(parent, (_instance, state) => state.storage.sql.exec<{
       substream_id: string;
     }>(`SELECT substream_id FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`, USER_ID).toArray());
     expect(perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
 
-    const queued = (await pendingParentEffects(parent))
-      .filter((envelope) => envelope.effect.kind === "directory_user");
+    const queuedViewerEffects = queued.filter((envelope) => envelope.effect.kind === "directory_user");
     // Main advances the Channel row, while the Breakout carries its own tagged
     // projection to the Space dashboard. The Breakout must not be folded into
     // Main even though both projections leave the parent.
-    expect(queued).toHaveLength(2);
-    expect(queued.find((envelope) => envelope.substreamId === undefined)).toMatchObject({
+    expect(queuedViewerEffects).toHaveLength(2);
+    expect(queuedViewerEffects.find((envelope) => envelope.substreamId === undefined)).toMatchObject({
       sourceVersion: 2,
       effect: { kind: "directory_user", unreadCount: 2, listable: true },
     });
-    expect(queued.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
+    expect(queuedViewerEffects.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
       substreamId: SIBLING_CHILD_ID,
       sourceVersion: 1,
       effect: { kind: "directory_user", unreadCount: 3, listable: true },
     });
 
-    await deliverParentEffectsInOrder(env, parent);
+    for (const envelope of queued) {
+      expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 1, retried: 0 });
+    }
     const viewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
       unread_count: number;
       waterline: number;
