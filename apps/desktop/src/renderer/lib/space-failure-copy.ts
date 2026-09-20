@@ -47,6 +47,10 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   // space's own authority saying nothing — nothing about the request, the
   // organization or the channels needs changing before a retry.
   space_authority_unreachable: 'That space couldn’t be reached to make the change. Try again in a moment.',
+  // Named rather than folded into `space_access_denied`: nothing is wrong with
+  // this person's permission, and the fix is one word of the request — put
+  // themselves back on the list.
+  space_audience_self_excluded: 'You can’t make a space private without yourself in it. Add yourself back to keep access.',
   // Nothing a person did, and nothing they can fix: a stale cursor is the
   // client asking for a page of an ordering that has moved on. The sentence is
   // what the reader should do, which is look at the list again.

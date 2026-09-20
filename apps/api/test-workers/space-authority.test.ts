@@ -1044,6 +1044,65 @@ describe("WorkspaceDO space authority", () => {
     member.socket.close();
   });
 
+  it("given an audience that leaves out its own caller, when the Space is narrowed, then it is refused and the Space does not move", async () => {
+    const personal = await reserve("Side work", "personal");
+
+    // `personal` admits its participants and nobody else, so this request
+    // would hand its own caller a Space they can no longer change and — with
+    // no Channel in it they can read — no longer see. Refused before the
+    // write, because the walk that follows would carry it to every member
+    // Channel and the one person who would ask for it back is the one who
+    // cannot.
+    await expect(workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: personal,
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [MEMBER] },
+    })).resolves.toMatchObject({ ok: false, code: "space_audience_self_excluded" });
+
+    // Nothing was written: the roster and the revision are as its own
+    // participant left them.
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
+    })).resolves.toMatchObject({
+      ok: true,
+      space: { reach: "participant", scope: "personal", revision: 1, participants: [{ userId: OWNER }] },
+    });
+
+    // And the same narrowing *with* the caller on the list is the ordinary
+    // operation, so the refusal above is about the omission rather than about
+    // narrowing at all.
+    await expect(workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: personal,
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    })).resolves.toMatchObject({ ok: true, space: { scope: "personal" } });
+  });
+
+  it("given a Space this viewer has no reach into, when its summary is read, then the row is not rendered at all", async () => {
+    const personal = await reserve("Side work", "personal");
+    const organization = await reserve("Company", "workspace");
+    await publishPersonalChannel(CHANNEL_B, OWNER);
+    await place(personal, CHANNEL_B);
+
+    // The one read that renders a single Space row goes through the same
+    // visibility predicate the directory does, rather than through a second
+    // gate beside it. Without the filter on that read the row still comes back
+    // — labelled `through_channel`, which is what the reach column says about
+    // any row that reaches it, whether or not it is reachable at all.
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal,
+    })).resolves.toMatchObject({ ok: false, code: "space_not_found" });
+    // And the Organization-wide one beside it is answered, so the refusal is
+    // about this viewer's reach rather than about the read being broken.
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: organization,
+    })).resolves.toMatchObject({ ok: true, space: { reach: "organization" } });
+  });
+
   it("given a Space reached through a Channel, when a Channel they cannot see moves in it, then no nudge names it", async () => {
     const personal = await reserve("Side work", "personal");
     const holding = await reserve("Company", "workspace");

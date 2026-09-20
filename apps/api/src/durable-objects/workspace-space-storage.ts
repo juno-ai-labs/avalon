@@ -844,7 +844,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.advanceWaterline(createdAt);
-      return this.space(spaceId, request.userId);
+      return this.writtenSpace(spaceId, request.userId);
     });
   }
 
@@ -873,7 +873,7 @@ export class WorkspaceSpaceStorage {
     } catch (error) {
       const winner = this.generalSpaceId();
       if (winner === null) throw error;
-      return { space: this.space(winner, request.userId), created: false };
+      return { space: this.writtenSpace(winner, request.userId), created: false };
     }
   }
 
@@ -1177,9 +1177,14 @@ export class WorkspaceSpaceStorage {
     return new Set(this.listableChannelIds(userId, placed));
   }
 
-  /** One Space as this viewer may see it, archived or not. */
+  /**
+   * One Space as this viewer may see it, archived or not.
+   *
+   * The read is its own gate: {@link WorkspaceSpaceStorage.space} renders the
+   * visibility predicate, so asking `canRead` first would be the same question
+   * twice and a second place for the answer to drift.
+   */
   readable(userId: string, spaceId: string): SpaceSummary | false {
-    if (!this.canRead(userId, spaceId)) return false;
     return this.space(spaceId, userId);
   }
 
@@ -1216,9 +1221,24 @@ export class WorkspaceSpaceStorage {
    * `directory_user` projection writes: the Space's own object decides who its
    * participants are, and this is the provisional copy of that answer.
    */
-  applyAudience(request: WorkspaceSpaceAudienceNoteRequest, now = Date.now()): SpaceSummary | false {
+  applyAudience(
+    request: WorkspaceSpaceAudienceNoteRequest,
+    now = Date.now(),
+  ): SpaceSummary | "self_excluded" | false {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(request.userId, request.spaceId)) return false;
+      // Before the write, because there is no undo: `personal` admits its
+      // participants and nobody else, so a caller who leaves themselves off
+      // the list has made a Space they can no longer change — and, unless a
+      // Channel in it is one they can read, no longer see. The walk would
+      // carry it to every member Channel and the one person who would ask for
+      // it back is the one who cannot. Removing somebody *else* is a different
+      // rule and belongs to an Organization owner or admin, which the service
+      // decides because it is the layer that knows the caller's role.
+      if (request.audience.scope === "personal"
+        && !request.audience.participantUserIds.includes(request.userId)) {
+        return "self_excluded";
+      }
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE workspace_space_directory
             SET scope = ?, revision = revision + 1, updated_at = ?
@@ -1700,11 +1720,11 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       ).toArray()[0];
       if (existing?.state === "active") {
-        return {
-          ok: true,
-          space: this.space(request.spaceId, request.userId),
-          membershipGeneration: existing.generation,
-        };
+        const space = this.space(request.spaceId, request.userId);
+        if (space === false) {
+          return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+        }
+        return { ok: true, space, membershipGeneration: existing.generation };
       }
       const membershipGeneration = (existing?.generation ?? 0) + 1;
       if (existing) {
@@ -1730,7 +1750,11 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration };
+      const space = this.space(request.spaceId, request.userId);
+      if (space === false) {
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      return { ok: true, space, membershipGeneration };
     });
   }
 
@@ -1847,7 +1871,11 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), membershipGeneration: generation };
+      const space = this.space(request.spaceId, request.userId);
+      if (space === false) {
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      return { ok: true, space, membershipGeneration: generation };
     });
   }
 
@@ -1974,7 +2002,11 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(spaceId, userId) };
+      const space = this.space(spaceId, userId);
+      if (space === false) {
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      return { ok: true, space };
     });
   }
 
@@ -2069,7 +2101,11 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         const targets = this.pendingTargets(request, existing.generation);
         this.stageDefaultPublications(targets, request.userId, now);
-        return { ok: true, space: this.space(request.spaceId, request.userId), targets };
+        const space = this.space(request.spaceId, request.userId);
+        if (space === false) {
+          return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+        }
+        return { ok: true, space, targets };
       }
       const defaultGeneration = (existing?.generation ?? 0) + 1;
       if (existing) {
@@ -2112,7 +2148,11 @@ export class WorkspaceSpaceStorage {
       for (const target of targets) this.insertDefaultTarget(target, now);
       this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
-      return { ok: true, space: this.space(request.spaceId, request.userId), targets };
+      const space = this.space(request.spaceId, request.userId);
+      if (space === false) {
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      return { ok: true, space, targets };
     });
   }
 
@@ -3263,24 +3303,58 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * One Space as this viewer is answered with it.
+   * The summary for a Space the statements above just wrote, where "not
+   * visible to you" is not an answer.
+   *
+   * {@link WorkspaceSpaceStorage.space} refuses a Space this viewer may not
+   * see, which is the right answer everywhere it can happen. These two callers
+   * wrote the directory row and this caller's own participant row in the same
+   * transaction, so a refusal here is one of those statements not having
+   * landed — thrown in the shape the other broken-invariant guards in this
+   * object are thrown, because a Space summary is the one thing it must not
+   * invent.
+   */
+  private writtenSpace(spaceId: string, userId: string): SpaceSummary {
+    const space = this.space(spaceId, userId);
+    if (space === false) throw new Error("workspace_space_unreadable_after_write");
+    return space;
+  }
+
+  /**
+   * One Space as this viewer is answered with it, or `false` when it is not
+   * theirs to see.
    *
    * Takes the viewer because the summary now carries one viewer-dependent
-   * field. Every caller is a mutation answering the person who asked for it,
-   * or a read that has already decided this person may see the Space — the
-   * reach is the *why* of that decision rather than a second one.
+   * field, and renders {@link spaceVisibleToViewerSql} because
+   * {@link spaceReachSql} is only sound beside it: its `ELSE 'through_channel'`
+   * is the label for a row that reached it having passed the filter, so a row
+   * selected without the filter is labelled `through_channel` whether or not
+   * it is reachable at all. This was the one renderer without it, and the one
+   * mutation that can take its own caller's visibility away answers through
+   * it — an audience change to `personal` that leaves the actor off the list
+   * used to answer them a summary labelled `through_channel`, with an empty
+   * participant list and a viewer-scoped count that could be zero, which the
+   * contract says such a viewer's count never is.
+   *
+   * Every other caller ran `canEdit` or `canRead` in this same transaction and
+   * changed nothing about who may see the Space, so their `false` is those two
+   * predicates disagreeing; each passes it on as its own "no such Space"
+   * rather than rendering a row it cannot account for.
    */
-  private space(spaceId: string, userId: string): SpaceSummary {
-    return this.summary(this.storage.sql.exec<SpaceRow>(
+  private space(spaceId: string, userId: string): SpaceSummary | false {
+    const row = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
          FROM workspace_space_directory space
          LEFT JOIN workspace_space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
-        WHERE space.space_id = ?`,
+        WHERE space.space_id = ?
+          AND ${spaceVisibleToViewerSql("space", "viewer")}`,
       userId,
       spaceId,
-    ).one(), userId);
+      userId,
+    ).toArray()[0];
+    return row === undefined ? false : this.summary(row, userId);
   }
 
   /**
