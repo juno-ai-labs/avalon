@@ -110,7 +110,7 @@ interface SidebarProps {
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
   onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
-  onImportChannel?: (input: { name: string; spaceId: string; url: string }) => Promise<void>;
+  onImportChannel?: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
@@ -1835,7 +1835,8 @@ export function Sidebar({
               rather than when the fade ends, or the rail would offer two New
               work stream buttons for a quarter of a second. */}
           <NewWorkstreamMenu
-            spaces={spaces}
+            canCreateSpace={spaces !== undefined && spacesReady}
+            spaces={placementSpaces}
             onCreateChannel={onCreateChannel}
             onCreateSpace={async (name) => {
               const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
@@ -1876,7 +1877,8 @@ export function Sidebar({
             // covered.
             <NewWorkstreamMenu
               tooltipSide="right"
-              spaces={spaces}
+              canCreateSpace={spaces !== undefined && spacesReady}
+              spaces={placementSpaces}
               onCreateChannel={onCreateChannel}
               onCreateSpace={async (name) => {
                 const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
@@ -1906,7 +1908,8 @@ export function Sidebar({
         >
           {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NewWorkstreamMenu
-              spaces={spaces}
+              canCreateSpace={spaces !== undefined && spacesReady}
+              spaces={placementSpaces}
               onCreateChannel={onCreateChannel}
               onCreateSpace={async (name) => {
                 const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });

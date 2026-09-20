@@ -181,13 +181,18 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
     throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
   }
   const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
+  // Placement is creation semantics, not imported-history identity. Keeping it
+  // out also preserves the content hash written by Workers from before the
+  // optional field existed, when an uncertain import is retried across rollout.
+  const { spaceIds, ...contentIdentity } = body;
   const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
     objective: body.title,
+    title: body.title,
     clientMessageId: body.clientMessageId,
     participantUserIds: [],
     scope: "personal",
-    spaceIds: body.spaceIds.map(asSpaceId),
-  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(body) });
+    spaceIds: spaceIds.map(asSpaceId),
+  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(contentIdentity) });
   return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),

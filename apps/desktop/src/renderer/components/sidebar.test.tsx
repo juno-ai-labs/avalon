@@ -3289,6 +3289,7 @@ describe('the sidebar without a recency list', () => {
     expect(screen.getByRole('heading', { name: 'Today' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Today actions' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
   it('given a channel in no visible space, when the sidebar is drawn, then it is under Other channels', () => {
@@ -3358,6 +3359,7 @@ describe('the sidebar without a recency list', () => {
     expect(screen.queryByRole('button', { name: 'Expand General' })).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Other channels' }))
       .getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
   // The section above already holds it, and a row in both would take its order
