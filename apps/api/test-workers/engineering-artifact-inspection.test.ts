@@ -156,7 +156,7 @@ beforeEach(async () => {
     at: NOW,
   });
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
-  await seedSecondInspectableWorkspace(env.DB, { workspaceId: OTHER_WORKSPACE_ID, at: NOW });
+  await seedSecondInspectableWorkspace(env.DB, { workspaceId: OTHER_WORKSPACE_ID });
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", OTHER_WORKSPACE_ID)))
     .initializeWorkspace(OTHER_WORKSPACE_ID, "wnam");
 });
@@ -297,7 +297,7 @@ describe("engineering inspection of a live web artifact's supervisor", () => {
     expect(tables).not.toContain("votes");
   });
 
-  it("refuses a stale caller generation and a quarantined workspace route", async () => {
+  it("refuses a stale caller generation and a quarantined regional authority", async () => {
     await publishArtifact();
     const inspection = bridge();
 
@@ -308,8 +308,7 @@ describe("engineering inspection of a live web artifact's supervisor", () => {
       query: { sql: "SELECT 1 AS answer", bindings: [] },
     })).toEqual({ found: false });
 
-    await env.DB.prepare(`UPDATE workspace_product_authority_routes SET state = 'quarantined' WHERE workspace_id = ?`)
-      .bind(WORKSPACE_ID).run();
+    await env.DB.prepare(`UPDATE workstream_authority_control SET phase = 'quarantined' WHERE id = 1`).run();
     expect(await inspection.resolveArtifact({ workspaceId: WORKSPACE_ID, artifactId: ARTIFACT_ID }))
       .toEqual({ found: false });
   });

@@ -29,12 +29,9 @@ type InspectionRouteEnv = Pick<Env, "AVALON_REGION" | "DB">;
  * Resolve only a workspace that the regional Worker is currently allowed to
  * serve.
  *
- * `workspace_product_authority_routes` is the retained one-time cutover
- * ledger. The cutover seeded every workspace that existed at the time, then
- * removed the trigger that populated this table. A missing row therefore
- * identifies a workspace created directly in WorkspaceDO authority after the
- * cutover; its regional `workspaces` identity is the route. When a historical
- * row does exist, it remains a fence and must be active in the open generation.
+ * WorkspaceDO names are deterministic from the regional workspace identity.
+ * The region-wide authority control is the generation and serving-contract
+ * fence; no per-workspace product route exists after the completed cutover.
  */
 export async function resolveInspectionWorkspaceRoute(
   env: InspectionRouteEnv,
@@ -46,17 +43,12 @@ export async function resolveInspectionWorkspaceRoute(
             workspace.placement_affinity, 'active' AS authority_state,
             control.generation AS authority_generation
        FROM workspaces workspace
-       LEFT JOIN workspace_product_authority_routes route
-         ON route.workspace_id = workspace.id
        JOIN workstream_authority_control control
          ON control.id = 1
         AND control.phase = 'durable_object_open'
         AND control.serving_contract_version >= control.required_serving_contract_version
         AND control.required_serving_contract_version <= ?
       WHERE workspace.id = ? AND workspace.region = ?
-        AND (route.workspace_id IS NULL OR (
-          route.state = 'active' AND route.generation = control.generation
-        ))
         AND (? IS NULL OR control.generation = ?)`,
   ).bind(
     WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
