@@ -39,7 +39,7 @@ function Route(): React.JSX.Element {
 }
 function WorkspaceView(): React.JSX.Element {
   const allowed = useConversationAdmission();
-  return <><div>Ordinary workspace</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
+  return <><div>Ordinary organization</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
 }
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -66,21 +66,21 @@ describe('new-account learning paths', () => {
     expect(screen.getByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
     expect(state.getAccount).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+    expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
   });
   it('lets exempt accounts enter without creating a journey', async () => {
     state.getAccount.mockResolvedValue({ ...state.account, eligible: false }); show();
-    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+    expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
     expect(state.journey).not.toHaveBeenCalled();
   });
-  it('sends members directly to personal setup and saves their chosen appearance before opening the first work stream', async () => {
+  it('sends members directly to personal setup and saves their chosen appearance before opening the first channel', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
     state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
     expect(screen.queryByText('Bring context for your first task')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'rose' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
-    await screen.findByText('Ordinary workspace');
+    await screen.findByText('Ordinary organization');
     expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, presentation: { color: 'rose', avatar: 'circle', displayName: 'Person', initials: 'P' } });
     expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
     // The finished journey is replaced by the landing, not left behind for Back.
@@ -109,13 +109,13 @@ describe('new-account learning paths', () => {
   it('starts creators at connectors and offers a skip', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] });
     state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 1, connectorIds: [] });
-    show(); await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    show(); await screen.findByRole('heading', { name: 'Connect tools for your organization' });
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await screen.findByRole('heading', { name: 'Connect your personal tools' });
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'profile' }));
   });
-  it.each([{ provider: 'ashby', name: 'Ashby' }, { provider: 'granola', name: 'Granola' }])('opens Settings for $name workspace setup', async ({ provider, name }) => {
+  it.each([{ provider: 'ashby', name: 'Ashby' }, { provider: 'granola', name: 'Granola' }])('opens Settings for $name organization setup', async ({ provider, name }) => {
     const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
     state.connectors.mockResolvedValue([provider]);
     state.journey.mockResolvedValue(journey);
@@ -123,7 +123,7 @@ describe('new-account learning paths', () => {
     show();
     fireEvent.click(await screen.findByRole('button', { name }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Connect for workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect for organization' }));
     await waitFor(() => expect(state.openSettings).toHaveBeenCalledWith('connections'));
     expect(state.startProviderConnection).not.toHaveBeenCalled();
     expect(state.openExternal).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ describe('new-account learning paths', () => {
     state.journey.mockResolvedValue(journey);
     state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
     show();
-    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    await screen.findByRole('heading', { name: 'Connect tools for your organization' });
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Ashby' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
@@ -143,31 +143,31 @@ describe('new-account learning paths', () => {
     expect(state.startProviderConnection).toHaveBeenCalledWith('ashby', 'you', ['ashby.personal.mcp']);
     expect(state.openSettings).not.toHaveBeenCalled();
   });
-  it('opens a restored workspace before account lookup and keeps it mounted when details arrive', async () => {
+  it('opens a restored organization before account lookup and keeps it mounted when details arrive', async () => {
     let resolveLookup!: (account: typeof state.account) => void;
     state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     const client = show();
-    const workspaceElement = screen.getByText('Ordinary workspace');
+    const workspaceElement = screen.getByText('Ordinary organization');
     expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
     expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
     expect(state.getAccount).toHaveBeenCalledTimes(1);
     await act(async () => { resolveLookup({ ...state.account, eligible: false }); });
     await waitFor(() => expect(client.getQueryState(['account-onboarding', 'person@example.com'])?.status).toBe('success'));
-    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    expect(screen.getByText('Ordinary organization')).toBe(workspaceElement);
     await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
   });
-  it('keeps a returning workspace mounted while journey progress loads and completes', async () => {
+  it('keeps a returning organization mounted while journey progress loads and completes', async () => {
     let resolveJourney!: (journey: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
     state.journey.mockImplementation(() => new Promise((resolve) => { resolveJourney = resolve; }));
     const client = show();
-    const workspaceElement = screen.getByText('Ordinary workspace');
+    const workspaceElement = screen.getByText('Ordinary organization');
     await waitFor(() => expect(state.journey).toHaveBeenCalledTimes(1));
-    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
-    expect(screen.queryByRole('heading', { name: 'Opening your workspace' })).not.toBeInTheDocument();
+    expect(screen.getByText('Ordinary organization')).toBe(workspaceElement);
+    expect(screen.queryByRole('heading', { name: 'Opening your organization' })).not.toBeInTheDocument();
     expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
     await act(async () => { resolveJourney({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] }); });
     await waitFor(() => expect(client.getQueryState(['onboarding-journey', 'global', 'workspace-1', 'user-1'])?.status).toBe('success'));
-    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    expect(screen.getByText('Ordinary organization')).toBe(workspaceElement);
     await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
   });
   it('keeps a new identity gated until its introduction status arrives', async () => {
@@ -176,20 +176,20 @@ describe('new-account learning paths', () => {
     state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     show();
     expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
     expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
-  it('still introduces an eligible workspace account when its background lookup completes', async () => {
+  it('still introduces an eligible organization account when its background lookup completes', async () => {
     let resolveLookup!: (account: typeof state.account) => void;
     state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     show();
-    expect(screen.getByText('Ordinary workspace')).toBeInTheDocument();
+    expect(screen.getByText('Ordinary organization')).toBeInTheDocument();
     expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
     expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
   it('withholds admission when pending journey progress resolves to unfinished setup', async () => {
     let finishJourney!: (value: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
@@ -199,7 +199,7 @@ describe('new-account learning paths', () => {
     expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
     await act(async () => { finishJourney({ path: 'member', stage: 'profile', revision: 0, connectorIds: [] }); });
     expect(await screen.findByRole('heading', { name: 'This is you in Rally' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
   it('shows account profile loading without a false error or editable placeholders', async () => {
     let finishAccount!: (value: typeof state.account) => void;
@@ -212,33 +212,33 @@ describe('new-account learning paths', () => {
     await act(async () => { finishAccount({ ...state.account, eligible: false }); });
     expect(await screen.findByLabelText('Name')).toHaveValue('Person');
   });
-  it('keeps an identity without a workspace gated after a failed lookup and during retry', async () => {
+  it('keeps an identity without an organization gated after a failed lookup and during retry', async () => {
     state.hasWorkspace = false;
     state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
     show();
     expect(await screen.findByRole('heading', { name: "Let's pick up where you left off" })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
     let rejectLookup!: (error: Error) => void;
     state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(state.getAccount).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
     await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
-  it('keeps an authenticated workspace available when the identity service is unavailable', async () => {
+  it('keeps an authenticated organization available when the identity service is unavailable', async () => {
     state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
     show();
-    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+    expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
   });
-  it('keeps the workspace mounted while retrying a failed account lookup', async () => {
+  it('keeps the organization mounted while retrying a failed account lookup', async () => {
     state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
     const client = show();
-    const workspaceElement = await screen.findByText('Ordinary workspace');
+    const workspaceElement = await screen.findByText('Ordinary organization');
     let rejectLookup!: (error: Error) => void;
     state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
     await act(async () => {
@@ -250,7 +250,7 @@ describe('new-account learning paths', () => {
     expect(workspaceElement).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
     await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
-    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    expect(screen.getByText('Ordinary organization')).toBe(workspaceElement);
   });
   it('refreshes an open appearance draft when a newer account revision arrives', async () => {
     const client = show();
@@ -266,12 +266,12 @@ describe('new-account learning paths', () => {
       presentation: { color: 'rose', avatar: 'circle', displayName: 'Harper', initials: 'H' } }));
   });
 
-  it('retains workspace selections and unsaved personal selections across refetches', async () => {
+  it('retains organization selections and unsaved personal selections across refetches', async () => {
     const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
     state.journey.mockResolvedValue(journey);
     state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
     const client = show();
-    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    await screen.findByRole('heading', { name: 'Connect tools for your organization' });
     fireEvent.click(await screen.findByRole('button', { name: 'Google Drive + Docs + Sheets' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
@@ -295,7 +295,7 @@ describe('new-account learning paths', () => {
     state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
     show();
     const offeredFor = (scope: string) => connectorProviders.filter((provider) => provider.scopes.some((candidate) => candidate === scope));
-    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    await screen.findByRole('heading', { name: 'Connect tools for your organization' });
     for (const provider of offeredFor('workspace')) fireEvent.click(await screen.findByRole('button', { name: provider.name }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     const workspaceIds = offeredFor('workspace').map((provider) => `workspace:${provider.id}`);
@@ -319,7 +319,7 @@ describe('new-account learning paths', () => {
     await screen.findByText(/Could not invite:/u);
     state.invitations.mockResolvedValue([{ email: 'aspen@example.com', status: 'pending' }]);
     fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
-    await screen.findByText('Ordinary workspace');
+    await screen.findByText('Ordinary organization');
     expect(state.invite).toHaveBeenCalledTimes(1);
   });
 

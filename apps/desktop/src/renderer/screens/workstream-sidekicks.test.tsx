@@ -92,6 +92,7 @@ function boot(participant = false): WorkstreamBoot {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     createdAt: '2026-09-10T14:00:00.000Z',
     participants: participant ? [{ id: 'person', name: 'Person', email: 'person@example.com', role: 'member', timezone: 'UTC' }] : [],
     viewers: [],
@@ -149,7 +150,7 @@ function renderScreen(participant = false): void {
  * behaviour here rests on, and the one a future narrowing of that `catch`
  * would quietly take away.
  */
-describe('a work stream\u2019s own Sidekicks when the viewer may not list them', () => {
+describe('a channel\u2019s own Sidekicks when the viewer may not list them', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     currentSession.mockReturnValue(null);
@@ -175,13 +176,13 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
 
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('does not carry a removal error into another substream', async () => {
+  it('does not carry a removal error into another breakout', async () => {
     currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
     api.getWorkstreamSidekicks.mockResolvedValue([]);
     api.removeAttachedSidekick.mockRejectedValue(new Error('Removal failed in main.'));
     renderScreen(true);
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
     expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
@@ -199,7 +200,7 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     renderScreen(true);
 
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
     await act(async () => { rejectRemoval(new Error(diagnostic)); });
 
@@ -209,8 +210,8 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
   });
 
   it.each([
-    { attached: false, action: 'Recommend for this work stream', expected: 'That Sidekick couldn’t be recommended.' },
-    { attached: true, action: 'Remove work stream recommendation', expected: 'That Sidekick recommendation couldn’t be removed.' },
+    { attached: false, action: 'Recommend for this channel', expected: 'That Sidekick couldn’t be recommended.' },
+    { attached: true, action: 'Remove channel recommendation', expected: 'That Sidekick recommendation couldn’t be removed.' },
   ])('reports a rejected $action as that action', async ({ attached, action, expected }) => {
     const diagnostic = `provider rejected recommendation attached=${attached}`;
     const recommendation = { id: 'attached-1', name: 'Editorial guidance', description: 'Write clearly.', available: true };
@@ -227,7 +228,7 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     expect(api.setRecommendedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', !attached, '0');
   });
 
-  it('keeps recommendations shared and loaded rows local when switching substreams', async () => {
+  it('keeps recommendations shared and loaded rows local when switching breakouts', async () => {
     api.getWorkstreamSidekicks.mockResolvedValue([]);
     api.getRecommendedSidekicks.mockResolvedValue([{ id: 'shared', name: 'Shared guide', description: '', available: true }]);
     api.getAttachedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([

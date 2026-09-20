@@ -102,8 +102,10 @@ export interface RegionalEffectCommand {
  * What this conversation object is: the workspace it lives in and the parent
  * it belongs to. `parentId` is stored in the root row's `workstream_key`
  * column (the name predates typed parents and is held by released migration
- * text); `parentKind` says whether that id names a work stream or an
- * automation.
+ * text); `parentKind` says whether that id names a work stream, an automation,
+ * or a Space. The read parses it through `ConversationParentKindSchema`, so a
+ * kind the contract does not know is named at this boundary rather than
+ * degrading to `workstream`.
  */
 export interface WorkstreamObjectIdentity {
   workspaceId: WorkspaceId;

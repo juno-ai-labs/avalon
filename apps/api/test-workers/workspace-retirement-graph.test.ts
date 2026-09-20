@@ -40,6 +40,7 @@ const OPERATION_ID = "00000000-0000-7000-8000-00000000e003";
 /** The instant the walk is asked to retire at; the register records the same instant. */
 const COMPLETED_AT = "2026-09-05T13:00:00.000Z";
 const FIRST_ROOM_ID = "00000000-0000-7000-8000-00000000e201";
+const SPACE_ID = "00000000-0000-7000-8000-00000000e401";
 
 let workspaceSequence = 0;
 function freshWorkspaceId() {
@@ -145,6 +146,24 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
       ACTOR_ID,
       Date.now(),
     );
+    // Archived on purpose. What the graph is about is an object, not a product
+    // surface: an archived Space is still a `SpaceDO` holding a hidden main
+    // conversation, so enumerating only the active ones would report the
+    // Organization closed with one of its objects still answering.
+    state.storage.sql.exec(
+      `INSERT INTO workspace_space_directory (
+         space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+         system_role, authority_generation, source_version, payload_hash, revision,
+         created_at, updated_at, source_created_at, source_updated_at)
+       VALUES (?, 'Hiring', 'workspace', NULL, ?, ?, NULL, 1, 1, 'h', 1, ?, ?, ?, ?)`,
+      SPACE_ID,
+      Date.now(),
+      ACTOR_ID,
+      Date.now(),
+      Date.now(),
+      Date.now(),
+      Date.now(),
+    );
     void instance;
   });
 }
@@ -169,8 +188,14 @@ describe("workspace retirement graph", () => {
       "00000000-0000-7000-8000-00000000e201",
       "00000000-0000-7000-8000-00000000e202",
       "00000000-0000-7000-8000-00000000e301",
+      SPACE_ID,
     ]);
     expect(begun.nodes.filter((node) => node.parentKind === "automation")).toHaveLength(1);
+    // A Space is enumerated as its own kind rather than as a work stream: it
+    // lives under its own binding, and addressing it through `WORKSTREAM_DOS`
+    // would tombstone a different, empty object while leaving the Space open.
+    expect(begun.nodes.filter((node) => node.parentKind === "space")
+      .map((node) => node.parentId)).toEqual([SPACE_ID]);
 
     // The workspace is closed from this moment. A product read is refused...
     let refusal: unknown;
@@ -184,7 +209,7 @@ describe("workspace retirement graph", () => {
     // ...while the walk's own reads keep working, which is the whole reason the
     // graph is recorded rather than re-derived from a directory that now refuses.
     const progress = await stub.workspaceRetirementProgress();
-    expect(progress.remaining).toBe(3);
+    expect(progress.remaining).toBe(4);
     expect(progress.complete).toBe(false);
   });
 
@@ -209,18 +234,24 @@ describe("workspace retirement graph", () => {
     });
     expect(resumed.nodes).toEqual(first.nodes);
 
-    for (const node of first.nodes.slice(0, 2)) {
+    // Everything but the Space, which is the interruption this is about: a
+    // pass that closed the Channels and the Sidekick and died before it
+    // reached the Space must not let the Organization report itself closed.
+    const spaceNode = first.nodes.find((node) => node.parentKind === "space");
+    expect(spaceNode).toBeDefined();
+    for (const node of first.nodes.filter((node) => node.parentKind !== "space")) {
       await stub.recordRetiredNode({ parentKind: node.parentKind, parentId: node.parentId });
     }
     const partial = await stub.workspaceRetirementProgress();
     expect(partial.remaining).toBe(1);
-    // A failed child leaves retirement visibly incomplete rather than silently
-    // finished, which is what makes the operator's Failed state truthful.
+    // A node left unreceipted leaves retirement visibly incomplete rather than
+    // silently finished, which is what makes the operator's Failed state
+    // truthful.
     expect(partial.complete).toBe(false);
 
     await stub.recordRetiredNode({
-      parentKind: first.nodes[2]!.parentKind,
-      parentId: first.nodes[2]!.parentId,
+      parentKind: spaceNode!.parentKind,
+      parentId: spaceNode!.parentId,
     });
     const done = await stub.workspaceRetirementProgress();
     expect(done.remaining).toBe(0);
@@ -286,13 +317,13 @@ describe("workspace retirement graph", () => {
     // Retired directly, with no `recordRetiredNode` — exactly the state an
     // interrupted pass leaves behind.
     await room.retireObject(tombstone);
-    expect((await stub.workspaceRetirementProgress()).remaining).toBe(3);
+    expect((await stub.workspaceRetirementProgress()).remaining).toBe(4);
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
     expect(receipt.failed).toEqual([]);
     expect(receipt.complete).toBe(true);
     expect(receipt.remaining).toBe(0);
-    expect(receipt.parents).toBe(3);
+    expect(receipt.parents).toBe(4);
   });
 
   it("leaves a parent that disagrees about its own identity unreceipted, and says so", async () => {
@@ -404,8 +435,8 @@ describe("workspace retirement graph", () => {
     });
 
     expect(receipt.failed).toEqual([]);
-    expect(receipt.parents).toBe(3);
-    expect(receipt.retiredParents).toBe(3);
+    expect(receipt.parents).toBe(4);
+    expect(receipt.retiredParents).toBe(4);
     // The child was found and closed, which is only possible because it was
     // asked for before its parent was tombstoned.
     expect(receipt.retiredChildren).toBe(1);

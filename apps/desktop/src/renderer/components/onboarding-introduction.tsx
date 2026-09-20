@@ -8,15 +8,15 @@ import '../styles/onboarding-introduction.css';
 
 const slides = [
   { scene: 3, title: 'Meet Rally. Work moves forward together.', description: 'Bring your team and Rally into the same stream. Share context, give direction, and build on each other’s work.', next: 'Meet streams' },
-  { scene: 1, title: 'A stream gives your work a home.', description: 'Give each area of work its own stream. As your team and Rally make progress, active work rises to the top.', next: 'Explore substreams' },
-  { scene: 2, title: 'Explore an idea in a substream.', description: 'Take a focused conversation off Main, with context from your stream.', next: 'Get started' },
+  { scene: 1, title: 'A stream gives your work a home.', description: 'Give each area of work its own stream. As your team and Rally make progress, active work rises to the top.', next: 'Explore breakouts' },
+  { scene: 2, title: 'Explore an idea in a breakout.', description: 'Take a focused conversation off Main, with context from your stream.', next: 'Get started' },
 ] as const;
 
 const sidebarStreams = [
   { id: 'pilot', title: 'Customer pilot', color: 'blue', detail: 'Harper added feedback' },
   { id: 'launch', title: 'Product launch', color: 'purple', detail: 'Rally updated the launch plan' },
-  { id: 'feedback', title: 'Customer feedback', color: 'cyan', detail: 'Aspen started a workstream' },
-  { id: 'hiring', title: 'Growing our team', color: 'green', detail: 'Harper started a workstream' },
+  { id: 'feedback', title: 'Customer feedback', color: 'cyan', detail: 'Aspen started a channel' },
+  { id: 'hiring', title: 'Growing our team', color: 'green', detail: 'Harper started a channel' },
 ] as const;
 const sidebarOrders = [
   ['pilot', 'launch'], ['feedback', 'pilot', 'launch'],
@@ -88,9 +88,9 @@ function SubstreamStory(): React.JSX.Element {
         <p>The customer pilot plan is ready.</p>
         <ResourceEmbedCard label="Customer pilot plan" resource={{ id: 'substream-demo-plan', title: 'Customer pilot plan.md', resourceType: 'file', mimeType: 'text/markdown' }} onOpen={() => setOpenFile((value) => !value)} />
         {openFile && <p>Welcome session · Tuesday<br />Feedback session · Friday<br />Next · Review what customers learned</p>}
-        <button className={`onboarding-substream-start ${phase === 1 ? 'is-highlighted' : ''}`} type="button" onClick={() => setPhase(2)}><GitBranch size={14} /> Start substream</button>
+        <button className={`onboarding-substream-start ${phase === 1 ? 'is-highlighted' : ''}`} type="button" onClick={() => setPhase(2)}><GitBranch size={14} /> Start breakout</button>
       </div>}
-      {phase === 2 && <div className="onboarding-substream-review"><strong>Review starting context</strong><p>Customer pilot · Five customers<br />Feedback session planned for Friday</p><Button className="button-primary" onClick={() => setPhase(3)}>Create substream</Button></div>}
+      {phase === 2 && <div className="onboarding-substream-review"><strong>Review starting context</strong><p>Customer pilot · Five customers<br />Feedback session planned for Friday</p><Button className="button-primary" onClick={() => setPhase(3)}>Create breakout</Button></div>}
       {child && <div className="onboarding-substream-chat">
         <small className="onboarding-substream-context">Starting context reviewed from Main</small>
         {phase >= 4 && <div className="onboarding-preview-message"><span className="onboarding-story-person"><strong>Aspen</strong></span><p>Help me write three questions for Friday.</p></div>}

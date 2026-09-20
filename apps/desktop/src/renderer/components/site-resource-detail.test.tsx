@@ -218,9 +218,9 @@ describe('showing a live artifact in the rail', () => {
   });
 
   it('says so plainly when the artifact could not be opened', async () => {
-    setup({ openArtifact: vi.fn(async () => { throw new Error('You can no longer see this work stream.'); }) });
+    setup({ openArtifact: vi.fn(async () => { throw new Error('You can no longer see this channel.'); }) });
     expect(await screen.findByText('This site could not be opened')).toBeInTheDocument();
-    expect(screen.getByText('You can no longer see this work stream.')).toBeInTheDocument();
+    expect(screen.getByText('You can no longer see this channel.')).toBeInTheDocument();
   });
 
   it('tears the preview down when it goes away', async () => {

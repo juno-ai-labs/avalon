@@ -27,7 +27,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
     <div className="sidekick-filters" role="group" aria-label="Sidekick ownership">
-      {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Workspace'], ['workstream', 'Work streams']] as const).map(([value, label]) =>
+      {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Organization'], ['workstream', 'Channels']] as const).map(([value, label]) =>
         <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>{label}</button>)}
     </div>
     <section aria-labelledby="sidekick-results-title">
@@ -35,7 +35,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <InlineError>{query.error.message}</InlineError> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
       <ul className="sidekicks-library-list">{items.map((item) => <li key={item.id}><Link to={`/sidekicks/${item.id}`}>
         <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        <div className="sidekick-list-copy"><h3>{item.name}</h3><p>{item.description}</p><small>{item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : item.loadable ? 'Available in conversations' : 'Delegated work'} · {item.scope === 'you' ? 'Only you' : item.scope === 'workspace' ? 'Workspace' : 'Work stream'}</small></div>
+        <div className="sidekick-list-copy"><h3>{item.name}</h3><p>{item.description}</p><small>{item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : item.loadable ? 'Available in conversations' : 'Delegated work'} · {item.scope === 'you' ? 'Only you' : item.scope === 'workspace' ? 'Organization' : 'Channel'}</small></div>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
       </Link></li>)}</ul>}
     </section>

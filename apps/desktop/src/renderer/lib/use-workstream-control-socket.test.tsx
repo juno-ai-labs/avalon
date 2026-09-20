@@ -92,6 +92,7 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     ...overrides,
   };
 }

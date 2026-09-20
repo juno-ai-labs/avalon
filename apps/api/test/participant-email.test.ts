@@ -47,7 +47,7 @@ function sentBody(resend: ReturnType<typeof successfulResend>): Record<string, u
   return JSON.parse(String(init.body)) as Record<string, unknown>;
 }
 
-describe("work-stream participant-added email", () => {
+describe("channel participant-added email", () => {
   it("sends a branded, escaped email keyed on the participation", async () => {
     const resend = successfulResend();
 
@@ -91,7 +91,7 @@ describe("work-stream participant-added email", () => {
     );
 
     const body = sentBody(resend);
-    expect(String(body.text)).toContain("You were added to a work stream in Rally.");
+    expect(String(body.text)).toContain("You were added to a channel in Rally.");
     expect(String(body.text)).toContain(`Open in Rally: https://rallywith.ai/app/workspaces/global/${input.workspaceId}/workstreams/`);
     expect(String(body.html)).toContain(">Rally</td>");
     expect(String(body.html)).toContain("Open in Rally</a>");
@@ -112,11 +112,11 @@ describe("work-stream participant-added email", () => {
     // The heading already says it; repeating it two lines below is the bug this
     // covers, not a missing greeting.
     const html = String(sentBody(unnamed).html);
-    expect(html).toContain("You were added to a work stream</h1>");
-    expect(html).not.toContain("You were added to a work stream in Rally.");
+    expect(html).toContain("You were added to a channel</h1>");
+    expect(html).not.toContain("You were added to a channel in Rally.");
   });
 
-  it("does not name a work stream the naming agent has not named yet", async () => {
+  it("does not name a channel the naming agent has not named yet", async () => {
     const resend = successfulResend();
     // What a create from the composer produces: the title is the opening
     // message's first line and the objective is the same line, so quoting the
@@ -130,10 +130,10 @@ describe("work-stream participant-added email", () => {
     }, resend);
 
     const body = sentBody(resend);
-    expect(String(body.subject)).toBe("Adam <Admin> Injected started a work stream with you");
+    expect(String(body.subject)).toBe("Adam <Admin> Injected started a channel with you");
     expect(String(body.text))
-      .toContain("started a work stream in Research & Development and added you to it.");
-    expect(String(body.html)).toContain("You're in a new work stream</h1>");
+      .toContain("started a channel in Research & Development and added you to it.");
+    expect(String(body.html)).toContain("You're in a new channel</h1>");
     // The opening line appears exactly once, as the objective, rather than
     // twice — once cut mid-sentence as a name and once whole.
     expect(String(body.text).split(opening)).toHaveLength(2);

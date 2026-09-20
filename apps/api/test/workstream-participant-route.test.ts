@@ -34,12 +34,35 @@ function routedApp(): Hono<HonoAppEnv> {
 }
 
 describe("the participant removal route", () => {
-  it("preserves the service's active-project audience fence", async () => {
-    const remove = vi.spyOn(WorkstreamService.prototype, "removeParticipant")
+  it("given the service accepts, when a participant is deleted, then both path parameters reach it and the answer is an empty 204", async () => {
+    const remove = vi.spyOn(WorkstreamService.prototype, "removeParticipant").mockResolvedValue();
+
+    const response = await routedApp().request(
+      `https://api.example.com/workstreams/${WORKSTREAM_ID}/participants/${TARGET_ID}`,
+      { method: "DELETE" },
+      createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+    // In that order: the two path parameters are both ids of the same shape,
+    // so a route that transposed them would remove the actor from a Channel
+    // named after the person it was asked to remove.
+    expect(remove).toHaveBeenCalledWith(WORKSTREAM_ID, TARGET_ID);
+  });
+
+  it("given the service refuses, when a participant is deleted, then the refusal reaches the client with its own status and code", async () => {
+    // `workstream_participant_required` is a real refusal on this path: the
+    // last active participant cannot be removed, and the decision is the main
+    // conversation's, on the far side of a Durable Object RPC hop. What is
+    // being proved here is only what the route adds — that it awaits the
+    // service rather than answering 204 while the rejection goes unhandled,
+    // and that `errorHandler` renders the code rather than a 500.
+    vi.spyOn(WorkstreamService.prototype, "removeParticipant")
       .mockRejectedValue(new ApiError(
         409,
-        "project_audience_managed_by_project",
-        "Change project participants before removing this person",
+        "workstream_participant_required",
+        "At least one participant must remain in this work stream",
       ));
 
     const response = await routedApp().request(
@@ -50,10 +73,7 @@ describe("the participant removal route", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      error: {
-        code: "project_audience_managed_by_project",
-      },
+      error: { code: "workstream_participant_required" },
     });
-    expect(remove).toHaveBeenCalledWith(WORKSTREAM_ID, TARGET_ID);
   });
 });

@@ -7,6 +7,10 @@ import { ensureScope, resolveMemoryAccess, type MemoryScope } from './memory-ser
 import { requireAuthorizedRead } from './authorization-service';
 
 const ContextSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+  // No `space` arm: memory search runs inside an agent loop, and a Space never
+  // starts one. Narrower than `ConversationParentKindSchema` so that a caller
+  // that somehow reached here with one is named at the boundary rather than
+  // silently searching a Channel's memory scope.
   parentKind: z.enum(['workstream', 'automation']), harnessRunId: HarnessRunIdSchema, executionPrincipal: ExecutionPrincipalSchema });
 const PREFIX = 'memory-search:v1:';
 

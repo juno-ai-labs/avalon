@@ -33,7 +33,7 @@ export const statusDescription: Record<WorkstreamMarkerStatus, string> = {
   stopped: `${statusLabel.stopped} — the run was stopped by request.`,
   unread: `${statusLabel.unread} — there are messages here you have not read.`,
   mentioned: `${statusLabel.mentioned} — somebody named you in a message you have not read.`,
-  unseen: `${statusLabel.unseen} — you were added to this work stream and have not opened it yet.`,
+  unseen: `${statusLabel.unseen} — you were added to this channel and have not opened it yet.`,
 };
 
 /**

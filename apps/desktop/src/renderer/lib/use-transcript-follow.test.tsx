@@ -284,7 +284,7 @@ describe('useTranscriptFollow', () => {
     expect(stub.geometry.scrollTop).toBe(1_000);
   });
 
-  it('does not carry one work stream’s decision into the next', () => {
+  it('does not carry one channel’s decision into the next', () => {
     stub = stubScrollGeometry({ scrollHeight: 2_000, clientHeight: 500, scrollTop: 1_500 });
     const { rerender } = render(<Transcript revision={0} workstreamId="workstream-a" />);
 

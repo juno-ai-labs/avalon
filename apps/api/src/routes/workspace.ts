@@ -5,6 +5,7 @@ import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcceptWorkspaceInvitationRequestSchema,
+  ContainerOrderSchema,
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
@@ -22,7 +23,9 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { requireCurrentClientContract } from "../lib/client-contract";
 import { getAuth } from "../middleware/auth";
+import { SpaceService } from "../services/space-service";
 import { WorkspaceService } from "../services/workspace-service";
 import { workspaceAttention } from "../services/workspace-attention-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
@@ -51,6 +54,11 @@ workspaceRoutes.get("/", async (c) =>
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
 workspaceRoutes.get("/socket", async (c) => {
+  // The door to the sidebar payload, which now carries both Space directories
+  // and is parsed strictly by every shipped desktop. A build that cannot read
+  // it is told to update here rather than left reconnecting to a socket whose
+  // first frame it discards.
+  requireCurrentClientContract((name) => c.req.header(name));
   const auth = getAuth(c);
   const ticket = await issueWorkspaceSocketTicket(c.env, auth);
   const url = new URL(c.env.PUBLIC_API_BASE_URL);
@@ -65,6 +73,26 @@ workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), asy
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(WorkspaceMemberSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
+);
+/**
+ * One person's order for one list they arranged by hand.
+ *
+ * At the workspace level rather than under `/spaces` because the container is
+ * not always a Space: the same request orders the Organization's Spaces, one
+ * Space's Channels and one Channel's Breakouts, and a `/spaces/order` that
+ * carried a Breakout's arrangement would be a Space route about something no
+ * Space has heard of. The authority is still the Space one — the rows, the
+ * refusals and the snapshot the answer is republished on all belong to it — so
+ * this reaches it through `SpaceService`.
+ *
+ * It answers with what was stored rather than with the whole directory: the
+ * lists themselves arrive on the workspace socket, which this write
+ * republishes to every session this person has open.
+ */
+workspaceRoutes.put("/order", zValidator("json", ContainerOrderSchema), async (c) =>
+  c.json(ContainerOrderSchema.parse(
+    await new SpaceService(c.env, getAuth(c)).reorderContainer(c.req.valid("json")),
+  )),
 );
 workspaceRoutes.get("/terminal", async (c) =>
   c.json(TerminalWorkspaceSettingsSchema.parse(await terminalSettingsService(c).get())),

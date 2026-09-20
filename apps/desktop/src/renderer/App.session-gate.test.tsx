@@ -42,11 +42,11 @@ vi.mock('./lib/app-session', () => ({
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
   InvitationOnboarding: ({ invitations }: { invitations: unknown[] }) => <div>invitations {invitations.length}</div>,
-  RegionOnboarding: () => <div>workspace setup</div>,
+  RegionOnboarding: () => <div>organization setup</div>,
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>main workspace UI</div> }));
+vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>main organization UI</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({
@@ -124,35 +124,36 @@ describe('SessionGate identity-first ordering', () => {
     expect(screen.queryByText(/invitations/u)).not.toBeInTheDocument();
   });
 
-  it('opens the main UI immediately when the authenticated session has a workspace', async () => {
+  it('opens the main UI immediately when the authenticated session has an organization', async () => {
     sessionState.session = {
       ...identitySession,
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
     renderGate();
 
-    expect(await screen.findByText('main workspace UI')).toBeVisible();
+    expect(await screen.findByText('main organization UI')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
   });
 
-  it('starts workspace admission and the landing pair while workspace details are pending', async () => {
+  it('starts organization admission and the landing pair while organization details are pending', async () => {
     sessionState.session = { ...identitySession, workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' } };
     const profile = { id: 'workspace-1', name: 'Rally Studio', region: 'global', currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' } };
     let finishProfile!: (value: typeof profile) => void;
     sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise((resolve) => { finishProfile = resolve; }));
     const client = renderGate();
-    expect(screen.getByText('Opening workspace…')).toBeVisible();
+    expect(screen.getByText('Opening organization…')).toBeVisible();
     expect(sessionState.api.getWorkspace).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
     const id = '00000000-0000-7000-8000-000000000031';
     // The workspace provider's canonical directory write can land before REST.
     const first: WorkstreamSummary = {
-      id, title: 'First work stream', titleStatus: 'settled', scope: 'workspace',
+      id, title: 'First channel', titleStatus: 'settled', scope: 'workspace',
       harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
       manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
       firstUnreadSequenceNumber: null, lastActivityAt: '2025-01-01T12:00:00Z',
       lastAccessedAt: '2026-09-09T12:00:00Z',
       pinPosition: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
+      spaceIds: [],
     };
     // Recently viewed wins the landing even outside the five most active rows.
     const recent = Array.from({ length: 5 }, (_, index) => ({ ...first,
@@ -163,7 +164,7 @@ describe('SessionGate identity-first ordering', () => {
     await waitFor(() => expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6));
     expect(sessionState.api.getSocketTicket.mock.calls.some(([target]) => target === id)).toBe(true);
     expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
-    expect(screen.getByText('Opening workspace…')).toBeVisible();
+    expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
     expect(await screen.findByText('workstream')).toBeVisible();
     expect(window.location.hash).toBe(`#/workstreams/${id}`);
@@ -172,7 +173,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
   });
 
-  it('draws the settings surface on the session while the workspace read is still in flight', async () => {
+  it('draws the settings surface on the session while the organization read is still in flight', async () => {
     window.history.replaceState({}, '', '/?surface=settings#/settings');
     sessionState.session = completeWorkspaceSession;
     sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
@@ -182,11 +183,11 @@ describe('SessionGate identity-first ordering', () => {
     // `Opening workspace…` for a whole round trip before its own reads could
     // even start, on a profile the session already held.
     expect(await screen.findByText('settings')).toBeVisible();
-    expect(screen.queryByText('Opening workspace…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Opening organization…')).not.toBeInTheDocument();
     expect(screen.getByTestId('settings-workspace')).toHaveTextContent('Rally Studio / Europe/London');
   });
 
-  it('replaces the session view of the workspace with the server answer', async () => {
+  it('replaces the session view of the organization with the server answer', async () => {
     window.history.replaceState({}, '', '/?surface=settings#/settings');
     sessionState.session = completeWorkspaceSession;
     const renamed = {
@@ -206,7 +207,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(screen.getByTestId('settings-workspace')).toHaveTextContent('Rally Labs / America/New_York');
   });
 
-  it('still waits for the read when the session cannot describe the workspace', async () => {
+  it('still waits for the read when the session cannot describe the organization', async () => {
     window.history.replaceState({}, '', '/?surface=settings#/settings');
     // No timezones: a placeholder built from this would be inventing two of the
     // five fields, so the surface waits exactly as it did before.
@@ -217,12 +218,12 @@ describe('SessionGate identity-first ordering', () => {
     sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
     renderGate();
 
-    expect(await screen.findByText('Opening workspace…')).toBeVisible();
+    expect(await screen.findByText('Opening organization…')).toBeVisible();
     expect(screen.queryByText('settings')).not.toBeInTheDocument();
   });
 
   it.each([
-    ['/workstreams/new', 'main workspace UI'],
+    ['/workstreams/new', 'main organization UI'],
     ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);
@@ -254,7 +255,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
   });
 
-  it('abandons a sidebar opening when a workspace error replaces its owning surface', async () => {
+  it('abandons a sidebar opening when an organization error replaces its owning surface', async () => {
     const workstreamId = '00000000-0000-4000-8000-000000000220';
     window.history.replaceState({}, '', `/#/workstreams/${workstreamId}`);
     sessionState.session = {
@@ -281,13 +282,13 @@ describe('SessionGate identity-first ordering', () => {
     expect(retryAttempt).not.toBe(firstAttempt);
   });
 
-  it('surrenders the active workspace credential after a membership revocation', async () => {
+  it('surrenders the active organization credential after a membership revocation', async () => {
     sessionState.session = {
       ...identitySession,
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
     sessionState.api.getWorkspace.mockRejectedValueOnce(new ApiError(
-      'Workspace access is unavailable',
+      'Organization access is unavailable',
       403,
       'workspace_access_denied',
     ));
@@ -298,7 +299,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.signOut).not.toHaveBeenCalled();
   });
 
-  it('shows authenticated invitations before workspace setup', async () => {
+  it('shows authenticated invitations before organization setup', async () => {
     sessionState.session = identitySession;
     sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: null,
@@ -307,17 +308,17 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
 
     expect(await screen.findByText('invitations 1')).toBeVisible();
-    expect(screen.queryByText('workspace setup')).not.toBeInTheDocument();
+    expect(screen.queryByText('organization setup')).not.toBeInTheDocument();
   });
 
-  it('shows workspace setup only when no memberships or invitations exist', async () => {
+  it('shows organization setup only when no memberships or invitations exist', async () => {
     sessionState.session = identitySession;
     renderGate();
 
-    expect(await screen.findByText('workspace setup')).toBeVisible();
+    expect(await screen.findByText('organization setup')).toBeVisible();
   });
 
-  it('automatically activates an existing workspace discovered through the one identity service', async () => {
+  it('automatically activates an existing organization discovered through the one identity service', async () => {
     sessionState.session = identitySession;
     sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: {
@@ -378,14 +379,14 @@ describe('SessionGate identity-first ordering', () => {
     };
 
     it.each(['sidekicks', 'settings'] as const)(
-      'closes the %s window while the workspace profile is still in flight',
+      'closes the %s window while the organization profile is still in flight',
       async (surface) => {
         const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
         window.history.replaceState({}, '', `/?surface=${surface}`);
         sessionState.session = workspaceSession;
         sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
         renderGate();
-        expect(screen.getByText('Opening workspace…')).toBeVisible();
+        expect(screen.getByText('Opening organization…')).toBeVisible();
 
         fireEvent.keyDown(document.body, { key: 'Escape' });
 
@@ -422,12 +423,12 @@ describe('SessionGate identity-first ordering', () => {
       expect(close).not.toHaveBeenCalled();
     });
 
-    it('leaves the main window alone, where the keystroke would shut the workspace', async () => {
+    it('leaves the main window alone, where the keystroke would shut the organization', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
       renderGate();
-      expect(screen.getByText('Opening workspace…')).toBeVisible();
+      expect(screen.getByText('Opening organization…')).toBeVisible();
 
       fireEvent.keyDown(document.body, { key: 'Escape' });
 
@@ -440,7 +441,7 @@ describe('SessionGate identity-first ordering', () => {
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
       renderGate();
-      expect(screen.getByText('Opening workspace…')).toBeVisible();
+      expect(screen.getByText('Opening organization…')).toBeVisible();
 
       fireEvent.keyDown(document.body, { key: 'Escape' });
 

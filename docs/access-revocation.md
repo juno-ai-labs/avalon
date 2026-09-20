@@ -110,7 +110,10 @@ about; each child becomes its own message on the same queue.
 workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [automationIds] + [artifactIds]
 workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
 workstream             ──▶ WorkstreamDO   ──▶ [substreamIds]
+workstream_audience_narrowed
+                       ──▶ WorkstreamDO   ──▶ [closedUserIds]  (revokeNarrowedAudienceAccess)
 automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
+space                  ──▶ SpaceDO        ──▶ [substreamIds]   (listChildren; it holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
 ```
@@ -157,6 +160,39 @@ more way to lose a reader: the room removes a participant, a write the room
 makes locally that no membership revocation follows. The room's writer
 publishes a `workstream_automations` hop, and WorkspaceDO names the room's
 automations for it.
+
+A **narrowed audience** is the one hop that names nobody. Every other message
+is about one person, because every other way access ends names one: a member is
+removed, a session is revoked, a participant is taken out of a room. A work
+stream that stops being Organization-wide takes access from every member who is
+not a participant, which is a set nothing outside the room can enumerate and
+nobody wants one message per name for. What *is* enumerable is who is holding a
+socket right now, and only the room knows that — so the hop asks it to close
+what it can no longer admit and to answer with whose sockets those were. Each
+of those names then becomes an ordinary `workstream` hop, which reaches the
+substreams, and an ordinary `workstream_automations` hop, which reaches the
+automations the room owns. The message carries `userId: null`, and the schema
+refuses that in any other combination: a per-user hop that lost its user would
+close every socket it found.
+
+This is the one place an object re-asks its own admission question, and it is
+not the polling the invariant below rules out. It runs once, because the
+audience it is about was just written; it is the same `authorizeViewer` a
+reconnect would run; and a holder it cannot confidently admit is closed rather
+than spared, which costs a reconnect where sparing keeps a reader reading a
+room that no longer admits them.
+
+A **Space** is the third sibling, and the simplest hop here. It is
+`WorkstreamDO` under a role whose `admitsClientSockets` is false, so it admits
+no client socket and there is nothing on it to close — the hop does not call
+`revokeSocketAccess` at all, because asking would be a subrequest whose answer
+is always empty. What it does hold is a hidden main conversation, an ordinary
+`SubstreamAgent` that *does* hold whatever was opened against it, and only the
+Space can name it. So the hop is `SpaceDO.listChildren` and one `substream`
+message per child, keyed by the Space id as the parent, exactly as an
+automation's conversations are keyed by its own. A Space is enumerated from the
+workspace hop once WorkspaceDO holds the Space directory; until then no product
+path creates one.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in that object's SQL storage, not in D1, so no query the
@@ -211,6 +247,11 @@ room would go on seeing an evicted reader listed as present.
 - **The producer publishes in the request that wrote the fact.** A fact written
   without a message is a socket that stays open until it reconnects. If you add a
   way to end access, you add a producer; there is nothing else to catch it.
+- **A message names one person, or one room's whole audience, never half of
+  each.** `workstream_audience_narrowed` is the only target carried with
+  `userId: null`, and the only one that may be; the schema enforces the
+  biconditional and names `userId` when it is broken. A per-user hop that lost
+  its user would close every socket it found.
 - **A message with a `sessionId` closes only that session's sockets.** Closing
   the rest would sign a person out of every window because one of them logged
   out.
@@ -227,8 +268,33 @@ room would go on seeing an evicted reader listed as present.
   access, and nothing will report it.
 - **Publishing never fails the request that wrote the fact.** The removal
   committed; failing the response would tell the operator it did not. A producer
-  that *can* still retry — the expiry sweep, which owns its own schedule — reads
-  the returned flag and leaves the row for the next run instead.
+  that *can* still retry — the expiry sweep, which owns its own schedule, and a
+  Space retraction, which has a `space_intents` row behind it — reads the
+  returned flag and leaves the work for the next run instead. **Every producer
+  reads the flag**; one that cannot retry names the refusal in a log rather than
+  discarding it, because a discarded `false` is a retraction recorded as
+  delivered when nothing was sent.
+
+## Known gaps
+
+### A narrowing published from the Channel's own scope change has no durable gate
+
+`WorkstreamService.update` publishes `workstream_audience_narrowed` when a
+Channel's own scope goes from `workspace` to `personal`, and nothing durable
+stands behind that send: a refusal is logged
+`channel_narrowing_publish_unannounced` and the Organization's non-participant
+readers keep whatever sockets they have open until they reconnect.
+
+This is a gap rather than a regression. Before the Spaces branch that path
+published *nothing at all*, so the announcement is strictly new and the missing
+gate is the part that was never built. The other narrowing — a Space's
+retraction — does have one: it is reached from an operation with a
+`space_intents` row, so a refused send fails the step, leaves the intent
+unsettled, and the WorkspaceDO alarm republishes the whole operation.
+
+Closing it means giving the direct narrowing a durable intent of its own, which
+is a change with a table behind it rather than a line in this one; it is named
+here so the next person to narrow something does not have to rediscover it.
 
 ## Boundary
 
@@ -385,6 +451,59 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-19 — A Space is a hop that names children and closes nothing, and a narrowing asks the room who is still reading
+
+**What changed:** The target union gains `{ scope: "space", spaceId }`, and the
+consumer resolves it through `SPACE_DOS`, calls `listChildren`, and publishes one
+`substream` message per child keyed by the Space id. It does not call
+`revokeSocketAccess`.
+
+`workstream_audience_narrowed` joins the target union,
+carried with `userId: null`, and `WorkstreamDO.revokeNarrowedAudienceAccess`
+closes the sockets it can no longer admit and answers with whose they were. The
+consumer turns each of those names into the ordinary `workstream` and
+`workstream_automations` hops. Both narrowings publish it: a Space's retraction
+when its plan sets `narrowScope`, and `WorkstreamService.update` when the
+Channel's own scope goes from `workspace` to `personal`.
+
+**Why:** A Space is `WorkstreamDO` under a role that refuses client socket
+upgrades, so the object itself holds nothing this queue exists to close. Its
+hidden main conversation is an ordinary `SubstreamAgent` and does hold what was
+opened against it, and only the Space knows that conversation exists.
+
+Neither narrowing published anything at all. A work stream that stopped
+being Organization-wide left every member who was reading it still reading it,
+because the room closes sockets only for somebody it was *told* about and a
+narrowing tells it about nobody. The set it takes access from is the
+Organization minus the participants, which no producer can enumerate and which
+would be absurd to publish a message per name for.
+
+**Considered and rejected:** Reusing the `workstream` hop by passing the Space id
+as a work-stream id. It would resolve a *real object* — a different, empty one in
+`WORKSTREAM_DOS` — rather than failing, leaving the Space's conversation open
+with nothing reporting a problem. Also rejected: calling `revokeSocketAccess`
+anyway for symmetry with the work-stream hop, which buys one subrequest per Space
+per revocation to be told what the role already guarantees.
+
+publishing one per-user message for the departing
+Space's roster, which is bounded and was tempting. It is the wrong set twice
+over — those readers usually *keep* access through the seating the retraction
+does first, and it names none of the members who were reading through the wide
+scope. Also rejected: having the canonical `update` close the sockets inside the
+room. That reaches the room's own sockets and nothing else, and the automations
+it owns are exactly the case `workstream_automations` exists for.
+
+**Consequences:** Nothing publishes this target yet — no product path creates a
+Space, and the workspace hop enumerates Spaces only once WorkspaceDO holds the
+Space directory. The hop and its fan-out are in place and tested so that the
+release which creates Spaces does not also have to add the walk.
+
+the `userId` biconditional. Adding a
+target that names nobody means adding an object method that decides for itself
+who lost access, because `revokeSocketAccess` cannot be told "everybody" — and a
+per-user target that ever arrives without its user must fail by name rather than
+fan out.
 
 ### 2026-09-16 — Recover membership and grant revocation publication
 

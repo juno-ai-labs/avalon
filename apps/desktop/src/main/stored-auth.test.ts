@@ -107,7 +107,7 @@ describe('plural desktop authentication storage', () => {
     apiBaseUrl: 'https://enterprise.api.rallywith.ai',
   };
 
-  it('wraps a version-one workspace credential and profile without losing it', () => {
+  it('wraps a version-one organization credential and profile without losing it', () => {
     const auth = storedAuthFromSession(session, 'global');
     const profile = storedProfileFromSession(session);
 
@@ -124,7 +124,7 @@ describe('plural desktop authentication storage', () => {
     });
   });
 
-  it('keeps an account credential beside independently regional workspace credentials', () => {
+  it('keeps an account credential beside independently regional organization credentials', () => {
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
     const account = mergeStoredSession(null, null, accountSession, 'global');
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
@@ -144,7 +144,7 @@ describe('plural desktop authentication storage', () => {
     });
   });
 
-  it('attaches a missing account credential without changing the active legacy workspace', () => {
+  it('attaches a missing account credential without changing the active legacy organization', () => {
     const legacy = mergeStoredSession(null, null, enterpriseSession, 'enterprise');
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
 
@@ -175,7 +175,7 @@ describe('plural desktop authentication storage', () => {
     expect(parseStoredAuthSet(JSON.parse(JSON.stringify(enterprise.auth)))).toEqual(enterprise.auth);
   });
 
-  it('keeps same-id workspaces distinct when they belong to different regions', () => {
+  it('keeps same-id organizations distinct when they belong to different regions', () => {
     const regionalCollision = {
       ...enterpriseSession,
       workspace: { ...enterpriseSession.workspace, id: session.workspace.id },
@@ -198,7 +198,7 @@ describe('plural desktop authentication storage', () => {
     expect(removed.profiles.workspaces.map((profile) => profile.workspace?.region)).toEqual(['global']);
   });
 
-  it('removes only one workspace and selects the most recent remaining credential', () => {
+  it('removes only one organization and selects the most recent remaining credential', () => {
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
     const account = mergeStoredSession(null, null, accountSession, 'global');
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
@@ -212,7 +212,7 @@ describe('plural desktop authentication storage', () => {
     expect(removed.auth.account).not.toBeNull();
   });
 
-  it('changes the active workspace without replacing either credential', () => {
+  it('changes the active organization without replacing either credential', () => {
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
     const account = mergeStoredSession(null, null, accountSession, 'global');
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
@@ -228,7 +228,7 @@ describe('plural desktop authentication storage', () => {
     expect(selected.workspaces).toEqual(enterprise.auth.workspaces);
   });
 
-  it('never resolves a background credential for a destructive active-workspace action', () => {
+  it('never resolves a background credential for a destructive active-organization action', () => {
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
     const account = mergeStoredSession(null, null, accountSession, 'global');
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
@@ -243,7 +243,7 @@ describe('plural desktop authentication storage', () => {
   });
 });
 
-it('drops a removed deployment while preserving the account and Global workspace credentials', () => {
+it('drops a removed deployment while preserving the account and Global organization credentials', () => {
   const account = mergeStoredSession(null, null, { ...session, workspace: null }, 'global');
   const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
   const retiredSession = { ...session, workspace: { ...session.workspace, region: 'retired-deployment' } };

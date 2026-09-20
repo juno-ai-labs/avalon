@@ -1,15 +1,17 @@
 import { runInDurableObject } from "cloudflare:test";
 import {
   asAutomationId,
+  asSpaceId,
   asWorkspaceId,
   asWorkstreamId,
   ConversationEffectEnvelopeSchema,
   ParentEffectEnvelopeSchema,
   type ConversationEffectEnvelope,
+  type ConversationParentKind,
   type ParentEffectEnvelope,
 } from "@rally/contracts";
 import type { Env } from "../../src/env";
-import { automationDOName, workstreamDOName } from "../../src/durable-objects/names";
+import { automationDOName, spaceDOName, workstreamDOName } from "../../src/durable-objects/names";
 import { consumeActivityQueue } from "../../src/queues/activity-consumer";
 
 /**
@@ -128,11 +130,16 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
 export function parentStubFor(
   env: Env,
   region: string,
-  parent: { workspaceId: string; parentKind: "workstream" | "automation"; parentId: string },
+  parent: { workspaceId: string; parentKind: ConversationParentKind; parentId: string },
 ): DurableObjectStub {
   if (parent.parentKind === "automation") {
     return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
       automationDOName(region, asWorkspaceId(parent.workspaceId), asAutomationId(parent.parentId)),
+    ));
+  }
+  if (parent.parentKind === "space") {
+    return env.SPACE_DOS.get(env.SPACE_DOS.idFromName(
+      spaceDOName(region, asWorkspaceId(parent.workspaceId), asSpaceId(parent.parentId)),
     ));
   }
   return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
