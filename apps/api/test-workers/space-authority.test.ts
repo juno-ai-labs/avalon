@@ -26,6 +26,7 @@ import {
   asWorkstreamId,
   conversationEffectHash,
   WorkspaceSocketSyncEventSchema,
+  WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   type ParentEffect,
@@ -397,6 +398,68 @@ function nextSpaceSnapshot(socket: WebSocket): Promise<WorkspaceSpaceSnapshotEve
     };
     socket.addEventListener("message", listen);
   });
+}
+
+/**
+ * Every `space_conversations_changed` this socket is pushed, in arrival order.
+ *
+ * An array rather than a promise for the next one, because what most of these
+ * cases assert is a nudge that must *not* be sent, and "the next one" cannot
+ * tell a nudge that never came from one that has not arrived yet. A socket
+ * delivers in order, so an assertion made once a later event has landed is an
+ * assertion about everything before it.
+ */
+function collectSpaceNudges(socket: WebSocket): readonly (readonly string[])[] {
+  const seen: string[][] = [];
+  socket.addEventListener("message", (event: MessageEvent) => {
+    const decoded = WorkspaceSpaceConversationsEventSchema.safeParse(JSON.parse(String(event.data)));
+    if (decoded.success) seen.push(decoded.data.spaceIds);
+  });
+  return seen;
+}
+
+/** The next row this socket is pushed for one named Channel. */
+function nextWorkstreamStateFor(
+  socket: WebSocket,
+  workstreamId: WorkstreamId,
+): Promise<WorkspaceWorkstreamStateEvent> {
+  return new Promise((resolve) => {
+    const listen = (event: MessageEvent): void => {
+      const decoded = WorkspaceWorkstreamStateEventSchema.safeParse(JSON.parse(String(event.data)));
+      if (!decoded.success || decoded.data.workstreamId !== workstreamId) return;
+      socket.removeEventListener("message", listen);
+      resolve(decoded.data);
+    };
+    socket.addEventListener("message", listen);
+  });
+}
+
+/** Give a socket that should already hold `count` nudges the chance to. */
+async function settleNudges(seen: readonly (readonly string[])[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200 && seen.length < count; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/** Take a Channel out of a Space the way the service does: stage, then settle. */
+async function displace(
+  spaceId: SpaceId,
+  workstreamId: WorkstreamId,
+  remainingAudience: { scope: "personal" | "workspace"; participantUserIds: UserId[] },
+): Promise<void> {
+  const plan = await workspace().prepareSpaceMembershipRemoval({
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId, remainingAudience,
+  });
+  if (!plan.ok) throw new Error(`prepareSpaceMembershipRemoval refused: ${plan.code}`);
+  const settled = await workspace().finalizeSpaceMembershipRemoval({
+    workspaceId: WORKSPACE_ID,
+    userId: OWNER,
+    spaceId,
+    workstreamId,
+    spaceRevision: plan.space.revision,
+    membershipGeneration: plan.membershipGeneration,
+  });
+  if (!settled.ok) throw new Error(`finalizeSpaceMembershipRemoval refused: ${settled.code}`);
 }
 
 /**
@@ -893,6 +956,60 @@ describe("WorkspaceDO space authority", () => {
       ok: true,
       members: [{ workstreamId: CHANNEL_A }, { workstreamId: CHANNEL_B }],
     });
+  });
+
+  it("given a Space reached through a Channel, when a Channel they cannot see moves in it, then no nudge names it", async () => {
+    const personal = await reserve("Side work", "personal");
+    const holding = await reserve("Company", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_C, null);
+    await publishPersonalChannel(CHANNEL_B, OWNER);
+    // `CHANNEL_A` is the whole of MEMBER's reach into the personal Space and
+    // never moves. `holding` is where the other two live, so taking either of
+    // them out of the personal Space leaves it discoverable and the removals
+    // below are about the nudge rather than about a stranded Channel.
+    await place(personal, CHANNEL_A);
+    await place(holding, CHANNEL_A);
+    await place(holding, CHANNEL_B);
+    await place(holding, CHANNEL_C);
+
+    const member = await connectViewer(MEMBER, "f1");
+    const owner = await connectViewer(OWNER, "f2");
+    const memberNudges = collectSpaceNudges(member.socket);
+    const ownerNudges = collectSpaceNudges(owner.socket);
+
+    // The nudge is addressed through the Channel that moved. A viewer who
+    // reaches this Space through a *different* Channel sees the same page
+    // before and after, so a nudge would be the whole of the signal —
+    // something was just put into or taken out of this Space — and repeated
+    // it is a live feed of a participants-only Space's membership to somebody
+    // who is told only its name.
+    const placed = nextWorkstreamStateFor(member.socket, CHANNEL_C);
+    await place(personal, CHANNEL_B);
+    await place(personal, CHANNEL_C);
+    await placed;
+
+    // A removal has to name the Space alongside the Channel: by the time this
+    // publishes, the membership is `removed`, so the Channel no longer
+    // resolves to the Space it just left and a dashboard still holding its row
+    // would never hear.
+    const displaced = nextWorkstreamStateFor(member.socket, CHANNEL_C);
+    await displace(personal, CHANNEL_B, { scope: "personal", participantUserIds: [OWNER] });
+    await displace(personal, CHANNEL_C, { scope: "workspace", participantUserIds: [] });
+    await displaced;
+
+    // Both `CHANNEL_C` moves, and neither `CHANNEL_B` move: the row this
+    // person's page holds changed exactly twice. The socket delivers in order,
+    // so a nudge from either `CHANNEL_B` step would already be in this array.
+    expect(memberNudges).toEqual([[personal], [personal]]);
+
+    // And the Space's own participant, who can see all three Channels, was
+    // nudged by every one of the four — so the silence above is about what
+    // this viewer can see rather than about a nudge that stopped working.
+    await settleNudges(ownerNudges, 4);
+    expect(ownerNudges).toEqual([[personal], [personal], [personal], [personal]]);
+    member.socket.close();
+    owner.socket.close();
   });
 
   it("given a Space reached through a Channel, when that viewer arranges it, then the order is written", async () => {

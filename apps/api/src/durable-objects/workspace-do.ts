@@ -6195,7 +6195,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A settled membership changes which conversations this Space's dashboard
     // is about, so the readers of that page are nudged the same way a message
     // in one of them nudges them. One mechanism, not a second for memberships.
-    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    // Through the Channel, because the people whose page changed are the people
+    // who can list it: to anybody else reaching this Space the nudge would say
+    // only that *something* entered it, which is the private membership of a
+    // participants-only Space told one event at a time.
+    this.publishSpaceConversationsChanged({
+      spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
+    });
     await this.publishWorkstreamState(request.workstreamId);
     // Unconditionally, not only when this settlement staged a default of its
     // own. The matching `prepareSpaceMembership` armed a wake
@@ -6272,7 +6278,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A settled membership changes which conversations this Space's dashboard
     // is about, so the readers of that page are nudged the same way a message
     // in one of them nudges them. One mechanism, not a second for memberships.
-    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    // Through the Channel for the reason the finalize above is, and the Space
+    // has to be named alongside it: the membership is `removed` by now, so the
+    // Channel no longer resolves to the Space it just left.
+    this.publishSpaceConversationsChanged({
+      spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
+    });
     await this.publishWorkstreamState(request.workstreamId);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
@@ -6321,7 +6332,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceSnapshot();
     // An archive takes every member Channel off this Space's dashboard and a
     // restore puts the ones it withdrew back. Both are page changes for every
-    // reader still holding the page.
+    // reader still holding the page — and `spaceIds`, which names the Space to
+    // everybody who reaches it including through one Channel in it, is right
+    // here in a way it is not for a membership: the Space's own disappearance
+    // and return are visible to all of them anyway.
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
@@ -6363,6 +6377,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
     });
     this.publishSpaceSnapshot();
+    // `spaceIds` for the reason the archive above uses it: a Space coming back
+    // is visible to everybody who reaches it, however they reach it.
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
@@ -11394,7 +11410,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * existence of that Space leaking through a shared Channel, and a Channel's
    * id never leaves this method at all — only the Spaces it is placed in do.
    *
-   * Two local reads per socket and no write.
+   * **`spaceIds` names a Space to everybody who reaches it, including through
+   * a Channel in it, and that is only right when the Space *itself* moved.**
+   * A Channel entering or leaving a Space is not that: somebody who reaches
+   * the Space through a different Channel sees the same page before and after,
+   * so the nudge is the whole of the signal — *something was just put into or
+   * taken out of this Space* — and repeated it is a live feed of a
+   * participants-only Space's membership to a person who is told only its
+   * name. `spaceIdsThroughChannel` is the arm for that case: the Space is
+   * named, but only to the viewers who can list the Channel that moved, which
+   * is exactly the set whose page changed. An archive and a restore do use
+   * `spaceIds`, because the Space's own disappearance or return is already
+   * visible to everyone who reaches it by any clause.
+   *
+   * Two local reads per socket and no write, plus two more per entry in
+   * `spaceIdsThroughChannel` — which is one Channel on the two membership
+   * settlements that pass it, beside a `publishSpaceSnapshot` on the same line
+   * that rebuilds both directories per socket.
    */
   private publishSpaceConversationsChanged(moved: {
     /** Channels whose shared row moved: everyone who can list them. */
@@ -11403,11 +11435,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     readonly viewerChannelIds?: ReadonlyMap<string, ReadonlySet<string>>;
     /** Spaces whose own membership moved: everyone who can see them. */
     readonly spaceIds?: readonly string[];
+    /**
+     * Spaces a Channel entered or left, keyed by that Channel: named only to
+     * the viewers who can list it.
+     *
+     * Keyed by the Channel rather than the Space because the Channel is what
+     * decides the audience, and a removal is why the Space has to be named
+     * here at all — once the membership is `removed` the Channel arm no longer
+     * resolves to the Space it just left, and the dashboards still holding its
+     * row would never hear.
+     */
+    readonly spaceIdsThroughChannel?: ReadonlyMap<string, readonly string[]>;
   }): void {
     const sharedChannelIds = moved.channelIds ?? [];
     const viewerChannelIds = moved.viewerChannelIds ?? new Map<string, ReadonlySet<string>>();
     const namedSpaceIds = moved.spaceIds ?? [];
-    if (sharedChannelIds.length === 0 && viewerChannelIds.size === 0 && namedSpaceIds.length === 0) return;
+    const spaceIdsThroughChannel = moved.spaceIdsThroughChannel ?? new Map<string, readonly string[]>();
+    if (
+      sharedChannelIds.length === 0 && viewerChannelIds.size === 0
+      && namedSpaceIds.length === 0 && spaceIdsThroughChannel.size === 0
+    ) return;
     const occurredAt = new Date().toISOString();
     const spaces = this.spaceStorage();
     for (const socket of this.state.getWebSockets()) {
@@ -11423,6 +11470,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         )),
       ])];
       const spaceIds = new Set(spaces.visibleSpaceIdsAmong(attachment.userId, namedSpaceIds));
+      for (const [workstreamId, named] of spaceIdsThroughChannel) {
+        // Both halves: can this person list the Channel that moved, and may
+        // they see the Space it moved into or out of. The second is not
+        // implied by the first — a Channel they can read leaving somebody's
+        // personal Space takes their whole reach into it with it.
+        if (spaces.listableChannelIds(attachment.userId, [workstreamId]).length === 0) continue;
+        for (const spaceId of spaces.visibleSpaceIdsAmong(attachment.userId, named)) {
+          spaceIds.add(spaceId);
+        }
+      }
       if (channelIds.length > 0) {
         for (const ids of spaces.spaceIdsByChannel(
           attachment.userId,

@@ -949,7 +949,7 @@ to*. The dashboard re-reads the page it is holding; nothing else reacts to it.
 It goes out when a directory batch changes a member Channel's shared row, when
 a breakout's forwarded projection changes its, when one person's viewer row on
 either changes, and when a membership settles, is removed, or is taken away and
-given back by a Space archive and restore.
+given back by a Space archive and restore. Who each of those reaches is below.
 
 **Nothing durable stands behind it, deliberately.** The page is re-read on
 mount, on socket reconnect and on this nudge, so a nudge lost to a closing
@@ -976,7 +976,26 @@ exchange in a private Channel off every other member's dashboard, and keeps a
 personal Space's id from reaching somebody who only shares a Channel with its
 owner. A guest is sent none: a guest is handed no Space state at all.
 
-The cost is two local reads per subscribed socket and no write. The page itself
+**"Can see that Space" is the wrong address for a membership, because of the
+third clause.** Somebody who reaches a Space only through one Channel in it
+sees the same page before and after a *different* Channel is placed into or
+taken out of it — so a nudge tells them something their own refetch does not:
+that something was just put into or taken out of this Space. Repeated, that is
+a live feed of a participants-only Space's membership to a person who is told
+only its name, which is the disclosure the viewer-scoped `channelCount` is
+narrowed to avoid, reopened in the time dimension. A membership settling or
+being removed is therefore addressed **through the Channel that moved** — the
+viewers who can list it, which is exactly the set whose page changed — and the
+Space is named alongside it rather than resolved from it, because by the time a
+removal publishes the membership is `removed` and the Channel no longer
+resolves to the Space it just left. An archive and a restore keep the
+see-the-Space address: the Space's own disappearance and return are visible to
+everybody who reaches it, however they reach it.
+
+The cost is two local reads per subscribed socket and no write, plus two more
+per Channel addressed that way — one Channel, on the two membership
+settlements, beside a Space snapshot on the same line that rebuilds both
+directories per socket. The page itself
 is never pushed: that would put one Channel's traffic on every reader of every
 Space that holds it, and would put breakouts on a socket nothing else draws
 them on.
@@ -1433,7 +1452,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
@@ -1879,6 +1898,15 @@ out. It is `canEdit` now, it answers that refusal apart from "no such Space" so
 `listSpaceMembers` can name it, and it says why there is no viewer-scoped
 variant to narrow to instead: every caller is a walk that has to reach the
 whole Space or it converges on nothing.
+
+The dashboard nudge was the third. Its `spaceIds` arm addresses everybody who
+can *see* a Space, which the third clause widened — so every Channel placed
+into or taken out of a participants-only Space told the people who reach it
+through one other Channel that something had moved in it, one event at a time.
+The narrowed `channelCount` refuses that disclosure as a number and the nudge
+was making it again over time. A membership settling now addresses the viewers
+of the Channel that moved; an archive and a restore still address everybody,
+because the Space's own disappearance is visible to them anyway.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
