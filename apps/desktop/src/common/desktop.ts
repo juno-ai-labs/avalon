@@ -462,6 +462,8 @@ export interface RallyDesktopBridge {
    * `parseSidekicksWindowTarget` rather than routing on it directly.
    */
   openSidekicks: (target?: string) => Promise<void>;
+  demoSidecarAvailable?: (binding: { userId: string; workspaceId: string; region: Region }) => Promise<boolean>;
+  openDemoSidecar?: (binding: { userId: string; workspaceId: string; region: Region }) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
   stopSystemAudioCapture: () => Promise<void>;

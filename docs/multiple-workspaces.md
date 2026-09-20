@@ -391,6 +391,14 @@ credential/profile/drafts before another workspace becomes active. Lockdown
 encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
+### 2026-09-20 — Demo sidecars retain their launch binding
+
+The [Demo sidecar](demo-sidecar.md) selects a stored credential by its original
+user, Organization, and region; active navigation never retargets it. Another
+eligible demo gets a separate window. Non-demo navigation and account departure
+close sidecars and discard their in-memory cards. Reusing the active credential
+was rejected because it could submit a prepared message into a regular Organization.
+
 ### 2026-09-14 — Configurable deployment isolation
 
 Workspace creation uses Global without asking for a geographical choice. Stored credentials and profile caches drop removed deployments while retaining the Global account and other configured workspaces. This reuses existing session reconciliation; it does not migrate sessions or add enterprise provisioning.

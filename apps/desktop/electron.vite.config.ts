@@ -15,7 +15,8 @@ const rendererContentSecurityPolicy = {
       // React Fast Refresh injects a small inline bootstrap only while Vite's
       // development server is active. Packaged HTML remains strict.
       const developmentSource = context.server ? "'unsafe-inline'" : '';
-      return html.replace(developmentScriptSourceMarker, developmentSource);
+      return html.replace(developmentScriptSourceMarker, developmentSource)
+        .replace('__RALLY_DEVELOPMENT_CONNECT_SOURCE__', context.server ? 'ws://127.0.0.1:* ws://localhost:*' : '');
     },
   },
 };
@@ -28,10 +29,11 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@rally/ui'] })],
     build: {
       sourcemap: true,
       rollupOptions: {
+        input: { index: resolve('src/preload/index.ts'), 'demo-sidecar': resolve('src/preload/demo-sidecar.ts') },
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
@@ -52,6 +54,7 @@ export default defineConfig({
     },
     plugins: [rendererContentSecurityPolicy, react()],
     build: {
+      rollupOptions: { input: { index: resolve('src/renderer/index.html'), 'demo-sidecar': resolve('src/renderer/demo-sidecar.html') } },
       sourcemap: true,
     },
   },

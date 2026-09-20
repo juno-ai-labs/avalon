@@ -120,6 +120,22 @@ export function WorkspaceAccountMenu({
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoEligibleKey, setDemoEligibleKey] = useState<string | null>(null);
+  const demoKey = JSON.stringify([currentUser.id, activeWorkspace.id, activeWorkspace.region]);
+  useEffect(() => {
+    let live = true;
+    const bridge = desktopBridge();
+    if (bridge.demoSidecarAvailable) void bridge.demoSidecarAvailable({ userId: currentUser.id, workspaceId: activeWorkspace.id, region: activeWorkspace.region })
+      .then(eligible => { if (live) setDemoEligibleKey(eligible ? demoKey : null); })
+      .catch(() => { if (live) setDemoEligibleKey(null); });
+    return () => { live = false; };
+  }, [currentUser.id, activeWorkspace.id, activeWorkspace.region, demoKey, menuOpen]);
+  const openDemoSidecar = (): void => {
+    setDemoError(null);
+    void desktopBridge().openDemoSidecar?.({ userId: currentUser.id, workspaceId: activeWorkspace.id, region: activeWorkspace.region })
+      .catch(() => { setDemoError('Demo sidecar could not be opened. Try again from the demo organization.'); setMenuOpen(true); });
+  };
   const [creating, setCreating] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const workspaceRegion = 'global';
@@ -223,6 +239,9 @@ export function WorkspaceAccountMenu({
                   <Settings aria-hidden="true" />
                   <span>Settings</span>
                 </DropdownMenu.Item>
+                {demoEligibleKey === demoKey && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={openDemoSidecar}>
+                  <Sparkles aria-hidden="true" /><span>Demo sidecar</span>
+                </DropdownMenu.Item>}
               </>
             )}
             {enabled && (
@@ -348,11 +367,13 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><Settings size={14} /> Settings…</button>
                 </DropdownMenu.Item>
+                {demoEligibleKey === demoKey && <DropdownMenu.Item className="menu-item" onSelect={openDemoSidecar}>Demo sidecar</DropdownMenu.Item>}
                 <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
                   <LogOut size={14} /> Sign out
                 </DropdownMenu.Item>
               </>
             )}
+            {demoError && <DropdownMenu.Label className="menu-label" role="alert">{demoError}</DropdownMenu.Label>}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

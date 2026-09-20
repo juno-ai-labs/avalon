@@ -135,11 +135,9 @@ The server checks this boundary before returning any participant or destination 
 
 ### Authentication and app targeting
 
-The sidecar uses Rally’s standard Google identity sign-in and workspace-session activation for the workspace supplied by the launch handoff. Authentication preserves that target and cannot select or fall back to another workspace; if the operator cannot activate it, access is denied. It calls the existing `POST /auth/google/start` flow with a dedicated callback URI registered to the sidecar. The backend validates and preserves that caller-supplied `returnUri`, so the operating system opens the sidecar when Google authentication completes.
+The sidecar is a separate secured window within Rally. It uses the main process’s existing authenticated operator session, pinned to the Organization and region supplied by the launch handoff. Credential refresh preserves that binding and never falls back to the main window’s active Organization.
 
-The sidecar must register a callback scheme/URI distinct from the main Rally app. Two installed applications cannot reliably share ownership of the same custom URL scheme, and the backend cannot choose which application the operating system launches after both claim it. The backend allowlists the sidecar’s exact callback host and path alongside Rally’s existing callback rather than accepting arbitrary return destinations. The OAuth state, PKCE, single-use ticket, activation of the launch-bound workspace, session storage, and refresh behavior remain the standard Rally authentication flow.
-
-The sidecar does not register Rally’s existing `rallywithai:` scheme. That scheme remains owned by the main Rally app.
+There is no separate installed app, sign-in flow, callback URI, or protocol registration. Rally retains ownership of its existing deep links and authentication callbacks. Signing out or changing accounts closes sidecars; after signing in again, the operator reopens one from an eligible demo Organization.
 
 ### Loading and selection
 
@@ -214,7 +212,7 @@ Cards and their direct API results remain in memory for as long as the sidecar p
 
 | Failure | Product behavior |
 | --- | --- |
-| Operator authentication missing, expired, or revoked | The shell locks and starts or resumes standard Google authentication through the sidecar callback. |
+| Operator authentication missing, expired, or revoked | The shell denies further requests; sign-out closes it. The operator signs in through Rally and reopens from the eligible demo. |
 | Operator email is outside `rallywith.ai` or unverified, workspace is not an eligible demo, or the exact relationship is absent | Access denied without enumerating participants or destinations; no represented message is admitted. |
 | Catalog read fails or is malformed | Selections are unsendable and reload is offered. |
 | Participant is removed, suspended, or no longer delegable | Send is denied at authorization before message admission and the selection is marked stale. |
@@ -327,7 +325,7 @@ are denied, remote content is absent, every IPC argument is parsed, and the
 preload exposes named operations rather than `ipcRenderer` or arbitrary URLs.
 The privileged API key mentioned in the product concept is never packaged,
 placed behind `VITE_`, exposed to renderer/devtools, written to local storage, or
-logged. The sidecar authenticates an ordinary Rally user through the standard Google identity, PKCE, ticket redemption, launch-bound workspace activation, and session boundary. Its dedicated callback URI selects the sidecar as the completion target; the backend allowlists that exact host/path and accepts no arbitrary destination. The sidecar does not reuse the regional demo-operations bearer credential or `demos` role, and the request body cannot choose the operator identity or role.
+logged. The sidecar authenticates an ordinary Rally user through the standard Google identity, PKCE, ticket redemption, launch-bound workspace activation, and session boundary. It shares Rally’s existing authentication lifecycle and introduces no callback URI. The sidecar does not reuse the regional demo-operations bearer credential or `demos` role, and the request body cannot choose the operator identity or role.
 
 Every catalog read and send checks all of these server-side:
 
@@ -406,7 +404,7 @@ Revoking the exact relationship, removing either membership, losing the verified
 14. If required impersonation audit recording fails, no represented admission starts.
 15. After a successful direct message API response, the sidecar performs no follow-up read and reports no addressing or harness status; any later failure is owned and displayed by Rally’s ordinary surfaces.
 16. Revoking the exact relationship, removing either membership, losing the verified company email, attempting to retarget the sidecar to another workspace, losing demo eligibility, or retiring the demo blocks the next catalog read or represented send without a client update. Demo retirement revokes the workspace-scoped relationships it created while preserving prior turns, runs, and audit evidence.
-17. Standard Google sign-in returns to the sidecar through its dedicated allowlisted callback URI, while the sidecar does not register the main app’s `rallywithai:` scheme. The packaged app contains no internal operator key or represented participant credential; its renderer cannot access sessions, arbitrary IPC, Node, or arbitrary network destinations.
+17. The sidecar uses Rally’s existing operator session through the main process, pinned to its launching workspace. No separate OAuth callback or protocol scheme is registered. The packaged app contains no internal operator key or represented participant credential; its renderer cannot access sessions, arbitrary IPC, Node, or arbitrary network destinations.
 18. Automated coverage exercises relationship directionality, self-pairs, complete demo pair creation, idempotent setup, revoked and missing relationships, self-send, cross-participant send, stale membership, unauthorized destination, denial in regular workspaces even with a valid relationship, denial of non-company and unverified emails in demos, exact-domain matching against subdomains and lookalike suffixes, denial of template/unpublished/abandoned/retired demos, fail-closed eligibility lookup, direct-API and forged-client bypass attempts, account/workspace changes, cross-workspace IDs, impersonation audit correlation, unchanged transcript/imported-session contracts, direct API rejection, duplicate requests, lost-response retry with the same idempotency key, and the absence of sidecar polling/subscriptions against the real migrations and object runtime where those semantics depend on them.
 19. The sidecar imports shared presentation from `@rally/ui`, uses the shared theme contract and semantic states, and introduces no copied Rally stylesheet, sidecar component library, or Vue presentation implementation. Shared component tests exercise presentation once; host tests cover only adapter behavior.
 20. Deep links retain their existing Rally routing behavior. A successful deep-link navigation to a non-demo workspace closes the sidecar and clears its cards/results; no link can retarget the sidecar to that workspace. Already admitted messages remain admitted, and closing does not imply cancellation of an in-flight request.
@@ -422,4 +420,4 @@ Revoking the exact relationship, removing either membership, losing the verified
 
 ## Open questions
 
-N/A — the menu entry point, launch-bound workspace, original-cast eligibility, new-card message lifecycle, company-email/demo-workspace access boundary, authentication target, Rally navigation target, and in-memory result lifetime are decided above. Implementation-specific callback registration values are recorded in the design and configuration that introduce the sidecar.
+N/A — the menu entry point, launch-bound workspace, original-cast eligibility, new-card message lifecycle, company-email/demo-workspace access boundary, authentication target, Rally navigation target, and in-memory result lifetime are decided above. The sidecar shares Rally’s existing authenticated session and introduces no callback registration.

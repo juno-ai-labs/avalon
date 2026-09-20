@@ -105,6 +105,8 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
+  demoSidecarAvailable: binding => ipcRenderer.invoke('demo-sidecar:available', binding) as Promise<boolean>,
+  openDemoSidecar: binding => ipcRenderer.invoke('demo-sidecar:open', binding) as Promise<void>,
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
   onApplicationForegroundChanged: (listener) => {
