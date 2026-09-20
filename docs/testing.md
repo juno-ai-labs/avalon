@@ -673,15 +673,24 @@ real consumer. The real drain, with its delete on success, is proved once in
 `conversation-effect-queue.test.ts`; every other test only needs the effects to
 arrive when it says so.
 
-The hold is a spy on the binding's `sendBatch` prototype, not a proxy on
-`instance.env`. The next RPC or alarm rebinds `this.env` from the Worker, so an
-instance proxy is gone by the time the drain runs, and the row it was supposed
-to keep readable is deleted. That is how
+The hold for this file re-applies a refusing `ACTIVITY_QUEUE` on `this.env`
+at the start of `runDueAlarmWork`. The next RPC or alarm rebinds `this.env`
+from the Worker, so a proxy installed once is gone by the time the drain
+runs; spying on the test Worker's `ACTIVITY_QUEUE` does not catch that drain
+either, because the object the alarm sends through is not the same binding
+object the test file holds.
+
+That is how
 `retains private child unread locally without publishing it into Main's directory`
-failed on `main`: two child effects in one Queue batch, the drain between them,
-and the assertion seeing one queued `directory_user` envelope instead of two.
-`conversation-effect-queue.test.ts` uses the same prototype hold with a toggle
-(`parked`) so it can inspect the outbox and then hand the real drain back.
+failed on `main`: two child effects in one Queue batch become two RPCs, an
+overdue alarm on a different actor (`AlarmManager mismatch`) drains the first
+child's `directory_user`, and the assertion sees Main's envelope only. That
+case now applies both children in one `runInDurableObject` turn so the input
+gate is held across both writes, which is the serialization production uses
+per object without that interleave. The consumer path stays proved by the
+other cases in the file. The drain itself still has to run — an oversized
+envelope is dropped before `sendBatch` — so the wrapper refuses the producer
+rather than skipping alarm work.
 
 ## Letting a run reach the model
 

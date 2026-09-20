@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationEffectEnvelopeSchema,
   EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+  ParentEffectEnvelopeSchema,
   asAutomationId,
   asSubstreamId,
   asUserId,
@@ -28,6 +29,7 @@ import {
   conversationEffectHash,
   type ConversationEffect,
   type ConversationEffectEnvelope,
+  type ParentEffectEnvelope,
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
@@ -46,7 +48,6 @@ import {
   pendingChildEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
-import { holdEffectQueue, type EffectQueueHold } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ba0");
@@ -71,12 +72,12 @@ const AUTH: AuthContext = {
   role: "member",
 };
 
-/**
- * Shared with `holdEffectQueue` so every case in this file installs the
- * prototype spy once. Starts unparked: only the cases that inspect an outbox
- * flip it on, and the drain-proof case flips it back off before the alarm.
- */
-const effectQueueHold: EffectQueueHold = { parked: false };
+interface QueueGate {
+  /** While true the object's producer refuses, so its drain defers rows instead of deleting them. */
+  parked: boolean;
+}
+
+const effectQueueHold: QueueGate = { parked: false };
 
 beforeEach(async () => {
   await reset();
@@ -87,7 +88,6 @@ beforeEach(async () => {
   });
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
   effectQueueHold.parked = false;
-  holdEffectQueue(effectQueueHold);
 }, 30_000);
 
 afterEach(() => {
@@ -116,30 +116,46 @@ function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableO
   ));
 }
 
+function parkEnv(targetEnv: Env, logLevel?: "warn"): Env {
+  const refused = () => Promise.reject(new Error("effect_queue_parked_by_test"));
+  const parkedQueue = { send: refused, sendBatch: refused };
+  return new Proxy(targetEnv, {
+    get: (current, property, receiver) => {
+      if (property === "ACTIVITY_QUEUE" && effectQueueHold.parked) return parkedQueue;
+      if (property === "LOG_LEVEL" && logLevel) return logLevel;
+      return Reflect.get(current, property, receiver);
+    },
+  });
+}
+
 /**
  * Keep outbox rows readable across the next RPC and alarm.
  *
  * The drain fires the moment an effect commits and deletes every row
  * `ACTIVITY_QUEUE` accepts, so a read placed after the mutation races the
- * drain (docs/testing.md). Holding `sendBatch` on the binding prototype is
- * what survives the next invocation; patching `instance.env` does not.
- * Flip `parked` off to hand the real drain back.
+ * drain (docs/testing.md). The next invocation rebinds `this.env`, so a
+ * proxy installed once is gone by the time the alarm runs. Wrapping
+ * `runDueAlarmWork` re-applies the refuse on the rebound env before the
+ * drain reads it. Flip `parked` off to hand the real drain back.
  */
 async function parkEffectQueue(
   stub: DurableObjectStub,
   options: { logLevel?: "warn" } = {},
-): Promise<EffectQueueHold> {
+): Promise<QueueGate> {
   effectQueueHold.parked = true;
-  if (!options.logLevel) return effectQueueHold;
   await runInDurableObject(stub, (instance) => {
-    const target = instance as unknown as { env: Env };
-    const logLevel = options.logLevel;
-    target.env = new Proxy(target.env, {
-      get: (current, property, receiver) => {
-        if (property === "LOG_LEVEL") return logLevel;
-        return Reflect.get(current, property, receiver);
-      },
-    });
+    const target = instance as {
+      env: Env;
+      runDueAlarmWork: (now?: number) => Promise<void>;
+      originalRunDueAlarmWork?: (now?: number) => Promise<void>;
+    };
+    target.originalRunDueAlarmWork ??= target.runDueAlarmWork;
+    const original = target.originalRunDueAlarmWork;
+    target.runDueAlarmWork = async function parkedAlarmWork(this: { env: Env }, now?: number) {
+      if (effectQueueHold.parked) this.env = parkEnv(this.env, options.logLevel);
+      return original.call(this, now);
+    };
+    target.env = parkEnv(target.env, options.logLevel);
   });
   return effectQueueHold;
 }
@@ -353,31 +369,57 @@ describe("a parent with two children", () => {
     });
     await parent.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
 
-    const result = await consumeEffectBodies(env, [
-      childEnvelope({
-        parentKind: "workstream",
-        parentId: SIBLING_WORKSTREAM_ID,
-        substreamId: "0",
-        sourceVersion: 1,
-        effect: viewerEffect(2),
-      }),
-      childEnvelope({
-        parentKind: "workstream",
-        parentId: SIBLING_WORKSTREAM_ID,
-        substreamId: SIBLING_CHILD_ID,
-        sourceVersion: 1,
-        effect: viewerEffect(3),
-      }),
-    ]);
-    expect(result).toEqual({ acked: 2, retried: 0 });
+    const mainEnvelope = childEnvelope({
+      parentKind: "workstream",
+      parentId: SIBLING_WORKSTREAM_ID,
+      substreamId: "0",
+      sourceVersion: 1,
+      effect: viewerEffect(2),
+    });
+    const breakoutEnvelope = childEnvelope({
+      parentKind: "workstream",
+      parentId: SIBLING_WORKSTREAM_ID,
+      substreamId: SIBLING_CHILD_ID,
+      sourceVersion: 1,
+      effect: viewerEffect(3),
+    });
+    // Apply both children in one turn. `consumeActivityQueue` uses Promise.all,
+    // so two messages in one batch are two RPCs; an overdue alarm on a
+    // different actor (AlarmManager mismatch) drains the first child's
+    // `directory_user` before the assertion can read it. The input gate held
+    // here is the same serialization production uses per object, without that
+    // interleave. The consumer path is proved by the other cases in this file.
+    const applied = await runInDurableObject(parent, async (instance, state) => {
+      const receiver = instance as {
+        receiveChildEffects: (input: {
+          substreamId: string;
+          envelopes: ConversationEffectEnvelope[];
+        }) => Promise<{ accepted: { messageId: string }[] }>;
+      };
+      const main = await receiver.receiveChildEffects({
+        substreamId: "0", envelopes: [mainEnvelope],
+      });
+      const breakout = await receiver.receiveChildEffects({
+        substreamId: SIBLING_CHILD_ID, envelopes: [breakoutEnvelope],
+      });
+      const perChild = state.storage.sql.exec<{ substream_id: string }>(
+        `SELECT substream_id FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
+        USER_ID,
+      ).toArray();
+      const queued = state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM durable_outbox
+          WHERE state IN ('pending', 'inflight')
+            AND json_extract(payload_json, '$.kind') = 'parent_effect'
+          ORDER BY created_at, message_id`,
+      ).toArray()
+        .map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)))
+        .filter((envelope): envelope is ParentEffectEnvelope => envelope.effect.kind === "directory_user");
+      return { accepted: main.accepted.length + breakout.accepted.length, perChild, queued };
+    });
+    expect(applied.accepted).toBe(2);
+    expect(applied.perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
 
-    const perChild = await runInDurableObject(parent, (_instance, state) => state.storage.sql.exec<{
-      substream_id: string;
-    }>(`SELECT substream_id FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`, USER_ID).toArray());
-    expect(perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
-
-    const queued = (await pendingParentEffects(parent))
-      .filter((envelope) => envelope.effect.kind === "directory_user");
+    const queued = applied.queued;
     // Main advances the Channel row, while the Breakout carries its own tagged
     // projection to the Space dashboard. The Breakout must not be folded into
     // Main even though both projections leave the parent.
