@@ -1500,14 +1500,19 @@ export class RallyApi {
     return this.request('/workstreams/import/preview', { method: 'POST', body: input, schema: SessionImportPreviewSchema });
   }
 
-  async importSession(preview: SessionImportPreview, clientMessageId: string): Promise<string> {
+  async importSession(
+    preview: SessionImportPreview,
+    clientMessageId: string,
+    input: { title: string; spaceIds: string[] } = { title: preview.title, spaceIds: [] },
+  ): Promise<string> {
     const result = await this.request('/workstreams/import', {
-      method: 'POST', body: { ...preview, clientMessageId }, schema: createWorkstreamResponseSchema,
+      method: 'POST', body: { ...preview, ...input, clientMessageId }, schema: createWorkstreamResponseSchema,
     });
     return result.workstream.id;
   }
 
   async createWorkstream(input: {
+    title?: string;
     openingMessage: string;
     participantIds: string[];
     /**
@@ -1541,6 +1546,7 @@ export class RallyApi {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
+        ...(input.title ? { title: input.title } : {}),
         ...(input.spaceIds && input.spaceIds.length > 0 ? { spaceIds: input.spaceIds } : {}),
         openingMessage: input.openingMessage,
         participantUserIds,

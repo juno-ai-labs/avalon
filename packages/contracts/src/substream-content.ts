@@ -1,4 +1,5 @@
 import { HttpsUrlSchema } from "./url-schemas";
+import { SpaceIdSchema } from "./spaces";
 import { z } from "zod";
 
 /** Source bytes and unavailable references are explicit; a URL is never proof of retrieval. */
@@ -63,6 +64,10 @@ export const SessionImportPreviewSchema = z.strictObject({
   content: SubstreamContentSchema,
 });
 export const SessionImportRequestSchema = SessionImportPreviewSchema.extend({
+  title: z.string().min(1).max(180),
   clientMessageId: z.string().uuid(),
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
 });
 export type SessionImportPreview = z.infer<typeof SessionImportPreviewSchema>;

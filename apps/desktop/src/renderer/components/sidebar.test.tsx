@@ -211,6 +211,26 @@ describe('Sidebar channel markers', () => {
     expect(screen.getByRole('button', { name: 'New channel' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
+  it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
+    const onCreateChannel = vi.fn(async () => undefined);
+    render(<MemoryRouter><Tooltip.Provider>
+      <Sidebar {...defaultActions} automations={[]} onCreateChannel={onCreateChannel}
+        onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
+    </Tooltip.Provider></MemoryRouter>);
+    const launcher = screen.getAllByRole('button', { name: 'New channel' })[0];
+    if (!launcher) throw new Error('New channel launcher missing');
+    fireEvent.keyDown(launcher, { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general().id }));
+    expect(markSurfaceEntrypoint).toHaveBeenCalledWith('sidebar_new');
+  });
+
   it('reduces the GrokBot shell navigation to channels', () => {
     render(
       <MemoryRouter>
@@ -3289,6 +3309,7 @@ describe('the sidebar without a recency list', () => {
     expect(screen.getByRole('heading', { name: 'Today' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Today actions' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
   it('given a channel in no visible space, when the sidebar is drawn, then it is under Other channels', () => {
@@ -3358,6 +3379,7 @@ describe('the sidebar without a recency list', () => {
     expect(screen.queryByRole('button', { name: 'Expand General' })).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Other channels' }))
       .getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
   // The section above already holds it, and a row in both would take its order
