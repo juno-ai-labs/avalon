@@ -1,9 +1,8 @@
-import { IconLock, IconPlus, IconTriangle } from '@tabler/icons-react';
+import { IconLock, IconTriangle } from '@tabler/icons-react';
 import type { SpaceColorKey, SpaceIconKey, SpaceScope } from '@rally/contracts';
 import clsx from 'clsx';
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react';
 
-import { IconButton } from './primitives';
 import { SpaceIcon } from './space-appearance-picker';
 
 /**
@@ -64,16 +63,8 @@ export interface SpaceRowDrag {
  *
  * Presentational. Expansion, activity, drag semantics and navigation are all
  * the host's; what lives here is the geometry, the accordion control, the
- * hover-revealed plus and the motion keys — `space:<id>` on the row, so a Space
+ * motion keys — `space:<id>` on the row, so a Space
  * reordered past another glides with the placements under it.
- *
- * **The plus is optional**, which is the one capability this component now
- * lets a host withhold. A person who reaches a Space only because they can
- * read a Channel placed in it is shown its mark and name so that Channel has
- * somewhere to be drawn, and may write nothing on it — starting a Channel in
- * it included. The row's grid keeps its third column either way, so a list
- * mixing the two does not have its names in two different places; a control
- * that can only fail is the thing being avoided, not the column.
  */
 export function SpaceRow({
   active,
@@ -81,8 +72,6 @@ export function SpaceRow({
   drag,
   expanded,
   link,
-  newChannelLabel,
-  onNewChannel,
   onRowKeyDown,
   onToggleExpanded,
   space,
@@ -95,10 +84,6 @@ export function SpaceRow({
   expanded: boolean;
   /** The host's navigation element, wrapping {@link SpaceRowContent}. */
   link: ReactNode;
-  /** Required with `onNewChannel`; both are omitted together. */
-  newChannelLabel?: string | undefined;
-  /** Omitted for a Space this reader may not start a Channel in. */
-  onNewChannel?: (() => void) | undefined;
   onRowKeyDown?: ((event: KeyboardEvent<HTMLDivElement>) => void) | undefined;
   onToggleExpanded: () => void;
   space: SpaceRowSpace;
@@ -137,15 +122,6 @@ export function SpaceRow({
           <IconTriangle className={clsx(expanded && 'is-expanded')} size={10} stroke={1.8} />
         </button>
         {link}
-        {onNewChannel && newChannelLabel !== undefined && (
-          <IconButton
-            className="space-sidebar-action space-sidebar-row-action"
-            label={newChannelLabel}
-            onClick={onNewChannel}
-          >
-            <IconPlus size={14} stroke={1.8} />
-          </IconButton>
-        )}
       </div>
       {children}
     </div>

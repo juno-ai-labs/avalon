@@ -47,7 +47,7 @@ function renderMenu(callbacks: MenuCallbacks = {
   onImportChannel: vi.fn(async () => undefined),
 }) {
   render(<Tooltip.Provider>
-    <NewWorkstreamMenu {...callbacks} spaces={[general]} onStart={vi.fn()}>
+    <NewWorkstreamMenu {...callbacks} spaces={[general]}>
       <button type="button">Plus</button>
     </NewWorkstreamMenu>
   </Tooltip.Provider>);
@@ -85,7 +85,7 @@ describe('sidebar creation menu', () => {
       onImportChannel: vi.fn(async () => undefined),
     };
     const view = render(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[general, planning]} onStart={vi.fn()}>
+      <NewWorkstreamMenu {...callbacks} spaces={[general, planning]}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
@@ -96,7 +96,7 @@ describe('sidebar creation menu', () => {
     expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General');
 
     view.rerender(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[planning]} onStart={vi.fn()}>
+      <NewWorkstreamMenu {...callbacks} spaces={[planning]}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
@@ -111,7 +111,6 @@ describe('sidebar creation menu', () => {
         onCreateChannel={vi.fn(async () => undefined)}
         onCreateSpace={vi.fn(async () => undefined)}
         onImportChannel={vi.fn(async () => undefined)}
-        onStart={vi.fn()}
         spaces={[reachedThroughChannel, general]}
       >
         <button type="button">Plus</button>
@@ -132,7 +131,6 @@ describe('sidebar creation menu', () => {
         onCreateChannel={vi.fn(async () => undefined)}
         onCreateSpace={vi.fn(async () => undefined)}
         onImportChannel={vi.fn(async () => undefined)}
-        onStart={vi.fn()}
         spaces={[]}
       >
         <button type="button">Plus</button>
@@ -173,6 +171,26 @@ describe('sidebar creation menu', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(onImportChannel).toHaveBeenCalledTimes(2));
     expect(onImportChannel.mock.calls[1]?.[0].clientMessageId).toBe(firstRequestId);
+  });
+
+  it('keeps the form locked while creation is in flight', async () => {
+    let resolveCreate: (() => void) | undefined;
+    const callbacks = renderMenu({
+      onCreateChannel: vi.fn(() => new Promise<void>((resolve) => { resolveCreate = resolve; })),
+      onCreateSpace: vi.fn(async () => undefined),
+      onImportChannel: vi.fn(async () => undefined),
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(callbacks.onCreateChannel).toHaveBeenCalledTimes(1));
+    expect(within(dialog).getByRole('button', { name: 'Creating…' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+
+    resolveCreate?.();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Start a new channel' })).not.toBeInTheDocument());
   });
 
   it('creates a Space from its name alone', async () => {
