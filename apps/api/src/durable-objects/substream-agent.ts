@@ -1,3 +1,4 @@
+import { representedDemoAuth } from "../services/impersonation";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
@@ -421,7 +422,8 @@ const ProductAuthSchema = z.strictObject({
   // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
   // member who never signs in, verified the same way. Both are constructed
   // only by server code; `IdentityAuthContext.principal` says why.
-  principal: z.enum(["connector", "demo_seed"]).optional(),
+  principal: z.enum(["connector", "demo_seed", "impersonation"]).optional(),
+  operatorUserId: UserIdSchema.optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -3342,7 +3344,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // membership rather than by a session row. The enum on `principal` is the
     // gate: a value added to it inherits this branch.
     const nonSessionPrincipal = request.auth.principal !== undefined;
-    const current = nonSessionPrincipal
+    const current = request.auth.principal === "impersonation"
+      ? await (async () => {
+        if (request.operation !== "create_message" || !request.auth.operatorUserId) return null;
+        const operator = await this.socketAuth({ ...request.auth, userId: request.auth.operatorUserId });
+        return operator ? representedDemoAuth(this.env, operator, request.auth.userId) : null;
+      })()
+      : nonSessionPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
       : await span.step("workstream.room.session_auth", () => this.socketAuth({
         workspaceId: request.auth.workspaceId,

@@ -1,3 +1,4 @@
+import { provisionImpersonationRelationships } from "./impersonation";
 /**
  * The preparation operation: one durable, resumable sequence per demo.
  *
@@ -849,6 +850,7 @@ async function phaseBody(
            ON CONFLICT (workspace_id, user_id) DO UPDATE SET status = 'active'`,
         ).bind(workspaceId, userId, at).run();
       }
+      await provisionImpersonationRelationships(env.DB, workspaceId, [...seated], record.operation_id);
       return { outcome: "completed", detail: { workspaceId, members: seated.size } };
     }
     case "copying_connections": {

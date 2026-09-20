@@ -698,6 +698,15 @@ multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
 
+### 2026-09-20 — Original-cast impersonation relationships
+
+Preparation seats the immutable cast and provisions every directed pair, including
+self-pairs, through the shared [impersonation service](impersonation.md). Retirement
+revokes those pairs without deleting their evidence. Existing demos provision only
+missing original-cast pairs on catalog read; replay preserves revocation. This keeps
+live-demo sends within the cast without borrowing demo-seed authority.
+
+
 ### 2026-09-17 — Admit seeded uploads as attachment messages
 
 Uploads now use ordinary message admission with a stable client message ID and

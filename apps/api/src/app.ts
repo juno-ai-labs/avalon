@@ -1,3 +1,4 @@
+import { demoSidecarRoutes } from "./routes/demo-sidecar";
 import { sharingRoutes } from "./routes/sharing";
 import { createBrowserRoutes } from "./routes/browser";
 import { daytonaWebhookRoutes } from "./routes/daytona";
@@ -166,6 +167,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.use("*", requireAuth);
   protectedApi.use("*", workspaceRealtimeInvalidation);
   protectedApi.route("/workspace", workspaceRoutes);
+  protectedApi.route("/demo-sidecar", demoSidecarRoutes);
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);

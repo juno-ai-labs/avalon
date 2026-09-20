@@ -32,7 +32,12 @@ export async function markDemoWorkspaceRetired(
   workspaceId: string,
   now: string,
 ): Promise<void> {
-  await db.prepare(
+  await db.batch([db.prepare(
     "UPDATE demo_operations SET retired_at = ?, updated_at = ? WHERE workspace_id = ? AND retired_at IS NULL",
-  ).bind(now, now, workspaceId).run();
+  ).bind(now, now, workspaceId),
+    db.prepare(`UPDATE impersonation_relationships SET revoked_at = ?
+      WHERE workspace_id = ? AND revoked_at IS NULL
+        AND authority_basis IN (SELECT operation_id FROM demo_operations WHERE workspace_id = ?)`)
+      .bind(now, workspaceId, workspaceId),
+  ]);
 }

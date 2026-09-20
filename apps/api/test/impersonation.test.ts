@@ -1,3 +1,4 @@
+import { markDemoWorkspaceRetired } from '../src/services/demo-workspace-register';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { asUserId, asWorkspaceId } from '@rally/contracts';
@@ -56,4 +57,11 @@ describe('workspace impersonation authority', () => {
     database.prepare('DELETE FROM demo_operations').run();
     await expect(requireDemoOperator(db, workspaceId, operator, 'global')).rejects.toMatchObject({ code: 'demo_sidecar_denied' });
   });
+});
+
+it('retirement revokes the demo relationships without deleting the evidence', async () => {
+  const db = seed();
+  await provisionImpersonationRelationships(db, workspaceId, [operator, participant], 'demo-operation');
+  await markDemoWorkspaceRetired(db, workspaceId, '2026-09-20T12:00:00Z');
+  expect(database.prepare('SELECT count(*) AS n FROM impersonation_relationships WHERE revoked_at IS NOT NULL').get()).toEqual({ n: 4 });
 });

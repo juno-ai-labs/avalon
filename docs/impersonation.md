@@ -11,11 +11,21 @@ original cast of a published live demo.
 | `apps/api/src/services/impersonation.ts` | Generic pair provisioning and exact relationship checks; canonical demo/operator eligibility. |
 | `packages/db/migrations/0115_impersonation_relationships.sql` | Regional identity delegation records. |
 
+| `apps/api/src/services/demo-sidecar.ts`, `routes/demo-sidecar.ts` | HTTP catalog and message adapter with dual-identity audit. |
+
 ## How it works
 
 Provisioning inserts every ordered pair, including self-pairs. Existing records
 are retained, including revocations. Demo eligibility reads the original recorded
 cast, current membership, trusted regional identity, and publication state.
+
+Catalog reads provision missing original-cast pairs for older demos. Each participant's
+Channel/Breakout list uses ordinary parent authority, never transcript reads.
+HTTP admission resolves the represented participant, audits before admission, then
+calls the ordinary conversation message operation. The conversation independently
+rechecks the actual operator session and demo relationship before admitting the
+represented turn. Receipts and addressing remain the ordinary path; the sidecar
+never observes downstream execution. Retirement revokes demo-provisioned pairs.
 
 ## Invariants
 
@@ -41,6 +51,21 @@ Missing or malformed demo identity/cast denies access. Replaying provisioning
 inserts missing pairs and preserves revoked ones.
 
 ## Changelog
+
+### 2026-09-20 — HTTP represented admission
+
+**What changed:** Added catalog/send/eligibility routes, conversation-boundary
+reauthorization, content-free dual-identity audits, preparation and retirement wiring.
+
+**Why:** Socket ownership must stay in the ordinary Rally conversation UI, while
+an HTTP retry must preserve ordinary message idempotency and admission behavior.
+
+**Considered and rejected:** Direct transcript writes and trusting only the initial
+Worker authorization would bypass ordinary admission or miss a revoked session.
+
+**Consequences:** Both identities are carried only through authorization and audit;
+canonical messages and harness inputs retain the represented participant.
+
 
 ### 2026-09-20 — Directed authority for the internal demo sidecar
 
