@@ -514,6 +514,7 @@ describe("reaping a stale root", () => {
   it("closes its activity tree and removes its transient presentation checkpoints", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
+    seedRun(sql, OTHER);
     storage.claimAttempt({
       ...fence,
       runId: RUN,
@@ -569,6 +570,26 @@ describe("reaping a stale root", () => {
       NOW - 800,
     );
     sql.exec(
+      `INSERT INTO active_output_turns
+         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
+          durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
+          seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+       VALUES (?, 1, 'turn-other', 2, '0', 'streaming', 1, 1, 1, ?, '[]', 0, ?, ?, ?)`,
+      OTHER,
+      OTHER,
+      NOW - 600,
+      NOW - 500,
+      NOW - 500,
+    );
+    sql.exec(
+      `INSERT INTO active_output_chunks
+         (run_id, attempt_epoch, chunk_index, text, byte_length, first_frame_seq,
+          through_frame_seq, content_hash, updated_at)
+       VALUES (?, 1, 0, 'other', 5, 1, 1, 'other-hash', ?)`,
+      OTHER,
+      NOW - 500,
+    );
+    sql.exec(
       `INSERT INTO active_agent_compaction
          (id, run_id, attempt_id, compaction_index, trigger, started_at, updated_at)
        VALUES (1, ?, 'attempt-1', 1, 'auto', ?, ?)`,
@@ -579,9 +600,12 @@ describe("reaping a stale root", () => {
     sql.exec(
       `INSERT INTO inference_delay_status
          (inference_request_id, run_id, execution_id, root_attempt_id, attempt_id, turn_id, active)
-       VALUES ('inference-1', ?, ?, 'attempt-1', 'attempt-1', 'turn-1', 1)`,
+       VALUES ('inference-1', ?, ?, 'attempt-1', 'attempt-1', 'turn-1', 1),
+              ('inference-other', ?, ?, 'attempt-other', 'attempt-other', 'turn-other', 1)`,
       RUN,
       RUN,
+      OTHER,
+      OTHER,
     );
 
     expect(storage.reapStaleRoot({
@@ -616,29 +640,111 @@ describe("reaping a stale root", () => {
     ).toArray()).toEqual([
       {
         activity_id: `${RUN}:activity`,
-        stopped_at: NOW + 60_001,
-        duration_ms: 61_001,
+        stopped_at: NOW + 60_000,
+        duration_ms: 61_000,
         boundary_source: "recovered",
         timing_accuracy: "upper_bound",
         revision: 2,
       },
       {
         activity_id: `${RUN}:turn:1:activity`,
-        stopped_at: NOW + 60_001,
-        duration_ms: 60_901,
+        stopped_at: NOW + 60_000,
+        duration_ms: 60_900,
         boundary_source: "recovered",
         timing_accuracy: "upper_bound",
         revision: 2,
       },
     ]);
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_output_turns`).one())
-      .toEqual({ count: 0 });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_output_chunks`).one())
-      .toEqual({ count: 0 });
+    expect(sql.exec(`SELECT run_id FROM active_output_turns`).toArray())
+      .toEqual([{ run_id: OTHER }]);
+    expect(sql.exec(`SELECT run_id FROM active_output_chunks`).toArray())
+      .toEqual([{ run_id: OTHER }]);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM active_agent_compaction`).one())
       .toEqual({ count: 0 });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM inference_delay_status`).one())
-      .toEqual({ count: 0 });
+    expect(sql.exec(`SELECT run_id FROM inference_delay_status`).toArray())
+      .toEqual([{ run_id: OTHER }]);
+  });
+
+  it("preserves another run's singleton compaction checkpoint", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    seedRun(sql, OTHER);
+    storage.claimAttempt({
+      ...fence,
+      runId: RUN,
+      leaseSeconds: 60,
+      lifecycleEventId: "event-claim",
+    });
+    sql.exec(
+      `INSERT INTO active_agent_compaction
+         (id, run_id, attempt_id, compaction_index, trigger, started_at, updated_at)
+       VALUES (1, ?, 'attempt-other', 1, 'auto', ?, ?)`,
+      OTHER,
+      NOW - 700,
+      NOW - 700,
+    );
+
+    expect(storage.reapStaleRoot({
+      runId: RUN,
+      attemptId: "attempt-1",
+      leaseExpiresAt: NOW + 60_000,
+      lifecycleEventId: "event-terminal",
+      now: NOW + 60_001,
+    })).toEqual({ outcome: "reaped" });
+
+    expect(sql.exec(
+      `SELECT run_id, attempt_id FROM active_agent_compaction WHERE id = 1`,
+    ).one()).toEqual({ run_id: OTHER, attempt_id: "attempt-other" });
+  });
+
+  it("leaves activity and checkpoints untouched when the stale fence no longer matches", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({
+      ...fence,
+      runId: RUN,
+      leaseSeconds: 60,
+      lifecycleEventId: "event-claim",
+    });
+    sql.exec(
+      `INSERT INTO transcript_activities
+         (activity_id, parent_activity_id, scope, subject_id, call_index, label,
+          lifecycle_state, revision, created_at, updated_at)
+       VALUES (?, NULL, 'response', ?, NULL, 'Working', 'active', 1, ?, ?)`,
+      `${RUN}:activity`,
+      RUN,
+      NOW,
+      NOW,
+    );
+    sql.exec(
+      `INSERT INTO active_output_turns
+         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
+          durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
+          seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+       VALUES (?, 1, 'turn-1', 1, '0', 'streaming', 1, 1, 1, ?, '[]', 0, ?, ?, ?)`,
+      RUN,
+      RUN,
+      NOW,
+      NOW,
+      NOW,
+    );
+
+    expect(storage.reapStaleRoot({
+      runId: RUN,
+      attemptId: "attempt-1",
+      leaseExpiresAt: NOW + 59_999,
+      lifecycleEventId: "event-terminal",
+      now: NOW + 60_001,
+    })).toEqual({ outcome: "not_stale" });
+
+    expect(sql.exec(
+      `SELECT lifecycle_state, revision FROM transcript_activities WHERE activity_id = ?`,
+      `${RUN}:activity`,
+    ).one()).toEqual({ lifecycle_state: "active", revision: 1 });
+    expect(sql.exec(`SELECT status FROM active_output_turns WHERE run_id = ?`, RUN).one())
+      .toEqual({ status: "streaming" });
+    expect(sql.exec(`SELECT status, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
+      .toEqual({ status: "running", lease_expires_at: NOW + 60_000 });
   });
 });
 

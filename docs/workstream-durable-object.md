@@ -1377,6 +1377,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
 - **No synchronous product transaction callback may return a Promise.** This includes `transactionSync`, `commitRuntimeMutation`, and `commitWithRegionalEffects`, whether the Promise is visible as `async` or hidden behind a helper. Prepare asynchronous transcript material first, then commit only synchronous SQLite work and revalidate its fences inside the transaction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
+- **A terminal run retains no participant-visible active execution state.** Terminalization closes response, assistant-turn, plugin, tool-call, thinking, and compaction activities and removes that run's streaming, compaction, and inference-delay checkpoints in the same transaction. A delayed compaction-start event must prove the exact running attempt and its live lease before it can recreate a checkpoint.
 - **A persistent loop goes back to `idle` only with its provider protocol settled.** An accepted assistant tool batch whose results are still missing is settled by `recoverInterruptedToolBatch`, which reads the durable receipts and can only run under a live execution lease — so a failing run settles the batch before it releases, and a loop released while one is open can never be repaired, and every queued message behind it is refused by `applyBindLoopTransition` for ever. Both release paths ask `unsettledToolBatchBlockingRelease`, and a third one has to as well. The single exception is a batch whose every withheld call is an unanswered question: its answer is a pending input, so the room releases itself.
 - **`inputsBindCanAccept` offers only what Bind will accept.** `nextLoopWorkAt` reads a non-empty answer as work that is due now and arms the object's alarm at `now`, so an input offered here and then refused is not one wasted pass — it is a wake per pass, indefinitely. A loop that can offer nothing reports `substream_loop_parked_with_queued_input` and derives no alarm of its own.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
@@ -1792,9 +1793,11 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 ### 2026-09-20 — Stale-run reaping closes the execution's visible activity
 
 **What changed:** the stale root reaper now closes every still-active response,
-assistant, plugin, and tool interval at the terminal receipt's timestamp and
-marks those durations as recovered upper bounds. The same transaction removes
-that run's transient output, compaction, and inference-delay checkpoints.
+assistant-turn, plugin, tool-call, thinking, and compaction interval at the
+expired lease boundary and marks those durations as recovered upper bounds. The
+same transaction removes that run's transient output, compaction, and
+inference-delay checkpoints. A delayed compaction-start event now has to prove
+the exact running attempt and its unexpired lease before recreating state.
 
 **Why:** the ordinary terminalization path already performed this recovery, but
 the stale-lease path wrote a failed run receipt without invoking it. A run that
@@ -1809,9 +1812,13 @@ work ended, and both would compete with the run receipt that already owns that
 fact.
 
 **Consequences:** ordinary and reaped terminal receipts now enforce the same
-participant-visible invariant. A recovered duration remains deliberately
-qualified as “at most …”, because the stale reaper knows only the latest durable
-time by which the work had ended, not the lost executor's exact stop time.
+participant-visible activity and checkpoint invariant. A recovered duration
+remains deliberately qualified as “at most …”, because lease expiry is the
+latest durable boundary through which the lost executor had authority, not its
+exact stop time. Persistent-loop release still follows its own fenced recovery
+path; this change does not make stale reaping a replacement for that settlement.
+
+Shipped in #880.
 
 ### 2026-09-19 — A failing run may not release the loop out from under the repair
 
