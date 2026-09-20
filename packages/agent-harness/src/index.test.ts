@@ -4525,7 +4525,7 @@ describe("agent harness", () => {
       type: "object",
       properties: {
         query: { type: "string" },
-        brand_kit_id: { type: "string", minLength: 1 },
+        brand_kit_id: { type: "string", minLength: 1, description: "Select a brand kit.", title: "Brand kit", default: "test-brand" },
         clear: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
       required: ["query"],
@@ -4545,6 +4545,12 @@ describe("agent harness", () => {
     const wire = requests[1]?.tools?.find((tool) => tool.function.name === "test_generate")?.function.parameters;
     expect(requests[1]?.tools?.map((tool) => tool.function.name)).toContain("test_generate");
     expect(wire).toBeDefined();
+    expect(wire!.properties).toMatchObject({ brand_kit_id: {
+      title: "Brand kit", default: "test-brand",
+      description: "Select a brand kit.\nUse null or omit this field when unspecified; null is removed before execution.",
+      anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+    } });
+    expect(JSON.stringify(wire).split("Select a brand kit.")).toHaveLength(2);
     const modelSchema = z.fromJSONSchema(wire!);
     expect(modelSchema.safeParse({ query: "draw", brand_kit_id: null, clear: null }).success).toBe(true);
     expect(modelSchema.safeParse({ query: null }).success).toBe(false);
@@ -4744,7 +4750,7 @@ describe("agent harness", () => {
     expect(result.error).not.toContain("content");
   });
 
-  it("preserves model-actionable errors from code-only input refinements", async () => {
+  it.each([undefined, null])("preserves model-actionable errors from code-only input refinements with title=%s", async (title) => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;
     }> = [];
@@ -4755,7 +4761,7 @@ describe("agent harness", () => {
             0,
             "provider-write",
             "update_resource",
-            JSON.stringify({ resourceId: "resource-1" }),
+            JSON.stringify({ resourceId: "resource-1", title }),
           )] },
           finish_reason: "tool_calls",
         }],

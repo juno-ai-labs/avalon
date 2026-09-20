@@ -1780,7 +1780,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const downstreamValidationError = error instanceof z.ZodError;
           // A tool may use Zod both for its initial argument parse and for
           // downstream provider/stored data. Only blame the model when its
-          // normalized arguments also violate the schema it was shown.
+          // normalized arguments also violate the execution schema.
           // The hook is tool-supplied and runs inside this catch, so a throwing
           // one would escape the failure handling entirely: no `tool_failed`,
           // no receipt checkpoint, and a raw internal message reaching the

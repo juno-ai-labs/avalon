@@ -57,17 +57,21 @@ export function modelToolArgumentSchema(schema: JsonObject): JsonObject {
   if (keys.length === 0 || !isObject(schema.properties)) return schema;
   const properties = { ...schema.properties };
   for (const key of keys) {
-    const original = properties[key] as JsonObject;
+    const { description, title, default: defaultValue, ...constraints } = properties[key] as JsonObject;
     properties[key] = {
-      anyOf: [original, { type: "null" }],
-      description: [original.description, "Use null or omit this field when unspecified; null is removed before execution."]
+      ...(title !== undefined ? { title } : {}),
+      ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+      anyOf: [constraints, { type: "null" }],
+      description: [description, "Use null or omit this field when unspecified; null is removed before execution."]
         .filter((part) => typeof part === "string").join("\n"),
     };
   }
   return { ...schema, properties };
 }
 
-/** Decode only the null alternatives added by modelToolArgumentSchema. */
+/** Decode only the null alternatives added by modelToolArgumentSchema.
+ * Both sides must receive the same original execution schema.
+ */
 export function omitUnspecifiedToolArguments(input: unknown, schema: JsonObject): unknown {
   if (!isObject(input)) return input;
   const omitted = new Set(omissionKeys(schema).filter((key) => input[key] === null));
@@ -83,7 +87,7 @@ function omissionKeys(schema: JsonObject): string[] {
       || schema.required.some((key) => typeof key !== "string")))) return [];
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   return Object.entries(schema.properties).filter(([key, property]) =>
-    !required.has(key) && isObject(property)
+    !required.has(key) && isObject(property) && !("$ref" in property)
     && typeof property.type === "string" && OMISSION_SCALAR_TYPES.has(property.type)
   ).map(([key]) => key);
 }
