@@ -12,7 +12,7 @@ actions to the same components rather than drawing a second design.
   (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
   `space-appearance-picker.tsx` (`SpaceAppearancePicker`, `SpaceIcon`),
   `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`,
-  `SpaceDefaultList`, `SpaceChannelRow`) and `space-icons.ts` (`SPACE_ICONS`).
+  `SpaceDefaultList`) and `space-icons.ts` (`SPACE_ICONS`).
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
@@ -73,9 +73,9 @@ does, for a Space reached only through a Channel placed in it
 ([`spaces.md`](spaces.md#who-may-see-a-space-and-why)) — and a plus that can
 only fail is worse than no plus. The row's grid keeps its third column either
 way, so a list mixing the two kinds does not have its names in two different
-places; that is the same reservation `SpaceChannelRow` makes for the
-**Remove** a breakout has no use for, except that this one needs no hidden
-copy because the grid holds the column by itself.
+places. The Space dashboard's Channel and breakout entries are host-owned links,
+not shared removable rows; the landing page draws both at full width and keeps
+placement management in its owning surfaces.
 
 A Space's resources and its Sidekick recommendations are one list. They are one
 registry keyed by `kind` on the server, and nothing about the drawing depends on
@@ -130,6 +130,17 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-20 — The Space dashboard no longer exports a removable Channel row
+
+**What changed:** `SpaceChannelRow` and its hidden control-column layout were
+removed from the shared package. The desktop Space dashboard now supplies its
+Channel and breakout links directly, at full width.
+
+**Why:** The landing page no longer owns Channel-placement controls, so a shared
+component whose only distinction was whether to render or reserve **Remove** had
+no remaining presentation contract. Keeping it would advertise a management
+surface that no host uses.
 
 ### 2026-09-19 — A Space row may be drawn without its plus
 

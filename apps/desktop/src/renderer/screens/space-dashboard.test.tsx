@@ -6,6 +6,7 @@ import { SpaceSummarySchema, asSpaceId, type SpaceSummary } from '@rally/contrac
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
+import type * as SidebarListStore from '../lib/sidebar-list-store';
 import { SpaceDashboardScreen } from './space-dashboard';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 
@@ -18,8 +19,17 @@ const api = vi.hoisted(() => ({
   updateSpaceAudience: vi.fn(),
   updateSpacePresentation: vi.fn(),
 }));
+const removedDataHooks = vi.hoisted(() => ({
+  useSocketOwnedList: vi.fn(() => ({ data: [] })),
+  useWorkstreamsQuery: vi.fn(() => ({ data: [] })),
+}));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
+vi.mock('../lib/sidebar-list-store', async (importOriginal) => ({
+  ...await importOriginal<typeof SidebarListStore>(),
+  useSocketOwnedList: removedDataHooks.useSocketOwnedList,
+}));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: removedDataHooks.useWorkstreamsQuery }));
 vi.mock('../lib/workstream-landing', () => ({ useOpenFirstWorkstream: () => () => undefined }));
 /** Null unless a test wants the screen to think the directory is the local cache's. */
 const workspaceSocket = vi.hoisted(() => ({
@@ -186,6 +196,8 @@ describe('the Space dashboard', () => {
     expect(screen.queryByRole('button', { name: 'New channel in Hiring' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     expect(api.listResources).not.toHaveBeenCalled();
+    expect(removedDataHooks.useSocketOwnedList).not.toHaveBeenCalled();
+    expect(removedDataHooks.useWorkstreamsQuery).not.toHaveBeenCalled();
   });
 
   // The list is conversations, not memberships: a Channel and any of its
@@ -229,6 +241,7 @@ describe('the Space dashboard', () => {
     renderSpace(makeSpace({ channelCount: 0 }));
 
     expect(await screen.findByText('No channels yet')).toBeVisible();
+    expect(screen.getByText('Channels will appear here when they need your attention.')).toBeVisible();
     expect(screen.queryByText('Nothing here needs you right now')).not.toBeInTheDocument();
   });
 

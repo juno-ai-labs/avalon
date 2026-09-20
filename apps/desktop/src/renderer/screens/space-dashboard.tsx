@@ -285,7 +285,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               // there anything in here at all", while the list above is
               // "is any of it yours to deal with".
               ? space.channelCount === 0
-                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Channels added to this space will appear here.' : 'This archived space has no channels.'} />
+                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Channels will appear here when they need your attention.' : 'This archived space has no channels.'} />
                 : <EmptyState
                     description="Everything in this space has been read and nothing is running. Channels and breakouts show up here while they need you; the rest stay in the sidebar and in search."
                     title="Nothing here needs you right now"
