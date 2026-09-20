@@ -43,7 +43,7 @@ The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
-| `list_workspaces` | Regional `workspaces` identity plus the open authority generation; retained cutover rows are additional fences | D1 identity inventory from configured deployments |
+| `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_workstreams` | Regional workspace identity at the open authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
@@ -100,13 +100,12 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 - D1 locates authority; it never substitutes for Durable Object product state.
 - The bridge accepts workspace identity only in the current
   `durable_object_open` generation with a compatible serving contract.
-  `workspace_product_authority_routes` is a retained one-time cutover ledger,
-  not the route for workspaces created after cutover: when a historical row is
-  present it must still be active in the current generation; when it is absent,
-  the regional `workspaces` row is the deterministic WorkspaceDO route.
-  Work-stream targets still require their active current-generation route.
-  Pending, importing, verified, quarantined, and stale-generation rows cannot
-  obtain a Durable Object stub.
+  The regional `workspaces` row is the deterministic WorkspaceDO route;
+  migration 0115 removed the completed per-workspace cutover ledger so it
+  cannot be mistaken for live authority. Work-stream targets still require
+  their active current-generation route. A closed or incompatible regional
+  authority and pending, importing, verified, quarantined, or stale work-stream
+  routes cannot obtain a Durable Object stub.
 - SQL resolves configured deployments without mutation, refuses a duplicate target, and
   executes against exactly one selected binding. The selected bridge rechecks
   the generation so a cutover between resolution and execution fails closed.
@@ -208,9 +207,8 @@ on real WorkspaceDO, WorkstreamDO, and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
 `apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
-post-cutover workspace with no historical product-authority row is inventoried
-as active, resolves at the open generation, and executes against its initialized
-WorkspaceDO.
+workspace is inventoried as active, resolves at the open generation, and
+executes against its initialized WorkspaceDO from regional identity alone.
 
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
 bridge's Sidekick tools against a Sidekick created through the real path, and
@@ -275,13 +273,40 @@ ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
 
+### 2026-09-20 — Remove the completed workspace cutover ledger
+
+**What changed:** Regional migration 0115 drops
+`workspace_product_authority_routes`. Workspace inventory and resolution now
+have one model: regional workspace identity plus the region-wide open generation
+and serving-contract fence. The deployment classifies this as Worker-first, so
+the compatible bridge is live before D1 removes the table it replaced.
+
+**Why:** The table had no writer after the one-time WorkspaceDO cutover, yet its
+route-shaped name and retained rows repeatedly led operators and agents to treat
+it as current authority. That produced false reports that newer Organizations
+had no WorkspaceDO authority.
+
+**Considered and rejected:** Keeping the inert table with stronger comments was
+rejected because the prior inspection bug showed that documentation did not
+neutralize the misleading schema. Backfilling new rows was rejected because it
+would revive a second routing system beside deterministic WorkspaceDO identity.
+
+**Consequences:** Current schema inspection cannot discover or depend on the old
+ledger. Immutable historical migrations and the migration-0090 baseline still
+name it as evidence of the cutover they performed; all live code, local
+bootstrap tooling, fixtures, and authority guards do not.
+
 ### 2026-09-20 — Resolve post-cutover workspaces from their regional identity
 
-**What changed:** Workspace inventory and resolution now use the regional
-`workspaces` identity under the open compatible authority generation. If a
-`workspace_product_authority_routes` row exists, it remains an additional
-active/current-generation fence; its absence no longer makes a workspace
-uninspectable.
+**Superseded later the same day:** the completed cutover ledger described below
+was removed entirely by migration 0115; the entry above is the current model.
+
+**What changed at that intermediate point:** Workspace inventory and resolution
+began using the regional `workspaces` identity under the open compatible
+authority generation. A retained `workspace_product_authority_routes` row was
+temporarily treated as an additional active/current-generation fence; its
+absence no longer made a workspace uninspectable. Migration 0115 later removed
+that table and temporary fence entirely.
 
 **Why:** That table was populated for the one-time WorkspaceDO cutover, and its
 population trigger was removed when legacy product tables were retired. Every
@@ -295,10 +320,10 @@ system. Ignoring retained rows entirely was also rejected because a quarantined
 or stale cutover row is still useful evidence that a historical workspace must
 not be opened through the console.
 
-**Consequences:** Post-cutover Organizations are visible and inspectable without
-backfilling synthetic migration rows. The regional open-generation and serving
-contract fences remain mandatory, and historical workspace rows retain their
-stricter activation fence.
+**Consequences at that intermediate point:** Post-cutover Organizations became
+visible and inspectable without backfilling synthetic migration rows. The
+regional open-generation and serving-contract fences remained mandatory, while
+historical workspace rows temporarily retained their stricter activation fence.
 
 ### 2026-09-19 — Route SpaceDO, fenced on the object's own identity row, and reach a Space's Main through the directory row
 

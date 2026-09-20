@@ -209,12 +209,8 @@ describe("removing a room participant", () => {
     const ROOM = "00000000-0000-7000-8000-0000000000a1";
     database.exec(`
       UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${NOW}' WHERE id = 1;
-      INSERT INTO workspace_product_authority_routes (workspace_id, generation, state, updated_at)
-        VALUES ('${WORKSPACE}', 1, 'pending', '${NOW}');
       UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1;
-      UPDATE workspace_product_authority_routes SET state = 'verified';
       UPDATE workstream_authority_control SET phase = 'maintenance_verified' WHERE id = 1;
-      UPDATE workspace_product_authority_routes SET state = 'active';
       UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1 WHERE id = 1;
     `);
     const removed = vi.spyOn(ChannelAccessService.prototype, "removeDirectReader")
