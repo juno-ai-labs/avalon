@@ -73,6 +73,25 @@ function openAuthority(database: DatabaseSync): void {
 }
 
 describe("engineering inspection authority routing", () => {
+  it("resolves a post-cutover workspace identity without a historical product route", async () => {
+    const { database, env } = fixture();
+    beginImport(database);
+    openAuthority(database);
+    database.exec(`
+      DELETE FROM workspace_product_authority_routes WHERE workspace_id = '${WORKSPACE_ID}';
+    `);
+
+    await expect(resolveInspectionWorkspaceRoute(env, WORKSPACE_ID)).resolves.toMatchObject({
+      id: WORKSPACE_ID,
+      authority_state: "active",
+      authority_generation: 3,
+    });
+    await expect(resolveInspectionWorkspaceRoute(env, WORKSPACE_ID, 3)).resolves.toMatchObject({
+      id: WORKSPACE_ID,
+    });
+    expect(await resolveInspectionWorkspaceRoute(env, WORKSPACE_ID, 4)).toBeNull();
+  });
+
   it("refuses pending and verified routes until their generation is open and active", async () => {
     const { database, env } = fixture();
 

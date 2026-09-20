@@ -43,18 +43,18 @@ The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
-| `list_workspaces` | Regional `workspaces` plus the workspace authority ledger | D1 identity inventory from configured deployments |
-| `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
+| `list_workspaces` | Regional `workspaces` identity plus the open authority generation; retained cutover rows are additional fences | D1 identity inventory from configured deployments |
+| `list_workstreams` | Regional workspace identity at the open authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
-| `list_sidekicks` | Active workspace route at the open regional authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
-| `list_spaces` | Active workspace route at the open regional authority generation | `workspace_space_directory` in WorkspaceDO, archived Spaces included |
-| `list_artifacts` | Active workspace route at the open regional authority generation | `artifact_registry` in WorkspaceDO |
-| `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
+| `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
+| `list_spaces` | Regional workspace identity at the open authority generation | `workspace_space_directory` in WorkspaceDO, archived Spaces included |
+| `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
+| `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
 | `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | WorkstreamDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
-| `run_sidekick_sql` | Resolve the active workspace route and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
-| `run_space_sql` | Resolve the active workspace route and `workspace_space_directory` membership, select one region, then revalidate | SpaceDO SQLite |
-| `run_artifact_sql` | Resolve the active workspace route and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
+| `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
+| `run_space_sql` | Resolve the regional workspace identity and `workspace_space_directory` membership, select one region, then revalidate | SpaceDO SQLite |
+| `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -98,10 +98,15 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 ## Invariants and contracts
 
 - D1 locates authority; it never substitutes for Durable Object product state.
-- The bridge accepts only an `active` route in the current
-  `durable_object_open` generation with a compatible serving contract. Pending,
-  importing, verified, quarantined, and stale-generation routes cannot obtain a
-  Durable Object stub.
+- The bridge accepts workspace identity only in the current
+  `durable_object_open` generation with a compatible serving contract.
+  `workspace_product_authority_routes` is a retained one-time cutover ledger,
+  not the route for workspaces created after cutover: when a historical row is
+  present it must still be active in the current generation; when it is absent,
+  the regional `workspaces` row is the deterministic WorkspaceDO route.
+  Work-stream targets still require their active current-generation route.
+  Pending, importing, verified, quarantined, and stale-generation rows cannot
+  obtain a Durable Object stub.
 - SQL resolves configured deployments without mutation, refuses a duplicate target, and
   executes against exactly one selected binding. The selected bridge rechecks
   the generation so a cutover between resolution and execution fails closed.
@@ -186,7 +191,8 @@ identity or authorization.
 - A missing or invalid Access assertion returns a refusal from the origin; an
   unauthenticated MCP client receives Cloudflare Access's OAuth challenge before
   reaching it.
-- A missing D1 route returns not found without creating an object.
+- A missing D1 workspace identity or child route returns not found without
+  creating an object.
 - A SQLite error is returned to the authenticated caller and logged only as the
   fixed `tool_failed` code.
 - A regional Service Binding failure fails the tool. There is no one-region
@@ -200,6 +206,11 @@ identity or authorization.
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
 on real WorkspaceDO, WorkstreamDO, and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
+
+`apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
+post-cutover workspace with no historical product-authority row is inventoried
+as active, resolves at the open generation, and executes against its initialized
+WorkspaceDO.
 
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
 bridge's Sidekick tools against a Sidekick created through the real path, and
@@ -263,6 +274,31 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-20 — Resolve post-cutover workspaces from their regional identity
+
+**What changed:** Workspace inventory and resolution now use the regional
+`workspaces` identity under the open compatible authority generation. If a
+`workspace_product_authority_routes` row exists, it remains an additional
+active/current-generation fence; its absence no longer makes a workspace
+uninspectable.
+
+**Why:** That table was populated for the one-time WorkspaceDO cutover, and its
+population trigger was removed when legacy product tables were retired. Every
+workspace created afterward correctly went straight to its deterministic
+WorkspaceDO, but the engineering MCP mislabeled it as having unknown authority
+and refused every workspace-owned inspection tool.
+
+**Considered and rejected:** Restoring writes to the cutover ledger was rejected
+because it would turn historical migration evidence into a second live routing
+system. Ignoring retained rows entirely was also rejected because a quarantined
+or stale cutover row is still useful evidence that a historical workspace must
+not be opened through the console.
+
+**Consequences:** Post-cutover Organizations are visible and inspectable without
+backfilling synthetic migration rows. The regional open-generation and serving
+contract fences remain mandatory, and historical workspace rows retain their
+stricter activation fence.
 
 ### 2026-09-19 — Route SpaceDO, fenced on the object's own identity row, and reach a Space's Main through the directory row
 
