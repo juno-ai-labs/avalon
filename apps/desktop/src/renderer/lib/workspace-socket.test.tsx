@@ -74,6 +74,7 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     ...overrides,
   };
 }
@@ -130,7 +131,7 @@ afterEach(() => {
 });
 
 describe('WorkspaceSocketProvider', () => {
-  it('reports app and work-stream foreground separately and receives viewer-scoped presence', async () => {
+  it('reports app and channel foreground separately and receives viewer-scoped presence', async () => {
     applicationFocus.foregrounded = true;
     const documentFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     const queryClient = new QueryClient();
@@ -314,7 +315,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(screen.queryByText('00000000-0000-7000-8000-000000000003')).not.toBeInTheDocument();
   });
 
-  it('notifies the session owner when the active workspace revokes access', async () => {
+  it('notifies the session owner when the active organization revokes access', async () => {
     const queryClient = new QueryClient();
     const onAccessRevoked = vi.fn();
 
@@ -346,7 +347,7 @@ describe('WorkspaceSocketProvider', () => {
       closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
       status: 403,
       code: 'workspace_access_revoked',
-      message: 'You can no longer access this workspace.',
+      message: 'You can no longer access this organization.',
       telemetryCause: 'access_revoked',
     },
     {
@@ -419,7 +420,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
-  it('keeps one workspace socket, subscribes durably, and invalidates every workspace surface', async () => {
+  it('keeps one organization socket, subscribes durably, and invalidates every organization surface', async () => {
     const queryClient = new QueryClient();
     const recommendationKey = ['recommended-sidekicks', 'idle-workstream'];
     queryClient.setQueryData(recommendationKey, []);
@@ -514,7 +515,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ suggestedWorkEnabled: true });
   });
 
-  it('reports how deep a workspace reconnect had to go, and stops reporting at teardown', async () => {
+  it('reports how deep an organization reconnect had to go, and stops reporting at teardown', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -556,7 +557,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(socketTelemetry()).toEqual([]);
   });
 
-  it('times out a stranded reconnect ticket and starts another workspace attempt', async () => {
+  it('times out a stranded reconnect ticket and starts another organization attempt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const queryClient = new QueryClient();
@@ -640,7 +641,7 @@ describe('WorkspaceSocketProvider', () => {
     }]);
   });
 
-  it('names the cause a workspace close event cannot carry', async () => {
+  it('names the cause an organization close event cannot carry', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -728,6 +729,7 @@ describe('WorkspaceSocketProvider', () => {
         pinPosition: null,
         participantUserIds: [],
         participantExtraCount: 0,
+        spaceIds: [],
       }],
     };
     const access = '2026-09-07T20:00:00.000Z';
@@ -742,7 +744,7 @@ describe('WorkspaceSocketProvider', () => {
       .toBe('2026-09-08T20:00:00.000Z');
   });
 
-  it('pages the authoritative work-stream directory over the workspace socket', async () => {
+  it('pages the authoritative channel directory over the organization socket', async () => {
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -819,6 +821,7 @@ describe('WorkspaceSocketProvider', () => {
         pinPosition: null,
         participantUserIds: [],
         participantExtraCount: 0,
+        spaceIds: [],
       }],
     }));
     await expect(result).resolves.toMatchObject({
@@ -899,6 +902,7 @@ describe('WorkspaceSocketProvider', () => {
           pinPosition: null,
           participantUserIds: [],
           participantExtraCount: 0,
+          spaceIds: [],
         }],
       },
       automations: { waterline: 3, items: [{
@@ -933,9 +937,10 @@ describe('WorkspaceSocketProvider', () => {
     }));
 
     act(() => socket.message({
-      type: 'workspace_project_snapshot',
+      type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:01:00.000Z',
-      projects: {
+      spacesReady: true,
+      spaces: {
         active: { waterline: 4, items: [] },
         inactive: { waterline: 4, items: [] },
       },
@@ -958,7 +963,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'projects', 'projects-inactive', 'feature-flags',
+    const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'feature-flags',
       'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);
@@ -1308,7 +1313,7 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
-  it('applies active and archived project state from the socket and drops an older snapshot', async () => {
+  it('applies active and archived space state from the socket and drops an older snapshot', async () => {
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1329,43 +1334,48 @@ describe('WorkspaceSocketProvider', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
 
-    const project = {
+    const space = {
       id: '00000000-0000-7000-8000-0000000000f2',
       name: 'Hiring',
       iconKey: 'briefcase',
       colorKey: 'blue',
       scope: 'personal',
       status: 'active',
-      presentationRevision: 1,
-      audienceGeneration: 1,
-      lifecycleGeneration: 1,
+      systemRole: null,
+      revision: 1,
       participants: [],
-      workstreamIds: [],
+      channelCount: 0,
       defaultResourceIds: [],
+      defaultSidekickIds: [],
       createdAt: '2026-08-27T00:00:00.000Z',
       updatedAt: '2026-08-27T00:00:00.000Z',
     };
     act(() => socket.message({
-      type: 'workspace_project_snapshot',
+      type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:01:00.000Z',
-      projects: {
-        active: { waterline: 4, items: [project] },
+      spacesReady: true,
+      spaces: {
+        active: { waterline: 4, items: [space] },
         inactive: { waterline: 4, items: [] },
       },
     }));
-    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 4, items: [project] });
-    expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 4, items: [] });
+    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 4, items: [space] });
+    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 4, items: [] });
 
     act(() => socket.message({
-      type: 'workspace_project_snapshot',
+      type: 'workspace_space_snapshot',
       occurredAt: '2026-08-27T00:02:00.000Z',
-      projects: {
+      spacesReady: false,
+      spaces: {
         active: { waterline: 3, items: [] },
-        inactive: { waterline: 3, items: [{ ...project, status: 'archived' }] },
+        inactive: { waterline: 3, items: [{ ...space, status: 'archived' }] },
       },
     }));
-    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 4, items: [project] });
-    expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 4, items: [] });
+    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 4, items: [space] });
+    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 4, items: [] });
+    // The dropped snapshot's `spacesReady` is dropped with it: an older payload
+    // must not put the organization-opening state back over a finished cutover.
+    expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
@@ -1407,7 +1417,7 @@ describe('WorkspaceSocketProvider', () => {
   });
 });
 
-describe('the workspace and work-stream sockets over one store', () => {
+describe('the organization and channel sockets over one store', () => {
   /**
    * Both sockets carry the same state change, and both write it into the one
    * waterline ledger. That redundancy is the point: whichever authority
@@ -1503,6 +1513,7 @@ describe('the workspace and work-stream sockets over one store', () => {
         pinPosition: null,
         participantUserIds: [],
         participantExtraCount: 0,
+        spaceIds: [],
       },
     };
   }
@@ -1595,7 +1606,7 @@ describe('the workspace and work-stream sockets over one store', () => {
   });
 });
 
-describe('the workspace socket over the local cache', () => {
+describe('the organization socket over the local cache', () => {
   const scope = 'global:00000000-0000-7000-8000-000000000001';
   const remembered = '00000000-0000-7000-8000-000000000002';
   const forgotten = '00000000-0000-7000-8000-000000000003';
@@ -1646,6 +1657,7 @@ describe('the workspace socket over the local cache', () => {
             pinPosition: null,
             participantUserIds: [],
             participantExtraCount: 0,
+            spaceIds: [],
           })),
         },
         automations: { waterline: 1, items: [] },
@@ -1659,8 +1671,8 @@ describe('the workspace socket over the local cache', () => {
     await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, {
       workstreams: [summary({ id: remembered, title: 'Remembered row' }), summary({ id: forgotten, title: 'Archived elsewhere' })],
       automations: [],
-      projects: { waterline: 2, items: [] },
-      inactiveProjects: { waterline: 2, items: [] },
+      spaces: { waterline: 2, items: [] },
+      inactiveSpaces: { waterline: 2, items: [] },
     });
     const conversation = {
       detail: {
@@ -1704,7 +1716,7 @@ describe('the workspace socket over the local cache', () => {
       expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((row) => row.title))
         .toEqual(['Remembered row', 'Archived elsewhere']);
     }, { timeout: 2_000 });
-    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 2, items: [] });
+    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 2, items: [] });
     const socket = FakeWebSocket.instances[0]!;
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
 

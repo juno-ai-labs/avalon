@@ -6,10 +6,10 @@ import { NewWorkstreamMenu } from "./new-workstream-menu";
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
-import { IconDots, IconLock } from '@tabler/icons-react';
+import type { CreateSpaceRequest, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
+import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
@@ -26,7 +26,9 @@ import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
-import { ProjectSidebarSection } from './project-sidebar-section';
+import { ManageAccessDialog } from './manage-access-dialog';
+import { ContextNestedMenu } from './nested-menu';
+import { SpaceSidebarSection } from './space-sidebar-section';
 import { RelativeTime } from './relative-time';
 import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
@@ -58,8 +60,22 @@ interface SidebarProps {
    * can forget is a flag that reads "empty workspace" on a cold sidebar.
    */
   automations: AutomationSummary[] | undefined;
-  projects?: ProjectSummary[];
-  inactiveProjects?: ProjectSummary[];
+  /**
+   * The active Space directory, or absent for a host with no Space navigation.
+   *
+   * Absent is not empty: an empty directory is an Organization whose Spaces
+   * have not been made yet, which still has a **Spaces** heading and a **New
+   * space**. No directory at all is the guest shell, where Space discovery is
+   * deferred — the host decides that, per the PRD's design decision 9, rather
+   * than this component inferring it from a refusal.
+   */
+  spaces?: SpaceSummary[];
+  inactiveSpaces?: SpaceSummary[];
+  /** False while the Organization has not finished its one-time cutover. */
+  spacesReady?: boolean;
+  /** The Space directory on screen is the last one the socket delivered. */
+  spacesOutOfDate?: boolean;
+  onRetrySpaces?: () => void;
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
@@ -92,10 +108,11 @@ interface SidebarProps {
   onPreviewWorkstreamBatch: (
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
-  onCreateProject?: (input: CreateProjectRequest) => Promise<ProjectSummary>;
-  onAddWorkstreamToProject?: (projectId: string, workstreamId: string) => Promise<void>;
-  onReorderProjects?: (projectIds: string[]) => Promise<void>;
-  onRestoreProject?: (projectId: string) => Promise<void>;
+  onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
+  onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
+  onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
+  onReorderSpaces?: (spaceIds: string[]) => Promise<void>;
+  onRestoreSpace?: (spaceId: string) => Promise<void>;
   onSignOut: () => void;
 }
 
@@ -133,8 +150,8 @@ function batchTotal(target: WorkstreamBatchTarget): number {
  */
 function batchSubject(target: WorkstreamBatchTarget): string {
   const workstreams = target.matchedCount === 1
-    ? '1 work stream'
-    : `${target.matchedCount} work streams`;
+    ? '1 channel'
+    : `${target.matchedCount} channels`;
   return workstreams;
 }
 
@@ -200,7 +217,7 @@ const onboardingItems = [
   {
     id: 'invite-teammate',
     title: 'Invite a teammate',
-    description: 'Work together in a shared work stream',
+    description: 'Work together in a shared channel',
   },
 ] as const;
 
@@ -277,7 +294,7 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
 
   return (
     <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
-      <Copy aria-hidden="true" size={16} /> Copy work stream link
+      <Copy aria-hidden="true" size={16} /> Copy channel link
     </ContextMenu.Item>
   );
 }
@@ -388,7 +405,7 @@ function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
 }
 
 function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
-  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+  const scopeDescription = sidekick.scope === 'workspace' ? ' · Organization' : '';
   // Which part of the tile the pointer is on, which only the hexagon can say:
   // the play is drawn in its viewBox so it scales with the tile, rather than
   // positioned by this rail, so there is no element here whose own pointer
@@ -470,7 +487,7 @@ interface PinnedRowDrag {
  * work stream, and the shell that presents one as a chat elsewhere does not
  * change what the control makes.
  */
-const NEW_STREAM_LABEL = 'New work stream';
+const NEW_STREAM_LABEL = 'New channel';
 
 /**
  * What the globe badge means, at the two granularities the two surfaces want.
@@ -496,9 +513,9 @@ const NEW_STREAM_LABEL = 'New work stream';
  * is only checkable if they are read together — two of three getting a copy
  * edit is exactly the drift this is meant to prevent.
  */
-const PUBLIC_SCOPE_NAME = 'Public work stream';
-const PUBLIC_SCOPE_LABEL = 'Public to workspace';
-const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the workspace can see this work stream.';
+const PUBLIC_SCOPE_NAME = 'Public channel';
+const PUBLIC_SCOPE_LABEL = 'Public to organization';
+const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the organization can see this channel.';
 
 /**
  * The row itself gets deliberately terse when the sidebar becomes an icon
@@ -532,34 +549,34 @@ function WorkstreamRow({
   workspace,
   workstream,
   pinPending,
-  scopePending,
   onArchive,
   onChangeScope,
   onMarkUnread,
   onRename,
   onTogglePin,
-  canDropOnProjects,
+  onAddToSpace,
+  onRemoveFromSpace,
+  spaces,
 }: {
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   workspace: Pick<Workspace, 'id' | 'region'>;
   workstream: WorkstreamSummary;
   pinPending: boolean;
-  scopePending: boolean;
   onArchive: (workstream: WorkstreamSummary) => void;
-  onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => void;
+  onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
-  // Whether a project row is on screen to receive this row. A project row is
-  // the only thing a work stream can be dropped on, and the sidebar draws none
-  // in its conversation-only mode — so this is not `projects.length > 0`, and a
-  // row that reads it as such offers a drag that can never land.
-  canDropOnProjects: boolean;
+  onAddToSpace: (workstream: WorkstreamSummary, spaceId: string) => void;
+  onRemoveFromSpace: (workstream: WorkstreamSummary, spaceId: string) => Promise<void>;
+  /** The active Space directory: where this Channel could go, and where it is. */
+  spaces: SpaceSummary[];
 }): React.JSX.Element {
   const location = useLocation();
   const collaboration = useOptionalCollaborationSession();
   const [sharing, setSharing] = useState(false);
+  const [managingAccess, setManagingAccess] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const markerStatus = workstreamMarkerStatus(workstream);
@@ -621,18 +638,36 @@ function WorkstreamRow({
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
   const naming = useNamingSkeleton(workstream);
-  const isPrivate = workstream.scope === 'personal';
   const isPinned = workstream.pinPosition !== null;
+  // A subsystem's own Channel takes both its audience and its home from the
+  // subsystem that writes it, so neither of the two controls that would claim
+  // otherwise is raised on one: a system Channel is not a product Channel. The
+  // API refuses either change; the menu simply does not ask the question.
+  const isProductChannel = !workstream.systemKind;
+  // Every active Space the viewer can see that does not already hold this
+  // Channel. Adding never removes another placement, so the ones it is already
+  // in are simply not offered again.
+  const addableSpaces = isProductChannel
+    ? spaces.filter((space) => !workstream.spaceIds.includes(space.id))
+    : [];
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
-  // A subsystem's own work stream takes its audience from the subsystem, so
-  // offering the toggle on it would describe a change that does not happen.
-  // The API refuses it; the menu simply does not raise the question.
-  const scopeIsThisRowsToDecide = !workstream.systemKind;
   return (
     <>
     {collaboration?.api && <ShareConversationDialog api={collaboration.api} workspaceId={workspace.id} parentId={workstream.id} substreamId="0" open={sharing} onOpenChange={setSharing} />}
+    {/* Mounted only while it is open. It reads the Channel's access sources,
+        and a copy of that query standing behind every row in the sidebar would
+        be one request per row for a dialog almost none of them will open. */}
+    {managingAccess && <ManageAccessDialog
+      onChangeScope={(scope) => onChangeScope(workstream, scope)}
+      onOpenChange={setManagingAccess}
+      onRemoveFromSpace={(spaceId) => onRemoveFromSpace(workstream, spaceId)}
+      open
+      spaces={spaces}
+      workstreamId={workstream.id}
+      workstreamTitle={workstream.title}
+    />}
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
@@ -646,7 +681,12 @@ function WorkstreamRow({
           // on every row the pointer crosses. See `useListMotion`.
           data-motion-hold={drag?.dragging ? '' : undefined}
           data-motion-key={`workstream:${workstream.id}`}
-          draggable={drag !== undefined || canDropOnProjects}
+          // A drag on this row is either a pinned reorder or a placement, so
+          // it is draggable exactly while one of the two is possible. With no
+          // Space to drop on — an Organization still opening, a shell without
+          // Space navigation, a system Channel — the gesture has nowhere to go
+          // and the row does not offer it.
+          draggable={drag !== undefined || addableSpaces.length > 0}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
@@ -739,7 +779,7 @@ function WorkstreamRow({
                 <NavLink
             aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
-            aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
+            aria-label={[naming ? 'Rally is naming this channel' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             className={({ isActive }: { isActive: boolean }) => clsx(
               'sidebar-row workstream-row',
               isActive && 'is-active',
@@ -778,7 +818,7 @@ function WorkstreamRow({
             <NavigationRowContent id={workstream.id} title={workstream.title} appearance={workstream.appearance} naming={naming}
               marks={<>{workstream.scope === 'workspace' && <PublicMarker />}{markerStatus !== 'completed' &&
                 <span className="workstream-row-status"><StatusDot compact status={markerStatus} tooltip /></span>}</>}
-              titlePrefix={workstream.systemKind ? <Cog aria-label="System work stream" size={11} /> : undefined}
+              titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
               activity={workstream.hasUnread ? <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} /> : undefined} />
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
@@ -847,18 +887,25 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
-          {/* Named for the state it moves to, the way the note item is. Private
-              is not ownership: everyone left in the work stream can still read
-              it, write to it, and bring somebody else in. */}
-          {scopeIsThisRowsToDecide && (
-            <ContextMenu.Item
-              className="menu-item"
-              disabled={scopePending}
-              onSelect={() => onChangeScope(workstream, isPrivate ? 'workspace' : 'personal')}
-            >
-              {isPrivate
-                ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
-                : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
+          {addableSpaces.length > 0 && (
+            <ContextNestedMenu
+              icon={<FolderPlus aria-hidden="true" size={16} />}
+              label="Add to space"
+              options={addableSpaces.map((space) => ({
+                id: space.id,
+                label: space.name,
+                onSelect: () => onAddToSpace(workstream, space.id),
+              }))}
+            />
+          )}
+          {/* Replaces **Make private**, which could only ever describe this
+              Channel's own scope. Its readers are now the union of that scope
+              and every active Space that holds it, so the row cannot say
+              whether it is private without reading those sources — which is
+              what the dialog does. */}
+          {isProductChannel && (
+            <ContextMenu.Item className="menu-item" onSelect={() => setManagingAccess(true)}>
+              <Globe2 aria-hidden="true" size={16} /> Manage access
             </ContextMenu.Item>
           )}
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
@@ -869,7 +916,7 @@ function WorkstreamRow({
               the messages rather than removing the work stream from everyone's
               sidebar for good. */}
           <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchive(workstream)}>
-            <Archive aria-hidden="true" size={16} /> Archive work stream
+            <Archive aria-hidden="true" size={16} /> Archive channel
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
@@ -947,31 +994,27 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
   return [...without.slice(0, bounded), id, ...without.slice(bounded)];
 }
 
-type SidebarMenuFailure = 'archive' | 'make_public' | 'make_private' | 'pin' | 'unpin' | 'reorder_pinned';
+type SidebarMenuFailure = 'archive' | 'add_to_space' | 'pin' | 'unpin' | 'reorder_pinned';
 
 const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: string }> = {
   archive: {
-    title: 'Work stream could not be archived',
-    copy: 'The work stream is still in the sidebar. Try again in a moment.',
+    title: 'Channel could not be archived',
+    copy: 'The channel is still in the sidebar. Try again in a moment.',
   },
-  make_public: {
-    title: 'Work stream visibility could not be changed',
-    copy: 'The work stream is still private. Try again in a moment.',
-  },
-  make_private: {
-    title: 'Work stream visibility could not be changed',
-    copy: 'The work stream is still visible to the workspace. Try again in a moment.',
+  add_to_space: {
+    title: 'Channel could not be added to that space',
+    copy: 'The channel is still in the spaces it was in. Try again in a moment.',
   },
   pin: {
-    title: 'Work stream could not be pinned',
-    copy: 'The work stream is still in the recent list. Try again in a moment.',
+    title: 'Channel could not be pinned',
+    copy: 'The channel is still in the recent list. Try again in a moment.',
   },
   unpin: {
-    title: 'Work stream could not be unpinned',
-    copy: 'The work stream is still pinned. Try again in a moment.',
+    title: 'Channel could not be unpinned',
+    copy: 'The channel is still pinned. Try again in a moment.',
   },
   reorder_pinned: {
-    title: 'Pinned work streams could not be reordered',
+    title: 'Pinned channels could not be reordered',
     copy: 'The pinned list is back in the order it was in. Try again in a moment.',
   },
 };
@@ -983,8 +1026,11 @@ export function Sidebar({
   constrained = false,
   workspace,
   automations,
-  projects = [],
-  inactiveProjects = [],
+  spaces,
+  inactiveSpaces = [],
+  spacesReady = true,
+  spacesOutOfDate = false,
+  onRetrySpaces = () => undefined,
   workstreams,
   loading,
   accountMenu,
@@ -996,12 +1042,13 @@ export function Sidebar({
   onReorderPinnedWorkstreams,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
-  onCreateProject = async () => {
-    throw new Error('Project creation is unavailable.');
+  onCreateSpace = async () => {
+    throw new Error('Space creation is unavailable.');
   },
-  onAddWorkstreamToProject = async () => undefined,
-  onReorderProjects = async () => undefined,
-  onRestoreProject = async () => undefined,
+  onAddChannelToSpace = async () => undefined,
+  onRemoveChannelFromSpace = async () => undefined,
+  onReorderSpaces = async () => undefined,
+  onRestoreSpace = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
   loadingMoreWorkstreams = false,
@@ -1051,7 +1098,6 @@ export function Sidebar({
   // menu, so a rejection has nowhere to land unless it is raised here: the row
   // simply stays as it was.
   const [menuFailure, setMenuFailure] = useState<SidebarMenuFailure | null>(null);
-  const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   // The work stream a pin or unpin has just moved, and which side of the
   // sidebar it was moved to, held until the list re-renders carrying that
@@ -1307,26 +1353,22 @@ export function Sidebar({
     }
   };
 
+  // Rejects rather than raising the sidebar's own failure dialog: an audience
+  // change is made from **Manage access**, which knows which source was refused
+  // and holds the exhaustive copy that says what to change first.
   const changeWorkstreamScope = async (
     workstream: WorkstreamSummary,
     scope: 'personal' | 'workspace',
   ): Promise<void> => {
-    setScopePendingWorkstreamId(workstream.id);
-    try {
-      await onChangeWorkstreamScope(workstream, scope);
-      reportTelemetryProductIntent({
-        kind: 'workstream_action_completed',
-        workstreamId: workstream.id,
-        action: scope === 'workspace' ? 'make_public' : 'make_private',
-        visibility: telemetryVisibility(scope),
-        origin: workstream.systemKind ? 'system' : 'ad_hoc',
-        pinned: workstream.pinPosition !== null,
-      });
-    } catch {
-      setMenuFailure(scope === 'workspace' ? 'make_public' : 'make_private');
-    } finally {
-      setScopePendingWorkstreamId((current) => current === workstream.id ? null : current);
-    }
+    await onChangeWorkstreamScope(workstream, scope);
+    reportTelemetryProductIntent({
+      kind: 'workstream_action_completed',
+      workstreamId: workstream.id,
+      action: scope === 'workspace' ? 'make_public' : 'make_private',
+      visibility: telemetryVisibility(scope),
+      origin: workstream.systemKind ? 'system' : 'ad_hoc',
+      pinned: workstream.pinPosition !== null,
+    });
   };
 
   const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
@@ -1437,24 +1479,36 @@ export function Sidebar({
     },
   });
 
-  // A work stream's only drop target is a project row, and the conversation-only
-  // sidebar draws no project section at all — so in that mode a row must not
-  // present itself as draggable however many projects the workspace has, or it
-  // offers a drag that silently does nothing when it is released.
-  const canDropWorkstreamsOnProjects = !conversationOnly && projects.length > 0;
+  const addToSpace = (workstream: WorkstreamSummary, spaceId: string): void => {
+    setMenuFailure(null);
+    void onAddChannelToSpace(spaceId, workstream.id).catch(() => setMenuFailure('add_to_space'));
+  };
+
+  // Where a Channel could be placed from its row: nowhere in a shell without
+  // Space navigation, and nowhere until the Organization has finished opening
+  // — the section is showing its opening card instead of the hierarchy, and
+  // the server refuses the membership with `space_bootstrap_pending`. One
+  // decision for all three row sites.
+  const placementSpaces = spaces !== undefined && spacesReady ? spaces : [];
+
+  const workstreamRowActions = {
+    onAddToSpace: addToSpace,
+    onArchive: setArchiveWorkstreamTarget,
+    onChangeScope: changeWorkstreamScope,
+    onMarkUnread: (target: WorkstreamSummary) => void markWorkstreamUnread(target).catch(() => undefined),
+    onRemoveFromSpace: (target: WorkstreamSummary, spaceId: string) =>
+      onRemoveChannelFromSpace(spaceId, target.id),
+    onRename: openRename,
+    onTogglePin: (target: WorkstreamSummary, pin: boolean) => void togglePin(target, pin),
+  };
 
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
+      {...workstreamRowActions}
       debugEnabled={debugEnabled}
-      workspace={workspace}
-      onArchive={setArchiveWorkstreamTarget}
-      onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
-      onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-      onRename={openRename}
-      onTogglePin={(target, pin) => void togglePin(target, pin)}
       pinPending={pinPendingWorkstreamId === workstream.id}
-      canDropOnProjects={canDropWorkstreamsOnProjects}
-      scopePending={scopePendingWorkstreamId === workstream.id}
+      spaces={placementSpaces}
+      workspace={workspace}
       workstream={workstream}
     />
   );
@@ -1684,7 +1738,7 @@ export function Sidebar({
         {/* Above the scroll box in both layouts, so search stays at the top
             however far the list is scrolled. */}
         <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
+          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
           {/* The rail's New work stream row. Inserted by the compact toggle and
               removed by the expand, and marked so that it is seen arriving and
               leaving rather than appearing in place: it slides in under the
@@ -1730,16 +1784,24 @@ export function Sidebar({
             </NewWorkstreamMenu>
           </div>}
 
-          {!conversationOnly && (
-            <ProjectSidebarSection
-              inactiveProjects={inactiveProjects}
+          {/* Drawn wherever the host supplies a directory, the
+              conversation-only shell included: every Channel belongs to at
+              least one Space, so a sidebar without this section cannot say
+              where anything lives. A host that supplies none — the guest
+              shell — has no Space navigation at all. */}
+          {spaces !== undefined && (
+            <SpaceSidebarSection
+              inactiveSpaces={inactiveSpaces}
               loading={loading === true}
-              onAddWorkstream={onAddWorkstreamToProject}
-              onCreate={onCreateProject}
-              onReorder={onReorderProjects}
-              onRestore={onRestoreProject}
-              projects={projects}
+              onAddChannel={onAddChannelToSpace}
+              onCreate={onCreateSpace}
+              onReorder={onReorderSpaces}
+              onRestore={onRestoreSpace}
+              onRetry={onRetrySpaces}
+              outOfDate={spacesOutOfDate}
+              ready={spacesReady}
               renderWorkstream={renderWorkstream}
+              spaces={spaces}
               workstreams={visibleWorkstreams}
             />
           )}
@@ -1774,23 +1836,18 @@ export function Sidebar({
                   accessible name, so somebody arrowing through the list hears
                   the whole instruction again before every title. */}
               <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
-                Hold Alt and press the up or down arrow to move a pinned work stream.
+                Hold Alt and press the up or down arrow to move a pinned channel.
               </p>
               <div className="sidebar-list">
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
+                    {...workstreamRowActions}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
-                    onArchive={setArchiveWorkstreamTarget}
-                    onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
-                    onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                    onRename={openRename}
-                    onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
-                    canDropOnProjects={canDropWorkstreamsOnProjects}
+                    spaces={placementSpaces}
                     workspace={workspace}
-                    scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
                 ))}
@@ -1798,16 +1855,16 @@ export function Sidebar({
             </section>
           )}
 
-          <section aria-label="Work streams" className="sidebar-section workstreams-section">
+          <section aria-label="Channels" className="sidebar-section workstreams-section">
             {/* The one announcement for the whole wait, and the only one: the
-                projects and automations above load from the same answer, so a
+                spaces and automations above load from the same answer, so a
                 live region in either of those sections would say the same thing
                 twice. It is tied to the wait rather than to this section's own
-                placeholder because cached work streams may already be visible
+                placeholder because cached channels may already be visible
                 while the sections above are still filling in. */}
             {loading && (
               <div role="status">
-                <span className="sr-only">Loading your projects and work streams</span>
+                <span className="sr-only">Loading your spaces and channels</span>
               </div>
             )}
             {loading && visibleWorkstreams.length === 0 ? (
@@ -1820,7 +1877,7 @@ export function Sidebar({
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
               pinnedWorkstreams.length === 0 && (
-                <p className="sidebar-empty">No work streams yet</p>
+                <p className="sidebar-empty">No channels yet</p>
               )
             ) : (
               groups.map((group) => (
@@ -1871,17 +1928,12 @@ export function Sidebar({
                   <div className="sidebar-list">
                     {group.streams.map((item) => (
                       <WorkstreamRow
+                        {...workstreamRowActions}
                         debugEnabled={debugEnabled}
                         key={item.id}
-                        onArchive={setArchiveWorkstreamTarget}
-                        onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
-                        onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                        onRename={openRename}
-                        onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
-                        canDropOnProjects={canDropWorkstreamsOnProjects}
+                        spaces={placementSpaces}
                         workspace={workspace}
-                        scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />
                     ))}
@@ -2072,7 +2124,7 @@ export function Sidebar({
           if (!open) closeRename();
         }}
         open={Boolean(renameTarget)}
-        title="Rename work stream"
+        title="Rename channel"
       >
         <form
           onSubmit={(event) => {
@@ -2083,7 +2135,7 @@ export function Sidebar({
           <label className="form-field rename-workstream-field">
             <span>Name</span>
             <input
-              aria-label="Work stream name"
+              aria-label="Channel name"
               autoFocus
               maxLength={180}
               onChange={(event) => setRenameTitle(event.currentTarget.value)}
@@ -2091,7 +2143,7 @@ export function Sidebar({
             />
           </label>
         </form>
-        {renameFailed && <InlineError>The work stream couldn’t be renamed.</InlineError>}
+        {renameFailed && <InlineError>The channel couldn’t be renamed.</InlineError>}
       </Modal>
 
       <Modal
@@ -2115,14 +2167,14 @@ export function Sidebar({
         title={batchTarget?.update.kind === 'archive' ? 'Archive all' : 'Mark all as read'}
       >
         <p className="modal-copy">
-          This is a mass change. {batchTarget ? batchSubject(batchTarget) : '0 work streams'} in{' '}
+          This is a mass change. {batchTarget ? batchSubject(batchTarget) : '0 channels'} in{' '}
           <strong>{batchTarget?.label}</strong> will be{' '}
           {batchTarget?.update.kind === 'archive' ? 'archived' : 'marked as read'}. Are you sure?
         </p>
         {batchPreviewing && <p aria-live="polite" className="modal-copy">Checking the current total…</p>}
         {batchFailure && <InlineError>{batchFailure === 'preview'
-          ? 'The work streams couldn’t be counted. Try again.'
-          : 'The work streams couldn’t be updated. Try again.'}</InlineError>}
+          ? 'The channels couldn’t be counted. Try again.'
+          : 'The channels couldn’t be updated. Try again.'}</InlineError>}
       </Modal>
       <Modal
         footer={(
@@ -2141,13 +2193,13 @@ export function Sidebar({
           if (!open) closeArchiveWorkstream();
         }}
         open={Boolean(archiveWorkstreamTarget)}
-        title="Archive work stream"
+        title="Archive channel"
       >
         <p className="modal-copy">
           <strong>{archiveWorkstreamTarget?.title}</strong> leaves the sidebar for everyone who can
           see it, and nobody — you included — will be able to open it again. A run still in flight
           is stopped, scheduled follow-ups stop, and mail to its address is refused. Nothing is
-          deleted, but Rally has no way to bring a work stream back.
+          deleted, but Rally has no way to bring a channel back.
         </p>
       </Modal>
       <Modal

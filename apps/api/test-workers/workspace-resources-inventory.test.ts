@@ -13,7 +13,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
@@ -74,7 +74,33 @@ async function outboxRow(objectRef: string): Promise<Record<string, unknown> | n
 beforeEach(async () => {
   await reset();
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+  // Close the Space cutover, the way the path that opens a new Organization
+  // does before its first session. A `pending` one is due at the epoch — that
+  // is how the fleet migration starts without anybody signing in — so an
+  // object left with one wakes into its full alarm handler, whose resource
+  // sweep would reap the drafts these cases are about before they ask for it.
+  await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+  await disarm();
 });
+
+/**
+ * Leave no wake-up behind.
+ *
+ * `reset()` clears an object's storage; it does not cancel a wake-up the
+ * platform has already been told about. One is delivered as a real `alarm()`
+ * that runs the whole handler — including the resource sweep, which reaps a
+ * draft whose `created_at` is in the past, which every draft in this file's
+ * fixture is. `scheduled-alarms.test.ts` disarms for the same reason.
+ */
+afterEach(disarm);
+
+async function disarm(): Promise<void> {
+  try {
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.deleteAlarm());
+  } catch {
+    // The object may never have been created, or may already be gone.
+  }
+}
 
 describe("upload drafts", () => {
   it("commits the draft and adopts its staged object in one decision", async () => {

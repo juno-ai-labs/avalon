@@ -1,0 +1,449 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * A Space on real workerd.
+ *
+ * `SpaceDO` is `WorkstreamDO` under a role, and every difference between them
+ * is a field of that role rather than a method. So what has to be proved here
+ * is not that a Space behaves like a Channel — it runs the same code — but the
+ * four places where the role makes it behave differently, and the one place
+ * where inheriting the Channel's behavior would be wrong.
+ *
+ * All four need the runtime: a migration ledger the object applies in its
+ * constructor, a WebSocket upgrade, a durable outbox row, and a retirement
+ * tombstone that survives the object being rebuilt from storage.
+ */
+import { env } from "cloudflare:workers";
+import { reset, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  asSpaceId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@rally/contracts";
+import {
+  ConversationEffectEnvelopeSchema,
+  conversationEffectHash,
+  type ConversationEffect,
+  type ConversationEffectEnvelope,
+} from "@rally/contracts/conversation-effects";
+import type { ScopeGrantMutation, ScopeGrantMutationResult } from "@rally/contracts/scope-grants";
+
+import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+
+import { latestMigrationVersion } from "../src/durable-objects/migration-reporting";
+import { conversationObjectName, spaceDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
+import { consumeEffectBodies } from "./helpers/conversation-effects";
+
+/** Its own workspace: object names are shared across files, storage is not. */
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ce01");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000ce02");
+const CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ce03");
+const USER_ID = asUserId("00000000-0000-7000-8000-00000000ce04");
+const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000ce05");
+
+const spaceName = spaceDOName("global", WORKSPACE_ID, SPACE_ID);
+const channelName = workstreamDOName("global", WORKSPACE_ID, CHANNEL_ID);
+const space = () => env.SPACE_DOS.getByName(spaceName);
+const channel = () => env.WORKSTREAM_DOS.getByName(channelName);
+
+/**
+ * The private seam these tests reach through, the way the other object suites
+ * do: the grant store is built by the object, and *which writer it is built
+ * with* is the whole difference the role makes here.
+ */
+interface ParentInternals {
+  scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage;
+}
+
+function internals(instance: object): ParentInternals {
+  return instance as unknown as ParentInternals;
+}
+
+/**
+ * The conversation object's identity store.
+ *
+ * Reached the same way, and for the same reason: what a conversation's
+ * `parent_kind` says is the whole subject of the product-request case below,
+ * and there is no public RPC that sets it without also provisioning a
+ * work stream.
+ */
+interface ConversationInternals {
+  objectStore: {
+    ensureIdentity(
+      identity: { workspaceId: string; parentKind: "workstream" | "automation" | "space"; parentId: string },
+      region: string,
+    ): void;
+  };
+}
+
+function conversationInternals(instance: object): ConversationInternals {
+  return instance as unknown as ConversationInternals;
+}
+
+/** The identity row every effect and projection path reads its address from. */
+function seedIdentity(state: DurableObjectState, parentId: string, title: string): void {
+  state.storage.sql.exec(
+    `INSERT INTO workstream_metadata
+       (id, workspace_id, workstream_id, region, authority_generation, title,
+        description, preview, scope, exact_state, last_activity_at,
+        created_at, updated_at)
+     VALUES (1, ?, ?, 'global', 1, ?, '', '', 'workspace', 'idle', 1, 1, 1)`,
+    WORKSPACE_ID,
+    parentId,
+    title,
+  );
+  state.storage.sql.exec(
+    `INSERT INTO conversation_children
+       (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+     VALUES ('0', 'main', ?, 1, 'ready', 1)`,
+    ACTOR_ID,
+  );
+}
+
+function grantMutation(parentId: string): ScopeGrantMutation {
+  return {
+    operationId: parentId === SPACE_ID
+      ? "00000000-0000-7000-8000-00000000ce07"
+      : "00000000-0000-7000-8000-00000000ce08",
+    actorUserId: ACTOR_ID,
+    userId: USER_ID,
+    target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId },
+    active: true,
+    expectedRevision: 0,
+  } as ScopeGrantMutation;
+}
+
+function outboxKinds(state: DurableObjectState): string[] {
+  return state.storage.sql.exec<{ effect_kind: string }>(
+    "SELECT effect_kind FROM durable_outbox ORDER BY effect_kind",
+  ).toArray().map((row) => row.effect_kind);
+}
+
+function childEffect(
+  parentKind: "space" | "workstream",
+  parentId: string,
+  effect: ConversationEffect,
+  sourceVersion: number,
+): ConversationEffectEnvelope {
+  return ConversationEffectEnvelopeSchema.parse({
+    kind: "conversation_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind,
+    parentId,
+    substreamId: "0",
+    generation: 1,
+    messageId: crypto.randomUUID(),
+    partitionKey: `${effect.kind}:0`,
+    sourceVersion,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(effect),
+    effect,
+  });
+}
+
+const DIRECTORY_EFFECT: ConversationEffect = {
+  kind: "directory_common",
+  title: "Hiring",
+  description: "",
+  preview: "",
+  scope: "workspace",
+  state: "idle",
+  systemKind: null,
+  lastActivityAt: "2026-09-19T00:00:00.000Z",
+  completedAt: null,
+  archivedAt: null,
+};
+
+const ACTIVITY_EFFECT: ConversationEffect = {
+  kind: "activity_event",
+  eventId: "00000000-0000-7000-8000-00000000ce06",
+  eventType: "message_created",
+  subjectSequenceNumber: null,
+  actorType: "user",
+  actorUserId: ACTOR_ID,
+  actorLabel: "Someone",
+  title: "Said something",
+  body: "",
+  canonicalUrl: null,
+  digestible: true,
+  occurredAt: "2026-09-19T00:00:00.000Z",
+  sourceKind: "conversation",
+  sourceId: null,
+  dedupeKey: "space-activity-1",
+  metadata: {},
+  targets: [],
+};
+
+const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
+
+/**
+ * The same directory effect a Space publishes, addressed at the workspace.
+ *
+ * A fixed UUIDv7 rather than `crypto.randomUUID()`: the workspace handoff
+ * refuses a directory effect whose message id is not one, and a v4 here would
+ * be refused for the wrong reason.
+ */
+function spaceDirectoryEnvelope() {
+  return ParentEffectEnvelopeSchema.parse({
+    kind: "parent_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "space",
+    parentId: SPACE_ID,
+    generation: 1,
+    messageId: "00000000-0000-7000-8000-00000000ce09",
+    partitionKey: "common",
+    sourceVersion: 1,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(DIRECTORY_EFFECT),
+    effect: DIRECTORY_EFFECT,
+  });
+}
+
+beforeEach(async () => {
+  await reset();
+});
+
+describe("a Space's Durable Object", () => {
+  it("applies its own migration component and answers a forced migration as a SpaceDO", async () => {
+    const result = await space().forceMigration({
+      commandId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      className: "SpaceDO",
+      objectId: env.SPACE_DOS.idFromName(spaceName).toString(),
+      objectName: spaceName,
+      region: "global",
+      requestedAt: Date.now(),
+    });
+    // The role's migration identity, not the class it extends. A plan that
+    // reported `workstream_do` would file every Space's schema version under
+    // the Channel rollup, and one that reported `WorkstreamDO` would make this
+    // object refuse the command the tracker sends it. The *ledger* is the
+    // Channel's, which is why the version is the Channel's head.
+    expect(result).toMatchObject({
+      className: "SpaceDO",
+      component: "space_do",
+      schemaVersion: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+    });
+
+    await runInDurableObject(space(), (_instance, state) => {
+      // Every version the Channel ledger holds, receipted under this object's
+      // own component. A Space replays history it never had — the version-17
+      // grant-directory retirement among it — because one array applied twice
+      // is what keeps a table added for a Channel from having to be written a
+      // second time for a Space.
+      expect(state.storage.sql.exec<{ version: number }>(
+        "SELECT version FROM _sql_schema_migrations ORDER BY version",
+      ).toArray()).toEqual(WORKSTREAM_DO_SCHEMA_MIGRATIONS.map(({ version }) => ({ version })));
+      for (const table of ["scope_grants", "conversation_children", "durable_outbox", "object_retirement"]) {
+        expect(state.storage.sql.exec(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
+        ).toArray()).toHaveLength(1);
+      }
+    });
+  });
+
+  it("refuses a client socket upgrade", async () => {
+    const response = await space().fetch("https://space.test/socket", {
+      headers: { upgrade: "websocket" },
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "space_socket_refused" });
+    expect(response.webSocket).toBeNull();
+  });
+
+  it("commits a grant without publishing it to the shared scope-grant directory", async () => {
+    let spaceResult: ScopeGrantMutationResult | null = null;
+    await runInDurableObject(space(), (instance, state) => {
+      seedIdentity(state, SPACE_ID, "Hiring");
+      spaceResult = internals(instance)
+        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: SPACE_ID })
+        .mutate(grantMutation(SPACE_ID));
+      // The grant itself commits. Only its discovery is suppressed: a Space is
+      // found through the Organization's Space directory, and a row in the
+      // shared work-stream grant directory would make its hidden conversation
+      // reachable from a surface with no business listing it.
+      expect(state.storage.sql.exec("SELECT user_id FROM scope_grants").toArray())
+        .toEqual([{ user_id: USER_ID }]);
+      expect(outboxKinds(state)).toEqual([]);
+    });
+    expect(spaceResult).toMatchObject({ status: "committed" });
+
+    // The same call on a Channel, so the absence above is the role's doing and
+    // not a grant that failed to commit or a path that never runs.
+    await runInDurableObject(channel(), (instance, state) => {
+      seedIdentity(state, CHANNEL_ID, "Hiring");
+      internals(instance)
+        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_ID })
+        .mutate(grantMutation(CHANNEL_ID));
+      expect(outboxKinds(state)).toEqual(["scope_grant_directory"]);
+    });
+  });
+
+  it("forwards its directory effects to the workspace and drops everything else", async () => {
+    await runInDurableObject(space(), (_instance, state) => seedIdentity(state, SPACE_ID, "Hiring"));
+
+    await space().receiveChildEffects({
+      substreamId: "0",
+      envelopes: [
+        childEffect("space", SPACE_ID, DIRECTORY_EFFECT, 1),
+        childEffect("space", SPACE_ID, ACTIVITY_EFFECT, 2),
+      ],
+    });
+
+    await runInDurableObject(space(), (_instance, state) => {
+      // The directory effect is what the Organization's Space directory is
+      // built from and has to leave. The activity event has nowhere to go: no
+      // product surface opens a Space's conversation, so a feed row for it
+      // would be an entry nobody asked for that nothing can navigate to. It is
+      // dropped here because anything that reaches this outbox is delivered.
+      expect(outboxKinds(state)).toEqual(["directory_common"]);
+      // Still recorded locally: the parent aggregates its child's state whether
+      // or not it republishes it.
+      expect(state.storage.sql.exec("SELECT substream_id FROM substream_directory").toArray())
+        .toEqual([{ substream_id: "0" }]);
+    });
+
+    // A Channel forwards both, which is what makes the list above a decision.
+    await runInDurableObject(channel(), (_instance, state) => seedIdentity(state, CHANNEL_ID, "Hiring"));
+    await channel().receiveChildEffects({
+      substreamId: "0",
+      envelopes: [
+        childEffect("workstream", CHANNEL_ID, DIRECTORY_EFFECT, 1),
+        childEffect("workstream", CHANNEL_ID, ACTIVITY_EFFECT, 2),
+      ],
+    });
+    await runInDurableObject(channel(), (_instance, state) => {
+      expect(outboxKinds(state)).toEqual(["activity_event", "directory_common"]);
+    });
+  });
+
+  it("refuses a child effect stamped with another parent kind", async () => {
+    await runInDurableObject(space(), (_instance, state) => seedIdentity(state, SPACE_ID, "Hiring"));
+    // Asserted inside the object rather than across the RPC boundary: a
+    // rejection returned over a stub is also reported to the harness as an
+    // unhandled error in the object, which is noise rather than a finding.
+    await expect(runInDurableObject(space(), (instance) => instance.receiveChildEffects({
+      substreamId: "0",
+      envelopes: [childEffect("workstream", SPACE_ID, DIRECTORY_EFFECT, 1)],
+    }))).rejects.toThrow(/workstream_effect_parent_kind_mismatch/u);
+  });
+
+  it("lands its directory effect in the Space directory rather than the Channel one", async () => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE workspaces(id TEXT PRIMARY KEY, region TEXT, abandoned_at TEXT)"),
+      env.DB.prepare("INSERT INTO workspaces(id, region) VALUES (?, 'global')").bind(WORKSPACE_ID),
+    ]);
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const envelope = spaceDirectoryEnvelope();
+    // Accepted and acknowledged. Phase 1 refused this by name because
+    // WorkspaceDO had nowhere to put it; migration 63 gave it somewhere, and
+    // the routing by parent kind is what keeps a Space out of the Channel
+    // sidebar now that both effects reach the same handoff.
+    expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 1, retried: 0 });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT workstream_id FROM workspace_workstream_directory",
+      bindings: [],
+    })).toMatchObject({ rows: [] });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT space_id, title, scope FROM workspace_space_directory",
+      bindings: [],
+    })).toMatchObject({ rows: [{ space_id: SPACE_ID, title: "Hiring", scope: "workspace" }] });
+  });
+
+  it("refuses a Channel product request addressed at its hidden main conversation", async () => {
+    const conversation = env.SUBSTREAM_AGENTS.getByName(
+      conversationObjectName("global", WORKSPACE_ID, SPACE_ID, asSubstreamId("0")),
+    );
+    await runInDurableObject(conversation, (instance) => {
+      // The identity a provisioned Space's conversation carries. Written
+      // through the object's own store rather than as SQL, because `parent_kind`
+      // is the whole subject of this case.
+      conversationInternals(instance).objectStore.ensureIdentity({
+        workspaceId: WORKSPACE_ID, parentKind: "space", parentId: SPACE_ID,
+      }, "global");
+    });
+    const auth = {
+      sessionId: `space-conversation-${USER_ID}`,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+    // A member with a live session, so the refusal below is the parent kind
+    // and not a caller the object would have turned away anyway.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT,
+        revoked_at TEXT, expires_at TEXT, workspace_incarnation TEXT DEFAULT 'existing-member'
+      )`),
+      env.DB.prepare(`CREATE TABLE workspace_members (
+        workspace_id TEXT, user_id TEXT, status TEXT, role TEXT,
+        access_class TEXT, incarnation TEXT DEFAULT 'existing-member'
+      )`),
+      env.DB.prepare("CREATE TABLE workspaces(id TEXT PRIMARY KEY, region TEXT, analytics_workspace_id TEXT, abandoned_at TEXT)"),
+      env.DB.prepare(`CREATE TABLE workstream_authority_control (
+        id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+        required_serving_contract_version INTEGER NOT NULL,
+        serving_contract_version INTEGER NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workstream_authority_control
+        (id, phase, generation, required_serving_contract_version, serving_contract_version)
+        VALUES (1, 'durable_object_open', 1, 1, 1)`),
+      env.DB.prepare("INSERT INTO workspaces(id, region) VALUES (?, 'global')").bind(WORKSPACE_ID),
+      env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role, access_class)
+        VALUES (?, ?, 'active', 'member', 'member')`).bind(WORKSPACE_ID, USER_ID),
+      env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(auth.sessionId, USER_ID, WORKSPACE_ID),
+    ]);
+
+    // What `PATCH /workstreams/<spaceId> { archived: true }` becomes: the route
+    // addresses a conversation by id, and every member is handed every Space id
+    // on the workspace socket. Without the parent-kind gate this archives
+    // General without `prepareSpaceArchive` and without `space_protected`.
+    const refused = await conversation.handleProductRequest({
+      operation: "update", auth, input: { archived: true },
+    });
+    expect(refused.status).toBe(404);
+    expect(JSON.parse(refused.bodyJson)).toMatchObject({
+      error: "conversation_parent_kind_mismatch",
+    });
+    // And the same request from the Space authority, which says what this
+    // object is, gets past the gate — so what is refused above is the address
+    // rather than a caller or an object that answers nothing.
+    const asSpace = await conversation.handleProductRequest({
+      operation: "update", parentKind: "space", auth, input: { archived: true },
+    });
+    expect(JSON.parse(asSpace.bodyJson)).not.toMatchObject({
+      error: "conversation_parent_kind_mismatch",
+    });
+  });
+
+  it("answers as retired once its workspace is closed, through the inherited gate", async () => {
+    await space().retireObject({
+      retiredAt: Date.now(),
+      operationId: crypto.randomUUID(),
+      actorUserId: ACTOR_ID,
+      reason: "demo_replaced",
+    });
+    // The gate classifies `fetch` as a dropped door rather than a refused one,
+    // so a retired Space answers instead of throwing at its caller. A subclass
+    // is where that is easiest to lose: every method it is gated on is one it
+    // inherits.
+    const response = await space().fetch("https://space.test/socket", {
+      headers: { upgrade: "websocket" },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "workspace_retired" });
+  });
+});

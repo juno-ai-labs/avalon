@@ -7,6 +7,7 @@ import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
   patchCachedWorkstreamViewerState,
+  workstreamSummaryState,
 } from './workstream-state-store';
 
 const id = '00000000-0000-7000-8000-000000000001';
@@ -28,6 +29,7 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-08-18T00:00:00.000Z',
     ...overrides,
   };
@@ -134,6 +136,7 @@ describe('applyVersionedWorkstreamState', () => {
       scope: 'personal',
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
     applyVersionedWorkstreamState(queryClient, {
       workstreamId: id,
@@ -151,6 +154,7 @@ describe('applyVersionedWorkstreamState', () => {
         title: 'Staffing',
         participantUserIds: ['user-a', 'user-b'],
         participantExtraCount: 1,
+        spaceIds: [],
       },
       viewer: {},
       visible: true,
@@ -160,7 +164,62 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       participantUserIds: ['user-a', 'user-b'],
       participantExtraCount: 1,
+      spaceIds: [],
     });
+  });
+
+  it('takes a placement pushed at the waterline the row already had', () => {
+    const queryClient = new QueryClient();
+    const seed = summary({ title: 'Investigate ENG-142', spaceIds: ['general'] });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: seed,
+      viewer: seed,
+      seed,
+      visible: true,
+    });
+
+    // Adding an Organization-wide Channel to a second Organization-wide Space
+    // changes nothing the Channel's own authority projects, so WorkspaceDO
+    // republishes this row at the waterline it already had. Dropping it as a
+    // duplicate left the Channel under one Space for the session, and the
+    // local cache then carried that row through a reload.
+    const result = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Investigate ENG-142', spaceIds: ['general', 'customer-launch'] },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(result.commonApplied).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['general', 'customer-launch']);
+  });
+
+  it('refuses a placement from a superseded authority generation', () => {
+    const queryClient = new QueryClient();
+    const seed = summary({ spaceIds: ['general'] });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5, 2),
+      common: seed,
+      viewer: seed,
+      seed,
+      visible: true,
+    });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(9, 9, 1),
+      common: { spaceIds: ['general', 'older-epoch'] },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['general']);
   });
 
   it('does not invent a pile from an empty directory preview at a pinned waterline', () => {
@@ -186,16 +245,18 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
   });
 
-  it('does not put a facepile on a workspace-scoped row', () => {
+  it('does not put a facepile on an organization-scoped row', () => {
     const queryClient = new QueryClient();
     const personal = summary({
       title: 'Launch',
       scope: 'personal',
       participantUserIds: ['user-a', 'user-b'],
       participantExtraCount: 1,
+      spaceIds: [],
     });
     applyVersionedWorkstreamState(queryClient, {
       workstreamId: id,
@@ -218,6 +279,7 @@ describe('applyVersionedWorkstreamState', () => {
       scope: 'workspace',
       participantUserIds: [],
       participantExtraCount: 0,
+      spaceIds: [],
     });
   });
 });
@@ -308,6 +370,25 @@ describe('patchCachedWorkstreamViewerState', () => {
     const row = queryClient.getQueryData<WorkstreamSummary>(['workstream', id]);
     expect(row?.hasUnread).toBe(true);
     expect(row?.firstUnreadSequenceNumber).toBe(9);
+  });
+
+  // WorkspaceDO republishes the Channel's row after it finalizes a membership,
+  // and that row is the only thing that tells the sidebar the Channel now sits
+  // under another Space. Left out of the common patch, **Add to space** and a
+  // drop both appear to do nothing until the whole directory is read again.
+  it('carries a channel\'s space placements on a common state push', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, 1),
+      visible: true,
+      ...workstreamSummaryState(summary({ spaceIds: ['space-a', 'space-b'] })),
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['space-a', 'space-b']);
   });
 
   it('writes the addressed child entry without changing Main in the list', () => {

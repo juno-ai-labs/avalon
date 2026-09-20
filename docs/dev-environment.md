@@ -115,6 +115,14 @@ re-running this on a warm container does what it always did. Hosted databases
 never use a baseline. [`d1-baseline-migrations.md`](d1-baseline-migrations.md)
 owns the mechanism; read it before regenerating one or moving its boundary.
 
+If the seed route answers `workspace_do_schema_hash_mismatch:<n>` for a Durable
+Object migration that has not shipped yet, the local state holds a receipt
+written before that migration's DDL was last edited: delete
+`apps/api/.wrangler/state` and re-run `pnpm db:migrate` and `pnpm db:seed`.
+[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
+explains why the hash is checked at all — and why wiping is the remedy only
+while the migration is unreleased.
+
 After the Workers are running (§3), open the authority:
 
 ```bash
@@ -136,6 +144,15 @@ seed before product fixtures reach the Durable Objects.
 `routes/dev.ts` seeds transcript rows through the canonical ordered-turn
 storage API. It does not recreate the retired message tables or their runtime
 views merely to import development fixtures.
+
+It also places every Channel it seeds in the Organization's General Space,
+through the same `placeConnectorChannelInGeneral` the Slack agent uses, because
+every non-deleted Channel belongs to a Space and this route does not go through
+the creation coordinator. That is why the command can take a few seconds longer
+on a cold container than the import itself explains: each Channel's placement
+waits for the Organization to see it, which happens when the Channel's parent
+authority publishes its first directory projection.
+[`spaces.md`](spaces.md) owns the mechanism.
 
 ## 3. Start the API Workers
 
@@ -505,8 +522,9 @@ oversubscription: two sessions on this box is ~32 worker threads on four cores,
 three is ~48. Every fixed budget in the suites — the 15s in
 `packages/db`, `apps/api`, `apps/desktop`, `packages/agent-harness`,
 `packages/connectors`, `apps/ace` and `apps/site`, and the 30s in
-`apps/api/vitest.workers.config.ts` — is a floor sized for contention from
-sibling suites, not a ceiling.
+`apps/api/vitest.workers.config.ts` and `apps/browser/vitest.config.ts` (the
+same workerd pool) — is a floor sized for contention from sibling suites, not a
+ceiling.
 
 The lever is `VITEST_MAX_WORKERS`, which Vitest applies *after* the config
 resolves and therefore overrides an explicit `maxWorkers`:

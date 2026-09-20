@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asProjectId, type ProjectDirectory } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asSpaceId, asUserId, type SpaceDirectory } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -66,8 +66,8 @@ function announceApplicationSettings(settings: typeof applicationSettings.curren
   });
 }
 
-const currentUser = { id: 'user-1', name: 'Morgan Ellis', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
-const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
+const currentUser = { id: '00000000-0000-7000-8000-000000000001', name: 'Morgan Ellis', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
+const teammate = { id: '00000000-0000-7000-8000-000000000002', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Rally Studio',
@@ -106,38 +106,39 @@ function workstream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     preview: `${title} preview`,
     ...overrides,
   };
 }
 
-function personalProjectDirectory(projectId: ReturnType<typeof asProjectId>): ProjectDirectory {
+function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDirectory {
   return {
     waterline: 1,
     items: [{
-      id: projectId,
+      id: spaceId,
       name: 'Hiring',
       iconKey: 'briefcase',
       colorKey: 'blue',
       scope: 'personal',
       status: 'active',
-      presentationRevision: 1,
-      audienceGeneration: 1,
-      lifecycleGeneration: 1,
-      participants: [currentUser, teammate].map((member) => ({ userId: member.id, state: 'active', generation: 1 })),
-      workstreamIds: [],
+      systemRole: null,
+      revision: 1,
+      participants: [currentUser, teammate].map((member) => ({ userId: asUserId(member.id) })),
+      channelCount: 0,
       defaultResourceIds: [],
+      defaultSidekickIds: [],
       createdAt: '2026-08-27T00:00:00.000Z',
       updatedAt: '2026-08-27T00:00:00.000Z',
     }],
   };
 }
 
-function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }): QueryClient {
+function renderScreen(spaces: SpaceDirectory = { waterline: 0, items: [] }): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  queryClient.setQueryData(['projects'], projects);
+  queryClient.setQueryData(['spaces'], spaces);
   render(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
@@ -152,22 +153,22 @@ function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }):
   return queryClient;
 }
 
-function renderProjectScreen(
-  projectId: string,
-  projects: ProjectDirectory = { waterline: 0, items: [] },
-  nextProjectId?: string,
+function renderSpaceScreen(
+  spaceId: string,
+  spaces: SpaceDirectory = { waterline: 0, items: [] },
+  nextSpaceId?: string,
 ): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  queryClient.setQueryData(['projects'], projects);
+  queryClient.setQueryData(['spaces'], spaces);
   render(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
-          {nextProjectId && <Link to={`/projects/${nextProjectId}/workstreams/new`}>New work stream in another project</Link>}
+        <MemoryRouter initialEntries={[`/spaces/${spaceId}/workstreams/new`]}>
+          {nextSpaceId && <Link to={`/spaces/${nextSpaceId}/workstreams/new`}>New channel in another space</Link>}
           <Routes>
-            <Route element={<NewWorkstreamScreen projectId="route" workspace={workspace} />} path="/projects/:projectId/workstreams/new" />
+            <Route element={<NewWorkstreamScreen spaceId="route" workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -198,7 +199,7 @@ async function selectModel(name: string): Promise<void> {
   fireEvent.click(item);
 }
 
-describe('New work-stream home', () => {
+describe('New channel home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
@@ -243,7 +244,7 @@ describe('New work-stream home', () => {
   it('opens directly on the composer without the retired Welcome back home', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
+    expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: /Welcome back/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
@@ -251,32 +252,34 @@ describe('New work-stream home', () => {
     expect(workspaceSocket.listWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
-    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
-    const projects = personalProjectDirectory(projectId);
-    renderProjectScreen(projectId, projects);
+  it('given a space launcher, when the first message is submitted, then it omits home sections and takes its participants from the space', async () => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
 
-    expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
+    expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
-    expect(screen.queryByTitle('Participants are managed by the project')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Participants are managed by the space')).not.toBeInTheDocument();
     const modifier = document.querySelector('.participant-modifier');
     if (!(modifier instanceof HTMLElement)) throw new Error('participant modifier missing');
     const face = modifier.querySelector('.avatar-stack-item');
     if (!(face instanceof HTMLElement)) throw new Error('participant face missing');
     fireEvent.pointerMove(face, { pointerType: 'mouse' });
     const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip).toHaveTextContent('Participants are managed by the project');
+    expect(tooltip).toHaveTextContent('Participants are managed by the space');
     expect(tooltip).not.toHaveTextContent('Morgan Ellis');
     expect(tooltip).not.toHaveTextContent('Samantha Lee');
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
+    // Both halves of what a Space launcher owns: the roster it prefills from
+    // the personal Space, and the Space itself, which is what places the
+    // Channel rather than leaving it to General.
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
-      projectId,
       participantIds: [teammate.id],
+      spaceIds: [spaceId],
     })));
   });
 
@@ -290,7 +293,7 @@ describe('New work-stream home', () => {
     expect(await screen.findByRole('menuitem', { name: 'Attach files' })).toBeVisible();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: '@' } });
 
     // GrokBot opens the same inline list from an @ typed at the caret rather
@@ -302,7 +305,7 @@ describe('New work-stream home', () => {
 
   it('walks the mention list and submits the identity behind the person Enter picks', async () => {
     const queryClient = renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
 
     fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @' } });
@@ -333,12 +336,12 @@ describe('New work-stream home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       openingMessage: 'ask @Samantha Lee',
-      participantIds: ['user-2'],
+      participantIds: [teammate.id],
       operationId: expect.any(String),
       mentions: [{
         type: 'person',
         label: 'Samantha Lee',
-        userId: 'user-2',
+        userId: teammate.id,
         connectorType: null,
         startOffset: 4,
         endOffset: 17,
@@ -348,7 +351,7 @@ describe('New work-stream home', () => {
       .toMatchObject({ ranges: [{ turns: [{ blocks: [{
         mentions: [{
           type: 'person',
-          userId: 'user-2',
+          userId: teammate.id,
           startOffset: 4,
           endOffset: 17,
         }],
@@ -362,7 +365,7 @@ describe('New work-stream home', () => {
       { id: 'user-3', name: 'Rae Okafor', email: 'rae@example.com', timezone: 'America/Los_Angeles', status: 'active' },
     ]);
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
 
     fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @' } });
@@ -390,7 +393,7 @@ describe('New work-stream home', () => {
 
   it('takes no draft with it when the caret leaves the mention the list belongs to', async () => {
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' }) as HTMLTextAreaElement;
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' }) as HTMLTextAreaElement;
 
     fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'hello @Sam', selectionStart: 10, selectionEnd: 10 } });
@@ -409,7 +412,7 @@ describe('New work-stream home', () => {
 
   it('names the highlighted row to assistive technology while the list is open', async () => {
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
 
     expect(composer).not.toHaveAttribute('aria-activedescendant');
     fireEvent.focus(composer);
@@ -431,7 +434,7 @@ describe('New work-stream home', () => {
 
   it('dismisses the mention list with Escape and leaves the draft alone', async () => {
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
 
     fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @Sam' } });
@@ -451,13 +454,13 @@ describe('New work-stream home', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
     expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: '  Prepare the launch brief  ' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
-      participantIds: ['user-2'],
+      participantIds: [teammate.id],
       operationId: expect.any(String),
       // The create request travels under the trace id the screen printed;
       // asserted as present rather than by value so the exact-shape check that
@@ -468,35 +471,35 @@ describe('New work-stream home', () => {
     expect(request?.operationId).toBe(request?.requestId);
   });
 
-  it.each(['workspace', 'project'] as const)('focuses the message composer when the %s launcher opens', async (scope) => {
-    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+  it.each(['workspace', 'space'] as const)('focuses the message composer when the %s launcher opens', async (scope) => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
     const queryClient = scope === 'workspace'
       ? renderScreen()
-      : renderProjectScreen(projectId, personalProjectDirectory(projectId));
+      : renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
 
-    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus();
+    expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus();
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
     await waitFor(() => expect(queryClient.getQueryState(['workspace-members'])?.status).toBe('success'));
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
   });
 
-  it('focuses the message when navigating between project launchers', async () => {
-    const firstId = asProjectId('00000000-0000-7000-8000-0000000000f2');
-    const secondId = asProjectId('00000000-0000-7000-8000-0000000000f3');
-    renderProjectScreen(firstId, {
+  it('focuses the message when navigating between space launchers', async () => {
+    const firstId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    const secondId = asSpaceId('00000000-0000-7000-8000-0000000000f3');
+    renderSpaceScreen(firstId, {
       waterline: 1,
-      items: [...personalProjectDirectory(firstId).items, ...personalProjectDirectory(secondId).items],
+      items: [...personalSpaceDirectory(firstId).items, ...personalSpaceDirectory(secondId).items],
     }, secondId);
-    const firstComposer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const firstComposer = screen.getByRole('textbox', { name: 'Opening channel message' });
     expect(firstComposer).toHaveFocus();
-    const nextProject = screen.getByRole('link', { name: 'New work stream in another project' });
-    act(() => nextProject.focus());
-    fireEvent.click(nextProject);
+    const nextSpace = screen.getByRole('link', { name: 'New channel in another space' });
+    act(() => nextSpace.focus());
+    fireEvent.click(nextSpace);
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
   });
 
-  it('shows an empty recipient result when the workspace has no available members', async () => {
+  it('shows an empty recipient result when the organization has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
 
@@ -508,7 +511,7 @@ describe('New work-stream home', () => {
   it('hides the model selector unless developer mode is on', async () => {
     renderScreen();
 
-    await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    await screen.findByRole('textbox', { name: 'Opening channel message' });
     expect(screen.queryByRole('button', { name: /^Model:/ })).not.toBeInTheDocument();
   });
 
@@ -521,7 +524,7 @@ describe('New work-stream home', () => {
     await openModelMenu();
     expect(await screen.findByRole('menuitemradio', { name: 'Default' })).toHaveAttribute('aria-checked', 'true');
     closeOpenMenus();
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -533,14 +536,14 @@ describe('New work-stream home', () => {
     }));
   });
 
-  it('pins the work stream to the model chosen in developer mode', async () => {
+  it('pins the channel to the model chosen in developer mode', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
     await openModelMenu();
     await selectModel('GPT-5.6 Sol');
     closeOpenMenus();
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -566,7 +569,7 @@ describe('New work-stream home', () => {
     await selectModel('Grok 4.3');
     closeOpenMenus();
 
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
@@ -589,7 +592,7 @@ describe('New work-stream home', () => {
     await selectModel('Default');
     closeOpenMenus();
 
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
@@ -613,7 +616,7 @@ describe('New work-stream home', () => {
     announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
     await waitFor(() => expect(screen.queryByRole('button', { name: /^Model:/ })).not.toBeInTheDocument());
 
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -632,7 +635,7 @@ describe('New work-stream home', () => {
     }));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Create this once' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -650,7 +653,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
   });
 
-  it('freezes shared attachment actions while work-stream creation is pending', async () => {
+  it('freezes shared attachment actions while channel creation is pending', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
 
@@ -659,7 +662,7 @@ describe('New work-stream home', () => {
       target: { files: [file] },
     });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeEnabled());
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening channel message' }), { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: '',
@@ -672,9 +675,9 @@ describe('New work-stream home', () => {
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();
   });
 
-  it('seeds the new work-stream detail and opening message before navigation', async () => {
+  it('seeds the new channel detail and opening message before navigation', async () => {
     const queryClient = renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -699,7 +702,7 @@ describe('New work-stream home', () => {
     await selectModel('DeepSeek V4 Pro');
     closeOpenMenus();
 
-    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -719,11 +722,11 @@ describe('New work-stream home', () => {
     }));
   });
 
-  it('opens the work stream on the keystroke rather than on the response', async () => {
+  it('opens the channel on the keystroke rather than on the response', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -740,12 +743,12 @@ describe('New work-stream home', () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await screen.findByRole('status', { name: 'Rally is working' });
-    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toBe(composer);
+    expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toBe(composer);
   });
 
   // A message over the ceiling is refused here rather than by the server, and
@@ -753,10 +756,10 @@ describe('New work-stream home', () => {
   // and writes its D1 rows before anything reads the message's length, so a
   // request that was always going to be refused leaves those behind for a work
   // stream that never exists — and the launch surface would have opened on it.
-  it('refuses a message over the ceiling without sending it or opening a work stream', async () => {
+  it('refuses a message over the ceiling without sending it or opening a channel', async () => {
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS + 1) } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -773,7 +776,7 @@ describe('New work-stream home', () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS) } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -784,7 +787,7 @@ describe('New work-stream home', () => {
   it('clears the refusal on the next keystroke', async () => {
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'x'.repeat(MESSAGE_MAX_CHARACTERS + 1) } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await screen.findByText(MESSAGE_TOO_LONG_MESSAGE);
@@ -804,8 +807,8 @@ describe('New work-stream home', () => {
     fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
       target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
     });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create channel' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening channel message' }), { key: 'Enter' });
 
     // The tile shows the extension and exposes the same preview action as the
     // sent turn will once the message is persisted.
@@ -813,11 +816,11 @@ describe('New work-stream home', () => {
     expect(within(turn).getByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
   });
 
-  it('takes back the optimistic work stream when creation fails', async () => {
+  it('takes back the optimistic channel when creation fails', async () => {
     api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -832,7 +835,7 @@ describe('New work-stream home', () => {
   // the one thing that still read as a navigation.
   it('seeds the created run so the work timer keeps counting across the swap', async () => {
     const queryClient = renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -851,7 +854,7 @@ describe('New work-stream home', () => {
     api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Retry this request' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -867,7 +870,7 @@ describe('New work-stream home', () => {
     }));
     renderScreen();
 
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'ask @' } });
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -888,48 +891,48 @@ describe('New work-stream home', () => {
 
   it('brings back the drafted message and its attachment after the screen is reopened', async () => {
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Draft the launch brief' } });
     fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
       target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
     });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create channel' })).toBeEnabled());
     cleanup();
 
     renderScreen();
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' }))
       .toHaveValue('Draft the launch brief'));
     expect(await screen.findByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Create channel' })).toBeEnabled();
   });
 
   it('forgets the cached draft once the composer is emptied', async () => {
     renderScreen();
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Draft the launch brief' } });
     fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
       target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
     });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create channel' })).toBeEnabled());
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
     fireEvent.change(composer, { target: { value: '' } });
     // Send stays on screen now and goes disabled instead of unmounting, which
     // is the same signal that the composer has registered the emptying.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create channel' })).toBeDisabled());
     cleanup();
 
     renderScreen();
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveValue(''));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveValue(''));
     expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).not.toBeInTheDocument();
   });
 
   it('keeps taking attachments after one is already pending, including from a drop', async () => {
     renderScreen();
-    await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
       target: { files: [new File(['first'], 'first.txt', { type: 'text/plain' })] },
     });

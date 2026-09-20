@@ -54,7 +54,7 @@ describe('useNamingSkeleton', () => {
     expect(answers.at(-1)).toBe(false);
   });
 
-  it('answers for the work stream it is given, not the one before it', () => {
+  it('answers for the channel it is given, not the one before it', () => {
     vi.useFakeTimers();
     vi.setSystemTime(created);
     // The work-stream header stays mounted across work streams by design, so

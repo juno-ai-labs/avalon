@@ -21,7 +21,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import { SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -56,8 +56,10 @@ import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
 export * from "./attachment-contracts";
+export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
+export * from "./spaces";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
@@ -620,6 +622,22 @@ export const WorkstreamSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
   participantExtraCount: z.number().int().nonnegative().default(0),
+  /**
+   * Every Space this Channel currently sits in.
+   *
+   * A Channel belongs to at least one Space and may belong to several; each is
+   * a *placement* of this same row rather than a copy of it, so a sidebar
+   * renders one entry per id and all of them open the same Channel.
+   *
+   * Uncapped, deliberately. The ids are the Channel's own memberships rather
+   * than a fan-out over the Organization — a Channel is in as many Spaces as
+   * somebody put it in — and truncating the list would make a placement
+   * disappear from one of the Spaces that actually holds it.
+   *
+   * Defaulted because a payload written before Spaces existed describes a
+   * Channel from the flat directory they replace.
+   */
+  spaceIds: z.array(SpaceIdSchema).default([]),
 });
 
 export const ExternalActorSchema = z.object({
@@ -1028,6 +1046,31 @@ export const ElicitationSchema = z.object({
   createdAt: TimestampSchema,
   answeredAt: TimestampSchema.nullable()
 });
+
+/**
+ * One page of the Channels a Space holds.
+ *
+ * The same `Workstream` rows the Channel directory serves, shaped for the
+ * viewer: General holds every Channel in the Organization, so this is the one
+ * Space read that cannot ride the workspace socket. It answered bare ids
+ * first, which made the Space dashboard able to name only the Channels that
+ * happened to be in the device's loaded directory page and say nothing about
+ * the rest — and a second read per id would have been a round trip per row.
+ *
+ * It lives here rather than in `spaces.ts` because a page of Channels is made
+ * of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
+ * imported by it and cannot import back.
+ *
+ * Opaque cursor: the ordering is the authority's, and a client that could
+ * construct a cursor could ask for a page the ordering no longer has. A page
+ * may be shorter than the cursor suggests, because a membership the viewer may
+ * not read is dropped after the page is taken.
+ */
+export const SpaceChannelPageSchema = z.strictObject({
+  items: z.array(WorkstreamSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -1642,8 +1685,17 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 );
 
 export const WorkstreamCreationFieldsSchema = z.object({
-  /** Optional organizer chosen by the caller; the API reauthorizes it. */
-  projectId: ProjectIdSchema.optional(),
+  /**
+   * The Spaces this Channel is born in; the API reauthorizes every one of them.
+   *
+   * A list rather than one id because a Channel belongs to as many Spaces as it
+   * was put in. Empty — which is what every connector, import, recovery and
+   * scheduled path sends — means General: every Channel has a home, and no
+   * caller without a person at a keyboard has one to choose. A Space named here
+   * is established with the Channel or the creation fails without publishing
+   * one, so there is no window in which a Channel exists outside the hierarchy.
+   */
+  spaceIds: z.array(SpaceIdSchema).default([]),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**
@@ -2266,8 +2318,24 @@ export const WorkspaceSidebarSchema = z.strictObject({
      */
     nextCursor: NoteCursorSchema.nullable().optional(),
   }),
-  /** Optional during the rolling deployment; current servers always send it. */
-  projects: ProjectSnapshotSchema.optional(),
+  /**
+   * Both Space directories at one waterline, for this viewer.
+   *
+   * Optional so a client reading a payload from a server that predates it
+   * treats the hierarchy as absent rather than failing the connect.
+   */
+  spaces: SpaceSnapshotSchema.optional(),
+  /**
+   * False while the Organization has not finished creating General and placing
+   * every Channel in it.
+   *
+   * The client shows the Organization-opening state rather than a hierarchy
+   * that is half built — a Channel with no Space, or a Space directory missing
+   * General, is not a state any surface is allowed to render. Optional and
+   * read as `true` when absent, so a payload from a server without the cutover
+   * is not permanently stuck opening.
+   */
+  spacesReady: z.boolean().optional(),
 });
 
 /**
@@ -2390,16 +2458,20 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
 ]);
 
 /**
- * The viewer's complete active and inactive project state after a project write.
+ * The viewer's complete active and inactive Space state after a Space write.
  *
- * WorkspaceDO owns both lists and their shared waterline. The payload is read
- * per subscribed socket because personal-project visibility and ordering are
- * viewer-specific. Absence is the tombstone when a participant is removed.
+ * The shape the Project snapshot used, and for the same reasons: WorkspaceDO
+ * owns both lists and their shared waterline, personal-Space visibility and
+ * ordering are per viewer, and absence is the tombstone when somebody stops
+ * being a participant. `spacesReady` travels with it because a write can be the write
+ * that finishes the cutover, and a client holding `false` would otherwise keep
+ * showing the opening state until it reconnected.
  */
-export const WorkspaceProjectSnapshotEventSchema = z.strictObject({
-  type: z.literal("workspace_project_snapshot"),
+export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
+  type: z.literal("workspace_space_snapshot"),
   occurredAt: TimestampSchema,
-  projects: ProjectSnapshotSchema,
+  spaces: SpaceSnapshotSchema,
+  spacesReady: z.boolean(),
 });
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
@@ -2497,7 +2569,7 @@ export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEve
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
-export type WorkspaceProjectSnapshotEvent = z.infer<typeof WorkspaceProjectSnapshotEventSchema>;
+export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;

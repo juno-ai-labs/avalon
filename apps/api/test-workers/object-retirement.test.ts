@@ -36,6 +36,7 @@ import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId 
 
 import { ConversationParentDurableObject } from "../src/durable-objects/conversation-parent-object";
 import { SidekickDO } from "../src/durable-objects/sidekick-do";
+import { SpaceDO } from "../src/durable-objects/space-do";
 import {
   RETIREMENT_REFUSAL_CODE,
   gatedSurface,
@@ -514,6 +515,7 @@ describe("object retirement", () => {
       { name: "WorkspaceDO", target: WorkspaceDO },
       { name: "ConversationParentDurableObject", target: ConversationParentDurableObject },
       { name: "WorkstreamDO", target: WorkstreamDO },
+      { name: "SpaceDO", target: SpaceDO },
       { name: "SidekickDO", target: SidekickDO },
       { name: "SubstreamAgent", target: SubstreamAgent },
     ] as const;
@@ -541,14 +543,25 @@ describe("object retirement", () => {
 
     // The dispositions the design depends on, pinned by name. Each is a
     // decision a future edit could undo without any test above noticing.
-    for (const target of [ConversationParentDurableObject, WorkstreamDO, SidekickDO]) {
+    for (const target of [ConversationParentDurableObject, WorkstreamDO, SpaceDO, SidekickDO]) {
       // The walk's own read, on a parent that may already hold a tombstone.
       expect(retirementDisposition(target, "childrenForRetirement")).toBe("permit");
       // A product enumeration stays refused; the revocation consumer acks it.
       expect(retirementDisposition(target, "listChildren")).toBe("refuse");
     }
-    for (const target of [WorkstreamDO, WorkspaceDO]) {
+    for (const target of [WorkstreamDO, SpaceDO, WorkspaceDO]) {
       expect(retirementDisposition(target, "canReadWorkstream")).toBe("drop");
+    }
+    // `SpaceDO` is `WorkstreamDO` under a role and overrides nothing, so every
+    // door it answers on is one of these. A disposition resolves up the
+    // prototype chain, which is what makes that true whether the policy is
+    // registered on this class or inherited — the assertion is about the door
+    // list, and a door dropped from it is a retired Space throwing where the
+    // caller expected an answer.
+    for (const method of ["fetch", "alarm", "webSocketMessage", "canReadWorkstream"]) {
+      expect(retirementDisposition(SpaceDO, method))
+        .toBe(retirementDisposition(WorkstreamDO, method));
+      expect(retirementDisposition(SpaceDO, method)).toBe("drop");
     }
     expect(retirementDisposition(SubstreamAgent, "startRuntimeRecovery")).toBe("permit");
     for (const method of ["beginWorkspaceRetirement", "recordRetiredNode", "workspaceRetirementProgress"]) {

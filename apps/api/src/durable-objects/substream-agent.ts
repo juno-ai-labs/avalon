@@ -52,6 +52,7 @@ import {
   asWorkspaceId,
   ServerSocketEventSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamAppearancePatchSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
@@ -370,6 +371,19 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
 });
+/**
+ * A proposed audience, asked about rather than applied.
+ *
+ * Read-only by construction: it names the audience a caller is *considering*,
+ * and the answer is a boolean. A Space audience change reaches several Channels
+ * and widening cannot be taken back, so every one of them is asked before any
+ * of them is changed.
+ */
+const PreviewAudienceContainmentRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  audience: WorkstreamReaderAudienceSchema,
+});
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentKind: ConversationParentKindSchema,
@@ -407,25 +421,60 @@ const ProductAuthSchema = z.strictObject({
   // only by server code; `IdentityAuthContext.principal` says why.
   principal: z.enum(["connector", "demo_seed"]).optional(),
 });
+/**
+ * One product operation, with the two fields every one of them carries.
+ *
+ * `parentKind` is which authority the caller believes owns this conversation's
+ * parent, and `runProductRequest` refuses a request whose answer disagrees with
+ * the object's own identity. It is needed because a conversation is addressed
+ * by *id*: `WorkstreamObjectClient` derives the object name from the id alone,
+ * so without this a Space's hidden main conversation — which the PRD gives no
+ * product surface at all, no feed, no transcript, no search result — is
+ * reachable through `/workstreams/:id` by anybody holding a Space id, and every
+ * member is handed every Space id on the workspace socket. A Space id is not a
+ * secret; what it must not be is an address for a Channel operation.
+ *
+ * Defaulted to `workstream` so the wire shape is unchanged for every existing
+ * caller, all of which mean a Channel.
+ */
+function productOperation<Shape extends z.ZodRawShape>(shape: Shape) {
+  return z.strictObject({
+    auth: ProductAuthSchema,
+    parentKind: ConversationParentKindSchema.default("workstream"),
+    ...shape,
+  });
+}
+
 const ProductRequestSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("initialize"),
     input: InitializeWorkstreamObjectInputSchema }),
-  z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("search_links"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("get") }),
+  productOperation({ operation: z.literal("boot") }),
+  productOperation({ operation: z.literal("search_links"),
     links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
-  z.strictObject({ operation: z.literal("search_link"), auth: ProductAuthSchema, turnId: TranscriptTurnIdSchema, linkId: z.string() }),
-  z.strictObject({ operation: z.literal("search_turns"), auth: ProductAuthSchema, turnIds: z.array(TranscriptTurnIdSchema) }),
-  z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
-  z.strictObject({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }),
-  z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
+  productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
+  productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
+  productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
+  productOperation({ operation: z.literal("mark_unread") }),
+  productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
-  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
+  // `spaceSourceId` names the Space a participant change is being made on
+  // behalf of. It changes nothing about admission — the same roster or grant
+  // row is written either way — only where the resulting grant is published,
+  // and it is carried here because nothing downstream can infer it.
+  productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  // The appearance write over the product request. A Space admits no feed
+  // socket, so the socket command that carries this for a Channel cannot reach
+  // it; the write itself is the same one.
+  productOperation({ operation: z.literal("set_appearance"),
+    operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
+  productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
 ]);
 /**
@@ -471,6 +520,12 @@ interface AuthRoleRow {
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
+/**
+ * What a caller puts on the wire, where `parentKind` may be absent because the
+ * parse supplies `workstream`. Every existing caller means a Channel and says
+ * nothing; the Space authority is the one that has to say so.
+ */
+export type SubstreamProductRequestInput = z.input<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
 export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
@@ -1169,6 +1224,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private ensurePersistentLoop() {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
+    // A Space's hidden conversation is its participant and resource authority
+    // and nothing else: no composer reaches it, no socket opens it, and no
+    // agent runs in it. This is the one place a loop is minted, so it is the
+    // one place that has to say so — every other branch that excludes a Space
+    // from a run path is excluding something that could not have started.
+    if (identity.parentKind === "space") throw new Error("substream_loop_space_parent_refused");
     const substreamId = this.externalSubstreamId();
     const loopId = substreamLoopId(asWorkstreamId(identity.parentId), substreamId);
     const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
@@ -1778,7 +1839,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * caller's by async context. The flag only decides whether to open them.
    */
   async handleProductRequest(
-    input: SubstreamProductRequest,
+    input: SubstreamProductRequestInput,
     traced = false,
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
@@ -2205,6 +2266,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
+  }
+
+  /**
+   * Whether this conversation's retained content would still be contained by a
+   * proposed audience.
+   *
+   * `null` when this object is not the addressed Channel's main conversation,
+   * the way `readerAudience` answers: a misaddressed call is a refusal rather
+   * than a wrong answer, and a preflight that read `false` as "no fences" would
+   * be the one place a fence could be skipped.
+   *
+   * It writes nothing and is not the fence. The fence is the canonical scope
+   * and participant operations, which run the same predicate inside the
+   * transaction that changes the audience; this only lets a caller stop before
+   * it has widened Channels it cannot un-widen.
+   */
+  async previewAudienceContainment(
+    input: z.input<typeof PreviewAudienceContainmentRequestSchema>,
+  ): Promise<boolean | null> {
+    await this.initialized;
+    const request = parseRpcInput(
+      PreviewAudienceContainmentRequestSchema, input, "preview_audience_containment",
+    );
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") return null;
+    return this.product.retainedContentContains(request.audience);
   }
 
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
@@ -3198,6 +3288,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     request: SubstreamProductRequest,
     span: FlowSpan,
   ): Promise<Response> {
+    // The parent kind first, before the session read and before any other
+    // object is addressed. A conversation is reached by *id*, so this is the
+    // only place that can tell a Channel's main conversation from a Space's
+    // hidden one — and a Space's has no product surface to offer: no feed, no
+    // transcript, no archive, no scope. Every member holds every Space id off
+    // the workspace socket, so without this `PATCH /workstreams/<spaceId>`
+    // archives General or makes it personal behind the Space authority's back.
+    //
+    // Ahead of authentication deliberately. This is a statement about the
+    // address rather than about the caller — the answer is the same for
+    // everybody — and running it first keeps a misaddressed request from
+    // costing a D1 round trip. `not found` rather than a refusal that confirms
+    // the id: the caller asked a question about a Channel, and there is no
+    // Channel here.
+    const identity = this.objectStore.identity();
+    if (identity && identity.parentKind !== request.parentKind) {
+      span.setError("conversation_parent_kind_mismatch");
+      return jsonResponse({
+        error: "conversation_parent_kind_mismatch",
+        message: "Work stream not found",
+      }, 404);
+    }
     // Two principals, two verifications. A login session is re-verified against
     // its `sessions` row, which is what makes a revoked or expired login stop
     // working mid-flight. A connector principal has no `sessions` row to check
@@ -3301,7 +3413,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           }),
         });
       }
-      const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
@@ -3331,7 +3442,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId },
+          ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) });
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
@@ -3347,6 +3459,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
         await this.publishLocalProductEvent(identity, { type: "participant_removed", userId: request.userId });
+        return jsonResponse({ ok: true });
+      }
+      if (request.operation === "set_appearance") {
+        await this.product.setAppearance(current, request.operationId, request.patch);
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
@@ -5000,8 +5116,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : null;
     // An automation's conversations are named by the automation, not by a
     // naming pass over their transcripts, and nothing outside Rally is
-    // waiting on a run's outcome the way Slack waits on a room's.
-    if (input.parentKind !== "automation") {
+    // waiting on a run's outcome the way Slack waits on a room's. A Space's
+    // hidden conversation has no surface that shows a title or a description at
+    // all, so it is excluded for the stronger version of the same reason —
+    // positively, `=== "workstream"`, so a fourth parent kind has to opt in.
+    if (input.parentKind === "workstream") {
       // Addressed at the conversation that ran, not at its parent. A private
       // child is named from its own transcript now that it is created with an
       // instruction and starts in `naming`; before that it was born settled,
@@ -5092,7 +5211,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return settlementDiagnosticCode;
     }
 
-    if (input.parentKind === "automation") return settlementDiagnosticCode;
+    // Only a Channel's run has a Slack thread waiting on its outcome.
+    if (input.parentKind !== "workstream") return settlementDiagnosticCode;
     const slack = new SlackAgentService(this.env);
     await slack.deliverWorkstreamOutcome(
       input.workspaceId,

@@ -51,22 +51,22 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   };
   return <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
-    <Modal open={archiveTarget !== null} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }} title="Archive substream" description="This substream will leave the active list. You can restore it later.">
+    <Modal open={archiveTarget !== null} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }} title="Archive breakout" description="This breakout will leave the active list. You can restore it later.">
       <Button disabled={changingArchive} onClick={() => setArchiveTarget(null)}>Cancel</Button>
-      <Button disabled={changingArchive} onClick={() => { void changeArchive(true, archiveTarget ?? substreamId).then(() => setArchiveTarget(null)); }}>Archive substream</Button>
+      <Button disabled={changingArchive} onClick={() => { void changeArchive(true, archiveTarget ?? substreamId).then(() => setArchiveTarget(null)); }}>Archive breakout</Button>
     </Modal>
     {archiveFailure ? <InlineError>{archiveFailure === 'archive'
-      ? 'The substream couldn’t be archived.'
-      : 'The substream couldn’t be restored.'}</InlineError> : null}
-    {archived ? <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><h1>{parentArchived ? 'Archived work stream' : 'Archived conversation'}</h1>
-      {parentArchived ? <p>This work stream must be restored before its conversations can reopen.</p>
+      ? 'The breakout couldn’t be archived.'
+      : 'The breakout couldn’t be restored.'}</InlineError> : null}
+    {archived ? <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><h1>{parentArchived ? 'Archived channel' : 'Archived conversation'}</h1>
+      {parentArchived ? <p>This channel must be restored before its conversations can reopen.</p>
         : substreamId !== '0' && parent?.archived !== true
-          ? <Button disabled={changingArchive} onClick={() => void changeArchive(false)}>Restore substream</Button>
+          ? <Button disabled={changingArchive} onClick={() => void changeArchive(false)}>Restore breakout</Button>
           : <p>This conversation is archived.</p>}</section> :
       <ConversationSurface sidebarScope="conversation" parentKind="workstream" parentId={parentId} substreamId={substreamId}
         renderSidebar={(context) => <WorkstreamSidebar
           mainVisible={Boolean(parent?.conversations.some((item) => item.substreamId === '0'))}
-          workstream={{ ...context.detail, title: parent?.title ?? 'Shared workstream',
+          workstream={{ ...context.detail, title: parent?.title ?? 'Shared channel',
             privateChildren: parent?.conversations.filter((item) => item.substreamId !== '0' && !item.archived) }}
           mainActions={{ onShare: (target) => setSharingSubstream(target.substreamId) }}
           substreamActions={{ onShare: (target) => setSharingSubstream(target.substreamId), onArchive: (target) => setArchiveTarget(target.substreamId) }}
@@ -95,7 +95,7 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   return <NavigationFrame className={open ? 'is-mobile-open' : undefined}>
     <div className="sidebar-titlebar window-drag"><IconButton className="mobile-only" label="Close navigation"
       onClick={onClose}><Menu size={16} /></IconButton></div>
-    <div className="sidebar-scroll"><nav aria-label="Shared workstreams" className="sidebar-section">
+    <div className="sidebar-scroll"><nav aria-label="Shared channels" className="sidebar-section">
       {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
       {directory.isPending && <p>Loading shared conversations…</p>}
       {directory.data?.workstreams.length === 0 && <p>No shared conversations yet.</p>}
@@ -109,9 +109,9 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       })}
     </nav></div>
     <footer className="sidebar-footer"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
-      <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Workspace'} />
+      <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
     </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
-      <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch workspace</DropdownMenu.Item>
+      <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
       <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
     </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></footer>
   </NavigationFrame>;

@@ -4,6 +4,7 @@ const durableObjectBindings = new Set([
   "AUTOMATION_DOS",
   "WORKSPACE_DOS",
   "WORKSTREAM_DOS",
+  "SPACE_DOS",
   "ARTIFACT_HOSTS",
 ]);
 

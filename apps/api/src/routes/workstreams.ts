@@ -10,7 +10,11 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
+  ChannelAccessSchema,
   CreateWorkstreamRequestSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
   IdSchema,
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
@@ -24,9 +28,13 @@ import {
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
+import { requireCurrentClientContract } from "../lib/client-contract";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
+import { ChannelAccessService } from "../services/channel-access-service";
 import { ConversationService } from "../services/conversation-service";
 import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
@@ -154,6 +162,9 @@ async function authoritativeWorkstreamClient(
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
+  // Every row now carries its Spaces, and a build from before the cutover
+  // parses this page with a schema that has never heard of them.
+  requireCurrentClientContract((name) => c.req.header(name));
   await requireOpenWorkstreamAuthority(c.env);
   const service = new WorkstreamDirectoryService(c.env, getAuth(c));
   return c.json(WorkstreamPageSchema.parse(await service.list(
@@ -253,9 +264,16 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
+// Through the service, not the object client: an audience change has to be
+// recorded as the Channel's *own*, because once a Space has widened it the
+// stored scope is the effective audience and no longer says what the Channel
+// would be without that Space.
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(WorkstreamSchema.parse(await client.update(c.req.valid("json"))));
+  // No authority read here: the service opens the object client itself, which
+  // is the read. A second one is a D1 round trip on the front of every audience
+  // change that can only ever answer what the first did.
+  const result = await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"));
+  return c.json(WorkstreamSchema.parse(result));
 });
 /**
  * A released desktop's read acknowledgement, draining.
@@ -296,9 +314,45 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));
 });
+// Also through the service, and for the same reason: a direct add is the
+// Channel taking responsibility for this reader, so no Space's departure takes
+// them with it.
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(ParticipantSchema.parse(await client.addParticipant(c.req.valid("json").userId)), 201);
+  const participant = await new WorkstreamService(c.env, getAuth(c))
+    .addParticipant(c.req.valid("param").id, c.req.valid("json").userId);
+  return c.json(ParticipantSchema.parse(participant), 201);
+});
+/**
+ * Every source that currently grants a reader access to this Channel.
+ *
+ * What **Manage access** renders: the Channel's own direct source plus one
+ * entry per Space that reaches it. Listed rather than merged, because removing
+ * one is only legal when the others still cover the readers it supplied, and a
+ * merged audience cannot answer that.
+ *
+ * Gated on management access rather than on reading, which is the same rule a
+ * direct audience change requires. A reader who cannot change the audience has
+ * no reason to be shown the provenance behind it.
+ */
+workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const auth = getAuth(c);
+  const workstreamId = c.req.valid("param").id;
+  const sources = await new ChannelAccessService(c.env, auth).readSources(workstreamId);
+  // The Organization's memberships beside the Channel's own provenance. They
+  // agree in the steady state; while an operation is in flight or has been
+  // interrupted they do not, and that difference is what **Manage access** has
+  // to be able to show rather than average away.
+  const workspace = await durableObjectStubForWorkspace(
+    c.env, c.env.WORKSPACE_DOS, auth.workspaceId,
+    workspaceDOName(c.env.AVALON_REGION, auth.workspaceId),
+  );
+  const memberships = await workspace.channelSpaces({
+    workspaceId: asWorkspaceId(auth.workspaceId),
+    userId: asUserId(auth.userId),
+    workstreamId: asWorkstreamId(workstreamId),
+  });
+  return c.json(ChannelAccessSchema.parse({ ...sources, spaceIds: memberships.spaceIds }));
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");

@@ -22,6 +22,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { requireCurrentClientContract } from "../lib/client-contract";
 import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";
 import { workspaceAttention } from "../services/workspace-attention-service";
@@ -51,6 +52,11 @@ workspaceRoutes.get("/", async (c) =>
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
 workspaceRoutes.get("/socket", async (c) => {
+  // The door to the sidebar payload, which now carries both Space directories
+  // and is parsed strictly by every shipped desktop. A build that cannot read
+  // it is told to update here rather than left reconnecting to a socket whose
+  // first frame it discards.
+  requireCurrentClientContract((name) => c.req.header(name));
   const auth = getAuth(c);
   const ticket = await issueWorkspaceSocketTicket(c.env, auth);
   const url = new URL(c.env.PUBLIC_API_BASE_URL);

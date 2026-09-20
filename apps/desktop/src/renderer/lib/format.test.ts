@@ -35,16 +35,17 @@ function stream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
   };
 }
 
-describe('work-stream presentation rules', () => {
+describe('channel presentation rules', () => {
   const localDate = (year: number, month: number, day: number, hour = 0, minute = 0): string => (
     new Date(year, month, day, hour, minute).toISOString()
   );
   const now = new Date(2026, 7, 7, 10, 30);
 
-  it('groups and orders work streams only by their latest activity', () => {
+  it('groups and orders channels only by their latest activity', () => {
     const groups = groupWorkstreams(
       [
         stream('month-old-running', 'running', localDate(2026, 7, 1, 12)),
@@ -140,7 +141,7 @@ describe('work-stream presentation rules', () => {
     expect(statusLabel.stopped).toBe('Latest run stopped');
   });
 
-  it('ranks the states a work stream can show one person, most urgent first', () => {
+  it('ranks the states a channel can show one person, most urgent first', () => {
     const running = { harnessStatus: 'running' as const };
 
     // Every pair the ranking actually decides, walked down the order: each

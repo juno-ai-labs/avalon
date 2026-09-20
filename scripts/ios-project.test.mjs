@@ -184,7 +184,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(shell, /SidekicksScreen/);
   assert.match(shell, /tabBarMinimizeBehavior/);
   assert.match(shell, /hexagon\.fill/);
-  assert.match(shell, /Tab\("Work streams"/);
+  assert.match(shell, /Tab\("Channels"/);
   assert.doesNotMatch(shell, /Tab\("Chats"/);
   assert.doesNotMatch(shell, /sparkles/);
   assert.doesNotMatch(shell, /ProjectsScreen/);
@@ -197,7 +197,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(history, /Rename/);
   assert.doesNotMatch(history, /searchable/);
   assert.doesNotMatch(history, /New chat/);
-  assert.match(history, /navigationTitle\("Work streams"\)/);
+  assert.match(history, /navigationTitle\("Channels"\)/);
   assert.doesNotMatch(history, /navigationTitle\("Chats"\)/);
   assert.match(history, /WorkstreamGlyph/);
   assert.match(history, /AccountAvatar/);
@@ -229,14 +229,14 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(read("Rally/Network/RallyClient.swift"), /\/auth\/dev\/session/);
   assert.match(read("Rally/App/AppModel.swift"), /startLocalDevelopmentSession/);
   assert.match(read("RallyUITests/LaunchUITests.swift"), /RALLY_LOCAL_UI/);
-  assert.match(read("RallyUITests/LaunchUITests.swift"), /tabBars\.buttons\["Work streams"\]/);
+  assert.match(read("RallyUITests/LaunchUITests.swift"), /tabBars\.buttons\["Channels"\]/);
   assert.doesNotMatch(read("RallyUITests/LaunchUITests.swift"), /tabBars\.buttons\["Chats"\]/);
   const substreams = read("Rally/Features/Chat/SubstreamSwitcher.swift");
-  assert.match(substreams, /New substream/);
+  assert.match(substreams, /New breakout/);
   assert.doesNotMatch(substreams, /ToolbarItem/);
-  assert.match(substreams, /Copy substream link/);
-  assert.match(substreams, /Archive substream/);
-  assert.match(substreams, /Start a substream/);
+  assert.match(substreams, /Copy breakout link/);
+  assert.match(substreams, /Archive breakout/);
+  assert.match(substreams, /Start a breakout/);
   const model = read("Rally/App/AppModel.swift");
   assert.match(model, /prepareSubstream/);
   assert.match(model, /confirmSubstream/);
@@ -252,7 +252,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(conversation, /RallyFeedChrome/);
   assert.match(feed, /enum RallyFeedChrome/);
   assert.doesNotMatch(substreams, /SubstreamListSkeletonRows/);
-  assert.match(substreams, /Loading substreams/);
+  assert.match(substreams, /Loading breakouts/);
   assert.match(substreams, /RallySubstreamListChrome/);
   assert.match(feed, /enum RallySubstreamListChrome/);
   assert.match(feed, /awaitingChildren/);
@@ -350,7 +350,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.doesNotMatch(read("Rally/App/RallyAppDelegate.swift"), /Worker does not yet accept/);
   assert.match(read("Rally/Features/Settings/SettingsScreen.swift"), /Notify me on this iPhone/);
   assert.match(read("RallyTests/RallyPushTests.swift"), /testParsesMentionPayloadURL/);
-  assert.match(conversation, /New substream/);
+  assert.match(conversation, /New breakout/);
   assert.match(conversation, /SubstreamLaunchView/);
   const deepLink = read("Rally/App/RallyDeepLink.swift");
   assert.match(deepLink, /substreams/);
@@ -377,7 +377,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   for (const route of [
     "/workstreams/new",
     "/workstreams/:id",
-    "/projects/:projectId",
+    "/spaces/:spaceId",
     "/sidekicks",
     "/sidekicks/:id",
     "/automations/:id",

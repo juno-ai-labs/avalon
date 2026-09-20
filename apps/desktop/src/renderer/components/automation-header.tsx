@@ -45,7 +45,7 @@ const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {
 };
 
 function scopeLabel(scope: AutomationDetail['scope']): string {
-  return scope === 'you' ? 'Only you' : scope === 'workspace' ? 'Workspace' : 'This work stream';
+  return scope === 'you' ? 'Only you' : scope === 'workspace' ? 'Organization' : 'This channel';
 }
 
 function runTriggerLabel(run: AutomationRun): string {

@@ -222,11 +222,13 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from WorkstreamDO. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
+| `list_spaces` | `workspaceId` | Lists the Organization's Spaces, archived ones included. Answers an empty list until a product path creates a Space. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO. |
 | `run_workstream_sql` | `workstreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkstreamDO. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
 | `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SidekickDO — the Sidekick itself, not its conversation. |
+| `run_space_sql` | `workspaceId`, `spaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SpaceDO — the Space itself, not its hidden conversation. It runs the work-stream schema under the `space_do` migration component. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
