@@ -7,25 +7,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { SpaceDashboardScreen } from './space-dashboard';
-import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { SpaceConversationSummary, Workspace } from '../lib/types';
 
 const api = vi.hoisted(() => ({
-  addChannelToSpace: vi.fn(),
-  addSpaceDefault: vi.fn(),
   archiveSpace: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   listResources: vi.fn(),
   listSpaceChannels: vi.fn(),
-  removeChannelFromSpace: vi.fn(),
-  removeSpaceDefault: vi.fn(),
   restoreSpace: vi.fn(),
   updateSpaceAudience: vi.fn(),
   updateSpacePresentation: vi.fn(),
 }));
-const channels = vi.hoisted(() => ({ current: [] as WorkstreamSummary[] }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: channels.current }) }));
 vi.mock('../lib/workstream-landing', () => ({ useOpenFirstWorkstream: () => () => undefined }));
 /** Null unless a test wants the screen to think the directory is the local cache's. */
 const workspaceSocket = vi.hoisted(() => ({
@@ -146,7 +140,6 @@ describe('the Space dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workspaceSocket.current = null;
-    channels.current = [];
     api.getWorkspaceMembers.mockResolvedValue([member]);
     api.listResources.mockResolvedValue({
       items: [{
@@ -176,7 +169,7 @@ describe('the Space dashboard', () => {
     expect(screen.queryByRole('button', { name: /new breakout/iu })).not.toBeInTheDocument();
   });
 
-  it('shows the channels, resources and Sidekicks sections', async () => {
+  it('shows Channels without section actions, Resources, or Sidekicks', async () => {
     // The Space's own page carries the Channels; the device's directory is a
     // separate list and is deliberately not what this section reads.
     api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
@@ -187,8 +180,12 @@ describe('the Space dashboard', () => {
     }));
 
     expect(await screen.findByRole('link', { name: /Ship the launch/u })).toBeVisible();
-    expect(await screen.findByText('Hiring plan')).toBeVisible();
-    expect(screen.getByText('Weekly digest')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Resources' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add channel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New channel in Hiring' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    expect(api.listResources).not.toHaveBeenCalled();
   });
 
   // The list is conversations, not memberships: a Channel and any of its
@@ -213,9 +210,7 @@ describe('the Space dashboard', () => {
     const breakout = list[0]!;
     expect(within(breakout).getByText('in Ship the launch')).toBeVisible();
     expect(breakout.textContent).toContain('↳');
-    // A breakout follows its Channel, so there is one **Remove** on this
-    // screen and it belongs to the Channel.
-    expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
   });
 
   // Two empty states, because they are two different facts. Telling somebody
@@ -322,12 +317,9 @@ describe('the Space dashboard', () => {
   /**
    * A Space this reader reaches only because they can read a Channel in it.
    *
-   * The whole screen is the header and the conversation list. Everything else
-   * on it is the Space's own — who is in it, who it is for, whether it lives,
-   * what it hands down — and none of that is theirs to see or to change; the
-   * summary they are handed carries no participants and no defaults at all, so
-   * the sections would be two empty lists under two controls that can only
-   * fail.
+   * The whole screen is the header and the conversation list. Its lifecycle,
+   * audience, participants and Channel-management controls are the Space's own,
+   * and none of those are theirs to see or change.
    */
   it('given a space reached through a channel, then it is the header and the list and nothing else', async () => {
     api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
@@ -399,8 +391,8 @@ describe('the Space dashboard', () => {
   });
 
   // One failure appears once. A single `error` string was rendered in the body
-  // and in all five modals at once, so a refused rename turned up inside the
-  // channel picker the moment it was opened.
+  // and in every modal at once, so a refused rename turned up inside unrelated
+  // controls the moment one was opened.
   it('given a refused rename, then the sentence stays with the name and out of the modals', async () => {
     api.updateSpacePresentation.mockRejectedValueOnce(new ApiError('Revision 1 is stale', 409, 'space_revision_conflict'));
     renderSpace();
@@ -413,56 +405,10 @@ describe('the Space dashboard', () => {
     const sentence = 'The space changed while this was being applied. Try again.';
     expect(await screen.findByText(sentence)).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add channel' }));
-    const picker = await screen.findByRole('dialog', { name: 'Add channels' });
+    fireEvent.click(screen.getByRole('button', { name: /Manage participants/u }));
+    const picker = await screen.findByRole('dialog', { name: 'Space participants' });
     expect(within(picker).queryByText(sentence)).not.toBeInTheDocument();
     expect(screen.getAllByText(sentence)).toHaveLength(1);
-  });
-
-  it('removes a channel from this space without touching its other spaces', async () => {
-    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
-    api.removeChannelFromSpace.mockResolvedValue(makeSpace({ channelCount: 0 }));
-    renderSpace(makeSpace({ channelCount: 1 }));
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
-
-    await waitFor(() => expect(api.removeChannelFromSpace)
-      .toHaveBeenCalledWith(hiring.id, '00000000-0000-7000-8000-0000000000e1'));
-  });
-
-  it('adds an existing channel to this space', async () => {
-    api.addChannelToSpace.mockResolvedValue(makeSpace({ channelCount: 1 }));
-    channels.current = [{
-      id: '00000000-0000-7000-8000-0000000000e2',
-      title: 'Comp review',
-      lastActivityAt: '2026-08-27T01:00:00.000Z',
-      spaceIds: ['00000000-0000-7000-8000-0000000000f0'],
-    } as WorkstreamSummary];
-    renderSpace();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Add channel' }));
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'Add channels' }));
-
-    await waitFor(() => expect(api.addChannelToSpace)
-      .toHaveBeenCalledWith(hiring.id, '00000000-0000-7000-8000-0000000000e2'));
-  });
-
-  it('adds a resource and a Sidekick through the one kind-keyed route', async () => {
-    api.addSpaceDefault.mockResolvedValue(makeSpace());
-    renderSpace();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Add resource' }));
-    fireEvent.click(await screen.findByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(api.addSpaceDefault)
-      .toHaveBeenCalledWith(hiring.id, 'resource', '00000000-0000-7000-8000-0000000000c1'));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add Sidekick' }));
-    fireEvent.click(await screen.findByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(api.addSpaceDefault)
-      .toHaveBeenCalledWith(hiring.id, 'sidekick', '00000000-0000-7000-8000-0000000000b1'));
   });
 
   it('changes the audience through the confirmation', async () => {
