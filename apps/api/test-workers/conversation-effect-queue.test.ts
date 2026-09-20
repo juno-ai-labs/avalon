@@ -144,7 +144,7 @@ async function parkEffectQueue(
 ): Promise<QueueGate> {
   effectQueueHold.parked = true;
   await runInDurableObject(stub, (instance) => {
-    const target = instance as {
+    const target = instance as unknown as {
       env: Env;
       runDueAlarmWork: (now?: number) => Promise<void>;
       originalRunDueAlarmWork?: (now?: number) => Promise<void>;
@@ -390,7 +390,7 @@ describe("a parent with two children", () => {
     // here is the same serialization production uses per object, without that
     // interleave. The consumer path is proved by the other cases in this file.
     const applied = await runInDurableObject(parent, async (instance, state) => {
-      const receiver = instance as {
+      const receiver = instance as unknown as {
         receiveChildEffects: (input: {
           substreamId: string;
           envelopes: ConversationEffectEnvelope[];
