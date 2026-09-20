@@ -24,14 +24,13 @@ beforeEach(async () => {
     userId: USER_ID,
     sessionId: SESSION_ID,
     at: NOW,
-    includeHistoricalAuthorityRoute: false,
   });
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
 });
 
-describe("engineering inspection of a post-cutover workspace", () => {
-  it("lists, resolves, and executes against a workspace with no historical authority route", async () => {
+describe("engineering inspection of a workspace", () => {
+  it("lists, resolves, and executes from regional identity alone", async () => {
     const inspection = new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
 
     await expect(inspection.listWorkspaces({})).resolves.toMatchObject({
