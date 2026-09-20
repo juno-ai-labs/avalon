@@ -180,9 +180,13 @@ repeats once per Space the Channel is being born into:
    the main conversation is reserved — see the section below for why that order
    is load-bearing rather than incidental.
 4. **Recording the provenance** on the Channel's own authority
-   (`WorkstreamDO.applySpaceAccessSource`, then `confirmSpaceAccessSource`),
+   (`WorkstreamDO.applySpaceAccessSource`, in its `bornWithSourceApplied` mode),
    after the reservation, because the Channel's authority asserts a parent
-   identity the reservation is what writes.
+   identity the reservation is what writes. **One call, not two**: the plan and
+   the commit are normally split so the caller can run the canonical operations
+   that seat the plan in between, and on this path `initialize` has already run
+   them — the Channel opened with the union of every named Space written on it.
+   Every other caller of that RPC still takes both.
 
 What a Space hands *down* is not on the path: the resources and Sidekick
 recommendations a Space's defaults give a new member Channel are staged by step 3

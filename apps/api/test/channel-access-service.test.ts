@@ -66,9 +66,19 @@ function environment(input: {
       input.calls.push("object:sources");
       return input.sources ?? { direct: { scope: "personal", participantUserIds: [] }, spaces: [] };
     },
-    applySpaceAccessSource: async () => {
-      input.calls.push("object:apply");
-      return input.apply ?? { ok: true, plan: { widenScope: false, seatUserIds: [] } };
+    // Two modes on one RPC, and the call log says which: `born` is the
+    // creation path asserting there is nothing to seat between the plan and
+    // the commit, so the object commits the source here and no confirmation
+    // follows. Every other caller has a canonical operation in between and
+    // still takes both calls.
+    applySpaceAccessSource: async (request: { bornWithSourceApplied?: boolean }) => {
+      const applied = input.apply ?? { ok: true, plan: { widenScope: false, seatUserIds: [] } };
+      if (!request.bornWithSourceApplied) {
+        input.calls.push("object:apply");
+        return applied;
+      }
+      input.calls.push("object:apply(born)");
+      return applied.ok ? { ...applied, suppliedUserIds: applied.plan.seatUserIds } : applied;
     },
     confirmSpaceAccessSource: async (request: { spaceId: string; seatedUserIds: string[] }) => {
       input.calls.push(`object:confirm(${request.spaceId}:${request.seatedUserIds.join(",") || "none"})`);

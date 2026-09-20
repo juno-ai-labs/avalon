@@ -183,9 +183,24 @@ reaches for Docker and dies before any Worker binds:
 `"dev": { "enable_containers": false }` in the config does not suppress it
 either — only the absence of the `containers` block does. Until the runner has a
 way to say this that wrangler honours, a session that needs the whole regional
-stack and has no Docker daemon runs the same command against a scratch copy of
-`wrangler.global.jsonc` with that block removed, and deletes the copy
+stack and has no Docker daemon copies `wrangler.global.jsonc` to
+**`apps/api/wrangler.global.scratch.jsonc`**, deletes the `containers` block
+from the copy, runs the same command against that, and deletes the copy
 afterwards. Nothing in a member-facing screen reaches the symbolicator.
+
+**Use that name, in that directory.** `scripts/migrate-d1.mjs` discovers a
+region from every `wrangler.<name>.jsonc` carrying a migratable D1 binding, and
+`<name>` admits a single segment — so a copy called
+`wrangler.devlocal-global.jsonc` becomes a region named `devlocal-global`, and
+`pnpm db:migrate` then fails for want of a `.dev.vars.devlocal-global` that
+will never exist. Two segments is what already keeps
+`wrangler.artifacts.global.jsonc` and its siblings out of the region list, and
+it is what keeps this copy out; `scripts/migrate-d1.test.mjs` pins that. The
+copy belongs beside the original because the config's `main`, `migrations_dir`
+and `.dev.vars` paths are relative to `apps/api/`, and it is in `.gitignore`
+with the other generated wrangler files so a forgotten copy cannot be
+committed. Delete it when the session is done anyway: it goes stale the moment
+`wrangler.global.jsonc` changes.
 
 For an API-only session, the equivalent command is:
 

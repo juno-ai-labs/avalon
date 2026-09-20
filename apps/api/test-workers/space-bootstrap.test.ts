@@ -22,7 +22,17 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from "@rally/contracts";
+import {
+  WorkspaceSocketSyncEventSchema,
+  asSpaceId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type SpaceId,
+} from "@rally/contracts";
+import { conversationEffectHash } from "@rally/contracts/conversation-effects";
+
+import { uuidV7 } from "../src/lib/uuid-v7";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
@@ -232,6 +242,142 @@ async function alarmArmedOnWake(): Promise<{
   });
 }
 
+let ticketSequence = 0;
+
+/**
+ * `spacesReady` as a client actually reads it.
+ *
+ * There is no `GET /spaces`: the flag comes down the workspace socket's connect
+ * payload and nowhere else, and it is what decides whether a sidebar draws the
+ * hierarchy or the Organization-opening card. Reading the bootstrap row instead
+ * would prove the phase moved and say nothing about whether anybody was told.
+ */
+async function spacesReadyOnSnapshot(): Promise<boolean> {
+  ticketSequence += 1;
+  const response = await workspace().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": USER_ID,
+      "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id":
+        `00000000-0000-7000-8000-${ticketSequence.toString(16).padStart(12, "0")}`,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+  }
+  const socket = response.webSocket;
+  socket.accept();
+  const initial = new Promise<string>((resolve) => {
+    socket.addEventListener("message", (event) => { resolve(String(event.data)); }, { once: true });
+  });
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  const answer = WorkspaceSocketSyncEventSchema.parse(JSON.parse(await initial));
+  socket.close();
+  if (!answer.sidebar) throw new Error("workspace subscribe answered without a sidebar");
+  // Optional on the wire so a client talking to a server without the cutover is
+  // not permanently opening; a server that has it always sends it.
+  if (answer.sidebar.spacesReady === undefined) {
+    throw new Error("workspace sidebar answered without spacesReady");
+  }
+  return answer.sidebar.spacesReady;
+}
+
+/**
+ * One Channel's common directory row, as its own authority publishes it.
+ *
+ * This is the envelope a Channel's existence reaches the Organization on, and
+ * the one event that can put a Channel in the directory without anything having
+ * placed it in a Space.
+ */
+function directoryCommonEnvelope(input: {
+  workstreamId: string;
+  title: string;
+  systemKind?: "digest" | null;
+  generation: number;
+  sourceVersion: number;
+}): Record<string, unknown> {
+  const at = new Date().toISOString();
+  const effect = {
+    kind: "directory_common" as const,
+    title: input.title,
+    description: "",
+    preview: "",
+    scope: "personal" as const,
+    state: "idle",
+    systemKind: input.systemKind ?? null,
+    lastActivityAt: at,
+    completedAt: null,
+    archivedAt: null,
+    createdByUserId: USER_ID,
+    latestAttentionOrdinal: 0,
+    unreadTrackingStartOrdinal: 0,
+    createdAt: at,
+    updatedAt: at,
+  };
+  return {
+    kind: "parent_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "workstream",
+    parentId: input.workstreamId,
+    generation: input.generation,
+    // A directory state source identity has to be UUIDv7; the handoff refuses
+    // anything else by name.
+    messageId: uuidV7(),
+    partitionKey: "common",
+    sourceVersion: input.sourceVersion,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(effect),
+    effect,
+  };
+}
+
+/**
+ * Deliver one common directory effect, at the next version this Channel's row
+ * is fenced on.
+ *
+ * The handoff refuses an envelope at or below the waterline it already holds,
+ * so the version has to be read rather than assumed — a Channel the creation
+ * path built has published several already.
+ */
+async function deliverDirectoryCommon(input: {
+  workstreamId: string;
+  title: string;
+  systemKind?: "digest" | null;
+}): Promise<void> {
+  const row = await directoryRow(input.workstreamId);
+  await workspace().applyWorkstreamDirectoryEffects({
+    workspaceId: WORKSPACE_ID,
+    envelopes: [directoryCommonEnvelope({
+      ...input,
+      generation: row?.authority_generation ?? 1,
+      sourceVersion: (row?.waterline ?? 0) + 1,
+    })],
+  } as never);
+}
+
+async function directoryRow(workstreamId: string): Promise<{
+  title: string;
+  waterline: number;
+  authority_generation: number;
+} | undefined> {
+  const result = await workspace().runInspectionSql({
+    sql: `SELECT title, waterline, authority_generation FROM workspace_workstream_directory
+           WHERE workstream_id = ?`,
+    bindings: [workstreamId],
+  });
+  return result.rows[0] as {
+    title: string;
+    waterline: number;
+    authority_generation: number;
+  } | undefined;
+}
+
 /** The audience the conversation itself holds, which is the one that decides. */
 async function channelScope(workstreamId: string): Promise<string | null> {
   const audience = await env.SUBSTREAM_AGENTS
@@ -242,6 +388,7 @@ async function channelScope(workstreamId: string): Promise<string | null> {
 
 beforeEach(async () => {
   await reset();
+  ticketSequence = 0;
   await seedWorkspaceControlPlane(env.DB, {
     workspaceId: WORKSPACE_ID,
     userId: USER_ID,
@@ -469,6 +616,95 @@ describe("the Space cutover", () => {
       .toBe(false);
     expect(await membershipRows()).toEqual([]);
     void unplaced;
+  });
+
+  it("reopens a finished cutover when a Channel it already holds projects from no Space", async () => {
+    await createChannel("already-placed");
+    await forgetSpaces();
+    await runWholeCutover();
+    expect(await spacesReadyOnSnapshot()).toBe(true);
+
+    // The event nothing noticed. Every creation path places the Channel it
+    // makes, and the cutover places every Channel that predates them — but a
+    // directory row is committed by this handoff, and a `complete`
+    // Organization is never walked again, so a Channel that projects from no
+    // Space would stay homeless with `spacesReady` still saying the hierarchy
+    // is renderable. A real Channel, taken back out of every Space, because
+    // the walk that has to repair this reads the conversation's own audience
+    // and the participants who may act on it.
+    const homeless = await createChannel("left-unplaced");
+    await forgetMembership(homeless);
+    expect((await bootstrapRow()).phase).toBe("complete");
+
+    await deliverDirectoryCommon({ workstreamId: homeless, title: "Arrived unplaced" });
+
+    // The row is committed — the guard is a backstop, not a refusal, and
+    // dropping the Organization's own projection of a Channel would be worse
+    // than the state it is reacting to.
+    expect((await directoryRow(homeless))?.title).toBe("Arrived unplaced");
+    expect((await bootstrapRow()).phase).not.toBe("complete");
+    expect(await spacesReadyOnSnapshot()).toBe(false);
+
+    // And the walk the reopen armed is what actually repairs it.
+    await runWholeCutover();
+    expect(await membershipRows()).toContainEqual({ workstream_id: homeless, state: "active" });
+    expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ phase: "complete", ready: true, blockedWorkstreamIds: [] });
+    expect(await spacesReadyOnSnapshot()).toBe(true);
+  });
+
+  it("leaves a finished cutover alone for a placed Channel and for a system Channel", async () => {
+    const placed = await createChannel("already-placed");
+    await forgetSpaces();
+    await runWholeCutover();
+
+    // The ordinary case, which is every directory row an Organization ever
+    // commits: the Channel has an active membership, so the guard's question
+    // answers no and the cutover stays closed. A guard that asked a looser
+    // question than the close does would reopen every Organization on every
+    // edit to any Channel.
+    await deliverDirectoryCommon({ workstreamId: placed, title: "Renamed" });
+    expect((await directoryRow(placed))?.title).toBe("Renamed");
+    expect((await bootstrapRow()).phase).toBe("complete");
+
+    // And a system Channel, which the hierarchy invariant is not about: the
+    // subsystem that writes it decides both its audience and its home, and the
+    // close's own predicate excludes it by `system_kind`. Delivered twice, so
+    // what is under test here is that exclusion: a system Channel's *first*
+    // row is an arrival, which the case below leaves alone whatever the
+    // predicate says, and only its second projection reaches the predicate at
+    // all.
+    const digest = asWorkstreamId("00000000-0000-7000-8000-000000000de2");
+    await deliverDirectoryCommon({ workstreamId: digest, title: "Daily digest", systemKind: "digest" });
+    await deliverDirectoryCommon({ workstreamId: digest, title: "Daily digest v2", systemKind: "digest" });
+    expect((await directoryRow(digest))?.title).toBe("Daily digest v2");
+    expect((await bootstrapRow()).phase).toBe("complete");
+    expect(await spacesReadyOnSnapshot()).toBe(true);
+  });
+
+  it("leaves a finished cutover alone for a Channel arriving in the directory", async () => {
+    await createChannel("already-placed");
+    await forgetSpaces();
+    await runWholeCutover();
+
+    // A Channel's *first* common row is a creation in flight, not a Channel
+    // nobody is going to place. `reserveChild` enqueues that row before either
+    // creation path has placed anything, and the Channel authority's own
+    // recovery alarm delivers it straight to this handoff when it wins the
+    // race with the coordinator's flush. On a connector path the reservation
+    // comes before the placement and the conversation is provisioned in
+    // between, so that alarm has the whole window: a guard that fired on an
+    // arrival took `spacesReady` away from every member's sidebar on every run
+    // of the ordinary Slack creation, which `space-creation.test.ts` pins from
+    // the other side. The Channel's
+    // next common projection is what asks the question, by which time its
+    // creation has either placed it or failed.
+    const arriving = asWorkstreamId("00000000-0000-7000-8000-000000000de3");
+    await deliverDirectoryCommon({ workstreamId: arriving, title: "Arriving now" });
+
+    expect((await directoryRow(arriving))?.title).toBe("Arriving now");
+    expect((await bootstrapRow()).phase).toBe("complete");
+    expect(await spacesReadyOnSnapshot()).toBe(true);
   });
 });
 

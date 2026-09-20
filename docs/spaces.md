@@ -87,6 +87,53 @@ admitted**; and finally the appearance, through the same writer a Channel's icon
 and colour go through. Any failure cancels the reservation, so nothing ever
 renders a Space whose object never opened.
 
+### What the hidden conversation is asked
+
+Nothing in the product opens a Space's main conversation, but the Space
+authority writes six things on it, and those six are the whole of the traffic it
+has:
+
+| Operation | Reached from | What it writes |
+| --- | --- | --- |
+| `provision` and `setAppearance` at creation | `SpaceService.provisionSpaceObject` | the title, scope, creator and appearance that make the object a Space |
+| `update({ title })` and `setAppearance` | `PATCH /spaces/:id` | the name, icon and colour |
+| `update({ scope })` | `PATCH /spaces/:id/audience` | who the Space is for |
+| `addParticipant` / `removeParticipant` | `PATCH /spaces/:id/audience` | the Space's participants |
+| `attachResource` / `detachResource` | `POST`/`DELETE /spaces/:id/defaults` | a default resource |
+| `previewAudienceContainment` | the audience preflight | nothing — it is a read, and it is asked of a *member Channel's* conversation rather than this one |
+
+Everything else a conversation can do is not a Space operation: no message, no
+socket, no run, no archive through `/workstreams/:id`, and **no agent loop**.
+`ensurePersistentLoop` is the one place a loop is minted and it refuses a Space
+parent by name, which is the invariant rather than an optimization.
+
+**A refusal is not free where construction can reach it.** That refusal used to
+be reached from `SubstreamAgent`'s constructor, which mints the loop for every
+object that already has an identity so an isolate replacing another finds its
+run where it left it. A throw there is inside `blockConcurrencyWhile`, so it
+breaks the object's input gate — and the first time a Space's conversation was
+rebuilt from storage it could not be constructed at all. That is *every* time:
+nothing opens it, so it is evicted seconds after it is made. Every operation in
+the table above then answered 500, and the object's own drain could not run, so
+the Space's `directory_common` and `directory_user` effects stayed in its outbox
+and the Organization was left holding whatever the reservation had said. The
+guard is on the constructor rather than inside `ensurePersistentLoop`, because
+every other caller is asking to *run* something and the refusal is right for
+them; this one was only asking to recover, and a Space has nothing of the kind
+to recover.
+
+**A failure of this object is named `space_authority_unreachable`.** It is
+reached over Durable Object RPC, so a rejection that is not the object's own
+refusal arrives with no code on it, and a 500 from the object is the object
+saying it does not know what went wrong. Both used to reach a person as
+`internal_error` — the same word the Worker uses for every unhandled failure it
+has — so a Space whose authority could not answer was indistinguishable in a log
+from a bug in the route beside it, and the five operations above cost five
+separate diagnoses of one cause. `SpaceService.throughSpaceAuthority` is the one
+seam that names it; a refusal the object *chose* keeps its own code, because
+replacing `space_protected` or a content fence with a generic word would be the
+same mistake in the other direction.
+
 ### Membership
 
 Adding a Channel is staged. `prepareSpaceMembership` writes a `joining` row and
@@ -338,6 +385,41 @@ cutover's own view, which is acceptable only because that route is
 development-only. It buys a second property there: because the close asks
 whether any Channel *in the directory* is outside every Space, a walk that a
 refusal reopens cannot find an empty directory and close over it.
+
+**And the directory handoff itself is the backstop under all of them.** Every
+path above is a path that knows it has to place a Channel; what has no such
+path is a Channel that simply *stays* in the directory unplaced, which a future
+creation path that forgets to place would produce and which the development
+seed already did. `applyWorkstreamDirectoryEffects` therefore asks, after it
+commits a batch's channel envelopes, whether a `directory_common` effect in it
+was for a Channel that is now outside every Space — the close's own predicate,
+`unplacedChannelExists`, narrowed to those ids so there is one SQL text rather
+than two descriptions of the same question — and reopens the cutover when one
+was. The row is still committed: the guard is a backstop, not a refusal, and
+dropping the Organization's projection of a Channel would be a worse state than
+the one it is reacting to. It reads this object's own SQLite and nothing else,
+so an ordinary projection pays two local queries.
+
+**It asks only about Channels the batch did not introduce**, and that is the
+difference between a backstop and a false alarm. A Channel *arriving* in the
+directory is a creation in flight. `reserveChild` enqueues the provisional
+`directory_common` row, and both creation paths defer its delivery until after
+the placement — but the Channel authority's own recovery alarm delivers that
+row directly if it wins the race with the coordinator's flush, which is exactly
+what `drainParentOutboxWithCreationFence` is for. On the coordinator path the
+memberships are already settled by the time `reserveChild` runs, so the row can
+only arrive placed; on a connector path the reservation comes *before*
+`placeConnectorChannelInGeneral` and the conversation is provisioned in
+between, so that alarm has a wide window in which to deliver a row for a
+Channel whose placement has not started — and it takes it: a guard that fired
+on arrivals reopened the cutover on every run of `space-creation.test.ts`'s
+Slack creation. Reopening there takes `spacesReady` away from every member's
+sidebar until the walk catches up, which is the same cost that made the old
+Slack ordering a bug rather than a slow path. A row the Organization was
+**already** holding that is still in no Space is a different claim: it is about
+a broken invariant rather than an unfinished creation, and it is the one
+nothing else is going to fix. The price is that a Channel a forgetful path
+creates is caught on its next common projection rather than its first.
 
 ### A Channel's first Space
 
@@ -591,7 +673,7 @@ Organization membership and access class only.
 ## Failure modes and limits
 
 A malformed input fails strict contract parsing at the object boundary. Every
-refusal is one of the eleven closed `SpaceErrorCode` values, which is the code a
+refusal is one of the twelve closed `SpaceErrorCode` values, which is the code a
 route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
 `spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler
@@ -689,8 +771,19 @@ readers keep their open sockets until they reconnect.
 
 ## Testing
 
+**Each suite below proves one layer, and only that layer: the WorkspaceDO
+suites enter at an RPC, `space-service.test.ts` enters at the service with the
+objects around it doubled, and `space-routes.test.ts` is the only one that
+enters where a person does.** That gap is not academic — it is where both
+defects of 2026-09-19 lived, and each of them passed every suite above it: a
+request body's scope is parsed by a route nothing else drives, and a Space's
+hidden conversation refuses from a real object in a way no double reproduces.
+A behaviour that a route, a real session or a cold Durable Object could break
+belongs in the route suite as well as wherever its authority is proved.
+
 | Suite | What it proves |
 | --- | --- |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
@@ -698,7 +791,7 @@ readers keep their open sockets until they reconnect.
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. |
-| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
+| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
@@ -712,6 +805,7 @@ readers keep their open sockets until they reconnect.
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
 pnpm --filter @rally/api exec vitest run test/space-service.test.ts
 pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-routes.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
@@ -760,9 +854,11 @@ a new Organization does, and disarms what construction already armed.
 `scheduled-alarms.test.ts` and `workspace-resources-inventory.test.ts` both do,
 the second because that handler's resource sweep would otherwise reap the drafts
 its cases are about. In the Node suite the equivalent is
-`test/helpers/space-creation-rpcs.ts`: the three WorkspaceDO RPCs and two room
+`test/helpers/space-creation-rpcs.ts`: the three WorkspaceDO RPCs and the room
 RPCs a create now passes through, doubled in their steady case for a file whose
-subject is Slack assignment or origin attachment.
+subject is Slack assignment or origin attachment. It doubles both shapes of the
+provenance call, because an ordinary create takes one — `applySpaceAccessSource`
+in its birth mode — and the connector placement beside it still takes two.
 
 The service tests double the object stubs rather than the namespaces, and they
 are not where a fence is proved. A fence is a property of real storage; what the
@@ -975,6 +1071,52 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-19 — A Space's hidden conversation can be rebuilt from storage, and its failures have a name
+
+`SubstreamAgent`'s constructor mints the persistent agent loop for every object
+that already has an identity, so an isolate replacing another finds its run
+where it left it. `ensurePersistentLoop` refuses a Space parent by name — a
+Space's conversation is a participant and resource authority and no agent runs
+in it — and that refusal, raised from inside the constructor's
+`blockConcurrencyWhile`, broke the object's input gate. A Space's conversation
+is evicted within seconds of being made, because nothing opens it, so *every*
+rebuild failed: `PATCH /spaces/:id`, `PATCH /spaces/:id/audience`, the
+participant writes under it and the resource defaults all answered 500, and the
+object's own drain could not run, so the Space's `directory_common` and
+`directory_user` effects never left its outbox and the Organization kept
+whatever its reservation had said about the Space's name, appearance and scope.
+Archive and restore were the only whole-Space operations unaffected, because
+they never address that object.
+
+The guard is on the constructor rather than in `ensurePersistentLoop`, and that
+is the whole of the decision. Lifting the refusal was the alternative and it is
+the wrong one: every other caller of that function is asking to *run* something,
+and a Space with an agent loop is the thing that must not exist. The constructor
+is the one caller asking only to recover, and there is nothing of the kind to
+recover. A future change that adds a caller has to answer the same question the
+same way.
+
+The second half is the name. The Space's own authority is reached over Durable
+Object RPC, so a rejection that is not its own refusal crosses the hop with no
+code on it, and a 500 from the object is the object saying it does not know what
+went wrong; both reached a person as `internal_error`, which is what made one
+cause cost five diagnoses. `SpaceService.throughSpaceAuthority` names them
+`space_authority_unreachable` — a twelfth closed `SpaceErrorCode`, with its own
+sentence in the desktop copy table — while a refusal the object *chose* keeps
+its own code, because replacing `space_protected` or a content fence with a
+generic word is the same mistake pointing the other way. The containment
+preflight gets the same treatment: a member Channel's conversation that *throws*
+is now the same answer as one that returns `null`, `space_conversation_unreachable`,
+because in both the question was never asked.
+
+Found by staging a real window rather than by a suite, which is itself the
+finding. `apps/api/test-workers/space-routes.test.ts` is the layer that was
+missing: the `/spaces` routes driven with a real session against real objects,
+with the Space's conversation evicted first. Five of its six cases failed before
+this change. The testing section above now says which layer each Space suite
+proves, so the next author does not add the seventh case to a suite that cannot
+see the route.
+
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 
 **What changed:** Migration 61 adds the Space directory and viewer projections,
@@ -1080,6 +1222,57 @@ Organization's directory. That wait is not politeness: the parent authority a
 placement addresses is what publishes that row, and the cutover's close asks
 its question about the Channels the directory holds, so without it neither the
 placement nor the reopened walk behind it has anything to work from.
+
+**That seed was the second path to be caught by hand, so the third is caught by
+the Organization itself.** Each of the fixes above teaches one writer to place
+what it creates, and the invariant is written about every Channel rather than
+about the writers anybody has enumerated — so the failure was not the seed, it
+was that a Channel could reach `workspace_workstream_directory` in no Space and
+`spacesReady` went on saying the hierarchy was renderable.
+`reopenBootstrap`'s own doc already named that event as one of its two reasons
+to exist and nothing called it on one: `applyWorkstreamDirectoryEffects`
+committed the row and moved on. It now asks the close's own predicate about the
+Channels the batch committed and reopens the cutover when the answer is yes,
+which turns a Channel nobody placed into an Organization that walks itself
+again rather than one that is quietly wrong. The predicate is the close's,
+taking an optional list of ids rather than being rewritten: the guard and the
+close have to mean the same thing by "outside every Space", and a second query
+is how they come to disagree about a system Channel or a `joining` membership.
+The three steps a reopen owes — the row, the published snapshot that takes
+`spacesReady` away, the armed alarm — are one helper the `reopenSpaceBootstrap`
+RPC shares, because a copy at the second call site is a copy that can lose one
+of them and leave a walk scheduled that nobody is told about.
+
+The guard asks its question only of Channels the batch did not introduce, and
+that restriction was found by running the suites against the first version of
+it rather than reasoned out in advance. A Channel's arrival in the directory is
+a creation whose placement has not started yet: `reserveChild` enqueues the
+provisional row, and although both creation paths defer its delivery until
+after the placement, the Channel authority's recovery alarm delivers it itself
+when it wins the race with the coordinator's flush — and a connector path
+reserves before it places, with the conversation provisioned in between. So a
+guard that fired on an arrival reopened the cutover on every run of the Slack
+creation test, putting every member's sidebar behind the opening card until the
+walk caught up — precisely the cost the Slack reordering above was for. The
+narrower claim — a Channel the
+Organization was already holding is still in no Space — is the one that is
+about a broken invariant rather than an unfinished one, and it costs a
+forgetful creation path one further projection before it is caught.
+
+**Considered and rejected:** refusing the envelope, which would have kept the
+Organization consistent by dropping its own projection of a Channel — a worse
+state than the one being repaired, and one with no path out, because the walk
+that repairs it reads that very row. Also rejected: widening the guard's
+predicate to count a `joining` membership so an arrival could be admitted. It
+does not close the window it was for — the connector path reserves the Channel
+before it stages any membership at all, so there is no row of any state to find
+— and it would make the guard and the close disagree about what
+"outside every Space" means, which is the drift the shared predicate exists to
+stop. Also rejected: making the dev seed's wait-then-place redundant and
+deleting it. The guard is a backstop that costs a Queue round trip and an
+Organization-wide `spacesReady` blip; a path that knows which Channel it just
+created should still place it directly, and the seed is also what keeps the
+reopened walk from finding an empty directory.
 
 A pending cutover is also what makes every WorkspaceDO wake immediately: the
 `space_bootstrap` row is a derived alarm candidate due at the epoch until the
@@ -1338,9 +1531,18 @@ check that makes a sixth kind fail to compile instead of being abandoned by name
 in production. An intent that can never settle republishes on the alarm's
 backoff cap forever, one dead-letter message per cycle: what that costs, and
 what deciding a ceiling would need, is in "Numbers handed to the team" above.
-The latency audit's three remaining suggestions — collapsing the creation's
-provenance apply and confirm into one RPC, deferring the Slack path's inline
-placement, and the replay path using the full `addChannel` — are decisions for
-the team and were deliberately not taken here.
+The latency audit left three suggestions. The first was taken: the creation's
+provenance apply and confirm are one call, because the split exists to bracket
+the caller's canonical operations and a Channel born into a Space has none —
+`initialize` wrote that audience already, so the second hop was a same-object
+round trip per Space with nothing in between. It is one *mode* on the existing
+RPC rather than a second RPC, sharing the commit body so the revision fence and
+the direct-scope seeding cannot drift, and the mode is part of the receipt's
+request fence so a redelivery under the other one is refused rather than
+converging on the wrong answer;
+[`workstream-durable-object.md`](workstream-durable-object.md) owns it. The
+other two — deferring the Slack path's inline placement, and the replay path
+using the full `addChannel` — are decisions for the team and were deliberately
+not taken here.
 
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
