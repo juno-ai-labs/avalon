@@ -1092,9 +1092,9 @@ refusal to name. It is not offered under **Add to space** either. Every one of
 those is refused by the server by name, and drawing a control that can only
 fail teaches a reader that Rally's controls are suggestions.
 
-`SpaceRow` still supports an optional action for other hosts, but the desktop
-withholds it from every Space: Channel and Space creation now live in the one
-sidebar plus menu. The row's grid keeps its third column either way. That is why
+`SpaceRow` carries no creation action: Channel and Space creation live in the
+one sidebar plus menu, and the row does not reserve a column for a control no
+host renders. That is why
 `spaceIds` travels on the *common* half of `workspace_workstream_state`: it is
 the Organization's fact about the Channel, not the reader's, and WorkspaceDO
 republishes the row after every membership settlement.
@@ -1895,6 +1895,16 @@ are readable but not editable.
 itself look editable in place and split closely related actions across different
 menus. One launcher is the reversible UI primitive; Space membership and
 creation remain on their existing authoritative service paths.
+
+**Considered and rejected:** Retaining optional Space-row and section-heading
+actions for a future host. No host uses them after consolidation, so preserving
+them would keep dead component API and layout rather than a reusable primitive.
+
+**Consequences:** Creation requires the Space directory to be ready and uses
+the global launcher in every sidebar layout. Space rows no longer carry or
+reserve room for creation; any future row-local action is a new product choice.
+
+Shipped in #876.
 
 ### 2026-09-20 — The Space landing page is about Channels
 

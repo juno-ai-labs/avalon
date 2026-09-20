@@ -289,6 +289,18 @@ describe('New channel home', () => {
     })));
   });
 
+  it('keeps the chosen Channel name visible while creation is pending', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByRole('heading', { name: 'Hiring plan' })).toBeVisible();
+    expect(document.querySelector('.title-skeleton-header')).toBeNull();
+  });
+
   it('uses the shared mention, attachment, and dictation controls', async () => {
     renderScreen();
 

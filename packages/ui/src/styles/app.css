@@ -1132,23 +1132,17 @@ pre {
 .space-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
 .space-sidebar-item[draggable='true'] { cursor: grab; }
 /* Shares `.sidebar-row` for hover fill, radius, and padding so a Space
-   and a Channel read as the same kind of row. The grid is the extra
-   accordion and plus columns; `height-dense` matches a single-line Channel.
+   and a Channel read as the same kind of row. The grid adds the accordion
+   column; `height-dense` matches a single-line Channel.
    Two classes so `display` and `gap` beat the later `.sidebar-row`
    flex rule rather than racing it on source order. */
 .sidebar-row.space-sidebar-row {
   align-items: center;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  grid-template-columns: 18px minmax(0, 1fr);
   gap: 0;
   min-height: var(--av-cmp-row-height-dense);
 }
-/* The section heading's plus stays put. The per-row plus is the same
-   control, shown only while the row is the one being pointed at or tabbed
-   into, so a list of Spaces does not grow a column of idle pluses. */
-.space-sidebar-row .space-sidebar-row-action { opacity: 0; }
-.space-sidebar-row:hover .space-sidebar-row-action,
-.space-sidebar-row:focus-within .space-sidebar-row-action { opacity: 1; }
 .space-accordion-control {
   align-items: center;
   background: transparent;

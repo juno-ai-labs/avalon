@@ -188,6 +188,16 @@ happened to be looking, while an import created into General and renamed itself
 from provider content. One launcher makes the destination and visible name
 explicit without changing prepared-history authority or fabricating a run.
 
+**Considered and rejected:** Keeping the query-parameter import dialog as a
+second UI. It had no producer after consolidation and would preserve different
+required fields and retry behavior for the same operation.
+
+**Consequences:** Desktop imports begin only in the sidebar launcher and retain
+one request identity while its Space, name and URL remain unchanged. Programmatic
+export callers keep the same API boundary without acquiring a second desktop UI.
+
+Shipped in #876.
+
 ### 2026-09-15 — Compose prepared content, resources and execution
 
 **What changed:** Root/private creation and text-only demos share authority-owned
