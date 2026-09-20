@@ -131,6 +131,15 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-20 — Reusable message cards
+
+Added `MessageCardStack` and shared compact-tool/card styles. The demo sidecar
+supplies participants, destinations, and direct-send states; presentation owns
+accessible controls and stable status copy. Attempt IDs, immutable payloads,
+authority, and transport remain in the host. Copying a second set of controls
+was rejected so theme and accessibility fixes continue to apply in one place.
+
+
 ### 2026-09-19 — A Space row may be drawn without its plus
 
 `SpaceRow` required `onNewChannel` on the argument that a host unable to start
