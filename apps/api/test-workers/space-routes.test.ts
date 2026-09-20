@@ -45,11 +45,11 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace id: object storage is reset per case, object names are not. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
-const OWNER = asUserId("00000000-0000-7000-8000-00000000d101");
-const MEMBER = asUserId("00000000-0000-7000-8000-00000000d102");
-const OWNER_SESSION = "00000000-0000-7000-8000-00000000d103";
-const MEMBER_SESSION = "00000000-0000-7000-8000-00000000d104";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d200");
+const OWNER = asUserId("00000000-0000-7000-8000-00000000d201");
+const MEMBER = asUserId("00000000-0000-7000-8000-00000000d202");
+const OWNER_SESSION = "00000000-0000-7000-8000-00000000d203";
+const MEMBER_SESSION = "00000000-0000-7000-8000-00000000d204";
 const SESSION_KEY = "space-routes-fixture-session-key";
 
 const OWNER_AUTH: AuthContext = {
