@@ -12,6 +12,7 @@ import { recordTerminalPlatformObservation } from "../../observability/terminal-
 import {
   createTerminalPlugin,
   parseTerminalRegionConfiguration,
+  TerminalArgumentSchemas,
   TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
   TERMINAL_PLUGIN_SYSTEM_MESSAGE,
   TERMINAL_TOOL_NAMES,
@@ -251,11 +252,10 @@ export async function createAvalonTerminalPlugin(
       throw error;
     }
   };
-  const runtime = createDaytonaTerminalRuntime(
-    terminalPort,
-    coordinator,
-    provider,
-    createTerminalResourceBridge(
+  // Hoisted out of the runtime call: the effect reconciler below asks the
+  // resource authority a question directly, without a sandbox, so it needs the
+  // bridge rather than the runtime that wraps it.
+  const resourceBridge = createTerminalResourceBridge(
       env,
       terminalPort,
       inObjectResourceAttacher,
@@ -264,7 +264,12 @@ export async function createAvalonTerminalPlugin(
       // its owner's sandbox; the import records that conversation so the
       // revocation check asks it, not the owner's.
       scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
-    ),
+  );
+  const runtime = createDaytonaTerminalRuntime(
+    terminalPort,
+    coordinator,
+    provider,
+    resourceBridge,
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
     createTerminalRepositorySelector(
       env,
@@ -367,6 +372,15 @@ export async function createAvalonTerminalPlugin(
   const plugin = createTerminalPlugin(
     observedExecutors,
     `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
+    {
+      // Only `publish_resource` needs one: the other re-enterable Terminal
+      // writes resolve their effect from the receipt, so re-entering them is
+      // already the question. See `REENTERABLE_TERMINAL_TOOLS`.
+      publish_resource: async (rawInput, context) => resourceBridge.reconcilePublishedResource(
+        context,
+        TerminalArgumentSchemas.publish_resource.parse(rawInput),
+      ),
+    },
   );
   let activationAttempt = 0;
   return {
