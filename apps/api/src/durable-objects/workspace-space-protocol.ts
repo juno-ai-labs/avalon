@@ -218,6 +218,12 @@ export type WorkspaceSpaceChannelPageResult = z.infer<typeof WorkspaceSpaceChann
 /**
  * Which memberships a fan-out is asking about.
  *
+ * Named for the walk rather than for the membership because `reach` is also
+ * what a *viewer's* relationship to a Space is called — `SpaceSummary.reach`,
+ * `participant | organization | through_channel` — and the two met three
+ * lines apart inside `WorkspaceSpaceStorage.members`, where reading this one
+ * as that one says the page is already viewer-scoped. It is not.
+ *
  * `active` is what a surface means by a member. `reaching` also counts the ones
  * a staged removal or a staged archive has already flipped to `removing`: this
  * Space's access source is still on those Channels, and taking it off is
@@ -225,12 +231,12 @@ export type WorkspaceSpaceChannelPageResult = z.infer<typeof WorkspaceSpaceChann
  * that asked for `active` would run over nothing, because the prepare it
  * follows is what emptied that set.
  */
-export const SpaceMembershipReachSchema = z.enum(["active", "reaching"]);
-export type SpaceMembershipReach = z.infer<typeof SpaceMembershipReachSchema>;
+export const MemberWalkReachSchema = z.enum(["active", "reaching"]);
+export type MemberWalkReach = z.infer<typeof MemberWalkReachSchema>;
 
 export const WorkspaceSpaceMembersRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
-  reach: SpaceMembershipReachSchema.default("active"),
+  reach: MemberWalkReachSchema.default("active"),
   /** Where the walk got to; `null` starts it at the first Channel. */
   cursor: z.string().min(1).nullable().default(null),
 }).strict();

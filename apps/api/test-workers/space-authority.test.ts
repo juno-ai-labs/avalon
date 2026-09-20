@@ -959,6 +959,17 @@ describe("WorkspaceDO space authority", () => {
         workstreamId: CHANNEL_A,
         remainingAudience: { scope: "workspace", participantUserIds: [OWNER] },
       }),
+      // The two settlements, which are reachable only behind a prepare that is
+      // itself refused above — enumerated anyway, because "every operation
+      // kind" is what this case claims and a settlement that grew its own
+      // entry point would inherit whichever gate it was given rather than this
+      // one.
+      workspace().cancelSpaceMembership({
+        ...asMember, workstreamId: CHANNEL_A, spaceRevision: 1, membershipGeneration: 1,
+      }),
+      workspace().finalizeSpaceMembershipRemoval({
+        ...asMember, workstreamId: CHANNEL_A, spaceRevision: 1, membershipGeneration: 1,
+      }),
       workspace().prepareSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
       workspace().finalizeSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
       workspace().restoreSpace({ ...asMember, operationId: crypto.randomUUID() }),
