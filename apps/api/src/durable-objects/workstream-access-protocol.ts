@@ -86,12 +86,15 @@ export const NoteChannelDirectReaderRequestSchema = ChannelAccessAddressSchema.e
 });
 
 /**
- * A plan and nothing else.
+ * A plan — and, in one named case, the commit as well.
  *
- * It records no source. What it holds instead is a receipt, so a redelivery
- * answers what the first attempt did rather than recomputing a delta against a
- * Channel the first attempt has already changed. The source itself is committed
- * by {@link ConfirmSpaceAccessSourceRequestSchema}.
+ * Ordinarily it records no source. What it holds instead is a receipt, so a
+ * redelivery answers what the first attempt did rather than recomputing a delta
+ * against a Channel the first attempt has already changed. The source itself is
+ * committed by {@link ConfirmSpaceAccessSourceRequestSchema}, because between
+ * the two the caller runs the canonical operations that seat the plan's
+ * readers. `bornWithSourceApplied` is the case where there is nothing to run in
+ * between; the doc comment there says why that is only ever true at birth.
  */
 export const ApplySpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
@@ -103,6 +106,26 @@ export const ApplySpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.ex
   membershipGeneration: z.number().int().positive(),
   operationId: IdSchema,
   channel: ObservedChannelSchema,
+  /**
+   * The caller asserting that the Channel was **born** with this source's
+   * audience already applied, so this call commits the source as well as
+   * planning it.
+   *
+   * That assertion is only true at birth. The creation coordinator derives the
+   * union of every named Space and hands it to `initialize`, so the
+   * conversation opens with the scope and the roster this source implies
+   * already written — there is no widening left for the caller to ask the
+   * Channel for, and therefore no step between the plan and its commit for a
+   * crash to land in. Every other caller has one: it applies the plan through
+   * the Channel's canonical scope and participant operations, and a source
+   * recorded before those ran would claim a Space reaches this Channel while
+   * that Space had seated nobody.
+   *
+   * Absent means false, and the normalized value is part of the receipt's
+   * request fence: a redelivery under the other mode is a different request
+   * rather than a convergence on the wrong answer.
+   */
+  bornWithSourceApplied: z.boolean().optional(),
 });
 export type ApplySpaceAccessSourceRequest = z.infer<typeof ApplySpaceAccessSourceRequestSchema>;
 
@@ -111,7 +134,17 @@ export const SpaceAccessApplicationSchema = z.strictObject({
   seatUserIds: z.array(UserIdSchema),
 });
 export const ApplySpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true), plan: SpaceAccessApplicationSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    plan: SpaceAccessApplicationSchema,
+    /**
+     * What a confirmation would have answered, present exactly when
+     * `bornWithSourceApplied` committed the source here: every reader this
+     * Space is now recorded as supplying. Absent otherwise, because nothing
+     * has been recorded yet.
+     */
+    suppliedUserIds: z.array(UserIdSchema).optional(),
+  }),
   z.strictObject({ ok: z.literal(false), code: SpaceErrorCodeSchema }),
 ]);
 export type ApplySpaceAccessSourceResult = z.infer<typeof ApplySpaceAccessSourceResultSchema>;
@@ -126,6 +159,15 @@ export type ApplySpaceAccessSourceResult = z.infer<typeof ApplySpaceAccessSource
  * supplies nobody — a Space the Channel claims reaches it and that seated no
  * reader. The confirmation is the first moment the Channel's readers and its
  * record of why can be made true together.
+ *
+ * **The split is the caller's canonical operations, so the one call that has
+ * none does not need it.** A Space joining a Channel that already exists is
+ * widened by the caller between the plan and this commit, which is the step the
+ * two calls exist to bracket; a Channel *born* into a Space opened with that
+ * audience already written, so `bornWithSourceApplied` on the application does
+ * exactly what this body does, in the application's own transaction. Anything
+ * with a canonical operation in the middle — an add, an audience change, a
+ * restore, a placement by the cutover — stays two calls.
  *
  * Absent means "attribute these readers to a source that is already here",
  * which is what a narrowing does: it seats readers a Space has supplied all

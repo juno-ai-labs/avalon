@@ -913,6 +913,22 @@ to be signed in.
    closes itself with no further command, and one nobody remediates re-walks
    about once a minute until somebody does.
 
+   **An Organization can also leave `complete` on its own, and that is not a
+   regression.** Three things reopen the walk: a `finalize` that refused, a
+   connector or seed placement that was refused, and a directory row committing
+   for a Channel the Organization was already holding that is in no Space. The
+   last is the backstop for a creation path that forgot to place what it made —
+   the Organization notices, takes `spacesReady` away while it re-walks, and
+   closes again once the Channel has a home. It is deliberately the Channel's
+   *second* row that trips it rather than its first: a Channel's first row is a
+   creation still in flight, so reopening on one would blank every member's
+   sidebar on ordinary creations. A Channel a forgetful path made is therefore
+   caught on its next projection, not the instant it appears. An Organization
+   that reopens
+   *repeatedly* is the signal worth chasing: something is creating Channels
+   without placing them, and the `workstream_id` will be in the membership rows
+   the next walk writes.
+
 4. **Project retirement needs no operator step.** Migration 62 settles every
    undelivered Project default in the same transaction that drops the tables —
    targets to `terminal` with `project_retired`, publications to `accepted` —
