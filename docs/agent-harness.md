@@ -561,11 +561,34 @@ If the object is evicted after `assistant_accepted` but before every
 provider request or pending input can cross the loop boundary, the host walks
 the missing call positions against their durable receipts. A completed or
 failed receipt becomes the corresponding exact tool result; an admitted call is
-terminalized as `not_run`; an executing write becomes
-`ambiguous_external_write`. Results are appended with their original call index
-and a separate dense accepted ordinal. An ambiguous recovery settles the whole
-tool batch and then fails the current cycle visibly without retrying the
-provider or pretending that human input was requested.
+terminalized as `not_run`; an executing *read* is failed. An executing **write**
+is not classified from its status: the host re-enters the tool over that same
+receipt, through `reenterInterruptedWriteForRecovery`, which builds the one
+plugin owning the call rather than the run's whole registry. A tool that
+declares `HarnessTool.reenterable` either resolves its own durable effect from
+the receipt — `run_command` reattaches to the `terminal_tasks` row its
+`effect_intent_id` names — or carries a `HarnessTool.reconcileEffect` that
+establishes what the attempt did without performing it. The host consults the
+reconciler first: `landed` returns its result and the executor is never
+reached, `not_landed` is the only licence to run the tool, because it says the
+external effect is provably absent and the call is therefore a first execution,
+and `unknown` leaves the attempt unresolved. `publish_resource` needs one,
+because its executor resolves a document by `(work stream, published path)` —
+what is published there now, not what this attempt published — and would swap
+the stored content whenever the sandbox file had moved on; its reconciler reads
+`resource_versions` instead, which is append-only and carries each revision's
+`author_run_id`, so a publication this run made inside the receipt's window
+reads as landed even after somebody else has revised the document away. A
+`provider_key` tool is re-submitted under the key its receipt was admitted with,
+never a fresh one. Only a tool that is not re-enterable, a plugin that cannot be
+built, or a re-entry that threw settles `ambiguous_external_write`, and the
+receipt, the `harness_interrupted_write_recovered` log line and the model's tool
+result all name the tool and the reason. Results are appended with their
+original call index and a separate dense accepted ordinal. A residual ambiguity
+settles the whole tool batch and the cycle **continues**: the repaired protocol
+array already carries the ambiguity as a failed tool result telling the model to
+check the call before repeating it, and the model is the only reader able to act
+on it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and applies two normalizations. It normalizes
@@ -619,8 +642,11 @@ Historical protocol reconstruction applies that same rule before it replays a
 completed attachment tool pair from an earlier run; the persisted execution
 plan identifies attachment operations, and a failed current-authority check
 omits their assistant/tool messages rather than trusting the R2 result.
-Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior
-write, or timed-out `record_before_execute` write becomes
+Incomplete safe reads may resume, and so may an incomplete `provider_key` write
+whose plan, request hash and provider key all match the call asking to run —
+`admit` answers `resume_write`, because the provider collapses two calls
+carrying one key. A reused or mismatched plan, a provider key that differs from
+the admitted one, or an incomplete `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
 append-only, and terminalization is idempotent and lease-fenced.
 
@@ -1256,6 +1282,10 @@ proof.
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/workstream-tool-receipt-storage.test.ts` | `admit`'s decisions against real migrations, including `resume_write` for an unsettled `provider_key` write and the two guards that keep it narrow: the declared class, and the admitted provider key. |
+| `apps/api/test/terminal-command-recovery.test.ts` | That re-entry follows `HarnessTool.reenterable` rather than a tool name, re-enters over the receipt's own effect identity, re-submits a `provider_key` write under the key it was admitted with, and consults `reconcileEffect` first — running the executor only on `not_landed`. |
+| `apps/api/test/terminal-resource-bridge.test.ts` | The publication reconciler against real WorkspaceDO resource schema and its capture triggers: a publication this run made in the window, one that predates it, one revised away by a later run, another run's revision inside the window, and a path never published. |
+| `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. Also the repair that holds no lease, which settles `no_repair_lease` rather than asking a question it could not record the answer to. |
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
@@ -1351,6 +1381,161 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-19 — An interrupted write is asked what it did before it is called unknowable
+
+**What changed:** Crash repair of an interrupted tool batch no longer classifies
+an unsettled write on `mode` alone. A receipt now carries the idempotency class
+its plan already recorded, and the repair walk *re-enters* the tool over that
+same receipt — through `reenterInterruptedWriteForRecovery`, which builds the
+one plugin owning the call — before considering the outcome unknown. Only a tool
+that cannot be asked, or an attempt to ask that failed, still settles
+`ambiguous_external_write`, and its receipt, its log line and the model's tool
+result now name the tool and why the question went unanswered.
+
+Four mechanisms moved with it. `reconcileRecoverableTerminalWrite` became
+`reenterInterruptedWrite` and takes its decision from `HarnessTool.reenterable`
+rather than three hard-coded Terminal names; `publish_resource` declares it, and
+so does every tool the old list held. `HarnessTool.reconcileEffect` is the
+second half of that decision, for a tool whose executor resolves its effect by
+*subject* rather than by receipt. `ToolReceiptStorage.admit` gained
+`resume_write`: an unsettled `provider_key` write whose plan, request hash and
+provider key all match the call asking to run is resumed rather than settled
+ambiguous. And a residual ambiguity no longer fails the cycle — the repair
+finishes the protocol array and the run continues.
+
+Six things were wrong in the first cut and are recorded because the reasoning
+that produced each was plausible, and because together they say what this kind
+of change costs to get right.
+
+Three were about the re-entry itself. It did not revalidate run authority,
+because it looked like the continuation of an authorized call rather than a new
+one; it is a tool call, and `beforeToolCall` proves authority on every other
+one. It ran under a signal that never aborted, on the theory that the tools
+reached carry their own budgets — but a claim holds a 300-second lease and
+`run_command` may run for 900, so the re-entry could outlive the lease its own
+settlement is fenced on; it now holds that lease open and aborts when it cannot.
+And it built Terminal without the publication scope `loadHarnessTools` freezes,
+which for a work-stream scoped Sidekick resolves `publish_resource` under the
+Sidekick's own conversation instead of the room that owns it — the reconciler
+would then look for the interrupted publication at a path identity it was never
+written to.
+
+Two were about what the repair says. The model-facing result for a residual
+ambiguity carried the bare code while the tool name and the instruction went
+only to the participant lifecycle: the generic-code defect, on the one path
+where continuing instead of stopping depends on the reader being told. And the
+settlement failure was caught with the re-entry, so a tool that *answered* and
+whose answer could not be written to R2 reported "could not confirm" while
+holding the confirmation — the same defect one line further down, now
+`reentry_result_not_durable`.
+
+The last was the ordering. Removing the failing arm from the caller let
+`ambiguous` outrank `waiting_for_input`, and while an ambiguity failed the cycle
+the two could never collide. A batch holding both a withheld elicitation and an
+unaskable write would have started the harness on an assistant turn whose
+question had no result. Pending human input now outranks everything.
+
+`publish_resource`'s own correction is above: it was declared re-enterable on
+the strength of its matching-digest branch alone, and `reconcileEffect` exists
+because that branch is not the whole behaviour.
+
+**Why:** On 2026-09-19 a `SubstreamAgent` isolate was replaced two seconds into
+a `publish_resource` call. The repair found the receipt `executing`, read
+`mode === "write"`, and killed the run — discarding seven completed tool calls
+in the same batch and giving the member `ambiguous_external_write` and a request
+ID. Nothing about that call was ambiguous. `publish_resource` is `provider_key`,
+it was admitted under a stable key, and its executor's first act is to look up
+the document `(work stream, published path)` already holds and return it
+untouched when the bytes match. The one thing that would have answered the
+question was running the tool again, which the repair path had no way to do
+because it runs before the run's tool registry exists. It does not need the
+registry: it needs the plugin owning the one call it is repairing, and Terminal
+is built from exactly the `(env, input)` the repair already holds.
+
+The class distinction is the point, and it is why this is not "retry writes".
+`record_before_execute` has no provider-side dedupe and keeps the ambiguous
+outcome; `provider_key` promises the provider collapses two calls carrying one
+key, and the repair re-submits under the key the interrupted attempt was
+admitted with, never a fresh one — a new key is a second write wearing the name
+of a retry. `reenterable` is a separate claim, host-authored and deliberately
+absent from `ToolDefinition`, which also parses remote MCP declarations: a
+server that could assert it would be asserting that Rally may repeat its writes.
+
+Continuing past a residual ambiguity is a traded-off loosening, and the trade is
+recorded because the next reader will want to undo it. The stop was there in
+case a model handed an ambiguous write simply repeats it. That risk is real and
+unchanged. What the stop did not do is prevent it: the member re-sends, a fresh
+run mints fresh receipt coordinates, and nothing in the receipt layer connects
+the new call to the abandoned one — so the cycle died for nothing, and took its
+siblings' completed work with it. Continuing puts the ambiguity in front of the
+only reader who can check before acting, as a tool result naming the call and
+saying to check it first. A future change that wants the stop back needs a
+receipt-layer link between a re-sent call and an abandoned one; without that it
+is buying the same nothing.
+
+**What a future change has to respect:** re-entry proves current authority
+before it runs anything. `beforeToolCall` does that on every ordinary dispatch
+and the repair path bypasses the hook entirely, so it calls
+`assertRunAuthorityStillValid` itself; without it a principal who lost
+membership between the interruption and the repair would still have their write
+executed.
+
+Re-entry also needs a *lease*, not just the fence a settlement runs under, and
+the two are separate parameters because one caller has only the fence. The
+loop-failure settlement path reconstructs an owner rather than minting a lease,
+deliberately — handing a lease back to `ToolReceiptStorage#fence` would be
+asking the row to vouch for itself, since that fence compares what it is given
+against the same row it read. That is enough to settle a receipt and not enough
+to hold a claim open while a tool runs, so a repair without a lease leaves an
+interrupted write ambiguous with `no_repair_lease` rather than obtaining an
+answer it has no claim to record. The reason is named rather than folded into
+the bare code because "nobody asked" and "the question failed" are different
+repairs and only one is worth chasing.
+
+Next, a `null` idempotency class — an
+unparseable plan, or a receipt written before the class was read back — is
+treated as `record_before_execute`, the class that assumes least. A `completed`
+or `failed` receipt is never re-entered: the first has a durable result to
+replay and the second may already have been read. An `ambiguous` one *is*, and
+that is not an exception to a rule about settled receipts — it is what the state
+is for, being what a previous re-entry attempt left behind, and
+`findCompletedToolResult` reaches it deliberately through
+`allowAmbiguousReconciliation`. And the re-entry is bounded twice, by numbers that already
+existed rather than invented ones: the tool's own declared `timeoutMs`, which
+Bind applies on every ordinary dispatch and which re-entry has to apply itself
+because it does not go through Bind, and the attempt lease, which it holds open
+and aborts on when it cannot renew — `run_command`'s 900 seconds outlives a
+300-second claim, and the lease is what the settlement is fenced on.
+
+**Considered and rejected:** routing a residual ambiguity to `needs_input`, the
+human-escalation the live path already has at `halt: "needs_input"`. It would
+preserve the batch's completed calls without letting the model near the
+ambiguous call, which is the better of the two on its face. It is rejected
+because crash repair has no question to escalate *with*: `needs_input` reached
+without a durable `elicitation_requests` row is the state the 2026-08-15 entry
+below records as a production defect — a run stopped with nothing to answer, no
+failed tool row, and a null error. Restoring it here would mean minting a
+question on the member's behalf about a write they did not make, which is a
+larger change than this one and a product decision rather than a repair.
+
+Also rejected: a per-tool `reconcile()` hook as the *primary* mechanism, which
+was the first design. Re-entry is better where the executor already resolves its
+own effect, because a reconciler there is a second copy of a lookup free to
+drift. `reconcileEffect` exists for the case where that reasoning does not hold,
+not as the general answer.
+
+**Left undone:** `resume_write` applies to every `provider_key` write, and that
+is safe because every one of them in this tree — memory `add`/`update`
+/`invalidate`, the four table writes, `schedule_wakeup`/`cancel_wakeup`,
+`request_elicitation` — writes to a Rally-owned authority and begins with a
+replay lookup keyed on that same provider key. What none of them has is
+`reenterable`, so *crash repair* still cannot ask them and an interrupted
+attempt of one stays ambiguous. Picking it up means declaring the property on
+those tools and teaching `reenterInterruptedWriteForRecovery` to build their
+plugins, which are core rather than Terminal and are constructed differently —
+it is the one reason that function names Terminal rather than resolving a
+plugin by id.
 
 ### 2026-09-19 — Close abandoned Canva transactions from durable receipts
 

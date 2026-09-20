@@ -430,8 +430,12 @@ JSON Schema cannot represent must also be exposed through the `HarnessTool`
 to update” model-actionable. If both declared and refined input are valid, the
 Zod failure came from downstream data. A read or provider-idempotent call may
 invite one retry, but a `record_before_execute` write becomes
-`ambiguous_external_write` and stops: the provider mutation may already have
-succeeded, so retry guidance could duplicate it. Do not catch and stringify
+`ambiguous_external_write` and **stops the run**: the provider mutation may
+already have succeeded, so retry guidance could duplicate it. That is this
+path — a validation failure inside an active turn. Crash repair of an
+interrupted batch is the one that continues instead, handing the model a failed
+tool result that names the call and says to check before repeating; the two are
+not the same path and only the second one keeps the run alive. Do not catch and stringify
 either Zod error inside the tool, which would restore the raw issue tree and
 defeat that distinction.
 
@@ -464,11 +468,47 @@ labels:
 - **`provider_key`** — the provider itself dedupes on a key the tool supplies.
   Use it when the provider offers a real idempotency key, and derive the key
   deterministically from the run and the receipt, never from a fresh random
-  value.
+  value. An incomplete prior call whose plan, request hash and key all match may
+  therefore *resume*, because the provider collapses the two; a call arriving
+  with a different key does not, and is ambiguous.
+
+  **That resume is load-bearing, not incidental.** `admit` grants it on the
+  declared class alone, so a `provider_key` tool owes a key-scoped replay lookup
+  as its first act — `loadReceipt` in `memory-service.ts` and
+  `loadMutationReceipt` in `memory-table-service.ts` are the shape. Every
+  `provider_key` write in this tree has one, and a new one without it would be
+  re-executed rather than deduped.
 - **`record_before_execute`** — a write with no provider-side dedupe. The
   canonical input and plan hashes are durably stored *before* execution, so a
   reused or mismatched plan, an incomplete prior write, or a timed-out record
   becomes `ambiguous_external_write` and is never blindly repeated.
+
+Two further properties are separate from all three, and are about the *executor*
+rather than the provider. Both are host-authored and deliberately absent from
+`ToolDefinition`: that schema also parses tool declarations from remote MCP
+servers, and a server able to assert either would be asserting that Rally may
+repeat its writes.
+
+**`HarnessTool.reenterable`** says the host may run this tool again over the
+receipt an interrupted attempt already started, instead of reporting
+`ambiguous_external_write`. Declare it only when the executor's first act is to
+resolve what that `effectIntentId` already did — reattach to the provider task
+it names, or find and return the record its stable identity already holds.
+
+**`HarnessTool.reconcileEffect`** is what a tool declares when it cannot do
+that. An executor that resolves its effect by *subject* — the document at this
+path, the row with this name — answers "what is there now", which is a different
+question from "did my attempt put it there", and re-entering it blind performs
+the write again whenever the two differ. A reconciler answers the second
+question without performing anything: `landed` returns the result and the
+executor is never reached, `not_landed` is the only licence to run it, and
+`unknown` leaves the attempt ambiguous. Prefer a durable record that names the
+*writer* — an append-only version or audit row carrying the run that wrote it —
+over comparing content, because content cannot distinguish your write from
+somebody else's.
+
+A tool that would simply perform the write a second time, and has no reconciler,
+declares neither, whatever its idempotency class says.
 
 That last mechanism only works if the request is **byte-stable**. Per-call
 randomness in the arguments — a client-side generated id, a timestamp, a nonce —
@@ -1133,6 +1173,25 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-19 — Re-enterability becomes a tool's own claim
+
+**What changed:** `HarnessTool.reenterable` replaced the hard-coded list of
+three Terminal tools the host was willing to run again over an interrupted
+receipt, and `HarnessTool.reconcileEffect` joined it for a tool that resolves
+its effect by subject rather than by receipt. `publish_resource` declares both.
+The idempotency section above gained the two properties and the `provider_key`
+resume rule.
+
+**Why:** the list had no way for a fourth tool to join it, so
+`publish_resource` was treated as unrecoverable and an interrupted publish
+killed its run on 2026-09-19. Adding it exposed the second gap: looking up the
+document at a path answers what is published there, not whether this attempt
+published it, and that executor *swaps* the stored content when the two
+disagree — so re-entry on its own was a second write, not a confirmation. One
+property says the host may re-enter; the other says how the tool proves there is
+nothing to duplicate. Both belong next to the executor that has to honour them.
+`docs/agent-harness.md` has the mechanism and the full incident.
 
 ### 2026-09-19 — A `get` is a declared record too
 

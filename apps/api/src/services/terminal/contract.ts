@@ -291,10 +291,56 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
 
 export const TERMINAL_TOOL_DEFINITIONS = TERMINAL_TOOL_NAMES.map((name) => definitions[name]);
 
-export function createTerminalPlugin(executors: TerminalToolExecutors, systemMessage = TERMINAL_PLUGIN_SYSTEM_MESSAGE): HarnessPlugin {
+/**
+ * The Terminal writes the host may run again over an interrupted attempt's
+ * receipt, instead of declaring the outcome unknowable.
+ *
+ * Each one earns its place in its executor rather than by category, and not
+ * all three by the same route. `run_command` **reattaches**: it resolves the
+ * `terminal_tasks` row its `effect_intent_id` names before doing anything.
+ * `publish_branch_and_pr` does the same against the publication its run
+ * recorded. `checkout_repository` **converges** instead — it never reads
+ * `effect_intent_id`, and re-entering it re-selects the same repository at the
+ * same access, because the recorded input fully determines the end state; an
+ * interrupted replacement is repaired by finishing it, which is what its test
+ * asserts.
+ *
+ * `publish_resource` is here on a different footing, and the distinction is
+ * the one that makes this list safe rather than convenient. Its executor
+ * resolves a document by `(work stream, published path)` — what is published
+ * there now, not what this attempt published — and on a digest mismatch it
+ * swaps the stored content, so re-entering it blind would write the subject
+ * again whenever the sandbox file had moved on. It qualifies because it also
+ * carries a `reconcileEffect`, which reads the row's own authorship to decide
+ * whether this attempt is the revision standing there. The host consults that
+ * before re-entry and never reaches the executor unless the effect is provably
+ * absent.
+ *
+ * So: a tool belongs here when re-entry is conclusive *or* when a reconciler
+ * makes it so. A Terminal tool absent from this set is not re-entered, and an
+ * interrupted attempt of it stays `ambiguous_external_write`.
+ */
+const REENTERABLE_TERMINAL_TOOLS: ReadonlySet<TerminalToolName> = new Set([
+  "run_command",
+  "checkout_repository",
+  "publish_branch_and_pr",
+  "publish_resource",
+]);
+
+export function createTerminalPlugin(
+  executors: TerminalToolExecutors,
+  systemMessage = TERMINAL_PLUGIN_SYSTEM_MESSAGE,
+  /**
+   * Effect reconcilers, by tool. Supplied by the caller that has the
+   * environment rather than built here, for the same reason the executors are.
+   */
+  reconcilers: Partial<Record<TerminalToolName, HarnessTool["reconcileEffect"]>> = {},
+): HarnessPlugin {
   const tools = TERMINAL_TOOL_NAMES.map((name): HarnessTool => ({
     definition: definitions[name],
     serial: true,
+    ...(REENTERABLE_TERMINAL_TOOLS.has(name) ? { reenterable: true } : {}),
+    ...(reconcilers[name] ? { reconcileEffect: reconcilers[name] } : {}),
     validateInput: (input) => {
       const result = TerminalArgumentSchemas[name].safeParse(input);
       return result.success ? null : result.error;
