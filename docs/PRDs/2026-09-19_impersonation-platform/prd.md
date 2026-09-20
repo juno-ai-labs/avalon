@@ -259,7 +259,13 @@ Rally's product contract. The first surface is restricted to verified `@rallywit
 
 ## Decision log
 
-None yet.
+### 2026-09-20 — The menu-launched window shares Rally authentication
+
+**Decided:** Implement the sidecar as a separate secured Electron window in Rally, using the main process’s existing authenticated session pinned to the launching organization. No standalone app, separate Google sign-in, or callback scheme is introduced.
+
+**Why:** The agreed menu launch and closure on navigation make this a window lifecycle within Rally. A separately installed app and OAuth target would duplicate authentication without adding a product capability.
+
+**Changes:** Supersedes the separate callback and app-distribution requirements in Authentication and app targeting, Security, and acceptance 17. HTTP-only messaging, server authorization, original-cast eligibility, and session secrecy remain required.
 
 ## Key design decisions
 
