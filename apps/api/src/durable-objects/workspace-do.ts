@@ -7875,6 +7875,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const archivalChanges = new Set<string>();
     const watchReconciliations = new Set<string>();
     const viewerChanges = new Map<string, Set<string>>();
+    // The two halves of "somebody's reach into a Space moved in this batch":
+    // the Channels whose viewer participation changed, and the people it
+    // changed for. Participation and nothing else, because the Channel half of
+    // the Space visibility predicate is `scope = 'workspace' OR is_participant`
+    // — an unread count or a mention arrives on every message and moves no
+    // Space at all.
+    const reachChannels = new Set<string>();
+    const reachViewers = new Set<string>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     let spaceDirectoryChanged = false;
     // A breakout's move is a Space dashboard's move and nothing else's. It is
@@ -7923,6 +7931,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           // only reached the affected viewer's socket would leave everyone
           // else's pile stale until reconnect.
           commonChanges.add(envelope.parentId);
+          reachChannels.add(envelope.parentId);
+          reachViewers.add(envelope.effect.userId);
         } else {
           const users = viewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
@@ -7970,8 +7980,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const spaceStorage = this.spaceStorage();
     if (spaceDirectoryChanged
       || (archivalChanges.size > 0
-        && spaceStorage.noteMemberArchivalChange([...archivalChanges]))) {
+        && spaceStorage.noteMemberDirectoryChange([...archivalChanges]))) {
       this.publishSpaceSnapshot();
+    } else if (reachViewers.size > 0 && spaceStorage.noteMemberDirectoryChange([...reachChannels])) {
+      // A Space is visible to somebody who can see one Channel placed in it,
+      // so losing the last such Channel takes the Space out of their sidebar
+      // and gaining one puts it in — and this is the only event that says so.
+      // Without it the withdrawn Space kept its mark and name on their sidebar
+      // until they reconnected, and the desktop mirrors the snapshot into its
+      // local cache, so the name survived a restart. Nothing was *readable*:
+      // the server-side predicate is live on every read. The name is the
+      // disclosure, and it outlived the reach.
+      //
+      // To exactly these people, not to every socket: this is one person's
+      // relationship to one Channel changing, and a whole-Organization
+      // republication rebuilds both directories per socket for a snapshot
+      // identical to the one everybody else already holds. And only when one
+      // of the Channels is in a Space at all — a participant joining a Channel
+      // no Space holds moves nothing, and the same membership test keeps the
+      // archival arm above off the sockets.
+      for (const userId of reachViewers) this.publishSpaceSnapshot(userId);
     }
     // The Space dashboard's list is ordered by activity and filtered by each
     // conversation's state for the reader, so a member conversation's row

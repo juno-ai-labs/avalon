@@ -2913,8 +2913,14 @@ export class WorkspaceSpaceStorage {
    * every socket on each of those costs far more than the count is worth. The
    * waterline advance is not optional — a Space directory at a waterline a
    * client already holds is dropped as a replay.
+   *
+   * Named for the directory rather than for the archive because two different
+   * moves ask it now: a Channel arriving in or leaving the archive, which
+   * changes what its Spaces say about themselves to everybody, and a person's
+   * participation in a Channel changing, which changes which Spaces that one
+   * person can see at all. The question either one asks is the same.
    */
-  noteMemberArchivalChange(workstreamIds: readonly string[], now = Date.now()): boolean {
+  noteMemberDirectoryChange(workstreamIds: readonly string[], now = Date.now()): boolean {
     if (!this.ready()) return false;
     return this.storage.transactionSync(() => {
       const holdsMembership = boundParameterChunks(workstreamIds).some((chunk) => (
