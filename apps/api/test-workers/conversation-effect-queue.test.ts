@@ -374,10 +374,19 @@ describe("a parent with two children", () => {
 
     const queued = (await pendingParentEffects(parent))
       .filter((envelope) => envelope.effect.kind === "directory_user");
-    // Main advances the provisional parent row; private child activity never
-    // reaches the workspace-wide directory, even for a shared participant.
-    expect(queued.map((envelope) => envelope.sourceVersion)).toEqual([2]);
-    expect(queued.at(-1)?.effect).toMatchObject({ kind: "directory_user", unreadCount: 2, listable: true });
+    // Main advances the Channel row, while the Breakout carries its own tagged
+    // projection to the Space dashboard. The Breakout must not be folded into
+    // Main even though both projections leave the parent.
+    expect(queued).toHaveLength(2);
+    expect(queued.find((envelope) => envelope.substreamId === undefined)).toMatchObject({
+      sourceVersion: 2,
+      effect: { kind: "directory_user", unreadCount: 2, listable: true },
+    });
+    expect(queued.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
+      substreamId: SIBLING_CHILD_ID,
+      sourceVersion: 1,
+      effect: { kind: "directory_user", unreadCount: 3, listable: true },
+    });
 
     await deliverParentEffectsInOrder(env, parent);
     const viewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
@@ -389,6 +398,17 @@ describe("a parent with two children", () => {
       USER_ID,
     ).toArray());
     expect(viewer).toEqual([{ unread_count: 2, waterline: 2 }]);
+    const breakoutViewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+      unread_count: number;
+      waterline: number;
+    }>(
+      `SELECT unread_count, waterline FROM workspace_breakout_viewers
+        WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
+      SIBLING_WORKSTREAM_ID,
+      SIBLING_CHILD_ID,
+      USER_ID,
+    ).toArray());
+    expect(breakoutViewer).toEqual([{ unread_count: 3, waterline: 1 }]);
   });
 });
 
