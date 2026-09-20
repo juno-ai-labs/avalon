@@ -14,7 +14,6 @@ export function NewWorkstreamMenu({
   onCreateChannel,
   onCreateSpace,
   onImportChannel,
-  onStart,
   tooltipSide = 'bottom',
 }: {
   children: ReactElement;
@@ -24,7 +23,6 @@ export function NewWorkstreamMenu({
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
   onImportChannel: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
-  onStart: () => void;
 }): React.JSX.Element {
   const formId = useId();
   const [kind, setKind] = useState<CreationKind | null>(null);
@@ -54,7 +52,6 @@ export function NewWorkstreamMenu({
     setUrl('');
     setImportRequestId(crypto.randomUUID());
     setFailure(null);
-    if (next === 'channel') onStart();
   };
   const close = (): void => {
     if (saving) return;

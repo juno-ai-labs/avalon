@@ -518,6 +518,16 @@ Space row, while the top-level launcher left placement implicit. A single setup
 step makes the two durable identity choices explicit without weakening the
 existing rule that pressing Enter on an opening message is the creation boundary.
 
+**Considered and rejected:** Creating the Channel as soon as the setup form is
+submitted. That would move the durable boundary ahead of participant selection
+and the opening message, leaving abandoned empty Channels when setup is cancelled.
+
+**Consequences:** The selected name and Space remain route state until the
+opening message is submitted. Telemetry marks the sidebar entrypoint at that
+handoff, and the launching header can show the settled name immediately.
+
+Shipped in #876.
+
 ### 2026-09-19 — The launching header is the destination's row, immediately
 
 **What changed:** The launching header's height is 44px, the row

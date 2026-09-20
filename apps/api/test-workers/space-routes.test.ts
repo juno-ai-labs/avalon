@@ -328,6 +328,18 @@ describe("POST /spaces", () => {
 });
 
 describe("POST /workstreams/import", () => {
+  it("rejects an imported title outside the Channel creation contract", async () => {
+    const imported = await request("/workstreams/import", OWNER_AUTH, {
+      title: "x".repeat(181),
+      source: { provider: "claude", url: null },
+      content: { messages: [{ role: "user", text: "What did we learn?" }] },
+      clientMessageId: "00000000-0000-7000-8000-00000000d204",
+      spaceIds: [],
+    });
+
+    expect(imported.status).toBe(400);
+  });
+
   it("settles the chosen title and places imported history in the selected Space", async () => {
     const destination = await createSpace("personal", "Research");
     const imported = await request("/workstreams/import", OWNER_AUTH, {

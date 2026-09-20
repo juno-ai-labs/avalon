@@ -1793,6 +1793,20 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
+  const createChannelFromSidebar = useCallback(async (input: { name: string; spaceId: string }): Promise<void> => {
+    markSurfaceEntrypoint('sidebar_new');
+    try {
+      await onCreateChannel(input);
+    } catch (cause) {
+      markSurfaceEntrypoint('direct');
+      throw cause;
+    }
+  }, [onCreateChannel]);
+  const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
+    const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
+    void navigate(`/spaces/${created.id}`);
+  }, [navigate, onCreateSpace]);
+
   // Active standalone Sidekicks occupy the strip. Until one exists, its empty
   // slot remains the dashed New Sidekick action; the whole section stays absent
   // only while the workspace answer is still loading.
@@ -1837,13 +1851,9 @@ export function Sidebar({
           <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             spaces={placementSpaces}
-            onCreateChannel={onCreateChannel}
-            onCreateSpace={async (name) => {
-              const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
-              void navigate(`/spaces/${created.id}`);
-            }}
+            onCreateChannel={createChannelFromSidebar}
+            onCreateSpace={createSpaceFromSidebar}
             onImportChannel={onImportChannel}
-            onStart={() => markSurfaceEntrypoint('sidebar_new')}
           >
             <button type="button"
               aria-hidden={compact}
@@ -1879,13 +1889,9 @@ export function Sidebar({
               tooltipSide="right"
               canCreateSpace={spaces !== undefined && spacesReady}
               spaces={placementSpaces}
-              onCreateChannel={onCreateChannel}
-              onCreateSpace={async (name) => {
-                const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
-                void navigate(`/spaces/${created.id}`);
-              }}
+              onCreateChannel={createChannelFromSidebar}
+              onCreateSpace={createSpaceFromSidebar}
               onImportChannel={onImportChannel}
-              onStart={() => markSurfaceEntrypoint('sidebar_new')}
             >
               <button type="button"
                 aria-label={NEW_STREAM_LABEL}
@@ -1910,13 +1916,9 @@ export function Sidebar({
             <NewWorkstreamMenu
               canCreateSpace={spaces !== undefined && spacesReady}
               spaces={placementSpaces}
-              onCreateChannel={onCreateChannel}
-              onCreateSpace={async (name) => {
-                const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
-                void navigate(`/spaces/${created.id}`);
-              }}
+              onCreateChannel={createChannelFromSidebar}
+              onCreateSpace={createSpaceFromSidebar}
               onImportChannel={onImportChannel}
-              onStart={() => markSurfaceEntrypoint('sidebar_new')}
             >
               <button type="button"
                 className={clsx('sidebar-action', onNewStreamRoute && 'is-active')}

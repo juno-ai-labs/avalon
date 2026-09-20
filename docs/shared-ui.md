@@ -57,7 +57,7 @@ open, and the list that was missing it wrote the arrangement the pointer
 happened to build on its way past.
 
 The Space components follow the same split, one step further. A `SpaceRow` draws
-the geometry, the accordion, the hover-revealed plus and the motion keys, and
+the geometry, the accordion and the motion keys, and
 takes the host's own navigation element as a slot — routing is a host decision
 under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
 treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
@@ -66,16 +66,13 @@ that is presentation; the host only ever learns the committed name. Nothing here
 fetches, and no component infers a capability from an omitted prop: a Space with
 no audience control is a host that decided not to draw one.
 
-`SpaceRow` still requires the drag handlers and **the new-Channel action is
-optional**, which is the one capability this component lets a host withhold. A
-host may hand a reader a Space they can see and may write nothing on — Rally
-does, for a Space reached only through a Channel placed in it
-([`spaces.md`](spaces.md#who-may-see-a-space-and-why)) — and a plus that can
-only fail is worse than no plus. The row's grid keeps its third column either
-way, so a list mixing the two kinds does not have its names in two different
-places. The Space dashboard's Channel and breakout entries are host-owned links,
-not shared removable rows; the landing page draws both at full width and keeps
-placement management in its owning surfaces.
+`SpaceRow` still requires the drag handlers, but carries no creation action.
+Creation belongs to the host's global launcher, while the row presents a Space
+consistently whether the reader may write it or reaches it only through a Channel
+placed in it ([`spaces.md`](spaces.md#who-may-see-a-space-and-why)). The Space
+dashboard's Channel and breakout entries are host-owned links, not shared
+removable rows; the landing page draws both at full width and keeps placement
+management in its owning surfaces.
 
 The guest browser passes no Space props at all and draws no Space navigation.
 
@@ -125,6 +122,26 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-20 — Space rows stop advertising creation
+
+**What changed:** `SpaceRow` no longer accepts or renders a new-Channel action,
+and its layout no longer reserves a trailing action column. Hosts put creation
+in their global launcher rather than attaching it to each Space row.
+
+**Why:** Once Rally consolidated creation in the sidebar launcher, the shared
+row action had no callers. Keeping it advertised a presentation capability no
+host used and preserved layout around a control the product had removed.
+
+**Considered and rejected:** Keeping an optional callback for a future host.
+There is no second creation placement to model, and adding one later is cheaper
+than maintaining a dead contract now.
+
+**Consequences:** Space rows now have one presentation shape for writable and
+read-only reach. A future host that needs row-local creation must make that a new
+product decision rather than discovering an unused callback.
+
+Shipped in #876.
 
 ### 2026-09-20 — The Space dashboard sheds its retired management lists
 
