@@ -478,6 +478,37 @@ describe('the Space dashboard', () => {
     }));
   });
 
+  // The sentence for a refused roster is drawn inside this dialog, so a dialog
+  // that closes on the refusal closes over the only place it would be read.
+  // The refusal this is about is new: a personal Space cannot be narrowed to a
+  // participant list its own editor is not on.
+  it('keeps the participants dialog open on a refusal, with the sentence in it', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([member, {
+      id: '00000000-0000-7000-8000-000000000003',
+      name: 'Samantha Lee',
+      email: 'samantha@example.com',
+      timezone: 'America/Los_Angeles',
+    }]);
+    api.updateSpaceAudience.mockRejectedValueOnce(new ApiError(
+      'Making “Hiring” private without you in it would leave you unable to change it back',
+      409,
+      'space_audience_self_excluded',
+    ));
+    renderSpace();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Space participants' });
+    const checkboxes = within(dialog).getAllByRole('checkbox');
+    fireEvent.click(checkboxes[1]!);
+    fireEvent.click(checkboxes[0]!);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(await within(dialog).findByText(
+      'You can’t make a space private without yourself in it. Add yourself back to keep access.',
+    )).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Space participants' })).toBeVisible();
+  });
+
   // A remembered Space is read-only until the directory is live: every edit
   // sends the whole record back, so one made against the seed would carry
   // fields another client may have changed since the row was written.

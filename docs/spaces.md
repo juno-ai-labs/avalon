@@ -186,7 +186,10 @@ personal without its own caller on the list hands them a Space they can no
 longer change — and, unless a Channel in it is one they can read, no longer
 see. There is no undo: the Space's own authority accepts, the walk carries it
 to every member Channel, and the one person who would ask for it back is the
-one who cannot. It is refused `space_audience_self_excluded` at two depths —
+one who cannot. **Space participants** is where a person does it, and that
+dialog stays open on the refusal — the sentence for it is drawn inside the
+dialog, so one that closed would close over the only place it would be read.
+It is refused `space_audience_self_excluded` at two depths —
 `SpaceService.updateAudience` before the containment preflight walks anything,
 and `applyAudience` before the write, which is the fence for any other caller
 of the RPC. Removing *somebody else* is a different decision under a different
@@ -1540,7 +1543,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the two empty states, the one activity-ordered list of both kinds, the refetch after a reconnect and the one it does not do for the connection it opened on, the blocked-archive copy, General's protections, and that one refusal appears once. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the two empty states, the one activity-ordered list of both kinds, the refetch after a reconnect and the one it does not do for the connection it opened on, the blocked-archive copy, General's protections, that one refusal appears once, and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
@@ -1985,7 +1988,13 @@ a viewer-scoped count that could be zero — which the contract says such a
 viewer's count never is. Both halves are closed: that narrowing is refused by
 name, and the read renders the predicate, so `readable` is one gate rather than
 two and every mutation that cannot see its own answer passes on "no such Space"
-rather than a row it cannot account for.
+rather than a row it cannot account for. Driving the refusal in a real window
+found the third half: **Space participants** closed on it, and the sentence
+that names it is drawn inside that dialog, so a person saw nothing happen at
+all. It closes on success only now. The three other dialogs on that screen
+close the same way for the same reason and are left as they are — none of them
+is where this change's refusal lands, and each is its own decision about what a
+half-applied multi-item add should leave on screen.
 
 **Manage access** was the same disclosure through the client. Its Space row
 carries a count of the readers that source seated on the Channel — the
