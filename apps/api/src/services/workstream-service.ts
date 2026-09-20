@@ -864,8 +864,8 @@ export class WorkstreamService {
     // name; reaching the Channel authority first would materialise an empty
     // `WorkstreamDO` for a Space id and record a direct scope on it. The title
     // is what the refusals below need anyway.
-    const { title } = await client.get();
     const access = new ChannelAccessService(this.env, this.auth);
+    const title = await access.channelTitle(id);
     if (input.scope === "personal") await access.narrowDirectScope(id);
     const recorded = await access.recordDirectScope(id, input.scope);
     if (!recorded.ok) throw spaceAccessError(recorded.code, title);
@@ -942,12 +942,14 @@ export class WorkstreamService {
    * direct source losing a reader.
    */
   async removeParticipant(id: string, userId: string): Promise<void> {
-    const client = await this.authoritativeClient(id);
-    await client.removeParticipant(userId);
+    await requireOpenWorkstreamAuthority(this.env);
+    const accessLost = await new ChannelAccessService(this.env, this.auth)
+      .removeDirectReader(id, userId);
     // The room closes its own sockets for the person it just removed. The
     // automations it owns admitted them through the room, and nothing in the
     // room reaches those objects, so this is where the retraction is
     // published: whoever writes the fact publishes it, in the same request.
+    if (!accessLost) return;
     await publishAccessRevocation(this.env, {
       reason: "workstream_participant_removed",
       workspaceId: asWorkspaceId(this.auth.workspaceId),

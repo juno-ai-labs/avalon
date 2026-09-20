@@ -5,7 +5,7 @@ import {
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
-import type { SpaceSnapshot } from '@rally/contracts';
+import type { PersonalOrder, SpaceSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
 
 const SPACE_ID = '00000000-0000-7000-8000-0000000000a1';
@@ -122,5 +122,24 @@ describe('applyVersionedSidebarList', () => {
       active: { waterline: 5, items: [] },
       inactive: { waterline: 5, items: [] },
     }, [], true)).toBe(true);
+  });
+
+  it('does not let an older reorder response overwrite a newer snapshot', () => {
+    const queryClient = new QueryClient();
+    applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 4, items: [] }, inactive: { waterline: 4, items: [] },
+    }, [{ container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID] }], true);
+    const expected = queryClient.getQueryData<PersonalOrder>(['personal-order']);
+
+    applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 5, items: [] }, inactive: { waterline: 5, items: [] },
+    }, [{ container: { kind: 'space', id: SPACE_ID }, itemIds: [] }], true);
+    applyContainerOrder(queryClient, {
+      container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID],
+    }, expected);
+
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
+    ]);
   });
 });

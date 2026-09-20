@@ -555,7 +555,7 @@ PRD's idempotency requirement is unchanged and is met by the same state.
 **Decided:** The Project rules in `WorkstreamObjectProductService.update` and
 `removeParticipant` — and the `projectEffect` exemption that went with them —
 were deleted in the change that introduced `ChannelAccessService`, several
-phases before migration 62 drops the Project tables. The Space rule replaced
+phases before migration 64 drops the Project tables. The Space rule replaced
 them in the same change: a Channel that is Organization-wide through a Space
 cannot be made private.
 

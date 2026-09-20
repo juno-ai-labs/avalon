@@ -1,7 +1,7 @@
 /**
  * What retires a Project's undelivered effects, now that nothing asserts on them.
  *
- * WorkspaceDO migration 62 drops eight tables. The PRD makes "zero unsettled
+ * WorkspaceDO migration 64 drops eight tables. The PRD makes "zero unsettled
  * Project effects" a cutover gate, and this is what meets it: the migration
  * settles every pending target and publication in the same transaction that
  * drops them, and the activity consumer keeps a tombstone leg so a message
@@ -28,7 +28,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  * harness stops here, so leaving it behind exercises a ledger production no
  * longer has.
  */
-const PROJECT_RETIREMENT_VERSION = 62;
+const PROJECT_RETIREMENT_VERSION = 64;
 
 const PROJECT_ID = "00000000-0000-7000-8000-0000000000d1";
 const RESOURCE_ID = "00000000-0000-7000-8000-0000000000d2";
@@ -110,7 +110,7 @@ function queued(body: unknown) {
   return { batch, ack, retry };
 }
 
-describe("WorkspaceDO migration 62", () => {
+describe("WorkspaceDO migration 64", () => {
   it("given a Project default still queued, when the migration runs, then it is settled in the same transaction that drops it", () => {
     const database = openDatabase();
     apply(database, PROJECT_RETIREMENT_VERSION - 1);

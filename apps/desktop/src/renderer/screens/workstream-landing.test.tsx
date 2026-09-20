@@ -122,7 +122,7 @@ describe('default channel landing', () => {
   it('surfaces a failed opening socket before the directory query is enabled', () => {
     socket.state = 'unavailable';
     render(<Router />);
-    expect(screen.getByText(/Unable to connect to your workspace/u)).toBeVisible();
+    expect(screen.getByText(/Unable to connect to your organization/u)).toBeVisible();
     expect(screen.queryByTestId('destination')).toBeNull();
   });
 

@@ -40,8 +40,9 @@ export function requireCurrentClientContract(header: ClientRequestHeaders): void
     if (header("origin") === undefined) return;
     throw clientUpdateRequired();
   }
-  const version = Number.parseInt(declared, 10);
-  if (!Number.isFinite(version) || version < MINIMUM_SERVED_CLIENT_CONTRACT) {
+  if (!/^\d+$/u.test(declared)) throw clientUpdateRequired();
+  const version = Number(declared);
+  if (!Number.isSafeInteger(version) || version < MINIMUM_SERVED_CLIENT_CONTRACT) {
     throw clientUpdateRequired();
   }
 }
@@ -50,6 +51,6 @@ function clientUpdateRequired(): ApiError {
   return new ApiError(
     426,
     "client_update_required",
-    "This version of Rally can no longer read this workspace. Update Rally to continue.",
+    "This version of Rally can no longer read this organization. Update Rally to continue.",
   );
 }

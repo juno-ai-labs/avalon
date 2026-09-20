@@ -53,7 +53,7 @@ import { projectionSupersedes, type StoredProjection } from "./projection-fence"
  *   envelope, redelivered until it reaches the dead-letter queue.
  *
  * What a cascade would have bought is a deletion nothing performs: no path
- * deletes a Channel directory row outside migration 62. So the rule lives here
+ * deletes a Channel directory row outside migration 32. So the rule lives here
  * instead, for whoever writes the first one — **deleting a Channel's directory
  * row must delete its breakout rows in the same transaction**, because there
  * is no key that will do it for you.

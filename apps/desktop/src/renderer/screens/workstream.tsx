@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
+import type { PersonalOrder } from '@rally/contracts';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
 import { desktopBridge } from '../lib/platform';
@@ -20,7 +21,7 @@ import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal } from '../components/primitives';
 
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { applyContainerOrder } from '../lib/sidebar-list-store';
+import { applyContainerOrder, PERSONAL_ORDER_QUERY_KEY } from '../lib/sidebar-list-store';
 import { usePersonalOrder } from '../lib/use-space-directories';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
@@ -196,10 +197,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     setBreakoutOrder(substreamIds);
     setSubstreamMenuFailure(null);
     try {
+      const expected = queryClient.getQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY);
       applyContainerOrder(queryClient, await api.reorderContainer({
         container: { kind: 'channel', id },
         itemIds: substreamIds,
-      }));
+      }), expected);
     } catch {
       setSubstreamMenuFailure('reorder_substreams');
     } finally {

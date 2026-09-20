@@ -596,12 +596,11 @@ async function consumeOne(message: Message<unknown>, env: Env,
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
       try {
-        await workspace.recordSpaceIntentReceipt({
+        await workspace.recordSpaceIntentFailure({
           workspaceId: intent.workspaceId,
           userId: intent.requestedByUserId,
           operationId: intent.operationId,
-          receipt: "requester_inactive",
-          settled: true,
+          errorCode: "space_intent_requester_inactive",
         });
       } catch (error) {
         if (!isRetirementRefusal(error)) throw error;

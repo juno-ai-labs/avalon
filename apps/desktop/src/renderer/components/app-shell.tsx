@@ -1,4 +1,4 @@
-import type { CreateSpaceRequest, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateSpaceRequest, PersonalOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
@@ -23,7 +23,7 @@ import {
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -665,7 +665,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // the frame between the response and the socket's republication.
         onReorderContainer={async (order) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          applyContainerOrder(queryClient, await api.reorderContainer(order));
+          const expected = queryClient.getQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY);
+          applyContainerOrder(queryClient, await api.reorderContainer(order), expected);
         }}
         onRestoreSpace={async (spaceId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
