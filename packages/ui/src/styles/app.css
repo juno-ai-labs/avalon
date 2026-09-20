@@ -5282,13 +5282,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-default-list li { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 12px; justify-content: space-between; padding: 10px 12px; }
 .space-default-list li > span { display: grid; min-width: 0; }
 .space-default-list li small { color: var(--av-sys-color-text-muted); font-size: 11px; }
-/* A row with nothing to remove still reserves the control's box. A breakout
-   has no **Remove** — it follows its Channel — and without the reservation its
-   link ran to the right edge while the Channel rows above and below it stopped
-   short of one, putting the activity times in two different columns down a
-   list whose whole value is that it can be scanned. Hidden rather than absent,
-   and hidden by `visibility` rather than by a spacer of a guessed width: the
-   box is exactly the button's, whatever the font renders it at. */
 /* A breakout on the Space dashboard: the same row as its Channel, marked with
    the ↳ the middle column already uses for one.
 
