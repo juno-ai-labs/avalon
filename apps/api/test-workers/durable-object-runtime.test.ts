@@ -6059,6 +6059,15 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.now(),
         Date.now(),
       );
+      state.storage.sql.exec(
+        `UPDATE runs
+            SET legacy_attempt_id = ?, lease_owner = 'compaction-test-owner',
+                lease_expires_at = ?
+          WHERE run_id = ?`,
+        attemptId,
+        Date.now() + 600_000,
+        harnessRunId,
+      );
       await (instance as unknown as TestableSubstreamAgent).publishAgentRuntimeEvent({
         type: "compaction_started",
         compaction: {
@@ -6115,6 +6124,15 @@ describe("Durable Objects in the Workers runtime", () => {
     const recoveredAttemptId = "00000000-0000-7000-8000-000000000129";
     await runInDurableObject(stub, async (instance, state) => {
       const testable = instance as unknown as TestableSubstreamAgent;
+      state.storage.sql.exec(
+        `UPDATE runs
+            SET legacy_attempt_id = ?, lease_owner = 'recovered-compaction-test-owner',
+                lease_expires_at = ?
+          WHERE run_id = ?`,
+        recoveredAttemptId,
+        Date.now() + 600_000,
+        harnessRunId,
+      );
       await testable.publishAgentRuntimeEvent({
         type: "compaction_started",
         compaction: {
