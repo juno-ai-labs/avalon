@@ -53,6 +53,18 @@ import {
   type TerminalPublishedSiteOutput,
 } from "./tools";
 
+/** One captured revision, as `resource_versions` holds it. */
+interface VersionRow extends Record<string, unknown> {
+  title: string;
+  mime_type: string | null;
+  content_ref: string | null;
+  content_sha256: string | null;
+  metadata_json: string;
+  model_content_status: string | null;
+  captured_at: string;
+  author_run_id: string | null;
+}
+
 interface PublishedRow {
   id: string;
   title: string;
@@ -818,6 +830,74 @@ export function createTerminalResourceBridge(
         sizeBytes: bytes.byteLength,
         sourceSha256: digest,
       };
+    },
+
+    /**
+     * Whether *this* attempt's publication happened, asked of the version
+     * ledger rather than of the document.
+     *
+     * `publishResource` resolves a document by `(work stream, normalized
+     * path)`, which answers what is published there now. That is the wrong
+     * question after an interruption, and the gap is not academic: on a digest
+     * mismatch the publish swaps the stored content, so re-entering blind
+     * would write the subject a second time whenever the sandbox file had
+     * moved on, and would overwrite a newer document somebody else published
+     * into the same window.
+     *
+     * `resource_versions` answers the right question, because it is
+     * append-only. WorkspaceDO's triggers capture every insert and every
+     * semantic update into it with the writing run's `author_run_id` and a
+     * `captured_at`, then clear the `revision_author_*` columns on the row
+     * itself — so the current row cannot say who wrote it and the ledger
+     * always can, including for a publication that has since been revised
+     * away. That last case is the one that matters most: a landed attempt
+     * whose document somebody else has already replaced must still read as
+     * landed, or re-entry would undo their work.
+     *
+     * Ordered accordingly: this run's own version in the window first, then
+     * anyone else's, then absence.
+     *
+     * Deliberately reads no sandbox bytes. The file is shared mutable state
+     * and the interrupted attempt's digest was never recorded, so bytes cannot
+     * distinguish "I wrote this" from "somebody wrote this".
+     */
+    async reconcilePublishedResource(context, input) {
+      const providerResourceId = await publishedResourceIdentity(
+        publicationWorkstream(context, undefined),
+        input.filePath,
+      );
+      const document = await workspace.prepare(
+        `SELECT id FROM resources
+          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
+      ).bind(context.workspaceId, providerResourceId).first<{ id: string }>();
+      if (!document) return { outcome: "not_landed" as const };
+      const versions = await workspace.prepare(
+        `SELECT title, mime_type, content_ref, content_sha256, metadata_json,
+                model_content_status, captured_at, author_run_id
+           FROM resource_versions
+          WHERE workspace_id = ? AND resource_id = ? AND captured_at >= ?
+          ORDER BY version ASC`,
+      ).bind(context.workspaceId, document.id, new Date(context.attemptStartedAt).toISOString())
+        .all<VersionRow>();
+      const inWindow = versions.results ?? [];
+      const mine = inWindow.find((version) => version.author_run_id === context.harnessRunId);
+      if (mine) {
+        let size = 0;
+        try {
+          const metadata = JSON.parse(mine.metadata_json) as { size?: unknown };
+          size = typeof metadata.size === "number" ? metadata.size : 0;
+        } catch { /* legacy metadata; every other output field still resolves */ }
+        // Built from the captured version rather than the live row, because
+        // those differ exactly when somebody revised the document afterwards,
+        // and what this attempt published is the version it wrote.
+        return { outcome: "landed" as const, result: {
+          output: publishedOutput({ ...mine, id: document.id, created_at: mine.captured_at }, size),
+          summary: `Published ${input.filePath}`,
+        } };
+      }
+      return inWindow.length > 0
+        ? { outcome: "unknown" as const, reason: "publication_revised_by_another_run" }
+        : { outcome: "not_landed" as const };
     },
 
     async publishResource(context, input, bytes) {

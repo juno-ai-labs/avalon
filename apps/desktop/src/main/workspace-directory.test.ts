@@ -57,8 +57,8 @@ const profiles: StoredProfileSet = {
   workspaces: [profile(europe), profile(laCabra), profile(junoLabs)],
 };
 
-describe('stored workspace summaries', () => {
-  it('lists every stored workspace, most recently selected first and never-selected ones after', () => {
+describe('stored organization summaries', () => {
+  it('lists every stored organization, most recently selected first and never-selected ones after', () => {
     expect(storedWorkspaceSummaries(auth, profiles).map((row) => [row.name, row.credentialStored])).toEqual([
       ['Juno Labs', true],
       ['La Cabra', true],
@@ -83,8 +83,8 @@ describe('stored workspace summaries', () => {
   });
 });
 
-describe('merged workspace directory', () => {
-  it('keeps a stored workspace that discovery could not list and marks which rows this device can read', () => {
+describe('merged organization directory', () => {
+  it('keeps a stored organization that discovery could not list and marks which rows this device can read', () => {
     const stored = storedWorkspaceSummaries(auth, profiles);
     const merged = mergeWorkspaceDirectory(
       [{ ...junoLabs, name: 'Juno Labs (renamed)' }, joinedElsewhere],
@@ -119,7 +119,7 @@ describe('merged workspace directory', () => {
     ]);
   });
 
-  it('does not confuse a same-id workspace in the other region with a stored one', () => {
+  it('does not confuse a same-id organization in the other region with a stored one', () => {
     const regionalTwin = { ...laCabra, region: 'enterprise' as const, name: 'La Cabra enterprise' };
     const merged = mergeWorkspaceDirectory([regionalTwin], storedWorkspaceSummaries(auth, profiles), auth);
 
@@ -132,20 +132,20 @@ describe('merged workspace directory', () => {
   });
 });
 
-describe('ended stored workspaces', () => {
+describe('ended stored organizations', () => {
   const discoveredAt = '2026-09-02T12:00:00.000Z';
 
-  it('names a stored background workspace that a complete discovery no longer lists', () => {
+  it('names a stored background organization that a complete discovery no longer lists', () => {
     expect(endedStoredWorkspaces(auth, profiles, [junoLabs, europe], discoveredAt)).toEqual([
       { workspaceId: laCabra.id, region: 'global' },
     ]);
   });
 
-  it('never names the active workspace, even when discovery omits it', () => {
+  it('never names the active organization, even when discovery omits it', () => {
     expect(endedStoredWorkspaces(auth, profiles, [laCabra, europe], discoveredAt)).toEqual([]);
   });
 
-  it('spares a workspace stored after the discovery request began', () => {
+  it('spares an organization stored after the discovery request began', () => {
     const freshProfiles = {
       ...profiles,
       workspaces: profiles.workspaces.map((candidate) => (

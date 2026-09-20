@@ -3,6 +3,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   WorkstreamWorkflowInputSchema,
   asUserId,
@@ -303,6 +304,342 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
       expect(transcript.range(snapshot, { startInclusive: 1, endExclusive: 10 }).covered)
         .toEqual({ startInclusive: 1, endExclusive: 2 });
+    });
+  });
+
+  /**
+   * A run interrupted mid-batch, exactly as the 2026-09-19 incident left one: a
+   * provider-keyed `publish_resource` still `executing`, a `request_elicitation`
+   * whose answer is owed to a person, and an assistant turn holding both.
+   *
+   * Extracted because two tests need it from a clean object — what the repair
+   * does with a claim, and what it does without one — and `reset()` gives each
+   * `it` its own.
+   */
+  async function seedInterruptedWriteBatch(stub: DurableObjectStub, options: {
+    receiptRunId: string;
+    attemptId: string;
+    attemptOwner: string;
+  }): Promise<{ toolCallId: string }> {
+    const { receiptRunId, attemptId, attemptOwner } = options;
+    const now = Date.now();
+    const workflowInput = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      substreamId: "0",
+      loopId: LOOP_ID,
+      harnessRunId: receiptRunId,
+      triggerMessageId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      reason: "user_message",
+    });
+    const toolCallId = `${LOOP_ID}:turn:1:tool:0`;
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.commitBindTransition({
+        kind: "state_initialized",
+        loopId: LOOP_ID,
+        generation: 1,
+        stateRevision: 1,
+        systemProjection: {
+          revision: 1,
+          rendererVersion: "workstream-system-v1",
+          inputHash: "system-input",
+          message: { role: "system", content: "System" },
+        },
+        nonSystemMessages: [{ role: "user", content: "Publish the document" }],
+        nonSystemMessageOrigins: [{
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        }],
+      });
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      runs.admitRun({
+        runId: receiptRunId,
+        origin: "member_message",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "running",
+        startedAt: now,
+        model: "test/model",
+        triggerPartId: null,
+        parentRunId: null,
+        expectedLatestRunId: null,
+        now,
+      });
+      state.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = ? WHERE run_id = ?`,
+        JSON.stringify(workflowInput),
+        receiptRunId,
+      );
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      loop.activateExecutionReceipt({
+        runId: receiptRunId,
+        loopId: LOOP_ID,
+        executionEpoch: 1,
+        leaseOwner: "workerd-test-owner",
+        leaseExpiresAt: now + 60_000,
+        expectedLoopRevision: loop.loop()!.revision,
+        expectedBindStateRevision: 1,
+        now,
+      });
+      runs.claimAttempt({
+        runId: receiptRunId,
+        attemptId,
+        owner: attemptOwner,
+        leaseSeconds: 60,
+        lifecycleEventId: "workerd-write-attempt-claimed",
+        now,
+      });
+      const reservation = loop.reserveAssistantTurn({
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "workerd-test-owner",
+        expectedLoopRevision: loop.loop()!.revision,
+        receiptRunId,
+        turnId: `${LOOP_ID}:turn:1`,
+        modelTurnIndex: 1,
+        streamId: "workerd-write-stream",
+        now,
+      });
+      await transcript.commitBindTransition({
+        kind: "assistant_reserved",
+        loopId: LOOP_ID,
+        generation: 1,
+        stateRevision: 2,
+        turnId: `${LOOP_ID}:turn:1`,
+        modelTurnIndex: 1,
+        transcriptSequence: reservation.reservation!.transcript_sequence,
+      }, now, {
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "workerd-test-owner",
+        expectedBindStateRevision: 1,
+      });
+      await transcript.commitBindTransition({
+        kind: "assistant_accepted",
+        loopId: LOOP_ID,
+        generation: 1,
+        stateRevision: 3,
+        turnId: `${LOOP_ID}:turn:1`,
+        modelTurnIndex: 1,
+        transcriptSequence: reservation.reservation!.transcript_sequence,
+        message: {
+          role: "assistant",
+          content: "Publishing",
+          tool_calls: [{
+            id: "provider-call",
+            type: "function",
+            function: { name: "publish_resource", arguments: "{}" },
+          }, {
+            id: "provider-question",
+            type: "function",
+            function: { name: "request_elicitation", arguments: "{}" },
+          }],
+        },
+      }, now + 1, {
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "workerd-test-owner",
+        expectedBindStateRevision: 2,
+      });
+      // A question already put to a person, whose protocol result is withheld
+      // until they answer. The repair filters it out of the calls it settles.
+      state.storage.sql.exec(
+        `INSERT INTO elicitation_requests
+           (elicitation_id, run_id, prompt, response_type, options_json,
+            minimum_selections, status, created_at, tool_call_id)
+         VALUES ('elicitation-1', ?, 'Which one?', 'single_select', '[]', 1, 'pending', ?, ?)`,
+        receiptRunId,
+        now,
+        `${LOOP_ID}:turn:1:tool:1`,
+      );
+      // The shape the incident left behind: a provider-keyed write admitted
+      // and still `executing` when the isolate went away. Written directly
+      // because reaching it through Bind would mean running a real sandbox.
+      state.storage.sql.exec(
+        `INSERT INTO tool_effects
+           (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+            tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+            connection_id, input_json, execution_plan_hash, execution_plan_json,
+            provider_idempotency_key, started_at, checkpoint_index)
+         VALUES ('effect-publish', ?, 0, 0, 'runtime:effect-publish', 'publish_resource',
+                 'write', 'request-hash', 'plan-hash', 'executing', ?, NULL,
+                 '{"filePath":"prd.md"}', 'plan-hash',
+                 '{"pluginId":"rally:terminal","canonicalToolName":"publish_resource","capability":"terminal.resource.publish","mode":"write","idempotency":"provider_key"}',
+                 ?, ?, 0)`,
+        receiptRunId,
+        toolCallId,
+        `${LOOP_ID}:turn:1:tool:0`,
+        now,
+      );
+    });
+    return { toolCallId };
+  }
+
+  it("names the interrupted write it could not confirm, and repairs the batch anyway", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000706";
+    const attemptId = "workerd-write-attempt";
+    const attemptOwner = "workerd-write-attempt-owner";
+    const { toolCallId } = await seedInterruptedWriteBatch(stub, { receiptRunId, attemptId, attemptOwner });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const resident = instance as unknown as {
+        activeLoopExecution: { runId: string; leaseOwner: string; executionEpoch: number } | null;
+        recoverInterruptedToolBatch(
+          executionEnv: Env,
+          input: WorkstreamWorkflowInput,
+          fence: { attemptId: string; owner: string },
+          lease?: { attemptId: string; owner: string; attemptNumber: number; leaseExpiresAt: number },
+        ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null>;
+        claimPersistentLoopExecution(): Promise<{
+          input: WorkstreamWorkflowInput;
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+      };
+      const replacementClaim = await resident.claimPersistentLoopExecution();
+      if (!replacementClaim) throw new Error("replacement_loop_claim_missing");
+      resident.activeLoopExecution = replacementClaim.execution;
+      // The replacement isolate expires the dead one's attempt lease on the
+      // way in. Model it re-claiming, which `runHarnessAttempt` does before it
+      // reaches the repair; the settlements below are fenced on it.
+      state.storage.sql.exec(
+        "UPDATE runs SET legacy_attempt_id = ?, lease_owner = ?, lease_expires_at = ? WHERE run_id = ?",
+        attemptId,
+        attemptOwner,
+        Date.now() + 600_000,
+        receiptRunId,
+      );
+
+      // Terminal is unconfigured in this suite, so its plugin cannot be built
+      // and the write cannot be asked what it did. That is the one path that
+      // still ends in ambiguity — and it repairs the batch rather than
+      // throwing, because the protocol array has to be whole either way.
+      // `waiting_for_input`, not `ambiguous`, and the order is the whole
+      // point: this batch holds both. While an ambiguity failed the cycle the
+      // two could never collide, so reporting it first was harmless; now that
+      // it continues, it would discard the withheld elicitation and start the
+      // harness on an assistant turn whose second tool call has no result.
+      await expect(resident.recoverInterruptedToolBatch(
+        createTestEnv({ PAYLOADS: env.PAYLOADS }),
+        replacementClaim.input,
+        { attemptId, owner: attemptOwner },
+        { attemptId, owner: attemptOwner, attemptNumber: 1, leaseExpiresAt: Date.now() + 600_000 },
+      )).resolves.toBe("waiting_for_input");
+
+      // The tool is named. A member reading `ambiguous_external_write` alone
+      // cannot tell which of a batch's calls is in doubt, and neither can an
+      // operator reading the receipt's error.
+      expect(transcript.participantTurn(`${LOOP_ID}:turn:1`)!.blocks)
+        .toEqual(expect.arrayContaining([expect.objectContaining({
+          type: "tool",
+          toolCallId,
+          status: "ambiguous",
+          error: expect.stringContaining("publish_resource"),
+        })]));
+      expect(state.storage.sql.exec<{ status: string; error_json: string | null } & Record<string, SqlStorageValue>>(
+        `SELECT status, error_json FROM tool_effects WHERE effect_intent_id = 'effect-publish'`,
+      ).one()).toMatchObject({
+        status: "ambiguous",
+        error_json: expect.stringContaining("publish_resource"),
+      });
+
+      // Repaired, not abandoned: the batch has its result, so the loop can
+      // carry the ambiguity to the model instead of the run dying on it.
+      const recovered = bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!).at(-1);
+      expect(recovered).toMatchObject({ role: "tool", tool_call_id: "provider-call" });
+
+      // And the model is told what the member is told. Continuing past an
+      // ambiguity is only defensible if the one reader able to repeat the
+      // write knows not to; a bare `ambiguous_external_write` code left it
+      // free to reissue the call on a fresh receipt coordinate.
+      const modelResult = JSON.parse(
+        z.object({ content: z.string() }).parse(recovered).content,
+      ) as { success: boolean; kind: string; data: Record<string, unknown> };
+      expect(modelResult).toMatchObject({ success: false, kind: "ambiguous_external_write" });
+      expect(modelResult.data).toMatchObject({
+        code: "ambiguous_external_write",
+        recovery: "ambiguous",
+        toolName: "publish_resource",
+      });
+      expect(String(modelResult.data.instruction)).toContain("publish_resource");
+      expect(String(modelResult.data.instruction)).toContain("Do not repeat it");
+      // Authority is revalidated before the tool is reached, so this run —
+      // which has no seeded membership — never gets as far as building the
+      // plugin, let alone re-entering the write. The live path proves the same
+      // thing in `beforeToolCall`; crash repair bypasses that hook entirely, so
+      // without this the interrupted write of a principal who lost access
+      // between the interruption and the repair would still execute. The value
+      // is the ordering: any later refusal would report its own code here.
+      expect(modelResult.data.reason).toBe("run_authority_lost");
+    });
+  });
+
+  it("will not ask an interrupted write anything without a claim to record the answer under", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000707";
+    const attemptId = "workerd-unleased-attempt";
+    const attemptOwner = "workerd-unleased-attempt-owner";
+    await seedInterruptedWriteBatch(stub, { receiptRunId, attemptId, attemptOwner });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      const resident = instance as unknown as {
+        activeLoopExecution: { runId: string; leaseOwner: string; executionEpoch: number } | null;
+        recoverInterruptedToolBatch(
+          executionEnv: Env,
+          input: WorkstreamWorkflowInput,
+          fence: { attemptId: string; owner: string },
+          lease?: { attemptId: string; owner: string; attemptNumber: number; leaseExpiresAt: number },
+        ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null>;
+        claimPersistentLoopExecution(): Promise<{
+          input: WorkstreamWorkflowInput;
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+      };
+      const replacementClaim = await resident.claimPersistentLoopExecution();
+      if (!replacementClaim) throw new Error("replacement_loop_claim_missing");
+      resident.activeLoopExecution = replacementClaim.execution;
+      state.storage.sql.exec(
+        "UPDATE runs SET legacy_attempt_id = ?, lease_owner = ?, lease_expires_at = ? WHERE run_id = ?",
+        attemptId,
+        attemptOwner,
+        Date.now() + 600_000,
+        receiptRunId,
+      );
+
+      // The failure-settlement caller reconstructs an owner rather than
+      // minting a lease, so it can fence a settlement but cannot hold one open
+      // across a tool call. Asking anyway would mean obtaining an answer with
+      // no claim to record it under, which is worse than not asking.
+      await resident.recoverInterruptedToolBatch(
+        createTestEnv({ PAYLOADS: env.PAYLOADS }),
+        replacementClaim.input,
+        { attemptId, owner: attemptOwner },
+      );
+
+      expect(state.storage.sql.exec<{ status: string; error_json: string | null } & Record<string, SqlStorageValue>>(
+        `SELECT status, error_json FROM tool_effects WHERE effect_intent_id = 'effect-publish'`,
+      ).one()).toMatchObject({
+        status: "ambiguous",
+        // Named, not silent: "nobody asked" and "the question failed" are
+        // different repairs, and only one of them is worth chasing.
+        error_json: expect.stringContaining("no_repair_lease"),
+      });
     });
   });
 

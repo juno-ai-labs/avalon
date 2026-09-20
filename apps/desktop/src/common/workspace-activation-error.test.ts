@@ -6,12 +6,12 @@ import {
   workspaceActivationFailureCode,
 } from './workspace-activation-error';
 
-describe('workspace activation bridge failures', () => {
+describe('organization activation bridge failures', () => {
   it.each(['account_reconnect_required', 'workspace_access_denied', 'workspace_activation_unavailable'] as const)(
     'round-trips the stable %s code through Electron error serialization',
     (code) => {
       const serialized = new Error(
-        `Error invoking remote method 'onboarding:activate-workspace': Error: ${workspaceActivationFailure(code).message}`,
+        `Error invoking remote method 'onboarding:activate-organization': Error: ${workspaceActivationFailure(code).message}`,
       );
 
       expect(workspaceActivationFailureCode(serialized)).toBe(code);
@@ -20,7 +20,7 @@ describe('workspace activation bridge failures', () => {
 
   it('keeps a readable sentence after the code for a surface that does not handle it', () => {
     const failure = accountReconnectRequiredFailure();
-    const serialized = new Error(`Error invoking remote method 'onboarding:create-workspace': Error: ${failure.message}`);
+    const serialized = new Error(`Error invoking remote method 'onboarding:create-organization': Error: ${failure.message}`);
 
     expect(failure.message).toMatch(/\] Sign in to Rally again to continue$/u);
     expect(accountReconnectRequired(serialized)).toBe(true);
@@ -28,6 +28,6 @@ describe('workspace activation bridge failures', () => {
   });
 
   it('does not classify provider prose as an authorization result', () => {
-    expect(workspaceActivationFailureCode(new Error('Workspace access is unavailable'))).toBeNull();
+    expect(workspaceActivationFailureCode(new Error('Organization access is unavailable'))).toBeNull();
   });
 });

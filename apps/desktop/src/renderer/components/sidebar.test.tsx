@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
+import { SpaceSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -118,6 +118,7 @@ function workstream(
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt,
     ...viewerState,
   };
@@ -128,25 +129,45 @@ function pinned(workstream: WorkstreamSummary, position: number): WorkstreamSumm
   return { ...workstream, pinPosition: position };
 }
 
-function dropTargetProject(...workstreamIds: string[]) {
-  return ProjectSummarySchema.parse({
-    id: '00000000-0000-7000-8000-0000000000f2',
-    name: 'Hiring',
+function space(
+  id = '00000000-0000-7000-8000-0000000000f2',
+  name = 'Hiring',
+  overrides: Record<string, unknown> = {},
+) {
+  return SpaceSummarySchema.parse({
+    id,
+    name,
     iconKey: 'briefcase',
     colorKey: 'blue',
     scope: 'personal',
     status: 'active',
-    presentationRevision: 1,
-    audienceGeneration: 1,
-    lifecycleGeneration: 1,
-    participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+    systemRole: null,
+    revision: 1,
+    reach: 'participant',
+    participants: [{ userId: '00000000-0000-7000-8000-0000000000f1' }],
+    channelCount: 0,
+    defaultResourceIds: [],
+    defaultSidekickIds: [],
     createdAt: '2026-08-27T00:00:00.000Z',
     updatedAt: '2026-08-27T00:00:00.000Z',
-    workstreamIds,
+    ...overrides,
   });
 }
 
-describe('Sidebar work-stream markers', () => {
+/** General: the Organization's protected fallback, present in every sidebar. */
+function general() {
+  return space('00000000-0000-7000-8000-0000000000f0', 'General', {
+    scope: 'workspace',
+    systemRole: 'general',
+  });
+}
+
+/** The same Channel, placed in each of the Spaces named. */
+function placedIn(target: WorkstreamSummary, ...spaceIds: string[]): WorkstreamSummary {
+  return { ...target, spaceIds };
+}
+
+describe('Sidebar channel markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
@@ -180,17 +201,17 @@ describe('Sidebar work-stream markers', () => {
       .toBeLessThan(links.findIndex((text) => text?.includes('New shared activity')));
   });
 
-  it('keeps the unsent new work stream out of the sidebar', () => {
+  it('keeps the unsent new channel out of the sidebar', () => {
     render(<MemoryRouter initialEntries={['/workstreams/new']}><Tooltip.Provider>
       <Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()}
         workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
 
-    expect(screen.queryByLabelText('New work stream draft')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
+    expect(screen.queryByLabelText('New channel draft')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New channel' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
-  it('reduces the GrokBot shell navigation to work streams', () => {
+  it('reduces the GrokBot shell navigation to channels', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -210,13 +231,13 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('region', { name: 'Sidekick shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
     expect(screen.queryByText('New automation')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Search workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Search organization' })).toBeInTheDocument();
     const titlebar = document.querySelector('.sidebar-titlebar');
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(titlebar).not.toBeNull();
     expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New work stream' }));
-    expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
+    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New channel' }));
+    expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search organization' }));
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
 
@@ -226,7 +247,7 @@ describe('Sidebar work-stream markers', () => {
   // sentence, and it says work stream in the GrokBot shell too — that shell
   // presents a conversation as a chat, but the route this opens still starts a
   // work stream.
-  it('names the plus New work stream in the titlebar, the rail, and the GrokBot shell', () => {
+  it('names the plus New channel in the titlebar, the rail, and the GrokBot shell', () => {
     function Navigation(props: { compact?: boolean; conversationOnly?: boolean }) {
       return <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
     }
@@ -234,7 +255,7 @@ describe('Sidebar work-stream markers', () => {
 
     const titlebar = document.querySelector('.sidebar-titlebar');
     expect(titlebar).not.toBeNull();
-    const create = within(titlebar as HTMLElement).getByRole('button', { name: 'New work stream' });
+    const create = within(titlebar as HTMLElement).getByRole('button', { name: 'New channel' });
     // Both links are tooltip triggers, and Radix's Slot string-merges the
     // child's `className`: hand it `NavLink`'s callback form and the class
     // arrives at the DOM as that callback's source text, leaving the control
@@ -242,19 +263,19 @@ describe('Sidebar work-stream markers', () => {
     // window shows that, and a window is not a gate the next change runs.
     expect(create).toHaveClass('sidebar-new-button');
     fireEvent.focus(create);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
 
     rerender(<MemoryRouter><Tooltip.Provider><Navigation compact /></Tooltip.Provider></MemoryRouter>);
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(commandbar).not.toBeNull();
-    const rail = within(commandbar as HTMLElement).getByRole('button', { name: 'New work stream' });
+    const rail = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel' });
     expect(rail).toHaveClass('sidebar-new-button', 'sidebar-rail-new-button');
     fireEvent.focus(rail);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
 
     rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.focus(screen.getByRole('button', { name: 'New work stream' }));
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
+    fireEvent.focus(screen.getByRole('button', { name: 'New channel' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -500,8 +521,8 @@ describe('Sidebar work-stream markers', () => {
     expect(document.getElementById(link.getAttribute('aria-describedby')!)).toHaveTextContent(item.title);
   });
 
-  it('forwards a work-stream row hover to the pooled socket warm-up', () => {
-    const hovered = workstream('hovered-workstream', 'Warm this work stream', 'completed');
+  it('forwards a channel row hover to the pooled socket warm-up', () => {
+    const hovered = workstream('hovered-workstream', 'Warm this channel', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -515,8 +536,8 @@ describe('Sidebar work-stream markers', () => {
         </Tooltip.Provider>
       </MemoryRouter>,
     );
-    const row = screen.getByText('Warm this work stream').closest('[data-workstream-id]');
-    if (!row) throw new Error('The work-stream row has no hover target.');
+    const row = screen.getByText('Warm this channel').closest('[data-workstream-id]');
+    if (!row) throw new Error('The channel row has no hover target.');
 
     fireEvent.pointerEnter(row);
     expect(startWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
@@ -528,7 +549,7 @@ describe('Sidebar work-stream markers', () => {
 
     const socketLeaseId = '018f22f2-4c22-7abc-8def-012345678905';
     workstreamSocketOpenContext.mockReturnValue({ state: 'control_warmup', socketLeaseId });
-    fireEvent.click(screen.getByRole('link', { name: /Warm this work stream/u }));
+    fireEvent.click(screen.getByRole('link', { name: /Warm this channel/u }));
     expect(markWorkstreamFeedOpenStarted).toHaveBeenCalledWith(
       hovered.id,
       'recent',
@@ -558,7 +579,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.keyUp(window, { key: 'Meta' });
   });
 
-  it('omits work-stream descriptions even when the objective is populated', () => {
+  it('omits channel descriptions even when the objective is populated', () => {
     const described = {
       ...workstream('described-workstream', 'Daily competitor marketing', 'completed'),
       objective: 'Tracks competitor positioning and campaign changes.',
@@ -582,27 +603,18 @@ describe('Sidebar work-stream markers', () => {
       .not.toBeInTheDocument();
   });
 
-  it('given a project member, when the accordion opens, then the child is the same work-stream row as the recent list', () => {
+  // A placement is not a copy: the rows under an expanded Space go through the
+  // same component the rest of the sidebar draws a Channel with, so a Channel
+  // in two Spaces is one record shown twice rather than two rows that can
+  // drift.
+  it('given a channel in two spaces, when both accordions open, then each placement is the same channel row', () => {
     const memberId = '00000000-0000-7000-8000-0000000000e1';
-    const member = {
+    const hiring = space();
+    const company = space('00000000-0000-7000-8000-0000000000f3', 'Company');
+    const member = placedIn({
       ...workstream(memberId, 'Ship the launch', 'completed'),
       preview: 'Draft the announcement',
-    };
-    const project = ProjectSummarySchema.parse({
-      id: '00000000-0000-7000-8000-0000000000f2',
-      name: 'Hiring',
-      iconKey: 'briefcase',
-      colorKey: 'blue',
-      scope: 'personal',
-      status: 'active',
-      presentationRevision: 1,
-      audienceGeneration: 1,
-      lifecycleGeneration: 1,
-      participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
-      createdAt: '2026-08-27T00:00:00.000Z',
-      updatedAt: '2026-08-27T00:00:00.000Z',
-      workstreamIds: [memberId],
-    });
+    }, hiring.id, company.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -610,7 +622,7 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[project]}
+            spaces={[hiring, company]}
             workspace={workspace}
             workstreams={[member]}
           />
@@ -619,8 +631,9 @@ describe('Sidebar work-stream markers', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Company' }));
     const rows = screen.getAllByRole('link', { name: /Ship the launch/u });
-    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row).toHaveClass('sidebar-row', 'workstream-row');
       expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
@@ -628,7 +641,7 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
+  it('does not start navigation telemetry when the active channel row is clicked again', () => {
     const active = workstream('active-workstream', 'Already open', 'completed');
     render(
       <MemoryRouter initialEntries={[`/workstreams/${active.id}`]}>
@@ -729,6 +742,7 @@ describe('Sidebar work-stream markers', () => {
             automations={[]}
             loading
             onSignOut={vi.fn()}
+            spaces={[]}
             workspace={workspace}
             workstreams={[]}
           />
@@ -736,16 +750,16 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the projects, then two groups of
+    // Three for the spaces, then two groups of
     // four and three.
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects and work streams')).toBeInTheDocument();
+    expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
-    expect(screen.queryByText('No work streams yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
 
     rerender(
       <MemoryRouter>
@@ -755,6 +769,7 @@ describe('Sidebar work-stream markers', () => {
             automations={[]}
             loading={false}
             onSignOut={vi.fn()}
+            spaces={[]}
             workspace={workspace}
             workstreams={[workstream('00000000-0000-4000-8000-000000000030', 'Launch brief', 'running')]}
           />
@@ -820,7 +835,7 @@ describe('Sidebar work-stream markers', () => {
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
 
-  it('marks a work stream this person has never opened, whatever its run is doing', async () => {
+  it('marks a channel this person has never opened, whatever its run is doing', async () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/unseen']}>
         <Tooltip.Provider>
@@ -851,10 +866,10 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
 
     const dot = row.querySelector('.status-unseen');
-    if (!dot) throw new Error('the work-stream row rendered no unseen status dot');
+    if (!dot) throw new Error('the channel row rendered no unseen status dot');
     fireEvent.pointerMove(dot, { pointerType: 'mouse' });
 
-    expect(await screen.findByText('New to you — you were added to this work stream and have not opened it yet.'))
+    expect(await screen.findByText('New to you — you were added to this channel and have not opened it yet.'))
       .toBeVisible();
   });
 
@@ -928,7 +943,7 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByText('Check whether production deploy completed…')).toBeVisible();
   });
 
-  it('waits for a name rather than showing the request a work stream was created from', () => {
+  it('waits for a name rather than showing the request a channel was created from', () => {
     const naming = {
       ...workstream('naming', 'Create an email draft to Danny from Mucker that…', 'running'),
       titleStatus: 'naming' as const,
@@ -951,7 +966,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    const row = screen.getByRole('link', { name: /naming this work stream/u });
+    const row = screen.getByRole('link', { name: /naming this channel/u });
     expect(row.querySelector('.title-skeleton')).not.toBeNull();
     expect(row.textContent).not.toContain('Create an email draft');
     // A settled title is text, not a skeleton — the placeholder is only for the
@@ -989,7 +1004,7 @@ describe('Sidebar work-stream markers', () => {
         </MemoryRouter>,
       );
 
-      expect(screen.getByRole('link', { name: /naming this work stream/u })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /naming this channel/u })).toBeInTheDocument();
       expect(screen.getByRole('link', { name: /July invoices/u })
         .querySelector('.title-skeleton')).toBeNull();
 
@@ -1008,7 +1023,7 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('explains a work-stream dot color on hover', async () => {
+  it('explains a channel dot color on hover', async () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1024,7 +1039,7 @@ describe('Sidebar work-stream markers', () => {
     );
 
     const dot = screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input');
-    if (!dot) throw new Error('the work-stream row rendered no needs-input status dot');
+    if (!dot) throw new Error('the channel row rendered no needs-input status dot');
     fireEvent.pointerMove(dot, { pointerType: 'mouse' });
 
     expect(await screen.findByText('Needs input — the agent is waiting on an answer.')).toBeVisible();
@@ -1064,7 +1079,7 @@ describe('Sidebar work-stream markers', () => {
         'This month',
         'Before this month',
       ]);
-      expect(screen.queryByRole('heading', { name: 'Work streams' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
       expect([...document.querySelectorAll('.workstream-row .sidebar-row-title-copy')].map((row) => row.textContent)).toEqual([
         'Just completed',
         'Recently running',
@@ -1118,7 +1133,7 @@ describe('Sidebar work-stream markers', () => {
     else expect(onPreviewWorkstreamBatch.mock.calls[0]?.[0]).not.toHaveProperty('recency');
     const dialog = await screen.findByRole('dialog', { name: menuLabel });
     await waitFor(() => expect(dialog).toHaveTextContent(
-      new RegExp(`20 work streams.*will be ${resultCopy}`, 'u'),
+      new RegExp(`20 channels.*will be ${resultCopy}`, 'u'),
     ));
     expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
       pinned: false,
@@ -1161,10 +1176,10 @@ describe('Sidebar work-stream markers', () => {
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
     const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
-    await waitFor(() => expect(dialog).toHaveTextContent('20 work streams'));
+    await waitFor(() => expect(dialog).toHaveTextContent('20 channels'));
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(dialog).toHaveTextContent('The work streams couldn’t be updated. Try again.'));
+    await waitFor(() => expect(dialog).toHaveTextContent('The channels couldn’t be updated. Try again.'));
     expect(dialog).not.toHaveTextContent('One Queue chunk was not published.');
     const retry = within(dialog).getByRole('button', { name: 'Continue' });
     await waitFor(() => expect(retry).toBeEnabled());
@@ -1223,14 +1238,14 @@ describe('Sidebar work-stream markers', () => {
   // under it with the compact toggle and leaves with the expand, and is marked
   // so the list motion shows it doing so; the titlebar's own is hidden in the
   // rail rather than unmounted, so it can fade with the layout.
-  it('keeps search above the scroll box in both layouts, with the rail\'s New work stream row inserted under it', () => {
+  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted under it', () => {
     const onOpenSearch = vi.fn();
     const view = (compact: boolean): React.JSX.Element => (
       <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
     );
     const { rerender } = render(view(true));
-    const search = screen.getByRole('button', { name: 'Search workspace' });
-    const create = screen.getByRole('button', { name: 'New work stream' });
+    const search = screen.getByRole('button', { name: 'Search organization' });
+    const create = screen.getByRole('button', { name: 'New channel' });
     expect(screen.getByRole('navigation')).not.toContainElement(search);
     const bar = search.closest('.sidebar-commandbar');
     expect(bar).not.toBeNull();
@@ -1243,8 +1258,8 @@ describe('Sidebar work-stream markers', () => {
     expect(create).toHaveAttribute('aria-haspopup', 'menu');
 
     rerender(view(false));
-    expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
-    const [titlebarCreate, ...others] = screen.getAllByRole('button', { name: 'New work stream' });
+    expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search organization' }));
+    const [titlebarCreate, ...others] = screen.getAllByRole('button', { name: 'New channel' });
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
@@ -1270,7 +1285,7 @@ describe('Sidebar work-stream markers', () => {
     // rather than laid over it. The dot this replaced said only "a state is
     // true here", and inherited the work-stream marker's radius on the way, so
     // what a person actually saw was an unnamed dark square.
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
     const marker = tile.querySelector('.automation-glyph-marker');
     expect(marker).toHaveClass('lucide-play');
     expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
@@ -1281,7 +1296,7 @@ describe('Sidebar work-stream markers', () => {
     // announced. Queried above by the exact name, so a second source for the
     // state has to keep the name right rather than appending to it.
     expect(tile.querySelector('.sr-only')).toBeNull();
-    fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
+    fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Organization' }));
     expect(openSidekicks).toHaveBeenCalledWith('shared');
     // The Sidekicks window is a separate renderer with its own copy of the
     // telemetry module, and its surface mounts no route observer, so a marker
@@ -1295,7 +1310,7 @@ describe('Sidebar work-stream markers', () => {
     const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
 
     // One tooltip language per slot. `title` is the desktop's own: a different
     // delay, a different type, no theme, and nothing at all on keyboard focus —
@@ -1304,7 +1319,7 @@ describe('Sidebar work-stream markers', () => {
     expect(tile).not.toHaveAttribute('title');
 
     fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
     // Not the state: every tile in this strip is active, the play in the corner
     // reports it, and the tile's one line is better spent on which Sidekick it
     // is. A screen reader still gets the state, out of the accessible name
@@ -1325,7 +1340,7 @@ describe('Sidebar work-stream markers', () => {
     const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    return within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+    return within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
   }
 
   /** The marker's hover target: the `<g>` the hexagon wraps its play in. */
@@ -1341,7 +1356,7 @@ describe('Sidebar work-stream markers', () => {
     // 80px and dropped outright by the rail.
     act(() => { tile.focus(); });
 
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
   });
 
   it('says what the play means to a reader who cannot rest a pointer on it', () => {
@@ -1395,7 +1410,7 @@ describe('Sidebar work-stream markers', () => {
 
       fireEvent.pointerMove(tile, { pointerType: 'mouse' });
       act(() => { vi.advanceTimersByTime(600); });
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Team brief · Organization');
 
       fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
       act(() => { vi.advanceTimersByTime(50); });
@@ -1409,7 +1424,7 @@ describe('Sidebar work-stream markers', () => {
       fireEvent.pointerMove(tile, { pointerType: 'mouse' });
       act(() => { vi.advanceTimersByTime(50); });
       expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Team brief · Workspace']);
+        .toEqual(['Team brief · Organization']);
     } finally {
       vi.useRealTimers();
     }
@@ -1442,7 +1457,7 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
   });
 
-  it('waits for the workspace answer before saying a workspace has no Sidekicks', () => {
+  it('waits for the organization answer before saying an organization has no Sidekicks', () => {
     // The array itself carries the wait, so no caller has to remember a flag.
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={undefined} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
@@ -1466,14 +1481,14 @@ describe('Sidebar work-stream markers', () => {
     expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
-  it('does not resume a workspace draft whose management authority is unknown', () => {
+  it('does not resume an organization draft whose management authority is unknown', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workspace', status: 'draft' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
     fireEvent.click(create);
     expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
-  it('keeps the new-Sidekick slot when only a work-stream-owned Sidekick exists', () => {
+  it('keeps the new-Sidekick slot when only a channel-owned Sidekick exists', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
     fireEvent.click(create);
@@ -1488,10 +1503,10 @@ describe('Sidebar work-stream markers', () => {
     // same place and now carries the same name.
     const actions = document.querySelector('.sidebar-primary-actions');
     expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
+    expect(within(actions as HTMLElement).getByRole('button', { name: 'New channel' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
-  it('archives a work stream from the menu once the confirmation is accepted', async () => {
+  it('archives a channel from the menu once the confirmation is accepted', async () => {
     const onArchiveWorkstream = vi.fn(async () => undefined);
     const target = workstream('archive-me', 'Quarterly planning', 'completed');
     render(
@@ -1511,20 +1526,20 @@ describe('Sidebar work-stream markers', () => {
 
     const row = screen.getByRole('link', { name: /Quarterly planning/u });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
 
     // Cancelling is the whole point of confirming: a right-click that landed a
     // row away from where it was aimed must not have archived anything.
-    const dialog = await screen.findByRole('dialog', { name: 'Archive work stream' });
+    const dialog = await screen.findByRole('dialog', { name: 'Archive channel' });
     expect(within(dialog).getByText('Quarterly planning')).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive channel' }))
       .not.toBeInTheDocument());
     expect(onArchiveWorkstream).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive channel' }))
       .getByRole('button', { name: 'Archive' }));
 
     await waitFor(() => expect(onArchiveWorkstream).toHaveBeenCalledWith(target));
@@ -1532,13 +1547,13 @@ describe('Sidebar work-stream markers', () => {
       kind: 'workstream_action_completed', workstreamId: target.id, action: 'archive',
       visibility: 'public', origin: 'ad_hoc', pinned: false,
     }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive channel' }))
       .not.toBeInTheDocument());
   });
 
-  it('reports a work-stream archive the server rejected instead of failing silently', async () => {
+  it('reports a channel archive the server rejected instead of failing silently', async () => {
     const onArchiveWorkstream = vi.fn(async () => {
-      throw new Error('The work stream could not be reached.');
+      throw new Error('The channel could not be reached.');
     });
     const target = workstream('archive-me', 'Quarterly planning', 'completed');
     render(
@@ -1559,19 +1574,19 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120, clientY: 90,
     });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive channel' }))
       .getByRole('button', { name: 'Archive' }));
 
-    const failure = await screen.findByRole('dialog', { name: 'Work stream could not be archived' });
-    expect(failure).not.toHaveTextContent('The work stream could not be reached.');
+    const failure = await screen.findByRole('dialog', { name: 'Channel could not be archived' });
+    expect(failure).not.toHaveTextContent('The channel could not be reached.');
     // The copy line, not only the message: it is the sentence that tells the
     // reader the row survived, which is the whole reason this dialog exists.
-    expect(within(failure).getByText('The work stream is still in the sidebar. Try again in a moment.'))
+    expect(within(failure).getByText('The channel is still in the sidebar. Try again in a moment.'))
       .toBeVisible();
 
     fireEvent.click(within(failure).getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Work stream could not be archived' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Channel could not be archived' }))
       .not.toBeInTheDocument());
     // The row is still there, and saying so is the reason this dialog exists:
     // the sidebar looks identical either way, so a silent failure reads as an
@@ -1582,11 +1597,11 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
-  // The submenu that used to sit between Rename and the scope item is gone. The
-  // neighbours are asserted alongside it because an absence on its own also
+  // The neighbours are asserted alongside it because an absence on its own also
   // holds when the menu never opened, which would pass whatever the menu says.
-  it('given a project, when the row menu opens, then it offers no Add to project', async () => {
-    const target = workstream('menu-projects', 'Quarterly planning', 'completed');
+  it('given a channel already in a space, when the row menu opens, then only the other spaces are offered', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('menu-spaces', 'Quarterly planning', 'completed'), hiring.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1594,7 +1609,7 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general(), hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1602,18 +1617,117 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    // The row lives under the Space that holds it; there is no second, flat
+    // list of the same Channel to reach it through.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Archive work stream' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Add to project' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toBeVisible();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
+    expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
+    // Already a placement there: adding it again is not on offer.
     expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
   });
 
-  // A drag that cannot be released anywhere is worse than no drag: it draws a
-  // ghost, takes the pointer, and then does nothing. The conversation-only
-  // sidebar draws no project section, so having projects is not enough.
-  it('given a project but no project section, when a row renders, then it is not draggable', () => {
+  // A Space this reader reaches only through a Channel in it is a row they can
+  // see and nothing they can write on. Placing a Channel there is refused by
+  // name, so it is not offered — the same rule the plus on its row is under.
+  it('given a space reached through a channel, when the row menu opens, then it is not offered', async () => {
+    const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', {
+      reach: 'through_channel',
+      participants: [],
+      channelCount: 1,
+    });
+    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), general().id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[general(), reached]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand General' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
+
+    // The submenu is drawn at all, which is what makes the absence below a
+    // decision about this Space rather than an empty menu.
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+  });
+
+  // A system Channel is not a product Channel: the subsystem that writes it
+  // decides both who reads it and where it lives, so neither control is raised.
+  it('given a system channel, when the row menu opens, then no space control is offered', async () => {
+    const hiring = space();
+    const digest: WorkstreamSummary = {
+      ...workstream('menu-system-spaces', 'Digest · Adam', 'completed'),
+      systemKind: 'digest',
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[general(), hiring]}
+            workspace={workspace}
+            workstreams={[digest]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Manage access' })).not.toBeInTheDocument();
+  });
+
+  it('adds a channel to the space its row was dropped on', () => {
+    const onAddChannelToSpace = vi.fn(async () => undefined);
+    const hiring = space();
+    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), general().id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onAddChannelToSpace={onAddChannelToSpace}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = document.querySelector(`[data-workstream-id="${target.id}"]`);
+    expect(row).toHaveAttribute('draggable', 'true');
+    const item = screen.getByText('Hiring').closest('.space-sidebar-item');
+    if (!(item instanceof HTMLElement)) throw new Error('space row missing');
+    fireEvent.drop(item, {
+      dataTransfer: { getData: (type: string) => type === 'application/x-rally-workstream-id' ? target.id : '' },
+    });
+
+    expect(onAddChannelToSpace).toHaveBeenCalledWith(hiring.id, target.id);
+  });
+
+  // Every Channel belongs to at least one Space and the section is drawn in
+  // every shell, so a row is always draggable onto something.
+  it('given the conversation-only sidebar, then the spaces section is still drawn and rows are draggable', () => {
     const target = workstream('drag-conversation-only', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
@@ -1623,7 +1737,7 @@ describe('Sidebar work-stream markers', () => {
             automations={[]}
             conversationOnly
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general()]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1631,12 +1745,48 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('heading', { name: 'Projects' })).not.toBeInTheDocument();
-    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'false');
+    expect(screen.getByRole('heading', { name: 'Spaces' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
   });
 
-  it('given a project section on screen, when a row renders, then it is draggable onto it', () => {
-    const target = workstream('drag-full-sidebar', 'Quarterly planning', 'completed');
+  // The section is showing its opening card and no rows, so there is nothing to
+  // drop a Channel on and nothing to add it to — the server refuses either with
+  // `space_bootstrap_pending`.
+  // The guest shell is handed no directory at all: guest access to Spaces is
+  // deferred, and the host decides that rather than the sidebar inferring it
+  // from controls that would only be refused.
+  it('given no space directory, then the sidebar draws no space navigation', async () => {
+    const target = workstream('guest-shell', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            conversationOnly
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('heading', { name: 'Spaces' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.queryByText('No spaces yet')).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
+      .not.toHaveAttribute('draggable', 'true');
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+  });
+
+  it('shows the organization-opening state instead of a half-built hierarchy', async () => {
+    const target = workstream('opening-state', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1644,7 +1794,8 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            projects={[dropTargetProject()]}
+            spaces={[general()]}
+            spacesReady={false}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1652,11 +1803,72 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Projects' })).toBeVisible();
-    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
+    expect(screen.getByText(/Rally is opening this organization/u)).toBeVisible();
+    expect(screen.queryByRole('link', { name: /General/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
+      .not.toHaveAttribute('draggable', 'true');
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
   });
 
-  it('marks work streams unread on the server and renames from the menu', async () => {
+  it('keeps the spaces it has and offers a retry when the directory is out of date', () => {
+    const onRetrySpaces = vi.fn();
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onRetrySpaces={onRetrySpaces}
+            onSignOut={vi.fn()}
+            spaces={[general()]}
+            spacesOutOfDate
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
+    expect(screen.getByText('These spaces may be out of date.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetrySpaces).toHaveBeenCalled();
+  });
+
+  it('opens the same channel from a placement under each of its spaces', () => {
+    const hiring = space();
+    const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
+    const target = placedIn(workstream('two-places', 'Quarterly planning', 'completed'), hiring.id, launch.id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[hiring, launch]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
+    const rows = screen.getAllByRole('link', { name: /Quarterly planning/u });
+    // One under each Space, and nowhere else: every Channel belongs to a
+    // Space, so there is no second flat list of the same rows to find it in.
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toHaveAttribute('href', `/workstreams/${target.id}`);
+  });
+
+  it('marks channels unread on the server and renames from the menu', async () => {
     const onMarkWorkstreamUnread = vi.fn(async () => undefined);
     const onRenameWorkstream = vi.fn(async () => undefined);
     const target = workstream('rename-me', 'Quarterly planning', 'completed');
@@ -1680,7 +1892,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Pin' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Archive work stream' })).toHaveClass('menu-item-danger');
+    expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toHaveClass('menu-item-danger');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
     await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
     await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
@@ -1690,7 +1902,7 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
-    const input = await screen.findByRole('textbox', { name: 'Work stream name' });
+    const input = await screen.findByRole('textbox', { name: 'Channel name' });
     fireEvent.change(input, { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
@@ -1699,11 +1911,11 @@ describe('Sidebar work-stream markers', () => {
       kind: 'workstream_action_completed', workstreamId: target.id, action: 'rename',
       visibility: 'public', origin: 'ad_hoc', pinned: false,
     }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename work stream' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename channel' })).not.toBeInTheDocument());
   });
 });
 
-describe('private work streams', () => {
+describe('private channels', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
@@ -1719,17 +1931,13 @@ describe('private work streams', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  function renderWith(
-    streams: WorkstreamSummary[],
-    onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
-  ): void {
+  function renderWith(streams: WorkstreamSummary[]): void {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
             automations={[]}
-            {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -1748,15 +1956,15 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Digest/u });
-    expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Private channel')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
   it('explains the public badge on hover without displacing the row preview', async () => {
     renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
     const row = screen.getByRole('link', { name: 'Launch' });
-    expect(row).toHaveAccessibleDescription('Public work stream');
-    const globe = within(row).getByRole('img', { name: 'Public work stream' });
+    expect(row).toHaveAccessibleDescription('Public channel');
+    const globe = within(row).getByRole('img', { name: 'Public channel' });
     fireEvent.pointerEnter(row.closest('[data-workstream-id]')!);
     await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Launch'), { timeout: 5_000 });
 
@@ -1767,7 +1975,7 @@ describe('private work streams', () => {
     fireEvent.pointerMove(globe, { pointerType: 'mouse' });
     await waitFor(
       () => expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent)).toEqual(
-        expect.arrayContaining([expect.stringContaining('everyone in the workspace can see this work stream')]),
+        expect.arrayContaining([expect.stringContaining('everyone in the organization can see this channel')]),
       ),
       { timeout: 5_000 },
     );
@@ -1784,12 +1992,12 @@ describe('private work streams', () => {
     // be named for anyone who never touches a pointer.
     act(() => row.focus());
     await waitFor(
-      () => expect(screen.getByRole('tooltip', { name: /Launch/u })).toHaveTextContent('Public to workspace'),
+      () => expect(screen.getByRole('tooltip', { name: /Launch/u })).toHaveTextContent('Public to organization'),
       { timeout: 5_000 },
     );
   });
 
-  it('leaves the scope line off a preview for a work stream that is not public', async () => {
+  it('leaves the scope line off a preview for a channel that is not public', async () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-00000000003b', 'Launch', 'completed'),
       scope: 'personal',
@@ -1798,63 +2006,42 @@ describe('private work streams', () => {
 
     act(() => row.focus());
     await waitFor(() => expect(screen.getByRole('tooltip', { name: /Launch/u })).toBeInTheDocument(), { timeout: 5_000 });
-    expect(screen.queryByText('Public to workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Public to organization')).not.toBeInTheDocument();
   });
 
-  it('marks a workspace-scoped work stream as public', () => {
+  it('marks an organization-scoped channel as public', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
       // Participant presence remains visible even when the work stream is
       // available to the whole workspace.
       participantUserIds: ['user-1', 'user-2'],
       participantExtraCount: 3,
+      spaceIds: [],
     }]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
-    expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Private channel')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
-  it('closes a work stream to the people in it from the right-click menu', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
-    renderWith(
-      [workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')],
-      onChangeWorkstreamScope,
-    );
+  // **Make private** is gone. A Channel's readers are the union of its own
+  // scope and every active Space that holds it, so the row cannot answer
+  // whether it is private — the dialog reads the sources and says. What it then
+  // offers is covered in `manage-access-dialog.test.tsx`.
+  it('offers Manage access in place of the old visibility toggle', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')]);
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
-    // Named for the state it moves to, the way the note item is.
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
 
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000023' }),
-      'personal',
-    );
-  });
-
-  it('opens a private work stream back up to the workspace', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
-    renderWith(
-      [{
-        ...workstream('00000000-4000-4000-8000-000000000024', 'Comp review', 'completed'),
-        scope: 'personal',
-      }],
-      onChangeWorkstreamScope,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Comp review/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
-
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000024' }),
-      'workspace',
-    );
+    expect(await screen.findByRole('menuitem', { name: 'Manage access' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Make public to organization' })).not.toBeInTheDocument();
   });
 
   // A system work stream takes its audience from the subsystem, so the menu
   // does not offer a change that would not happen.
-  it('does not offer the toggle on a work stream that belongs to Rally itself', async () => {
+  it('does not offer the toggle on a channel that belongs to Rally itself', async () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000027', 'Digest · Adam', 'completed'),
       scope: 'personal',
@@ -1864,24 +2051,7 @@ describe('private work streams', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Make public to workspace' })).not.toBeInTheDocument();
-  });
-
-  it('reports a visibility change the server rejected instead of failing silently', async () => {
-    renderWith(
-      [workstream('00000000-4000-4000-8000-000000000028', 'Launch', 'completed')],
-      vi.fn(async () => {
-        throw new Error('The work stream could not be reached.');
-      }),
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Work stream visibility could not be changed' });
-    expect(within(dialog).getByText('The work stream is still visible to the workspace. Try again in a moment.'))
-      .toBeVisible();
-    expect(dialog).not.toHaveTextContent('The work stream could not be reached.');
+    expect(screen.queryByRole('menuitem', { name: 'Manage access' })).not.toBeInTheDocument();
   });
 });
 
@@ -1895,7 +2065,7 @@ describe('private work streams', () => {
  * The guard is `lib/window-activation.ts`; these cover what the sidebar does
  * with the answer.
  */
-describe('work-stream rows after an application switch', () => {
+describe('channel rows after an application switch', () => {
   let stopTracking: (() => void) | null = null;
 
   beforeEach(() => {
@@ -2017,7 +2187,7 @@ describe('work-stream rows after an application switch', () => {
   }
 });
 
-describe('pinned work streams', () => {
+describe('pinned channels', () => {
   // jsdom implements no layout and therefore no `scrollIntoView`; the sidebar
   // calls it optionally for that reason, so a test that wants to observe the
   // call has to put one there.
@@ -2077,7 +2247,7 @@ describe('pinned work streams', () => {
   /** The `sidebar-context-target` wrapper that carries a row's drag handlers. */
   function dragTarget(name: RegExp): HTMLElement {
     const wrapper = screen.getByRole('link', { name }).parentElement;
-    if (!wrapper) throw new Error('The work-stream row has no drag wrapper');
+    if (!wrapper) throw new Error('The channel row has no drag wrapper');
     return wrapper;
   }
 
@@ -2094,7 +2264,7 @@ describe('pinned work streams', () => {
     return { dropEffect, effectAllowed: '', setData: () => undefined };
   }
 
-  it('lifts a pinned work stream out of the recent list into its own section', () => {
+  it('lifts a pinned channel out of the recent list into its own section', () => {
     renderWith([
       pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
       workstream('ws-recent', 'Quarterly planning', 'completed'),
@@ -2131,7 +2301,7 @@ describe('pinned work streams', () => {
     const bravo = screen.getByRole('link', { name: /Bravo/u });
     fireEvent.contextMenu(screen.getByRole('link', { name: /Alpha/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
-    expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Rename channel' })).toBeVisible();
 
     fireEvent.keyDown(window, { code: 'Digit2', key: '2', metaKey: true });
 
@@ -2494,33 +2664,28 @@ describe('pinned work streams', () => {
       ]);
     });
 
-    it('scopes a project\'s members apart from the recent list', () => {
-      const member = workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed');
-      const project = ProjectSummarySchema.parse({
-        id: '00000000-0000-7000-8000-0000000000f2',
-        name: 'Launch',
-        iconKey: 'briefcase',
-        colorKey: 'blue',
-        scope: 'personal',
-        status: 'active',
-        presentationRevision: 1,
-        audienceGeneration: 1,
-        lifecycleGeneration: 1,
-        participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
-        createdAt: '2026-08-27T00:00:00.000Z',
-        updatedAt: '2026-08-27T00:00:00.000Z',
-        workstreamIds: [member.id],
-      });
+    it('scopes each space\'s placements apart from the others', () => {
+      const launch = space('00000000-0000-7000-8000-0000000000f2', 'Launch');
+      const hiring = space('00000000-0000-7000-8000-0000000000f3', 'Hiring');
+      const member = placedIn(
+        workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed'),
+        launch.id,
+        hiring.id,
+      );
       render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} projects={[project]} workspace={workspace} workstreams={[member]} />
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
       const rows = screen.getAllByRole('link', { name: /Roadmap review/u }).map((link) => link.closest('[data-motion-key]'));
       expect(rows).toHaveLength(2);
+      // One record shown twice, and the motion has to be told that: without a
+      // scope per Space it would take the two placements for one row that had
+      // moved from under one Space to under the other.
       const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
-      expect(scopes).toEqual(expect.arrayContaining([`project:${project.id}`, null]));
+      expect(scopes).toEqual(expect.arrayContaining([`space:${launch.id}`, `space:${hiring.id}`]));
       expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
     });
 
@@ -2658,7 +2823,7 @@ describe('pinned work streams', () => {
   // Pinning moves the row to a section the reader is very likely scrolled away
   // from — they pinned it because they were tired of hunting for it down the
   // list — so without this the action reads as the row vanishing.
-  it('brings a work stream back into view once the list carries the pin', async () => {
+  it('brings a channel back into view once the list carries the pin', async () => {
     renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
@@ -2873,7 +3038,7 @@ describe('pinned work streams', () => {
       [workstream('ws-recent', 'Quarterly planning', 'completed')],
       {
         onPinWorkstream: vi.fn(async () => {
-          throw new Error('The work stream could not be reached.');
+          throw new Error('The channel could not be reached.');
         }),
       },
     );
@@ -2883,7 +3048,7 @@ describe('pinned work streams', () => {
 
     // The row never moved, so following it somewhere would be following it
     // nowhere — on top of the dialog already explaining what happened.
-    await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
+    await screen.findByRole('dialog', { name: 'Channel could not be pinned' });
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
@@ -2925,7 +3090,7 @@ describe('pinned work streams', () => {
     // the wrapper around it and only ever sees the event by bubbling.
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
 
-    const dialog = await screen.findByRole('dialog', { name: 'Pinned work streams could not be reordered' });
+    const dialog = await screen.findByRole('dialog', { name: 'Pinned channels could not be reordered' });
     expect(within(dialog).getByText('The pinned list is back in the order it was in. Try again in a moment.'))
       .toBeVisible();
     // The open dialog hides the sidebar from the accessibility tree, so the
@@ -2940,7 +3105,7 @@ describe('pinned work streams', () => {
       [workstream('ws-recent', 'Quarterly planning', 'completed')],
       {
         onPinWorkstream: vi.fn(async () => {
-          throw new Error('The work stream could not be reached.');
+          throw new Error('The channel could not be reached.');
         }),
       },
     );
@@ -2948,13 +3113,13 @@ describe('pinned work streams', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
-    expect(within(dialog).getByText('The work stream is still in the recent list. Try again in a moment.')).toBeVisible();
-    expect(dialog).not.toHaveTextContent('The work stream could not be reached.');
+    const dialog = await screen.findByRole('dialog', { name: 'Channel could not be pinned' });
+    expect(within(dialog).getByText('The channel is still in the recent list. Try again in a moment.')).toBeVisible();
+    expect(dialog).not.toHaveTextContent('The channel could not be reached.');
   });
 });
 
-describe('Sidebar work-stream paging', () => {
+describe('Sidebar channel paging', () => {
   beforeEach(() => {
     window.localStorage.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
@@ -3018,13 +3183,13 @@ describe('Sidebar work-stream paging', () => {
     expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
   });
 
-  it('opens workspace search without loading sidebar pages', () => {
+  it('opens organization search without loading sidebar pages', () => {
     const onOpenSearch = vi.fn();
     const onLoadMoreWorkstreams = vi.fn();
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]}
       onSignOut={vi.fn()} workspace={workspace} workstreams={[]} hasMoreWorkstreams
       onOpenSearch={onOpenSearch} onLoadMoreWorkstreams={onLoadMoreWorkstreams} /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Search workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search organization' }));
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
   });
@@ -3056,5 +3221,327 @@ describe('Sidebar work-stream paging', () => {
     // No standing invitation to scroll: a list that ends on a page boundary
     // would otherwise claim forever that there is more.
     expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Every Channel belongs to a Space, so a member's sidebar says where each one
+ * lives rather than listing them all again by time. The guest shell has no
+ * hierarchy to say it with and keeps the flat list.
+ */
+describe('the sidebar without a recency list', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function renderSidebar(props: Partial<React.ComponentProps<typeof Sidebar>>): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+            {...props}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+
+  it('given a member session, when the sidebar is drawn, then no time-grouped list is', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByRole('heading', { name: 'Today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /actions$/u })).not.toBeInTheDocument();
+    // Under the Space that holds it, and nowhere else.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
+  });
+
+  // The guest shell is handed no Space directory at all — Space discovery is
+  // deferred for a guest, and the host decides that rather than the component
+  // inferring it. Absent is not empty, so this is the one session that keeps
+  // the flat list.
+  it('given a guest shell, when the sidebar is drawn, then the time-grouped list is untouched', () => {
+    // The group a row lands in is read off the clock, so the clock is held.
+    vi.useFakeTimers({ now: new Date('2026-08-01T12:00:00.000Z'), toFake: ['Date'] });
+    renderSidebar({ workstreams: [today] });
+
+    expect(screen.getByRole('heading', { name: 'Today' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Today actions' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+  });
+
+  it('given a channel in no visible space, when the sidebar is drawn, then it is under Other channels', () => {
+    const hiring = space();
+    const placed = placedIn(today, hiring.id);
+    // Readable, and every one of its Spaces is somebody else's personal one:
+    // **Manage access** already draws such a placement as a Space the viewer
+    // cannot see, and without this section the Channel would be in the
+    // sidebar nowhere at all.
+    const elsewhere = placedIn(
+      workstream('ws-elsewhere', 'Quarterly planning', 'completed'),
+      '00000000-0000-7000-8000-0000000000ff',
+    );
+    renderSidebar({ spaces: [hiring], workstreams: [placed, elsewhere] });
+
+    const section = screen.getByRole('region', { name: 'Other channels' });
+    expect(within(section).getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(within(section).queryByRole('link', { name: /Roadmap review/u })).not.toBeInTheDocument();
+  });
+
+  it('given every channel placed where the reader can see it, then there is no Other channels section', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByRole('region', { name: 'Other channels' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Other channels')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The state the removed list was the only thing describing.
+   *
+   * A member of a brand-new Organization sees Spaces, General, and "No
+   * channels" under it — and then, without this line, nothing: a sidebar that
+   * has stopped talking rather than one that is empty.
+   */
+  it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
+    renderSidebar({ spaces: [space()], workstreams: [] });
+
+    expect(screen.getByText('No channels yet')).toBeVisible();
+  });
+
+  it('given a member with a channel, when the sidebar is drawn, then it does not claim to be empty', () => {
+    const hiring = space();
+    renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
+
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The one-time cutover, with the desktop open.
+   *
+   * The Spaces section draws its opening card *instead of* the rows until the
+   * Organization has finished placing every Channel in General, and the
+   * directory already carries General while that is going on. A fallback list
+   * that read the directory without reading readiness would take each page of
+   * placed Channels out of **Other channels** as the walk placed it, and put it
+   * into a hierarchy nobody can see yet — a sidebar that empties itself, one
+   * page at a time, for as long as the cutover runs.
+   */
+  it('given an organization still opening, when the sidebar is drawn, then every channel is still reachable', () => {
+    const general = space('00000000-0000-7000-8000-0000000000f0', 'General');
+    const placed = placedIn(today, general.id);
+    renderSidebar({ spaces: [general], spacesReady: false, workstreams: [placed] });
+
+    // The hierarchy is not on screen: there is no row to find the Channel
+    // under, which is what makes the fallback the only place it can be.
+    expect(screen.queryByRole('button', { name: 'Expand General' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Other channels' }))
+      .getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+  });
+
+  // The section above already holds it, and a row in both would take its order
+  // from whichever the reader saw last — the same rule the list this replaces
+  // was under.
+  it('given an unplaced channel that is pinned, then it is in Pinned and not in Other channels', () => {
+    const hiring = space();
+    const unplaced = pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0);
+    renderSidebar({ spaces: [hiring], workstreams: [unplaced] });
+
+    expect(within(screen.getByRole('region', { name: 'Pinned' }))
+      .getByRole('link', { name: /Launch tracking/u })).toBeVisible();
+    expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
+  });
+
+  it('given a stored space order, when the section is drawn, then it is in that order', () => {
+    const first = space('00000000-0000-7000-8000-0000000000f3', 'Alpha');
+    const second = space('00000000-0000-7000-8000-0000000000f4', 'Bravo');
+    renderSidebar({
+      spaces: [first, second],
+      ordering: [{ container: { kind: 'organization' }, itemIds: [second.id, first.id] }],
+    });
+
+    const section = screen.getByRole('region', { name: 'Spaces' });
+    expect(within(section).getAllByRole('link').map((link) => link.textContent))
+      .toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+  });
+});
+
+/**
+ * The two lists inside the Spaces section, arranged by hand.
+ *
+ * Through `Sidebar` rather than the section alone, because the gesture is the
+ * row's and the section's together: the row carries the drag handlers and the
+ * section decides what a release means.
+ */
+describe('reordering the channels inside a space', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  const hiring = space();
+  const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
+  const alpha = placedIn(workstream('ws-alpha', 'Alpha', 'completed', '2026-08-02T09:00:00.000Z'), hiring.id);
+  const bravo = placedIn(workstream('ws-bravo', 'Bravo', 'completed', '2026-08-01T09:00:00.000Z'), hiring.id);
+
+  /**
+   * jsdom implements no `DataTransfer`, and this drag needs two of its fields:
+   * `types`, which is how a Space row tells a Channel's drag from its own, and
+   * `dropEffect`, which is how `dragend` tells a release the list took from one
+   * backed out of.
+   */
+  function channelTransfer(dropEffect: 'move' | 'none' = 'move'): {
+    dropEffect: string; effectAllowed: string; types: string[];
+    setData: (type: string, value: string) => void; getData: (type: string) => string;
+  } {
+    const data = new Map<string, string>();
+    const transfer = {
+      dropEffect,
+      effectAllowed: '',
+      types: [] as string[],
+      setData: (type: string, value: string) => {
+        data.set(type, value);
+        if (!transfer.types.includes(type)) transfer.types.push(type);
+      },
+      getData: (type: string) => data.get(type) ?? '',
+    };
+    return transfer;
+  }
+
+  function renderSidebar(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            spaces={[hiring, launch]}
+            workspace={workspace}
+            workstreams={[alpha, bravo]}
+            {...props}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+  }
+
+  function placementTitles(): string[] {
+    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    if (!list) throw new Error('The space has no placement list');
+    return within(list as HTMLElement).getAllByRole('link').map((row) => row.textContent ?? '');
+  }
+
+  function dragTarget(name: RegExp): HTMLElement {
+    const wrapper = screen.getByRole('link', { name }).parentElement?.closest('.sidebar-context-target');
+    if (!wrapper) throw new Error('The channel row has no drag wrapper');
+    return wrapper as HTMLElement;
+  }
+
+  it('given a placement dropped inside its own space, then that space\'s order is saved', async () => {
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onReorderContainer });
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+
+    const transfer = channelTransfer();
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    // The list settles under the pointer rather than jumping once at the end.
+    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+    fireEvent.drop(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
+
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
+      container: { kind: 'space', id: hiring.id },
+      itemIds: [bravo.id, alpha.id],
+    }));
+  });
+
+  // The two meanings of one gesture. A release inside the list the Channel is
+  // already in is a reorder; a release on another Space is a placement, and it
+  // must not also commit the arrangement the pointer built on its way out.
+  it('given a placement dropped on another space, then it is placed and nothing is reordered', async () => {
+    const onAddChannelToSpace = vi.fn(async () => undefined);
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onAddChannelToSpace, onReorderContainer });
+
+    const transfer = channelTransfer();
+    const target = screen.getByText('Launch').closest('.space-sidebar-item')!;
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(target, { dataTransfer: transfer });
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
+
+    await waitFor(() => expect(onAddChannelToSpace).toHaveBeenCalledWith(launch.id, bravo.id));
+    expect(onReorderContainer).not.toHaveBeenCalled();
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  });
+
+  // Every drag in the sidebar has one, so the feature is reachable without a
+  // pointer. Alt rather than a bare arrow: the arrows move focus through the
+  // sidebar, and a row must stay readable by somebody who is not rearranging.
+  it('given a placement, when Alt+ArrowUp is pressed, then the new order is saved', async () => {
+    const onReorderContainer = vi.fn(async () => undefined);
+    renderSidebar({ onReorderContainer });
+
+    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
+
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
+      container: { kind: 'space', id: hiring.id },
+      itemIds: [bravo.id, alpha.id],
+    }));
+  });
+
+  it('given a refused reorder, then the placements snap back and the section says so', async () => {
+    renderSidebar({
+      onReorderContainer: async () => { throw new Error('The space changed while this was applied'); },
+    });
+
+    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
+
+    expect(await screen.findByText('The channels in that space couldn’t be reordered.')).toBeVisible();
+    // The list shows what the server holds, which is what this person's other
+    // windows are showing — not a local order nothing took.
+    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+    expect(screen.queryByText('The space changed while this was applied')).not.toBeInTheDocument();
+  });
+
+  it('given a stored order for a space, then its placements are drawn in it rather than by recency', () => {
+    renderSidebar({
+      ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [bravo.id, alpha.id] }],
+    });
+
+    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
   });
 });

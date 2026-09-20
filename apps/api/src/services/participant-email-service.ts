@@ -66,19 +66,19 @@ export async function sendWorkstreamParticipantAddedEmail(
   // the unnamed case says what actually happened instead: somebody started
   // something and put you in it. The opening line still appears, once, below.
   const subject = input.titleIsProvisional
-    ? `${actorName} started a work stream with you`
+    ? `${actorName} started a channel with you`
     : `${actorName} added you to ${workstreamTitle}`;
   const opening = input.titleIsProvisional
-    ? `${actorName} started a work stream in ${workspaceName} and added you to it.`
+    ? `${actorName} started a channel in ${workspaceName} and added you to it.`
     : `${actorName} added you to "${workstreamTitle}" in ${workspaceName}.`;
   const text = [
-    recipientName ? `Hi ${firstName(recipientName)},` : "You were added to a work stream in Rally.",
+    recipientName ? `Hi ${firstName(recipientName)},` : "You were added to a channel in Rally.",
     "",
     opening,
     ...(objective ? ["", objective] : []),
     "",
     `Open in Rally: ${workstreamUrl}`,
-    ...(replyTo ? ["", "Reply to this email to post into the work stream."] : []),
+    ...(replyTo ? ["", "Reply to this email to post into the channel."] : []),
   ].join("\n");
 
   return sendResendEmail(env, {
@@ -138,16 +138,16 @@ function participantAddedEmailHtml(input: {
   // is dropped rather than printed two lines under itself.
   const greeting = recipientName ? `Hi ${escapeHtml(firstName(input.recipientName))},<br>` : "";
   const heading = input.titleIsProvisional
-    ? "You're in a new work stream"
-    : "You were added to a work stream";
+    ? "You're in a new channel"
+    : "You were added to a channel";
   const opening = input.titleIsProvisional
-    ? `<strong style="color:#f2f3ec">${actorName}</strong> started a work stream in ${workspaceName} and added you to it.`
+    ? `<strong style="color:#f2f3ec">${actorName}</strong> started a channel in ${workspaceName} and added you to it.`
     : `<strong style="color:#f2f3ec">${actorName}</strong> added you to <strong style="color:#f2f3ec">${workstreamTitle}</strong> in ${workspaceName}.`;
   const summary = objective
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CEDC00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${objective}</td></tr>`
     : "";
   const reply = input.replyTo
-    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to post into the work stream.</td></tr>`
+    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to post into the channel.</td></tr>`
     : "";
   return `<!doctype html>
 <html lang="en">

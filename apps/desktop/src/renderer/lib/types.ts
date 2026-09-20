@@ -184,6 +184,30 @@ export interface WorkstreamSummary {
    * same work stream is pinned for one member and not for another.
    */
   pinPosition: number | null;
+  /**
+   * Every Space this Channel currently sits in.
+   *
+   * A Channel belongs to at least one Space and may belong to several. Each id
+   * is a *placement* of this same row rather than a copy of it, so the sidebar
+   * draws one entry per id under the Space it names and all of them open the
+   * same Channel. The row itself — its unread, its running state, its title —
+   * is one record whatever it is listed under.
+   */
+  spaceIds: string[];
+}
+
+/**
+ * One row on a Space dashboard: a Channel, or one of a Channel's breakouts.
+ *
+ * Both draw as the same row — one status dot, one title, one activity time —
+ * so they are one type with a discriminator rather than two the screen has to
+ * branch on everywhere. `breakoutOf` is what the breakout row adds: the
+ * destination it links to, and the parent Channel's name it prints under its
+ * own so a breakout called "Pricing" says where it lives.
+ */
+export interface SpaceConversationSummary extends WorkstreamSummary {
+  kind: 'channel' | 'breakout';
+  breakoutOf: { workstreamId: string; substreamId: string; title: string } | null;
 }
 
 export interface Participant extends WorkspaceMember {

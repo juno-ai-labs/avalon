@@ -23,7 +23,7 @@ const session: DesktopSession = {
 };
 
 describe('workspaceFromSession', () => {
-  it('describes the workspace the session is already signed in to', () => {
+  it('describes the organization the session is already signed in to', () => {
     expect(workspaceFromSession(session)).toEqual({
       id: '00000000-0000-7000-8000-000000000002',
       name: 'Rally Studio',
@@ -55,8 +55,8 @@ describe('workspaceFromSession', () => {
 
   it.each([
     ['no session', null],
-    ['an identity with no workspace', { ...session, workspace: null }],
-    ['a workspace with no timezone', { ...session, workspace: { ...session.workspace!, timezone: undefined } }],
+    ['an identity with no organization', { ...session, workspace: null }],
+    ['an organization with no timezone', { ...session, workspace: { ...session.workspace!, timezone: undefined } }],
     ['a user with no timezone', { ...session, user: { ...session.user, timezone: undefined } }],
   ])('refuses to guess from %s', (_case, value) => {
     expect(workspaceFromSession(value as DesktopSession | null)).toBeNull();

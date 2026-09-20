@@ -601,6 +601,89 @@ describe("Terminal resource bridge", () => {
     expect(provider.writeFile).not.toHaveBeenCalled();
   });
 
+  describe("reconciling an interrupted publish", () => {
+    /** The receipt's own window: everything below is positioned against it. */
+    const startedAt = Date.parse("2026-08-14T00:00:00.000Z");
+    const reconcileContext = { ...context, attemptStartedAt: startedAt };
+
+    it("reports a publication this run made in the window as landed, and touches nothing", async () => {
+      const { database, bridge, put } = fixture();
+      await bridge.publishResource(context, { filePath: "report.md", displayName: "Analysis" }, new TextEncoder().encode("# Report\n"));
+      const before = database.prepare(
+        `SELECT content_sha256, updated_at FROM resources WHERE workspace_id = ? AND provider_resource_id = ?`,
+      ).get(W, `terminal:${S}:report.md`);
+      put.mockClear();
+
+      await expect(bridge.reconcilePublishedResource(reconcileContext, { filePath: "report.md" }))
+        .resolves.toMatchObject({ outcome: "landed", result: { output: { title: "Analysis" } } });
+
+      // The point of asking rather than re-entering: nothing was written, so a
+      // document that landed cannot be revised by the act of confirming it.
+      expect(put).not.toHaveBeenCalled();
+      expect(database.prepare(
+        `SELECT content_sha256, updated_at FROM resources WHERE workspace_id = ? AND provider_resource_id = ?`,
+      ).get(W, `terminal:${S}:report.md`)).toEqual(before);
+    });
+
+    it("reports nothing published at the path as not landed", async () => {
+      const { bridge } = fixture();
+
+      await expect(bridge.reconcilePublishedResource(reconcileContext, { filePath: "never-written.md" }))
+        .resolves.toEqual({ outcome: "not_landed" });
+    });
+
+    it("reports a publication that predates the attempt as not landed", async () => {
+      const { database, bridge } = fixture();
+      await bridge.publishResource(context, { filePath: "report.md" }, new TextEncoder().encode("# Older\n"));
+      // Same run, same path — only the window separates it from the case
+      // above. Without the `captured_at` comparison an earlier publish by this
+      // same run would be read as this attempt's own work.
+      database.prepare(
+        `UPDATE resource_versions SET captured_at = ? WHERE workspace_id = ?`,
+      ).run("2026-08-13T23:59:59.000Z", W);
+
+      await expect(bridge.reconcilePublishedResource(reconcileContext, { filePath: "report.md" }))
+        .resolves.toEqual({ outcome: "not_landed" });
+    });
+
+    it("still reports landed when a later run has already revised the document away", async () => {
+      const { database, bridge } = fixture();
+      await bridge.publishResource(context, { filePath: "report.md", displayName: "Mine" }, new TextEncoder().encode("# Mine\n"));
+      // Somebody else republishes the same path afterwards. The live row is
+      // now theirs, and the `revision_author_*` columns on it are cleared by
+      // the capture trigger, so nothing there can say this attempt happened.
+      await bridge.publishResource(
+        { ...context, harnessRunId: "20000000-0000-4000-8000-000000000009", effectIntentId: I2, toolCallId: "resource-recall" },
+        { filePath: "report.md", displayName: "Theirs" },
+        new TextEncoder().encode("# Theirs\n"),
+      );
+      expect(database.prepare(
+        `SELECT title FROM resources WHERE workspace_id = ? AND provider_resource_id = ?`,
+      ).get(W, `terminal:${S}:report.md`)).toEqual({ title: "Theirs" });
+
+      // Landed, not unknown: this attempt did publish, so re-entering it would
+      // be a second write that undid their revision. The ledger is what makes
+      // the distinction available at all, and the result describes the version
+      // this attempt wrote rather than the one standing there now.
+      await expect(bridge.reconcilePublishedResource(reconcileContext, { filePath: "report.md" }))
+        .resolves.toMatchObject({ outcome: "landed", result: { output: { title: "Mine" } } });
+    });
+
+    it("refuses to answer when another run revised the path inside the window", async () => {
+      const { database, bridge } = fixture();
+      await bridge.publishResource(context, { filePath: "report.md" }, new TextEncoder().encode("# Report\n"));
+      database.prepare(
+        `UPDATE resource_versions SET author_run_id = ?, captured_at = ? WHERE workspace_id = ?`,
+      ).run("20000000-0000-4000-8000-000000000009", "2026-08-14T00:00:05.000Z", W);
+
+      // This is the case re-entry must never guess at. The attempt may have
+      // landed and been revised away since, so republishing would undo work
+      // somebody else did in the window.
+      await expect(bridge.reconcilePublishedResource(reconcileContext, { filePath: "report.md" }))
+        .resolves.toEqual({ outcome: "unknown", reason: "publication_revised_by_another_run" });
+    });
+  });
+
   it("publishes a supported regular file as an attached resource with durable cleanup ownership", async () => {
     const { database, objectStore, objects, put, bridge } = fixture();
     const bytes = new TextEncoder().encode("# Report\n");

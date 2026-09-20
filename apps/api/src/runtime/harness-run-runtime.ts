@@ -116,6 +116,8 @@ export interface ToolExecutionPlan {
 export type ToolPlanClaim =
   | { state: "created"; invocationId: string; executionPlanHash: string }
   | { state: "resume_read"; invocationId: string; executionPlanHash: string }
+  /** An unsettled provider-deduped write, safe to run again under its own key. */
+  | { state: "resume_write"; invocationId: string; executionPlanHash: string }
   | { state: "replay_completed"; invocationId: string; executionPlanHash: string }
   | { state: "ambiguous_external_write"; invocationId: string; executionPlanHash: string };
 

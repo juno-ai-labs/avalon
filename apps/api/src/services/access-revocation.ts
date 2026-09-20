@@ -39,6 +39,16 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
   }),
   z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
   /**
+   * A Space, for a person who just lost the Organization.
+   *
+   * It holds no sockets of its own — its role refuses a client upgrade — so
+   * this hop exists only to name its children. That is the whole reason it is
+   * a hop rather than nothing: the Space's hidden main conversation is an
+   * ordinary `SubstreamAgent`, it *does* hold whatever was opened against it,
+   * and only the Space knows which conversations it has.
+   */
+  z.strictObject({ scope: z.literal("space"), spaceId: IdSchema }),
+  /**
    * Every automation a work stream owns, for a person who just lost that
    * room. A room-owned automation admits the room's participants to its
    * conversation and its runs, and removing a participant is a room-local
@@ -46,6 +56,22 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
    * publishes this and WorkspaceDO names the automations.
    */
   z.strictObject({ scope: z.literal("workstream_automations"), workstreamId: IdSchema }),
+  /**
+   * A work stream that stopped admitting the whole Organization.
+   *
+   * The one target that names nobody, because a narrowing does not know who
+   * it took access from: the readers it drops are every member who was not a
+   * participant, and that set is the Organization. What *is* enumerable is who
+   * still has a socket open, and only the room can answer that — so this hop
+   * asks it to close the ones it can no longer admit and to say whose they
+   * were. Each of those names then becomes an ordinary per-user hop, which is
+   * what reaches the substreams and the automations the room owns.
+   *
+   * It is therefore the only target carried with `userId: null`, and the
+   * schema below refuses the two in any other combination: a per-user hop
+   * that lost its user would close every socket it found.
+   */
+  z.strictObject({ scope: z.literal("workstream_audience_narrowed"), workstreamId: IdSchema }),
   /**
    * A live web artifact's supervisor, a sibling of the work streams.
    *
@@ -63,7 +89,7 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("artifact"), artifactId: IdSchema }),
 ]);
 
-export const AccessRevocationMessageSchema = z.strictObject({
+const AccessRevocationMessageShape = z.strictObject({
   kind: z.literal("access_revoked"),
   /** Why access ended. Carried for operators; the fan-out treats all alike. */
   reason: z.enum([
@@ -73,7 +99,11 @@ export const AccessRevocationMessageSchema = z.strictObject({
     "session_expired",
   ]),
   workspaceId: WorkspaceIdSchema,
-  userId: IdSchema,
+  /**
+   * Whose access ended. Null only for `workstream_audience_narrowed`, which
+   * cannot name one — see that target.
+   */
+  userId: IdSchema.nullable(),
   /**
    * The one session that ended, when only one did.
    *
@@ -87,6 +117,24 @@ export const AccessRevocationMessageSchema = z.strictObject({
   occurredAt: TimestampSchema,
 });
 
+/**
+ * A message is either about one person or about one room's whole audience,
+ * never half of each. The refinement names the field rather than failing the
+ * message as a whole (`docs/naming-a-schema-failure.md`): the consumer logs
+ * `parsed.error.issues` by path, and "userId" is what an operator needs to see.
+ */
+export const AccessRevocationMessageSchema = AccessRevocationMessageShape.superRefine((message, context) => {
+  const audienceNarrowed = message.target.scope === "workstream_audience_narrowed";
+  if (audienceNarrowed === (message.userId === null)) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["userId"],
+    message: audienceNarrowed
+      ? "a narrowed audience names no user"
+      : "this target requires the user whose access ended",
+  });
+});
+
 export type AccessRevocationMessage = z.infer<typeof AccessRevocationMessageSchema>;
 export type RevocationTarget = z.infer<typeof RevocationTargetSchema>;
 
@@ -97,13 +145,15 @@ export type RevocationTarget = z.infer<typeof RevocationTargetSchema>;
  * children; it has no use for the target that addressed it, and no business
  * deciding whether the retraction was legitimate.
  */
-export const SocketAccessRevocationSchema = AccessRevocationMessageSchema.pick({
+export const SocketAccessRevocationSchema = AccessRevocationMessageShape.pick({
   reason: true,
   workspaceId: true,
-  userId: true,
   sessionId: true,
   membershipIncarnation: true,
-}).strict();
+  // Restored to non-null here rather than inherited: an object is only ever
+  // told about one person, and the one target that names nobody never reaches
+  // `revokeSocketAccess` — it is answered by a method that decides for itself.
+}).extend({ userId: IdSchema }).strict();
 
 export type SocketAccessRevocation = z.infer<typeof SocketAccessRevocationSchema>;
 

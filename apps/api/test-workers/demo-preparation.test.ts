@@ -39,6 +39,7 @@ import {
   pendingParentEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { ensureAuditSchema } from "./helpers/audit-fixture";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 
@@ -90,11 +91,7 @@ function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
  * those against the real migrations.
  */
 async function seedControlPlane(): Promise<void> {
-  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL, actor_user_id TEXT,
-      workstream_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
-    )`).run();
+  await ensureAuditSchema();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,

@@ -5,6 +5,7 @@ import {
   asAutomationId,
   asUserId,
   asWorkspaceId,
+  type WorkstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
@@ -21,6 +22,15 @@ import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-data
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { createAutomation } from "../services/automation-service";
+import {
+  openGeneralSpaceForNewWorkspace,
+  placeConnectorChannelInGeneral,
+} from "../services/space-bootstrap-service";
+import {
+  WorkspaceSpaceBootstrapPageSchema,
+  type SpaceBootstrapChannel,
+  type WorkspaceSpaceBootstrapPage,
+} from "../durable-objects/workspace-space-protocol";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
@@ -197,6 +207,9 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     workspaceId,
     fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
   );
+  // The same step onboarding takes: every Channel this seed is about to write
+  // belongs to a Space, and the sidebar cannot be drawn without General.
+  await openGeneralSpaceForNewWorkspace(env, workspaceId);
   const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
 
   const workspaceCounts: Record<string, number> = {};
@@ -385,7 +398,84 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     }
     results.push({ workstreamId: workstream.id, copied });
   }
+
+  await placeSeededChannelsInGeneral(env, workspaceId, results.map((result) => result.workstreamId));
   return { seeded: true, workspaceTables: workspaceCounts, automations, workstreams: results };
+}
+
+/**
+ * Give every Channel this seed wrote its home in General.
+ *
+ * Every non-deleted Channel belongs to a Space, and this route does not reach
+ * `WorkstreamObjectCreationService` — it restores a captured fixture into
+ * objects it provisions under the ids the fixture chose. So it is the second
+ * creation path the coordinator's placement does not cover, and it takes the
+ * same step the Slack agent's does, through the same
+ * `placeConnectorChannelInGeneral`.
+ *
+ * **It waits for the Organization to know the Channel exists first**, which is
+ * what the creation coordinator gets for free. Reserving a Channel's main
+ * conversation writes the parent authority's own identity row and delivers a
+ * provisional directory row synchronously; seeding writes through the
+ * conversation instead, so the parent learns of the Channel from an effect
+ * that drifts up on its outbox. A placement issued before that lands is
+ * refused `conversation_parent_missing` by the Channel's own authority. The
+ * directory row is published *by* that parent, so one page of the cutover's
+ * own view of the Organization is exactly the signal: seeing the Channel there
+ * means the authority the placement addresses exists.
+ *
+ * It is also the best answer to what to place: the page's item is the Channel
+ * as the Organization records it — the scope its projection carries and the
+ * participants who may act on it — rather than two facts this route would have
+ * to assert about a Channel whose audience it does not set.
+ *
+ * **And the wait is what makes the fallback converge.** The participant half
+ * of the projection arrives as its own effect, so a placement can still be
+ * refused `space_bootstrap_no_active_actor` for a Channel whose directory row
+ * has landed and whose viewers have not. That refusal reopens the cutover, and
+ * the cutover's close asks whether any Channel in the directory is outside
+ * every Space — a question that can only be answered about a Channel the
+ * directory holds. Waiting for the row is therefore what stops the reopened
+ * walk from finding an empty directory, closing as complete, and leaving the
+ * Channel homeless with nothing left to notice.
+ *
+ * The wait has no deadline of its own. This is development tooling behind
+ * `APP_ENV=development`, `pnpm db:open-authority` is its only caller and
+ * already reports loudly, and an effect that never arrives is a local stack
+ * broken in a way a timeout here would only disguise.
+ */
+async function placeSeededChannelsInGeneral(
+  env: Env,
+  workspaceId: string,
+  workstreamIds: readonly string[],
+): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+  for (const workstreamId of workstreamIds) {
+    let channel: SpaceBootstrapChannel | undefined;
+    while (!channel) {
+      let cursor: WorkstreamId | null = null;
+      do {
+        const page: WorkspaceSpaceBootstrapPage = WorkspaceSpaceBootstrapPageSchema.parse(
+          await workspace.spaceBootstrapPage({ workspaceId, cursor }),
+        );
+        channel = page.items.find((item) => item.workstreamId === workstreamId);
+        cursor = page.nextCursor;
+      } while (!channel && cursor !== null);
+      // One directory round trip per poll, so the loop yields on real I/O
+      // rather than spinning; the interval is a cadence, not a limit.
+      if (!channel) await scheduler.wait(50);
+    }
+    // Idempotent on a warm container: a Channel General already holds settles
+    // the membership it has rather than staging a second one. A refusal this
+    // could not settle reopens the Organization's cutover, whose walk reaches
+    // the same Channel with the same directory record.
+    await placeConnectorChannelInGeneral(env, workspaceId, channel);
+  }
 }
 
 /**

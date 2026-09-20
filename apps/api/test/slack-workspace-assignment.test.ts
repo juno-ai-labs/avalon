@@ -19,6 +19,7 @@ import {
   SLACK_WORKSPACE_OBJECT_METHODS,
   workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
+import { spaceCreationRoomRpcs, spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import {
@@ -181,7 +182,10 @@ describe("Slack workspace workstream assignment", () => {
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+        extra: {
+          ...workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+          ...spaceCreationWorkspaceRpcs(),
+        },
       }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -301,7 +305,10 @@ describe("Slack workspace workstream assignment", () => {
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+        extra: {
+          ...workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+          ...spaceCreationWorkspaceRpcs(),
+        },
       }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -840,6 +847,7 @@ describe("Slack workspace workstream assignment", () => {
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
           ...workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+          ...spaceCreationWorkspaceRpcs(),
           recentWorkstreamDirectory: vi.fn(async () => ({ items: [] })),
           listAutomationDirectory: vi.fn(async () => ({ items: [] })),
         },
@@ -933,11 +941,16 @@ describe("Slack connector principal delivery", () => {
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       SUBSTREAM_AGENTS: substreamAgents,
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }) },
+        extra: {
+          ...parentCreationRpcs(),
+          ...spaceCreationRoomRpcs(),
+          admitConnectorParticipants: async () => ({ status: "legacy" }),
+        },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+          ...spaceCreationWorkspaceRpcs(),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -1591,11 +1604,16 @@ describe("Slack public channel membership", () => {
         },
       }),
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }) },
+        extra: {
+          ...parentCreationRpcs(),
+          ...spaceCreationRoomRpcs(),
+          admitConnectorParticipants: async () => ({ status: "legacy" }),
+        },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+          ...spaceCreationWorkspaceRpcs(),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -2585,13 +2603,17 @@ function slackMembershipEnvironment(
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, objectStores ? { objectStores } : {}),
     // Real parent grant initialization is covered in workerd conversation-creation.
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
-      ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }),
+      ...parentCreationRpcs(), ...spaceCreationRoomRpcs(),
+      admitConnectorParticipants: async () => ({ status: "legacy" }),
     } }),
     // The typed ingress methods and the runtime SQL port both answer from the
     // real workspace object, so every WorkspaceDO-authority table lives in
     // one store the way production has it.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+      extra: {
+        ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+        ...spaceCreationWorkspaceRpcs(),
+      },
     }),
     SLACK_APP_ID: "A1",
     SLACK_CLIENT_ID: "client",

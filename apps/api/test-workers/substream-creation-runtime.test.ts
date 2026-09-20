@@ -451,10 +451,16 @@ describe("substream preparation on workerd", () => {
     expect(await runInDurableObject(parent(), (_instance, state) =>
       state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray())).toEqual(originalMain);
 
-    // Everything addressed to a surface rather than a person stays here: a
-    // private child is in no feed, no digest and no workspace sidebar row.
+    // Everything addressed to the Channel's own surface rather than a person
+    // stays here: a private child is in no feed, no digest and no Channel
+    // sidebar aggregate. Its own tagged projection does leave, because the
+    // Space dashboard lists Breakouts beside their Channel without merging a
+    // Breakout's title or activity into the Channel row.
     expect(forwarded.some((envelope) => envelope.effect.kind === "activity_event")).toBe(false);
-    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common")).toBe(false);
+    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common"
+      && envelope.substreamId === undefined)).toBe(false);
+    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common"
+      && envelope.substreamId === substreamId)).toBe(true);
     expect(await runInDurableObject(parent(), (_instance, state) =>
       state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
     )).toBe("Source");

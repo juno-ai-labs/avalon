@@ -225,7 +225,7 @@ pre {
 .account-copy span,
 .account-copy strong,
 .automation-tile-name,
-.project-row-link > span,
+.space-row-link > span,
 .sidebar-row-hint-text,
 .sidebar-row-title,
 .sidebar-row-title-copy,
@@ -1126,17 +1126,17 @@ pre {
 .sidebar-section { margin-top: var(--av-sys-space-group-gap); }
 .sidebar-section-heading { align-items: center; display: flex; height: var(--av-cmp-group-label-height); padding: 0 8px; }
 .sidebar-section-heading h2 { flex: 1; min-width: 0; }
-.projects-section > .sidebar-section-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; padding: 0 4px 0 8px; }
-.project-sidebar-action.icon-button { border: 0; border-radius: var(--av-sys-size-radius-sm); height: 22px; justify-self: center; width: 22px; }
-.project-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
-.project-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
-.project-sidebar-item[draggable='true'] { cursor: grab; }
-/* Shares `.sidebar-row` for hover fill, radius, and padding so a project
-   and a work stream read as the same kind of row. The grid is the extra
-   accordion and plus columns; `height-dense` matches a single-line work
-   stream. Two classes so `display` and `gap` beat the later `.sidebar-row`
+.spaces-section > .sidebar-section-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; padding: 0 4px 0 8px; }
+.space-sidebar-action.icon-button { border: 0; border-radius: var(--av-sys-size-radius-sm); height: 22px; justify-self: center; width: 22px; }
+.space-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
+.space-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
+.space-sidebar-item[draggable='true'] { cursor: grab; }
+/* Shares `.sidebar-row` for hover fill, radius, and padding so a Space
+   and a Channel read as the same kind of row. The grid is the extra
+   accordion and plus columns; `height-dense` matches a single-line Channel.
+   Two classes so `display` and `gap` beat the later `.sidebar-row`
    flex rule rather than racing it on source order. */
-.sidebar-row.project-sidebar-row {
+.sidebar-row.space-sidebar-row {
   align-items: center;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 28px;
@@ -1145,11 +1145,11 @@ pre {
 }
 /* The section heading's plus stays put. The per-row plus is the same
    control, shown only while the row is the one being pointed at or tabbed
-   into, so a list of projects does not grow a column of idle pluses. */
-.project-sidebar-row .project-sidebar-row-action { opacity: 0; }
-.project-sidebar-row:hover .project-sidebar-row-action,
-.project-sidebar-row:focus-within .project-sidebar-row-action { opacity: 1; }
-.project-accordion-control {
+   into, so a list of Spaces does not grow a column of idle pluses. */
+.space-sidebar-row .space-sidebar-row-action { opacity: 0; }
+.space-sidebar-row:hover .space-sidebar-row-action,
+.space-sidebar-row:focus-within .space-sidebar-row-action { opacity: 1; }
+.space-accordion-control {
   align-items: center;
   background: transparent;
   border: 0;
@@ -1160,10 +1160,10 @@ pre {
   padding: 0;
   width: 18px;
 }
-.project-accordion-control svg { transform: rotate(90deg); transition: transform 120ms ease; }
-.project-accordion-control svg.is-expanded { transform: rotate(180deg); }
-.project-row-icon { align-items: center; display: inline-flex; justify-content: center; }
-.project-row-link {
+.space-accordion-control svg { transform: rotate(90deg); transition: transform 120ms ease; }
+.space-accordion-control svg.is-expanded { transform: rotate(180deg); }
+.space-row-icon { align-items: center; display: inline-flex; justify-content: center; }
+.space-row-link {
   align-items: center;
   color: var(--av-sys-color-text-subtle);
   display: grid;
@@ -1173,30 +1173,31 @@ pre {
   min-width: 0;
   text-decoration: none;
 }
-.project-row-link > span { overflow: hidden; white-space: nowrap; }
-.project-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
-.project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
-/* Nested members start where the accordion column ends, so they share a
-   leading edge with the project icon rather than sitting under the name.
-   The 18px is the accordion column in `.project-sidebar-row`; keep them
+.space-row-link > span { overflow: hidden; white-space: nowrap; }
+.space-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
+.space-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
+/* A stale directory's notice and its retry sit where the placements would,
+   so the section keeps its shape while it is out of date. */
+.space-sidebar-stale { align-items: center; display: flex; gap: 8px; padding: 2px 4px 0 8px; }
+.space-sidebar-stale > p { color: var(--av-sys-color-text-muted); flex: 1; font-size: 11px; margin: 0; min-width: 0; }
+/* Placements start where the accordion column ends, so they share a
+   leading edge with the Space icon rather than sitting under the name.
+   The 18px is the accordion column in `.space-sidebar-row`; keep them
    equal. Font, hover, and the title/description pair come from the shared
-   work-stream row, not a second style. */
-.project-sidebar-workstreams { display: grid; gap: var(--av-sys-space-row-gap); padding-left: 18px; }
-.project-icon-pile { align-items: center; display: inline-flex; flex: 0 0 auto; margin-left: 2px; }
-.project-icon-pile-item { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; display: inline-flex; height: 20px; justify-content: center; width: 20px; }
-.project-icon-pile-item + .project-icon-pile-item { margin-left: -6px; }
-.project-create-form { display: grid; gap: 18px; }
-.project-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
-.project-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
-.project-create-form .dropdown-select-trigger { width: 100%; }
-.project-create-form fieldset,
-.project-appearance-picker fieldset { border: 0; margin: 0; padding: 0; }
-.project-create-form legend,
-.project-appearance-picker legend { color: var(--av-sys-color-text-subtle); font-size: 12px; margin-bottom: 8px; }
-.project-appearance-picker { display: grid; gap: 18px; }
-.project-icon-grid { display: grid; gap: 6px; grid-template-columns: repeat(9, 32px); }
-.project-icon-grid button,
-.project-color-grid button {
+   Channel row, not a second style. */
+.space-sidebar-workstreams { display: grid; gap: var(--av-sys-space-row-gap); padding-left: 18px; }
+.space-create-form { display: grid; gap: 18px; }
+.space-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
+.space-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
+.space-create-form .dropdown-select-trigger { width: 100%; }
+.space-create-form fieldset,
+.space-appearance-picker fieldset { border: 0; margin: 0; padding: 0; }
+.space-create-form legend,
+.space-appearance-picker legend { color: var(--av-sys-color-text-subtle); font-size: 12px; margin-bottom: 8px; }
+.space-appearance-picker { display: grid; gap: 18px; }
+.space-icon-grid { display: grid; gap: 6px; grid-template-columns: repeat(9, 32px); }
+.space-icon-grid button,
+.space-color-grid button {
   align-items: center;
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-default);
@@ -1208,14 +1209,14 @@ pre {
   padding: 0;
   width: 32px;
 }
-.project-icon-grid button:hover,
-.project-color-grid button:hover { background-image: var(--hover-layer); }
-.project-icon-grid button.is-selected,
-.project-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
+.space-icon-grid button:hover,
+.space-color-grid button:hover { background-image: var(--hover-layer); }
+.space-icon-grid button.is-selected,
+.space-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
 /* Seven columns is what closes the palette ring across the row break; the
    count is mirrored by PROJECT_COLOR_COLUMNS in lib/project-palette.ts. */
-.project-color-grid { display: grid; gap: 8px; grid-template-columns: repeat(7, 32px); }
-.project-color-grid button span { border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); height: 17px; width: 17px; }
+.space-color-grid { display: grid; gap: 8px; grid-template-columns: repeat(7, 32px); }
+.space-color-grid button span { border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); height: 17px; width: 17px; }
 .sidebar-section-heading h2,
 .sidebar-group h3 {
   color: var(--av-ref-color-neutral-9);
@@ -1344,6 +1345,16 @@ pre {
 .sidebar-context-target.is-draggable { cursor: grab; }
 .sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
 .sidebar-context-target.is-dragging .sidebar-row { background: var(--av-sys-color-surface-subtle); }
+/* The Breakout rail's rows are arranged by hand too, and say so the same way
+   the sidebar's do: the same cursor, the same lift. The row is the button
+   itself here rather than a wrapper around a link, so the surface the drag
+   lifts is the row. */
+.workstream-conversation-row.is-draggable { cursor: grab; }
+.workstream-conversation-row.is-dragging {
+  cursor: grabbing;
+  opacity: 0.45;
+  background: var(--av-sys-color-surface-subtle);
+}
 
 .sidebar-row {
   --sidebar-row-background: var(--av-cmp-sidebar-background-solid);
@@ -4173,8 +4184,8 @@ pre {
 .connecting-card { pointer-events: none; }
 .connecting-card > .button { pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { .connecting-card, .connecting-card .spin { animation: none; } }
-.project-space-frame { height: 100%; position: relative; }
-.project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: calc(var(--screen-drag-strip-height) + var(--space-3)); }
+.space-dashboard-frame { height: 100%; position: relative; }
+.space-dashboard-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: calc(var(--screen-drag-strip-height) + var(--space-3)); }
 
 /* Composer */
 
@@ -5242,33 +5253,76 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .automation-run-row > time { display: none; }
 }
 
-.project-space-screen { height: 100%; overflow: auto; padding: 52px clamp(28px, 6vw, 84px) 80px; }
-.project-space-header { align-items: center; display: grid; gap: 14px; grid-template-columns: 44px minmax(0, 1fr) auto; margin-bottom: 40px; }
-.project-space-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; display: inline-flex; height: 42px; justify-content: center; padding: 0; width: 42px; }
-button.project-space-icon { cursor: pointer; }
-button.project-space-icon:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); }
-button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.project-space-header h1 { font-size: 26px; margin: 0; }
-.project-name-button { background: transparent; border: 0; color: inherit; cursor: default; font: inherit; letter-spacing: inherit; margin: 0; max-width: 100%; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.project-name-button:focus-visible { border-radius: 3px; outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 2px; }
-.project-name-input { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-highlight); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 26px; font-weight: 700; line-height: 1.2; max-width: 100%; min-width: 180px; padding: 2px 6px; width: auto; }
-.project-space-title { min-width: 0; }
-.project-space-title > .inline-error { margin-top: 6px; }
-.project-space-audience { align-items: center; display: flex; }
-.project-space-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
-.project-space-header p,
-.project-space-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
-.project-space-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding: 24px 0 32px; }
-.project-space-section-heading { align-items: center; display: flex; justify-content: space-between; }
-.project-space-section-heading h2 { font-size: 16px; margin: 0; }
-.project-space-section-copy { min-width: 0; }
-.project-space-header-actions { display: flex; gap: 8px; }
-.project-default-resource-list { display: grid; gap: 8px; list-style: none; margin: 16px 0 0; padding: 0; }
-.project-default-resource-list li { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 12px; justify-content: space-between; padding: 10px 12px; }
-.project-workstream-table-row { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
-.project-workstream-table-row .waiting-workstream-row { min-width: 0; }
-.project-recovery-list,
-.project-participant-list { display: grid; gap: 8px; }
+.space-dashboard-screen { height: 100%; overflow: auto; padding: 52px clamp(28px, 6vw, 84px) 80px; }
+.space-dashboard-header { align-items: center; display: grid; gap: 14px; grid-template-columns: 44px minmax(0, 1fr) auto; margin-bottom: 40px; }
+.space-dashboard-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; display: inline-flex; height: 42px; justify-content: center; padding: 0; width: 42px; }
+button.space-dashboard-icon { cursor: pointer; }
+button.space-dashboard-icon:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); }
+button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.space-dashboard-header h1 { font-size: 26px; margin: 0; }
+.space-name-button { background: transparent; border: 0; color: inherit; cursor: default; font: inherit; letter-spacing: inherit; margin: 0; max-width: 100%; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.space-name-button:focus-visible { border-radius: 3px; outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 2px; }
+.space-name-input { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-highlight); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 26px; font-weight: 700; line-height: 1.2; max-width: 100%; min-width: 180px; padding: 2px 6px; width: auto; }
+.space-dashboard-title { min-width: 0; }
+.space-dashboard-title > .inline-error { margin-top: 6px; }
+.space-dashboard-audience { align-items: center; display: flex; }
+.space-dashboard-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
+.space-dashboard-header p,
+.space-dashboard-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
+.space-dashboard-blocked-channels { color: var(--av-sys-color-text-muted); font-size: 13px; list-style: disc; margin: 8px 0 0; padding-left: 18px; }
+.space-dashboard-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding: 24px 0 32px; }
+.space-dashboard-section-heading { align-items: center; display: flex; justify-content: space-between; }
+.space-dashboard-section-heading h2 { font-size: 16px; margin: 0; }
+.space-dashboard-section-copy { min-width: 0; }
+.space-dashboard-header-actions { display: flex; gap: 8px; }
+/* One list for both kinds of default, because a resource and a Sidekick
+   recommendation are one mechanism with two consumers — see
+   `SpaceDefaultList`. */
+.space-default-list { display: grid; gap: 8px; list-style: none; margin: 16px 0 0; padding: 0; }
+.space-default-list li { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 12px; justify-content: space-between; padding: 10px 12px; }
+.space-default-list li > span { display: grid; min-width: 0; }
+.space-default-list li small { color: var(--av-sys-color-text-muted); font-size: 11px; }
+.space-channel-row { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.space-channel-row .waiting-workstream-row { min-width: 0; }
+/* A row with nothing to remove still reserves the control's box. A breakout
+   has no **Remove** — it follows its Channel — and without the reservation its
+   link ran to the right edge while the Channel rows above and below it stopped
+   short of one, putting the activity times in two different columns down a
+   list whose whole value is that it can be scanned. Hidden rather than absent,
+   and hidden by `visibility` rather than by a spacer of a guessed width: the
+   box is exactly the button's, whatever the font renders it at. */
+.space-channel-row-spacer { visibility: hidden; }
+/* A breakout on the Space dashboard: the same row as its Channel, marked with
+   the ↳ the middle column already uses for one.
+
+   The mark sits inside the copy rather than in a grid track of its own. The
+   row's template differs between the wide and narrow layouts, so a track would
+   have had to be placed twice and would have landed in the chevron slot the
+   one time it was got wrong; inside the copy it is a flex child and the
+   arithmetic disappears. It keeps its size where the sibling spans are
+   `flex: 1`, and it survives the narrow layout where they are hidden — the
+   parent Channel's name is the first thing to drop at that width, but without
+   the mark the row would stop saying it is a breakout at all. */
+.space-breakout-row .space-breakout-mark { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; }
+@media (max-width: 560px) {
+  .space-breakout-row .space-breakout-mark { display: inline; }
+}
+.space-recovery-list { display: grid; gap: 8px; }
+/* The Organization-opening card, in the sidebar section and on the
+   dashboard. One rule for both: the state is the same sentence in two
+   widths, and a second style is how the two drift. */
+.space-opening-card { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; margin: 4px; padding: 10px 12px; }
+.space-opening-card > span { min-width: 0; }
+/* Manage access: one block per source, the Channel's own first. */
+.manage-access-list { display: grid; gap: 10px; margin: 0; padding: 0; }
+.manage-access-source { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }
+.manage-access-source > div { display: grid; gap: 2px; min-width: 0; }
+.manage-access-source strong { align-items: center; display: flex; font-size: 13px; font-weight: 560; gap: 6px; min-width: 0; }
+.manage-access-source small { color: var(--av-sys-color-text-muted); font-size: 11px; }
+.manage-access-source .inline-error { grid-column: 1 / -1; }
+/* The read failed and there is nothing to list: the message and its retry take
+   the place of the sources rather than standing over a spinner. */
+.manage-access-failed { display: grid; gap: 10px; justify-items: start; }
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }

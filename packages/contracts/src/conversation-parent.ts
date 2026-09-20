@@ -9,16 +9,23 @@ import {
 } from "./substream-creation";
 
 /**
- * The two kinds of thing a conversation can belong to.
+ * The three kinds of thing a conversation can belong to.
  *
  * A `SubstreamAgent` is one ordered transcript and one agent loop; it does not
  * decide who may read it or where its state rolls up. Its parent does. A work
- * stream's parent is `WorkstreamDO`; an automation's parent is `AutomationDO`.
- * Both answer the same five questions below, so everything between the Worker
- * and a conversation object is written once against this contract rather than
- * once per kind of parent.
+ * stream's parent is `WorkstreamDO`; an automation's parent is `AutomationDO`;
+ * a Space's parent is `SpaceDO`. All three answer the same five questions
+ * below, so everything between the Worker and a conversation object is written
+ * once against this contract rather than once per kind of parent.
+ *
+ * `space` is a *parent* kind and not a product surface. A Space's hidden main
+ * conversation holds its participants and resources exactly as a Channel's
+ * does, and that is the whole reason it is a conversation at all — but Rally
+ * never opens it: no feed socket, no agent loop, no naming or description pass,
+ * no Sidekick skills. A branch that means "an ordinary Channel conversation"
+ * therefore tests `=== "workstream"`, never `!== "automation"`.
  */
-export const ConversationParentKindSchema = z.enum(["workstream", "automation"]);
+export const ConversationParentKindSchema = z.enum(["workstream", "automation", "space"]);
 export type ConversationParentKind = z.infer<typeof ConversationParentKindSchema>;
 
 export const ConversationParentRefSchema = z.strictObject({

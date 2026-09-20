@@ -2,7 +2,12 @@ import type { WorkstreamStateVersion } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
-import { evictCachedWorkstream, patchCachedWorkstream, setCachedWorkstreams } from './workstreams-cache';
+import {
+  WORKSTREAMS_QUERY_KEY,
+  evictCachedWorkstream,
+  patchCachedWorkstream,
+  setCachedWorkstreams,
+} from './workstreams-cache';
 
 export const WORKSTREAM_STATE_WATERLINES_KEY = ['workstream-state-waterlines'] as const;
 export const WORKSPACE_DIRECTORY_WATERLINES_KEY = ['workspace-directory-waterlines'] as const;
@@ -52,6 +57,12 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       nextPendingWakeup: workstream.nextPendingWakeup,
       participantUserIds: workstream.participantUserIds,
       participantExtraCount: workstream.participantExtraCount,
+      // Common rather than viewer state: a Channel's Space placements are the
+      // Organization's, not this reader's, and WorkspaceDO republishes the row
+      // after every membership settlement. Without it here, a Channel added to
+      // a Space stays under the Spaces it had until the whole directory is
+      // read again.
+      spaceIds: workstream.spaceIds,
     },
     viewer: {
       readThroughSequenceNumber: workstream.readThroughSequenceNumber,
@@ -85,6 +96,41 @@ export function withDerivedUnread<T extends WorkstreamSummary>(workstream: T): T
 }
 
 /**
+ * Whether this payload's Space placements are news, on a row the waterline
+ * ledger is about to reject.
+ *
+ * A placement is the Organization's fact about a Channel and changes nothing
+ * the Channel's own authority projects, so WorkspaceDO republishes the row at
+ * exactly the waterline it already had whenever the membership implied no
+ * audience change — adding an already Organization-wide Channel to a second
+ * Organization-wide Space is the ordinary case. The ledger reads that as a
+ * duplicate and drops it, which left the Channel under the Spaces it had for
+ * the rest of the session; the local cache then persisted that row, so a
+ * reload did not repair it either. The empty-pile case beside this is the same
+ * shape — a republication that is not newer and still carries something the
+ * stored row does not have.
+ *
+ * Read off the row cache rather than the ledger, which holds waterlines and
+ * not placements, and only from the branch that would otherwise stop: the
+ * ordinary push has already applied its common half and never reaches here.
+ * A payload from a superseded authority generation is still refused; its whole
+ * epoch has been replaced.
+ */
+function carriesNewPlacements(
+  queryClient: QueryClient,
+  input: VersionedWorkstreamState,
+  staleGeneration: boolean,
+): boolean {
+  const placements = input.common.spaceIds;
+  if (!input.visible || staleGeneration || placements === undefined) return false;
+  const held = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+    ?.find((item) => item.id === input.workstreamId)?.spaceIds;
+  return held === undefined
+    || held.length !== placements.length
+    || placements.some((spaceId, index) => held[index] !== spaceId);
+}
+
+/**
  * The one receiver for both WorkspaceDO and WorkstreamDO state sockets.
  *
  * Common and viewer rows advance independently. This is what makes a delayed
@@ -115,7 +161,8 @@ export function applyVersionedWorkstreamState(
     && input.common.scope !== 'workspace'
     && incomingIds !== undefined
     && incomingIds.length > 0;
-  if (!commonApplied && !viewerApplied && !canFillEmptyPile) {
+  if (!commonApplied && !viewerApplied && !canFillEmptyPile
+    && !carriesNewPlacements(queryClient, input, staleGeneration === true)) {
     return { commonApplied, viewerApplied };
   }
 
@@ -172,6 +219,15 @@ export function applyVersionedWorkstreamState(
       patched.participantUserIds = [];
       patched.participantExtraCount = 0;
     }
+    // The other half of `carriesNewPlacements`: the row is here, so take the
+    // placements off it even though the rest of the common half is not this
+    // payload's to write.
+    if (!commonApplied && input.common.spaceIds !== undefined) {
+      patched.spaceIds = input.common.spaceIds;
+    }
+    // The other half of `carriesNewPlacements`: the row is here, so take the
+    // placements off it even though the rest of the common half is not this
+    // payload's to write.
     return withDerivedUnread(patched) as T;
   };
   setCachedWorkstreams(queryClient, (items) => {

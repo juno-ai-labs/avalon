@@ -57,6 +57,11 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  PERSONAL_SPACE_ID,
+  spaceCreationRoomRpcs,
+  spaceCreationWorkspaceRpcs,
+} from "./helpers/space-creation-rpcs";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const memberId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -91,12 +96,23 @@ function seededDatabase(): DatabaseSync {
   return database;
 }
 
-/** The environment, plus the `initialize` payloads the object was handed. */
+/**
+ * The environment, plus what the object and the Channel's room were handed.
+ *
+ * `initialize` carries the audience the Channel *opens* with, which is the
+ * union of the caller's request and every Space it lands in. `directScopes`
+ * carries the caller's own half of that union, read off the observation the
+ * creation hands to `applySpaceAccessSource` — the thing a Space source is a
+ * delta against, and the only place the requested scope is still visible once
+ * an Organization-wide Space has widened it.
+ */
 function environment(database: DatabaseSync): {
   env: Env;
   initializeInputs: Array<Record<string, unknown>>;
+  directScopes: () => string[];
 } {
   const initializeInputs: Array<Record<string, unknown>> = [];
+  const room = spaceCreationRoomRpcs();
   /** The contract row each initialized work stream would answer `get` with. */
   const initialized = new Map<string, Record<string, unknown>>();
   const env = createTestEnv({
@@ -146,15 +162,21 @@ function environment(database: DatabaseSync): {
       },
     }),
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: parentCreationRpcs(),
+      extra: { ...parentCreationRpcs(), ...room },
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
         opportunityOriginEvents: vi.fn(async () => []),
+        ...spaceCreationWorkspaceRpcs(),
       },
     }),
   });
-  return { env, initializeInputs };
+  return {
+    env,
+    initializeInputs,
+    directScopes: () => room.applySpaceAccessSource.mock.calls
+      .map(([input]) => String(input.channel.readers.scope)),
+  };
 }
 
 /**
@@ -176,6 +198,16 @@ function parentCreationRpcs() {
   };
 }
 
+/**
+ * A create in a Space that supplies no readers of its own.
+ *
+ * The audience a Channel opens with is the union of the caller's request and
+ * every Space it lands in, and a creation that names none lands in General,
+ * which is Organization-wide. So a case about *the caller's* scope reaching the
+ * object has to name a Space that widens nothing — otherwise every case below
+ * would read `workspace` and the file would prove only that General is public.
+ * The first case names no Space on purpose, and says so.
+ */
 function createInput(overrides: Record<string, unknown> = {}) {
   return {
     title: "A work stream",
@@ -184,23 +216,30 @@ function createInput(overrides: Record<string, unknown> = {}) {
     clientMessageId: `client-${crypto.randomUUID()}`,
     participantUserIds: [] as string[],
     attachmentIds: [] as string[],
+    spaceIds: [PERSONAL_SPACE_ID],
     ...overrides,
   };
 }
 
 describe("the audience a new work stream is created with", () => {
-  it("asks the object for a private work stream when the caller names no audience", async () => {
+  it("asks the object for a private work stream when the caller names neither an audience nor a Space", async () => {
     const database = seededDatabase();
     const { env, initializeInputs } = environment(database);
 
-    await new WorkstreamService(env, auth).create(createInput());
+    await new WorkstreamService(env, auth).create(createInput({ spaceIds: [] }));
 
     // What the object was *asked* for. The work stream that comes back carries
     // whatever this file's `initialize` double echoed, so asserting on it would
     // be asserting on the double's own configuration; the row it really writes
     // is proved on workerd in `durable-object-runtime.test.ts`.
+    //
+    // `workspace`, and that is the cutover's doing rather than a caller's: a
+    // create that names no Space lands in General, and General is the
+    // Organization's own Space. The *direct* scope is still what the caller
+    // asked for, which `test-workers/space-creation.test.ts` reads off the
+    // Channel's access sources; what reaches the object is the union.
     expect(initializeInputs).toHaveLength(1);
-    expect(initializeInputs[0]).toMatchObject({ scope: "personal" });
+    expect(initializeInputs[0]).toMatchObject({ scope: "workspace" });
   });
 
   it("carries the audience a connector ingress resolved through to the object", async () => {
@@ -221,7 +260,7 @@ describe("the audience a new work stream is created with", () => {
 
   it("gives a suggestion the audience it was shown to", async () => {
     const database = seededDatabase();
-    const { env, initializeInputs } = environment(database);
+    const { env, initializeInputs, directScopes } = environment(database);
     const service = new WorkstreamService(env, auth);
 
     // A suggestion Avalon put in front of the whole workspace. Whoever presses
@@ -250,7 +289,13 @@ describe("the audience a new work stream is created with", () => {
       audienceScope: "personal",
     });
 
-    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
+    // Both open Organization-wide, because neither names a Space and the
+    // fallback is General. What the suggestion's own audience still decides is
+    // the Channel's *direct* source — the half a later narrowing or a Space
+    // leaving is computed against — so that is what this reads. Asserting on
+    // `initialize` here would pass with the audience plumbing deleted.
+    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "workspace"]);
+    expect(directScopes()).toEqual(["workspace", "personal"]);
   });
 
   it("refuses a retry of one create key that resolved a different audience", async () => {

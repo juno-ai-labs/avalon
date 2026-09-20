@@ -5,6 +5,8 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
+export * from "./conversation-attention";
+import { HarnessStatusSchema } from "./conversation-attention";
 export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
@@ -21,7 +23,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import { PersonalOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -56,8 +58,10 @@ import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
 export * from "./attachment-contracts";
+export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
+export * from "./spaces";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
@@ -130,15 +134,6 @@ export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
 export type UserId = z.infer<typeof UserIdSchema>;
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
 export const ScopeSchema = z.enum(["personal", "workspace"]);
-export const HarnessStatusSchema = z.enum([
-  "scheduled",
-  "running",
-  "needs_input",
-  "completed",
-  "failed",
-  "stopped",
-  "idle"
-]);
 export const HarnessFailureCodeSchema = z.enum([
   "run_wall_time_limit_exceeded",
   "run_iteration_limit_exceeded",
@@ -620,6 +615,24 @@ export const WorkstreamSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
   participantExtraCount: z.number().int().nonnegative().default(0),
+  /**
+   * Every Space this Channel currently sits in.
+   *
+   * A Channel belongs to at least one Space and may belong to several; each is
+   * a *placement* of this same row rather than a copy of it, so a sidebar
+   * renders one entry per id and all of them open the same Channel.
+   *
+   * Uncapped, deliberately. The ids are the Channel's own memberships rather
+   * than a fan-out over the Organization — a Channel is in as many Spaces as
+   * somebody put it in — and truncating the list would make a placement
+   * disappear from one of the Spaces that actually holds it.
+   *
+   * Defaulted because a payload written before Spaces existed describes a
+   * Channel from the flat directory they replace.
+   */
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
 });
 
 export const ExternalActorSchema = z.object({
@@ -1028,6 +1041,81 @@ export const ElicitationSchema = z.object({
   createdAt: TimestampSchema,
   answeredAt: TimestampSchema.nullable()
 });
+
+/**
+ * One conversation on a Space's dashboard: a Channel, or one of a Channel's
+ * breakouts.
+ *
+ * Both kinds are `WorkstreamSchema` plus two fields, rather than a union,
+ * because the dashboard draws them as one row type: the same status dot, the
+ * same title, the same activity time, in one list ordered by activity. A union
+ * would have made every one of those a branch, and the difference between the
+ * kinds is two facts and a destination.
+ *
+ * `id` is the *conversation's* id, which is the Channel id for a Channel and
+ * the substream id for a breakout. That is what makes the list keyable and the
+ * cursor total; `breakoutOf` carries the addressing a breakout needs on top —
+ * its parent Channel, its substream id again (checked equal to `id`, so the
+ * two can never drift) and the parent's title, which the row prints so a
+ * breakout is not a name with no context.
+ */
+export const SpaceConversationSchema = WorkstreamSchema.extend({
+  kind: z.enum(["channel", "breakout"]),
+  /** Non-null on exactly the breakouts. */
+  breakoutOf: z.strictObject({
+    workstreamId: IdSchema,
+    substreamId: IdSchema,
+    title: z.string().min(1).max(180),
+  }).nullable().default(null),
+}).superRefine((conversation, context) => {
+  if ((conversation.kind === "breakout") !== (conversation.breakoutOf !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["breakoutOf"],
+      message: "A breakout carries its parent Channel and a Channel carries none",
+    });
+  }
+  if (conversation.breakoutOf && conversation.breakoutOf.substreamId !== conversation.id) {
+    context.addIssue({
+      code: "custom",
+      path: ["breakoutOf", "substreamId"],
+      message: "A breakout's id is its substream id",
+    });
+  }
+});
+export type SpaceConversation = z.infer<typeof SpaceConversationSchema>;
+
+/**
+ * One page of the conversations a Space currently needs this viewer for.
+ *
+ * The route is still `GET /spaces/:id/channels` and this is still the answer
+ * to it, but what it answers is *conversations*: the Space's member Channels
+ * and those Channels' breakouts in one list, newest activity first, with
+ * everything that is stale for this viewer left out entirely
+ * (`conversationNeedsViewer`). The name is kept because the route is, and
+ * renaming a shipped path to describe its payload buys a reader nothing.
+ *
+ * The same rows the Channel directory serves, shaped for the viewer: General
+ * holds every Channel in the Organization, so this is the one Space read that
+ * cannot ride the workspace socket. It answered bare ids first, which made the
+ * Space dashboard able to name only the Channels that happened to be in the
+ * device's loaded directory page and say nothing about the rest — and a second
+ * read per id would have been a round trip per row.
+ *
+ * It lives here rather than in `spaces.ts` because a page of conversations is
+ * made of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
+ * imported by it and cannot import back.
+ *
+ * Opaque cursor: the ordering is the authority's, and a client that could
+ * construct a cursor could ask for a page the ordering no longer has. A page
+ * may be shorter than the cursor suggests, because a membership the viewer may
+ * not read is dropped after the page is taken.
+ */
+export const SpaceChannelPageSchema = z.strictObject({
+  items: z.array(SpaceConversationSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -1642,8 +1730,19 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 );
 
 export const WorkstreamCreationFieldsSchema = z.object({
-  /** Optional organizer chosen by the caller; the API reauthorizes it. */
-  projectId: ProjectIdSchema.optional(),
+  /**
+   * The Spaces this Channel is born in; the API reauthorizes every one of them.
+   *
+   * A list rather than one id because a Channel belongs to as many Spaces as it
+   * was put in. Empty — which is what every connector, import, recovery and
+   * scheduled path sends — means General: every Channel has a home, and no
+   * caller without a person at a keyboard has one to choose. A Space named here
+   * is established with the Channel or the creation fails without publishing
+   * one, so there is no window in which a Channel exists outside the hierarchy.
+   */
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**
@@ -2266,8 +2365,38 @@ export const WorkspaceSidebarSchema = z.strictObject({
      */
     nextCursor: NoteCursorSchema.nullable().optional(),
   }),
-  /** Optional during the rolling deployment; current servers always send it. */
-  projects: ProjectSnapshotSchema.optional(),
+  /**
+   * Both Space directories at one waterline, for this viewer.
+   *
+   * Optional so a client reading a payload from a server that predates it
+   * treats the hierarchy as absent rather than failing the connect.
+   */
+  spaces: SpaceSnapshotSchema.optional(),
+  /**
+   * Every list this viewer has arranged by hand, whatever contains it.
+   *
+   * Beside the Space directories rather than inside one, because it is the
+   * *viewer's* preference about three different containers — the Organization,
+   * a Space, a Channel — and only the first of those is a Space fact at all. It
+   * rides this payload because it is per viewer, it is small, and it has to
+   * reach the screen in the same frame as the lists it orders.
+   *
+   * Optional for the reason `spaces` is: a client reading a payload from a
+   * server that predates it draws every list in its natural order rather than
+   * failing the connect.
+   */
+  ordering: PersonalOrderSchema.optional(),
+  /**
+   * False while the Organization has not finished creating General and placing
+   * every Channel in it.
+   *
+   * The client shows the Organization-opening state rather than a hierarchy
+   * that is half built — a Channel with no Space, or a Space directory missing
+   * General, is not a state any surface is allowed to render. Optional and
+   * read as `true` when absent, so a payload from a server without the cutover
+   * is not permanently stuck opening.
+   */
+  spacesReady: z.boolean().optional(),
 });
 
 /**
@@ -2390,16 +2519,59 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
 ]);
 
 /**
- * The viewer's complete active and inactive project state after a project write.
+ * The viewer's complete active and inactive Space state after a Space write.
  *
- * WorkspaceDO owns both lists and their shared waterline. The payload is read
- * per subscribed socket because personal-project visibility and ordering are
- * viewer-specific. Absence is the tombstone when a participant is removed.
+ * The shape the Project snapshot used, and for the same reasons: WorkspaceDO
+ * owns both lists and their shared waterline, personal-Space visibility and
+ * ordering are per viewer, and absence is the tombstone when somebody stops
+ * being a participant. `spacesReady` travels with it because a write can be the write
+ * that finishes the cutover, and a client holding `false` would otherwise keep
+ * showing the opening state until it reconnected.
  */
-export const WorkspaceProjectSnapshotEventSchema = z.strictObject({
-  type: z.literal("workspace_project_snapshot"),
+export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
+  type: z.literal("workspace_space_snapshot"),
   occurredAt: TimestampSchema,
-  projects: ProjectSnapshotSchema,
+  spaces: SpaceSnapshotSchema,
+  /**
+   * Every list this viewer has arranged by hand, in full.
+   *
+   * The whole ordering rather than the container that just moved, for the
+   * reason the directories are whole: this is the one message a viewer's other
+   * windows get, and a delta would make each of them keep a copy to apply it
+   * to. Required here and optional on the connect payload, because a server
+   * that sends this event is a server that has the ordering.
+   */
+  ordering: PersonalOrderSchema,
+  spacesReady: z.boolean(),
+});
+
+/**
+ * The Space dashboards whose page this viewer should read again.
+ *
+ * A nudge, not a payload: it carries no rows, no version and no count, only
+ * the Spaces whose list of "conversations that need you" could have moved for
+ * the socket it is sent to. The dashboard re-reads the page it is holding;
+ * every other surface ignores it.
+ *
+ * **Nothing durable stands behind it.** The list is re-read on mount, on
+ * reconnect and on this event, so a nudge lost to a closing socket costs one
+ * stale view until the next event or the next reconnect — which is cheaper to
+ * reverse than a per-viewer counter written on every message in the
+ * Organization. `docs/spaces.md` records why that trade was taken.
+ *
+ * The ids are the ones *this* viewer may see. A Space a person cannot see is
+ * never named: a personal Space's id on somebody else's socket is the
+ * existence of that Space leaking through a shared Channel.
+ */
+export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
+  type: z.literal("space_conversations_changed"),
+  occurredAt: TimestampSchema,
+  /**
+   * At least one, because a nudge naming no Space asks for nothing. No upper
+   * bound: a Channel may be in as many Spaces as somebody puts it in, and the
+   * Organization has no number for that to trip over.
+   */
+  spaceIds: z.array(IdSchema).min(1),
 });
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */
@@ -2497,7 +2669,8 @@ export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEve
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
-export type WorkspaceProjectSnapshotEvent = z.infer<typeof WorkspaceProjectSnapshotEventSchema>;
+export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
+export type WorkspaceSpaceConversationsEvent = z.infer<typeof WorkspaceSpaceConversationsEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
@@ -3497,7 +3670,6 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 
 export type Region = z.infer<typeof RegionSchema>;
 export type Scope = z.infer<typeof ScopeSchema>;
-export type HarnessStatus = z.infer<typeof HarnessStatusSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;

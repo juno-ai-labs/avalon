@@ -51,6 +51,22 @@ export const ScopeGrantMutationSchema = z.strictObject({
   active: z.boolean(),
   /** Zero asserts absence. Revoked rows retain a positive revision. */
   expectedRevision: z.number().int().nonnegative(),
+  /**
+   * The Space this grant is being written on behalf of, when it is not the
+   * Channel's own decision.
+   *
+   * Absent means direct, which is what every grant was before Spaces existed.
+   * It is carried on the mutation rather than inferred because the authority
+   * cannot tell the two apart: the same method writes the same row either way,
+   * and the difference decides whether the grant reaches the shared
+   * scope-grant directory. A Space-derived reader finds the Channel through
+   * the Space, so publishing one would put every Channel in General into every
+   * member's flat candidate index.
+   *
+   * Deliberately not part of {@link ScopeGrantSchema}: it is provenance the
+   * object keeps, not a fact the grant's readers are owed.
+   */
+  spaceSourceId: IdSchema.optional(),
 });
 export type ScopeGrantMutation = z.infer<typeof ScopeGrantMutationSchema>;
 
@@ -77,6 +93,9 @@ export const ScopeAccessResultSchema = z.discriminatedUnion("allowed", [
 ]);
 export type ScopeAccessResult = z.infer<typeof ScopeAccessResultSchema>;
 
+/** ECMAScript's time-value range, the point past which an instant has no `Date` and no ISO string. */
+const MAX_TIME_VALUE = 8_640_000_000_000_000;
+
 /** An invitation is addressed to a verified mailbox; it is not a read capability. */
 export const CreateScopeInvitationsSchema = z.strictObject({
   operationId: IdSchema,
@@ -86,8 +105,11 @@ export const CreateScopeInvitationsSchema = z.strictObject({
   emails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).min(1),
   targets: z.array(ScopeGrantTargetSchema).min(1),
   completeWorkstream: z.boolean().optional(),
-  // Null explicitly leaves expiry open until a team policy is configured.
-  expiresAt: z.number().int().positive().nullable(),
+  // Null explicitly leaves expiry open until a team policy is configured. The
+  // ceiling is not a policy: it is the largest instant `Date` can represent, and
+  // past it `new Date(value).toISOString()` throws `RangeError: Invalid time
+  // value` somewhere downstream with nothing naming the field that caused it.
+  expiresAt: z.number().int().positive().max(MAX_TIME_VALUE).nullable(),
 }).refine((request) => request.targets.every((target) =>
   target.workspaceId === request.workspaceId && target.parentId === request.parentId),
 { message: "An invitation operation belongs to one workstream" });
@@ -108,6 +130,34 @@ export const AcceptScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   userId: UserIdSchema, token: z.string().min(1),
 });
+/**
+ * What a recipient's invitation link hands back.
+ *
+ * `link` is the opaque token current invitation emails carry. The workspace,
+ * the workstream, the invitation and its secret are a row the issuing
+ * deployment holds, so neither the recipient nor the page they open learns
+ * which scope they were offered until they accept it. The addressed form is the
+ * fragment format those emails used before, kept usable while links sent under
+ * it are still in inboxes; nothing mints it any more.
+ */
+export const ScopeInvitationLinkCredentialSchema = z.strictObject({ link: z.string().min(1) });
+export const ScopeInvitationCredentialSchema = z.union([
+  ScopeInvitationLinkCredentialSchema,
+  AcceptScopeInvitationSchema.omit({ userId: true }),
+]);
+export type ScopeInvitationCredential = z.infer<typeof ScopeInvitationCredentialSchema>;
+
+/** Opening a link releases the invited mailbox and nothing else: a sign-in form needs it before there is a session to ask. */
+export const ScopeInvitationPreviewSchema = z.strictObject({ email: z.string().email() });
+export type ScopeInvitationPreview = z.infer<typeof ScopeInvitationPreviewSchema>;
+
+export const DescribeScopeInvitationSchema = AcceptScopeInvitationSchema.omit({ userId: true });
+export const ScopeInvitationDescriptionSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("ready"), email: z.string().email() }),
+  z.strictObject({ status: z.literal("denied"), reason: z.literal("invitation_unavailable") }),
+]);
+export type ScopeInvitationDescription = z.infer<typeof ScopeInvitationDescriptionSchema>;
+
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   actorUserId: UserIdSchema, expectedRevision: z.number().int().positive(),
