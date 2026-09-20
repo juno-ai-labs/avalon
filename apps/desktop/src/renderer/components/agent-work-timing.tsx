@@ -121,41 +121,50 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 }
 
 /**
- * What the composer dock says between a Stop request and the run ending.
+ * What the composer dock says about a stop: one line, two phases.
  *
  * It borrows the activity rows' shape because it is the same kind of line, but
  * it is drawn in the dock rather than in the feed, and it carries no duration.
- * `docs/conversation-surfaces.md` owns both reasons.
+ * `docs/conversation-surfaces.md` owns both reasons. Settled, it is no longer
+ * an activity row — nothing is running — so it parks the orb's slot rather
+ * than borrowing `ActivityStatusRow`, whose whole contract is a state that is
+ * still going, and the mark takes that same 20px so the line does not shift
+ * under itself as the phase changes.
+ *
+ * **One component, mounted across both phases, deliberately.** Two sibling
+ * slots would unmount one `role="status"` and mount another, and a live region
+ * inserted together with its content is not reliably announced — the guidance
+ * is that the region exists first and its contents change. That gap falls on
+ * exactly the reader this row is for: somebody who pressed Stop and cannot see
+ * the dock, who now has nothing in the transcript to fall back on either.
  */
-export function RunStoppingIndicator(): React.JSX.Element {
-  return <ActivityStatusRow label={STOPPING_LABEL} />;
-}
+export function RunStopAcknowledgement({ settled }: { settled: boolean }): React.JSX.Element {
+  const appearance = useAppearance();
+  const label = settled ? STOPPED_LABEL : STOPPING_LABEL;
 
-/**
- * What the dock says once that stop has settled.
- *
- * The same line, in the same place, with the orb replaced by the stop square
- * and the sentence in the past tense: these two are one acknowledgement with
- * two phases, and it answers a button press, so it is drawn where the button
- * is. It is not an activity row — nothing is running — so it does not borrow
- * `ActivityStatusRow`, whose whole contract is a state that is still going.
- *
- * The mark takes the orb's 20px slot, so the line does not shift under itself
- * as the phase changes.
- */
-export function RunStoppedIndicator(): React.JSX.Element {
   return (
     <div
       aria-atomic="true"
-      aria-label={STOPPED_LABEL}
+      aria-label={label}
       aria-live="polite"
-      className="agent-work-timing"
+      className={clsx('agent-work-timing', !settled && 'agent-work-timing-active')}
       role="status"
     >
-      <span aria-hidden="true" className="run-stopped-mark">
-        <Square fill="currentColor" size={11} />
-      </span>
-      <span aria-hidden="true" className="agent-work-timing-label">{STOPPED_LABEL}</span>
+      {settled ? (
+        <span aria-hidden="true" className="run-stopped-mark">
+          <Square fill="currentColor" size={11} />
+        </span>
+      ) : (
+        <ThinkingOrb
+          aria-hidden="true"
+          className="agent-work-timing-orb"
+          size={20}
+          speed={1}
+          state="solving"
+          theme={appearance}
+        />
+      )}
+      <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
   );
 }

@@ -998,28 +998,88 @@ describe('conversationShowsStoppingRow', () => {
 });
 
 describe('nextStopAcknowledgement', () => {
-  const running = { id: 'run-one', status: 'running' as const };
+  const live = { id: 'run-one', status: 'running' as const };
   const stopped = { id: 'run-one', status: 'stopped' as const };
+  const held = { runId: 'run-one', pendingRunId: null };
 
   it('holds the arming across the wait, which is the whole of the mechanism', () => {
     // Between the request and the settlement the run still reads `running`.
     // An arming that cleared itself the moment it found nothing to say would
     // be gone by the time the run settled, which is exactly what it exists to
-    // survive — and what shipped broken the first time.
-    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, true, running);
-    expect(asked).toEqual({ runId: null, stopPending: true });
-    // The stopping row goes as soon as the run leaves `running`, so the pass
-    // that settles it carries no arming signal of its own.
-    expect(nextStopAcknowledgement(asked, false, stopped)).toEqual({ runId: 'run-one', stopPending: false });
+    // survive — and what the first version of this got wrong.
+    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, 'running', true, live);
+    expect(asked).toEqual({ runId: null, pendingRunId: 'run-one' });
+    // Three passes, not two: `applyHarnessStatus` clears `stopRequested` on a
+    // status frame while the run is still going, so the pass in the middle
+    // carries neither the request nor the settlement. An arming read from the
+    // request alone survives a two-pass test and dies here.
+    const waiting = nextStopAcknowledgement(asked, 'running', false, live);
+    expect(waiting).toEqual({ runId: null, pendingRunId: 'run-one' });
+    expect(nextStopAcknowledgement(waiting, 'stopped', false, stopped)).toEqual(held);
+  });
+
+  it('survives a status frame that cannot say a stop was a stop', () => {
+    // The sequence a real member stop actually produces. A stop leaves the
+    // work stream `idle` — `settleWorkstreamState` calls that the member
+    // taking the conversation back rather than an outcome — and this client
+    // reads `idle` as `completed`, so the frame that ends the wait looks
+    // exactly like an ordinary finish. Only the run row behind it says which
+    // it was. An arming cleared on that frame is gone a beat before its own
+    // evidence arrives, and the acknowledgement never appears at all.
+    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, 'running', true, live);
+    const quiet = nextStopAcknowledgement(asked, 'completed', false, live);
+    expect(quiet).toEqual({ runId: null, pendingRunId: 'run-one' });
+    expect(nextStopAcknowledgement(quiet, 'completed', false, stopped)).toEqual(held);
+  });
+
+  it('says so the moment the status frame lands, not when the snapshot does', () => {
+    // `harness_status_changed` writes the status and leaves `latestHarnessRun`
+    // to a separate snapshot round trip. Read from the run row alone the dock
+    // goes blank for the length of that trip — and stays blank for good if the
+    // socket reconnects instead of the snapshot landing, which loses the
+    // acknowledgement for somebody who watched the whole stop.
+    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, 'running', true, live);
+    const onTheFrame = nextStopAcknowledgement(asked, 'stopped', false, live);
+    // Acknowledged already, and still armed: the run row has not settled yet,
+    // so the arming stays up until the evidence behind the frame arrives.
+    expect(onTheFrame).toEqual({ runId: 'run-one', pendingRunId: 'run-one' });
+    // And the snapshot behind it does not take the row away again. The status
+    // no longer says `stopped` by then: `settleWorkstreamState` leaves a
+    // stopped run's work stream `idle`, which this client reads as
+    // `completed`, so the run row is what says it from here on.
+    expect(nextStopAcknowledgement(onTheFrame, 'completed', false, stopped)).toEqual(held);
+  });
+
+  it('will not let one run\u2019s arming answer for another', () => {
+    // `applyHarnessStatus` clears `stopRequested` from the status event and
+    // leaves `latestHarnessRun` to the canonical snapshot behind it, so a
+    // snapshot that lands already carrying the next run reaches this with the
+    // arm still up. Carried onto that run, it would say "Run stopped" as the
+    // settlement of a request nobody made for it.
+    const asked = nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, 'running', true, live);
+    const next = nextStopAcknowledgement(asked, 'running', false, { id: 'run-two', status: 'running' });
+    expect(next).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(next, 'stopped', false, { id: 'run-two', status: 'stopped' }))
+      .toEqual(NO_STOP_ACKNOWLEDGEMENT);
+  });
+
+  it('withdraws it the moment the conversation is working again', () => {
+    // The same skew, in the direction that shows. The status event moves
+    // first and the run row follows a snapshot later, so a held
+    // acknowledgement would otherwise sit in the dock saying the run stopped
+    // while the feed above it shows an agent visibly working — and would stay
+    // there for as long as the snapshot took, or for good if it never landed.
+    for (const status of ['running', 'scheduled', 'needs_input'] as const) {
+      expect(nextStopAcknowledgement(held, status, false, stopped)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    }
   });
 
   it('keeps saying so until the conversation has another run to describe', () => {
-    const held = { runId: 'run-one', stopPending: false };
-    expect(nextStopAcknowledgement(held, false, stopped)).toEqual(held);
-    expect(nextStopAcknowledgement(held, false, { id: 'run-two', status: 'running' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
-    expect(nextStopAcknowledgement(held, false, { id: 'run-two', status: 'stopped' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
-    expect(nextStopAcknowledgement(held, false, null)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
-    expect(nextStopAcknowledgement(held, false, undefined)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, 'completed', false, stopped)).toEqual(held);
+    expect(nextStopAcknowledgement(held, 'stopped', false, { id: 'run-two', status: 'stopped' }))
+      .toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, 'completed', false, null)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(held, 'completed', false, undefined)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 
   it('says nothing to a reader who was not there', () => {
@@ -1028,13 +1088,16 @@ describe('nextStopAcknowledgement', () => {
     // they never made — and, in a room where people talk to each other, keep
     // it on screen under every later message, because a turn the addressing
     // classifier reads as human-only starts no run to replace it.
-    expect(nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, false, stopped)).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT, 'stopped', false, stopped))
+      .toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 
   it('drops the arming on a run that ended some other way', () => {
-    const asked = { runId: null, stopPending: true };
-    expect(nextStopAcknowledgement(asked, false, { id: 'run-one', status: 'completed' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
-    expect(nextStopAcknowledgement(asked, false, { id: 'run-one', status: 'failed' })).toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    const asked = { runId: null, pendingRunId: 'run-one' };
+    expect(nextStopAcknowledgement(asked, 'completed', false, { id: 'run-one', status: 'completed' }))
+      .toEqual(NO_STOP_ACKNOWLEDGEMENT);
+    expect(nextStopAcknowledgement(asked, 'failed', false, { id: 'run-one', status: 'failed' }))
+      .toEqual(NO_STOP_ACKNOWLEDGEMENT);
   });
 });
 
