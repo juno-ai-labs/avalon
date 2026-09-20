@@ -1,24 +1,19 @@
-import { IconPlus } from '@tabler/icons-react';
+import { IconRestore } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   type ContainerOrder,
-  type CreateSpaceRequest,
   type PersonalOrder,
-  type SpaceColorKey,
-  type SpaceIconKey,
   type SpaceSummary,
 } from '@rally/contracts';
-import { SpaceAppearancePicker, SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/components/space-row';
-import { SPACE_SCOPE_OPTIONS } from '@rally/ui/components/space-dashboard';
 
 import { compareWorkstreamRecency } from '../lib/format';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
-import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
+import { Button, IconButton, InlineError, Modal } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamRowDrag } from './sidebar';
 import type { WorkstreamSummary } from '../lib/types';
@@ -72,7 +67,6 @@ interface SpaceSidebarSectionProps {
    */
   outOfDate: boolean;
   onRetry: () => void;
-  onCreate: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannel: (spaceId: string, workstreamId: string) => Promise<void>;
   /** One write for both lists this section arranges; see {@link ContainerOrder}. */
   onReorder: (order: ContainerOrder) => Promise<void>;
@@ -124,7 +118,6 @@ export function SpaceSidebarSection({
   ready,
   outOfDate,
   onRetry,
-  onCreate,
   onAddChannel,
   onReorder,
   ordering,
@@ -142,14 +135,8 @@ export function SpaceSidebarSection({
   // Space expanded without opening it stays open, and the open one they
   // collapsed stays shut.
   const [expansion, setExpansion] = useState<Record<string, boolean>>({});
-  const [createOpen, setCreateOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [iconKey, setIconKey] = useState<SpaceIconKey>('briefcase');
-  const [colorKey, setColorKey] = useState<SpaceColorKey>(PROJECT_COLOR_DEFAULT);
-  const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
-  const [saving, setSaving] = useState(false);
-  const [modalFailure, setModalFailure] = useState<'create' | 'restore' | null>(null);
+  const [restoreFailed, setRestoreFailed] = useState(false);
   const [sectionFailure, setSectionFailure] = useState<string | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
@@ -227,31 +214,6 @@ export function SpaceSidebarSection({
     onLoadMoreChannels?.();
   }, [expandedPageKey, expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
 
-  const closeCreate = (): void => {
-    if (saving) return;
-    setCreateOpen(false);
-    setName('');
-    setIconKey('briefcase');
-    setColorKey(PROJECT_COLOR_DEFAULT);
-    setScope('personal');
-    setModalFailure(null);
-  };
-
-  const submit = async (): Promise<void> => {
-    if (!name.trim() || saving) return;
-    setSaving(true);
-    setModalFailure(null);
-    try {
-      const created = await onCreate({ name: name.trim(), iconKey, colorKey, scope });
-      setSaving(false);
-      closeCreate();
-      void navigate(`/spaces/${created.id}`);
-    } catch {
-      setModalFailure('create');
-      setSaving(false);
-    }
-  };
-
   const commit = async (ids: string[]): Promise<void> => {
     setDragOrder(ids);
     setSectionFailure(null);
@@ -318,11 +280,8 @@ export function SpaceSidebarSection({
       >
         <div className="sidebar-section-heading">
           <h2 id="spaces-heading">Spaces</h2>
-          {/* Nothing to create into while the Organization is still opening;
-              the server refuses it with `space_bootstrap_pending`, and a
-              control that can only fail is worse than one that is not there. */}
-          {ready && <IconButton className="space-sidebar-action" label="New space" onClick={() => { setModalFailure(null); setCreateOpen(true); }}>
-            <IconPlus size={15} stroke={1.8} />
+          {ready && restorableSpaces.length > 0 && <IconButton className="space-sidebar-action" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
+            <IconRestore size={15} stroke={1.8} />
           </IconButton>}
         </div>
         {!ready ? (
@@ -541,10 +500,6 @@ export function SpaceSidebarSection({
                       <SpaceRowContent space={space} />
                     </NavLink>
                   )}
-                  {...(readOnly ? {} : {
-                    newChannelLabel: `New channel in ${space.name}`,
-                    onNewChannel: () => void navigate(`${destination}/workstreams/new`),
-                  })}
                   onRowKeyDown={(event) => {
                     // Alt rather than a bare arrow: the arrows move focus
                     // through the sidebar, and a Space must stay reachable by
@@ -586,48 +541,20 @@ export function SpaceSidebarSection({
         {sectionFailure && <InlineError>{sectionFailure}</InlineError>}
       </section>
       <Modal
-        footer={<>
-          {restorableSpaces.length > 0 && <Button disabled={saving} onClick={() => { closeCreate(); setRecoveryOpen(true); }}>Restore archived space</Button>}
-          <Button disabled={saving} onClick={closeCreate}>Cancel</Button>
-          <Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create space</Button>
-        </>}
-        onOpenChange={(open) => open ? setCreateOpen(true) : closeCreate()}
-        open={createOpen}
-        title="New space"
-      >
-        <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <label className="form-field">
-            <span>Name</span>
-            <input autoFocus onChange={(event) => setName(event.target.value)} value={name} />
-          </label>
-          <SpaceAppearancePicker colorKey={colorKey} iconKey={iconKey} onColorChange={setColorKey} onIconChange={setIconKey} />
-          <div className="form-field">
-            <span>Who can see this space?</span>
-            <DropdownSelect
-              ariaLabel="Space audience"
-              onValueChange={(value) => setScope(value as 'personal' | 'workspace')}
-              options={[...SPACE_SCOPE_OPTIONS]}
-              value={scope}
-            />
-          </div>
-          {modalFailure === 'create' && <InlineError>The space couldn’t be created.</InlineError>}
-        </form>
-      </Modal>
-      <Modal
-        footer={<Button onClick={() => { setModalFailure(null); setRecoveryOpen(false); }}>Cancel</Button>}
-        onOpenChange={(open) => { if (!open) setModalFailure(null); setRecoveryOpen(open); }}
+        footer={<Button onClick={() => { setRestoreFailed(false); setRecoveryOpen(false); }}>Cancel</Button>}
+        onOpenChange={(open) => { if (!open) setRestoreFailed(false); setRecoveryOpen(open); }}
         open={recoveryOpen}
         title="Restore archived space"
       >
         <div className="space-recovery-list">{restorableSpaces.map((space) => (
           <Button key={space.id} onClick={() => {
-            setModalFailure(null);
+            setRestoreFailed(false);
             void onRestore(space.id)
               .then(() => { setRecoveryOpen(false); void navigate(`/spaces/${space.id}`); })
-              .catch(() => setModalFailure('restore'));
+              .catch(() => setRestoreFailed(true));
           }}><SpaceIcon space={space} /> {space.name}</Button>
         ))}</div>
-        {modalFailure === 'restore' && <InlineError>The space couldn’t be restored.</InlineError>}
+        {restoreFailed && <InlineError>The space couldn’t be restored.</InlineError>}
       </Modal>
     </>
   );

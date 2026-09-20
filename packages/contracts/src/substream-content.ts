@@ -64,5 +64,6 @@ export const SessionImportPreviewSchema = z.strictObject({
 });
 export const SessionImportRequestSchema = SessionImportPreviewSchema.extend({
   clientMessageId: z.string().uuid(),
+  spaceIds: z.array(z.string().uuid()).default([]),
 });
 export type SessionImportPreview = z.infer<typeof SessionImportPreviewSchema>;
