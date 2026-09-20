@@ -1161,6 +1161,47 @@ describe('socket-first channel open', () => {
       expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument();
     });
 
+    // The bug this whole change exists for is the notice outliving the stop
+    // under later messages. The transition cannot express that half: a turn the
+    // addressing classifier reads as human-only leaves every one of its inputs
+    // unchanged, so only a rendered send shows it.
+    it.each([
+      ['accepted', true],
+      ['rejected', false],
+    ] as const)('clears on the next message this reader sends, when it is %s', async (_name, accepted) => {
+      const createMessage = accepted
+        ? vi.fn(async () => ({
+          turnId: 'turn', clientMessageId: 'message',
+          createdAt: '2026-08-26T14:01:00.000Z', deliveryState: 'queued',
+        }))
+        : vi.fn(async () => { throw new Error('send refused'); });
+      retainedSocket.mockReturnValue({
+        activeCompaction: null, activeInferenceDelays: [], createMessage,
+        requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+        sendReady: true, state: 'connected', workspaceSocketState: 'connected',
+      });
+      const queryClient = stoppingScreen();
+      await act(async () => Promise.resolve());
+      statusFrame(queryClient, 'completed');
+      settle(queryClient, 'stopped');
+      await screen.findByRole('status', { name: STOPPED_LABEL });
+
+      const composer = await screen.findByRole('textbox', { name: 'Message the channel' });
+      fireEvent.change(composer, { target: { value: 'thanks, picking this up tomorrow' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(createMessage).toHaveBeenCalled());
+
+      if (accepted) {
+        await waitFor(() => expect(screen.queryByRole('status', { name: STOPPED_LABEL })).not.toBeInTheDocument());
+      } else {
+        // The draft comes back and the conversation did not move on, so the
+        // acknowledgement has to survive — and nothing could put it back, the
+        // run being durably stopped by now.
+        await screen.findByText('The message couldn’t be sent. Try again.');
+        expect(screen.getByRole('status', { name: STOPPED_LABEL })).toBeVisible();
+      }
+    });
+
     it('says nothing to a reader who opens a conversation already stopped', async () => {
       // The run row is durable and the acknowledgement is not. Somebody who
       // was not in the room when the stop landed has no button press to have
