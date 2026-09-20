@@ -1,11 +1,11 @@
 /**
  * The regional D1 state an engineering inspection route resolves against.
  *
- * `resolveInspectionWorkspaceRoute` joins three things the shared workspace
- * fixture does not provide: the workspace's identity columns, an active product
- * authority route, and the open generation. Every Sidekick and artifact tool
- * fences on that same join, so both suites seed it from here rather than each
- * keeping its own copy of a query's shape.
+ * `resolveInspectionWorkspaceRoute` joins the workspace's identity columns to
+ * the open generation. Historical workspaces additionally have a one-time
+ * product-authority cutover row, while post-cutover workspaces do not. Every
+ * Sidekick and artifact tool fences on that same resolution, so the suites seed
+ * both shapes here rather than each keeping its own copy of the schema.
  */
 
 import { seedWorkspaceControlPlane } from "./substream-fixture";
@@ -16,7 +16,13 @@ import { seedWorkspaceControlPlane } from "./substream-fixture";
  */
 export async function seedInspectableWorkspace(
   database: D1Database,
-  input: { workspaceId: string; userId: string; sessionId: string; at: string },
+  input: {
+    workspaceId: string;
+    userId: string;
+    sessionId: string;
+    at: string;
+    includeHistoricalAuthorityRoute?: boolean;
+  },
 ): Promise<void> {
   await seedWorkspaceControlPlane(database, input);
   await database.batch([
@@ -29,9 +35,11 @@ export async function seedInspectableWorkspace(
       workspace_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, state TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`),
-    database.prepare(`INSERT INTO workspace_product_authority_routes
-      (workspace_id, generation, state, updated_at) VALUES (?, 1, 'active', ?)`)
-      .bind(input.workspaceId, input.at),
+    ...(input.includeHistoricalAuthorityRoute === false ? [] : [
+      database.prepare(`INSERT INTO workspace_product_authority_routes
+        (workspace_id, generation, state, updated_at) VALUES (?, 1, 'active', ?)`)
+        .bind(input.workspaceId, input.at),
+    ]),
     database.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
     )`),

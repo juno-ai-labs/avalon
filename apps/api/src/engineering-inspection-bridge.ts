@@ -65,6 +65,7 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
+import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -217,9 +218,9 @@ async function resolveInspectionSidekickRoute(
  * object behind in the namespace and a phantom in the migration tracker's
  * `SpaceDO` count.
  *
- * The workspace route is still read first — the same
- * `workstream_authority_routes`-backed resolver every other target starts from
- * — because it is what proves this region serves this Organization at all.
+ * The workspace route is still read first — the same regional workspace
+ * identity and open-generation resolver every other workspace-owned target
+ * starts from — because it proves this region serves this Organization at all.
  */
 async function resolveInspectionSpaceRoute(
   env: Env,
@@ -300,13 +301,25 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     parseRpcInput(ListEngineeringWorkspacesInputSchema, input, "listWorkspaces");
     const result = await this.env.DB.prepare(
       `SELECT workspace.id, workspace.name, workspace.slug, workspace.region,
-              workspace.placement_affinity, route.state AS authority_state
+              workspace.placement_affinity,
+              CASE
+                WHEN control.phase = 'durable_object_open'
+                 AND control.serving_contract_version >= control.required_serving_contract_version
+                 AND control.required_serving_contract_version <= ?
+                 AND (route.workspace_id IS NULL OR (
+                   route.state = 'active' AND route.generation = control.generation
+                 ))
+                THEN 'active'
+                ELSE route.state
+              END AS authority_state
          FROM workspaces workspace
          LEFT JOIN workspace_product_authority_routes route
            ON route.workspace_id = workspace.id
+         LEFT JOIN workstream_authority_control control
+           ON control.id = 1
         WHERE workspace.region = ?
         ORDER BY workspace.name COLLATE NOCASE, workspace.id`,
-    ).bind(this.env.AVALON_REGION).all<unknown>();
+    ).bind(WORKSTREAM_DO_SERVING_CONTRACT_VERSION, this.env.AVALON_REGION).all<unknown>();
     const rows = z.array(WorkspaceInventoryRowSchema).parse(result.results ?? []);
     return ListEngineeringWorkspacesResultSchema.parse({
       region: this.env.AVALON_REGION,
