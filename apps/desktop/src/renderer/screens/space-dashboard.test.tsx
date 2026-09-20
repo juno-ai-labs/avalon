@@ -122,14 +122,6 @@ function renderSpace(summary = hiring, options: { ready?: boolean } = {}): {
   queryClient.setQueryData(['spaces'], { waterline: 1, items: active ? [summary] : [] });
   queryClient.setQueryData(['spaces-inactive'], { waterline: 1, items: active ? [] : [summary] });
   queryClient.setQueryData(['spaces-ready'], options.ready ?? true);
-  queryClient.setQueryData(['automations'], [{
-    id: '00000000-0000-7000-8000-0000000000b1',
-    name: 'Weekly digest',
-    description: 'Summarises the week',
-    scope: 'workspace',
-    status: 'active',
-    updatedAt: '2026-08-27T00:00:00.000Z',
-  }]);
   const tree = (): React.JSX.Element => (
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -151,17 +143,6 @@ describe('the Space dashboard', () => {
     vi.clearAllMocks();
     workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([member]);
-    api.listResources.mockResolvedValue({
-      items: [{
-        id: '00000000-0000-7000-8000-0000000000c1',
-        title: 'Hiring plan',
-        resourceType: 'document',
-        provider: 'Drive',
-        watchEnabled: false,
-        watchStatus: 'unsupported',
-      }],
-      nextCursor: null,
-    });
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
     api.updateSpacePresentation.mockImplementation(async (_id: string, input: { name: string; iconKey: string; colorKey: string }) => makeSpace({ ...input, revision: 2 }));
     api.updateSpaceAudience.mockImplementation(async (_id: string, input: { scope: 'personal' | 'workspace' }) => makeSpace({ scope: input.scope, revision: 2 }));

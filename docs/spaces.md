@@ -414,7 +414,11 @@ transcript and execution context were built with it.
 The desktop Space landing page does not list or edit these defaults, add an
 existing Channel, or start a new Channel. The inheritance and Channel-placement
 mechanisms and their APIs remain, but the landing page is deliberately a view
-of the Channels in the Space rather than a management surface.
+of the Channels in the Space rather than a management surface. Defaults that
+were configured before this change continue applying to current and future
+member Channels; there is currently no desktop surface to inspect or change
+them. Retiring that durable behavior would be a separate product decision, not
+an incidental consequence of removing its landing-page controls.
 
 ### General
 
@@ -1350,8 +1354,8 @@ through to the Space row, which is what a placement is.
   discovery of a Channel its reader may not open.
 - **A breakout has no membership of its own.** Its Spaces are its parent
   Channel's, and the Space authority has no operation that adds or removes one.
-  The landing page offers no row-level membership controls for either kind of
-  conversation.
+  A **Remove** control on a breakout row would be offering a write nothing
+  implements.
 
 ## Boundary
 
@@ -1547,7 +1551,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section and absence of Resources and Sidekicks, the two empty states, the one activity-ordered list of both kinds, the refetch after a reconnect and the one it does not do for the connection it opened on, the blocked-archive copy, General's protections, that one refusal appears once, and that a refused participant roster leaves the dialog open with its sentence in it. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the one activity-ordered list of both kinds; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
@@ -1883,21 +1887,19 @@ afterwards.
 **What changed:** The desktop Space landing page no longer renders Resources or
 Sidekicks sections, their add/remove controls, or their pickers. The Channels
 section also no longer offers **Add channel** or the adjacent new-Channel plus
-control, and Channel rows no longer offer **Remove**. Opening a Space no longer
-fetches the resource catalog, subscribes to the Sidekick list, or loads the
-Organization's Channel directory for those removed controls. The underlying
-default inheritance and Channel-placement mechanisms and APIs remain unchanged.
+control, and Channel rows no longer offer **Remove**. The unused shared list
+components and desktop default API wrappers left behind by those controls were
+removed too. The underlying default inheritance and Channel-placement authority
+remain unchanged.
 
 **Why:** The landing page should orient a person around the Channels in a Space.
-Resources, Sidekicks, and Channel creation or placement made it a second
-management surface for concepts that already have homes elsewhere, adding
-controls and data dependencies to every open without helping that primary job.
-Removing a Channel from a Space is likewise a placement operation rather than
-part of scanning the Space's activity list.
-Removing only the visible markup was rejected because it would leave those reads
-running for UI that no longer exists. Future management surfaces can reuse the
-existing mechanisms, but they must be introduced where those jobs belong rather
-than silently restoring these controls.
+Default and Channel-placement controls made it a management surface as well,
+adding dependencies to every open without helping that primary job. Existing
+configured defaults continue to apply even though no desktop surface currently
+inspects or changes them; retiring that durable behavior was rejected as a
+separate product decision. Future management surfaces can reuse the authority,
+but they must be introduced where that job belongs rather than silently
+restoring these controls.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 
