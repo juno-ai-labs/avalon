@@ -1653,8 +1653,15 @@ describe('Sidebar channel markers', () => {
 
   it('removes a channel from the space whose placement menu was opened', async () => {
     const hiring = space();
+    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
     const onRemoveChannelFromSpace = vi.fn(async () => undefined);
-    const target = placedIn(workstream('remove-placement', 'Quarterly planning', 'completed'), hiring.id);
+    // Hiring is deliberately second: choosing the first membership from the
+    // Channel instead of the placement whose row was opened must fail here.
+    const target = placedIn(
+      workstream('remove-placement', 'Quarterly planning', 'completed'),
+      launch.id,
+      hiring.id,
+    );
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1663,7 +1670,7 @@ describe('Sidebar channel markers', () => {
             automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
-            spaces={[hiring]}
+            spaces={[launch, hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1722,6 +1729,43 @@ describe('Sidebar channel markers', () => {
     expect(within(dialog).getByText('A channel must be in at least one space.')).toBeVisible();
   });
 
+  it('preserves the actionable copy for another named removal refusal', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('incompatible-placement', 'Quarterly planning', 'completed'), hiring.id);
+    const onRemoveChannelFromSpace = vi.fn(async () => {
+      throw new ApiError('Readers would lose their remaining Space', 409, 'space_audience_incompatible');
+    });
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onRemoveChannelFromSpace={onRemoveChannelFromSpace}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120,
+      clientY: 90,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from space' }));
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Channel could not be removed from that space',
+    });
+    expect(within(dialog).getByText(
+      'Some people who can read the channel would be left with no space to find it in. Add it to a space they can see first.',
+    )).toBeVisible();
+  });
+
   // A Space this reader reaches only through a Channel in it is a row they can
   // see and nothing they can write on. Placing a Channel there is refused by
   // name, so it is not offered — the same rule the plus on its row is under.
@@ -1731,7 +1775,7 @@ describe('Sidebar channel markers', () => {
       participants: [],
       channelCount: 1,
     });
-    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), general().id);
+    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), reached.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1739,7 +1783,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            spaces={[general(), reached]}
+            spaces={[reached]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1747,23 +1791,24 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand General' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Theirs' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     // The submenu is drawn at all, which is what makes the absence below a
     // decision about this Space rather than an empty menu.
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 
   // A system Channel is not a product Channel: the subsystem that writes it
   // decides both who reads it and where it lives, so neither control is raised.
   it('given a system channel, when the row menu opens, then no space control is offered', async () => {
     const hiring = space();
-    const digest: WorkstreamSummary = {
+    const digest = placedIn({
       ...workstream('menu-system-spaces', 'Digest · Adam', 'completed'),
       systemKind: 'digest',
-    };
+    }, hiring.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1771,7 +1816,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            spaces={[general(), hiring]}
+            spaces={[hiring]}
             workspace={workspace}
             workstreams={[digest]}
           />
@@ -1779,11 +1824,13 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Manage access' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 
   it('adds a channel to the space its row was dropped on', () => {

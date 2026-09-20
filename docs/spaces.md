@@ -1166,6 +1166,11 @@ Every Space refusal on every one of these surfaces goes through one copy table,
 printing the diagnostic a Worker wrote for a log. A surface that knows what was
 being attempted supplies its own sentence for a refusal that carried no code —
 "Spaces couldn't be reordered" also accounts for the row that snapped back.
+The placement menu has one product-copy exception: `space_membership_final`
+uses **A channel must be in at least one space.** in its modal. Every other
+named refusal still uses the shared table, including the actionable instruction
+for `space_audience_incompatible`; the exception changes the requested sentence,
+not which authority decides the refusal.
 
 **A `through_channel` viewer's dashboard is the header and the conversation
 list.** Mark, colour, name — and that list, which is already filtered to the
@@ -1887,7 +1892,9 @@ afterwards.
 space** in its context menu, immediately above **Archive channel**. The action
 removes that specific placement through the existing Space membership mutation.
 If it is the Channel's final placement, the server's `space_membership_final`
-refusal is shown in a modal as **A channel must be in at least one space.**
+refusal is shown in a modal as **A channel must be in at least one space.** The
+action is withheld for system Channels and for placements in a Space reached
+only through that Channel, where the viewer cannot edit the membership.
 
 **Why:** The membership authority already allowed a Channel to leave one of
 several Spaces, but the sidebar exposed that operation only through **Manage
