@@ -307,13 +307,21 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
-  it("names the interrupted write it could not confirm, and repairs the batch anyway", async () => {
-    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    const receiptRunId = "00000000-0000-7000-8000-000000000706";
-    const attemptId = "workerd-write-attempt";
-    const attemptOwner = "workerd-write-attempt-owner";
+  /**
+   * A run interrupted mid-batch, exactly as the 2026-09-19 incident left one: a
+   * provider-keyed `publish_resource` still `executing`, a `request_elicitation`
+   * whose answer is owed to a person, and an assistant turn holding both.
+   *
+   * Extracted because two tests need it from a clean object — what the repair
+   * does with a claim, and what it does without one — and `reset()` gives each
+   * `it` its own.
+   */
+  async function seedInterruptedWriteBatch(stub: DurableObjectStub, options: {
+    receiptRunId: string;
+    attemptId: string;
+    attemptOwner: string;
+  }): Promise<{ toolCallId: string }> {
+    const { receiptRunId, attemptId, attemptOwner } = options;
     const now = Date.now();
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
@@ -473,6 +481,17 @@ describe("work-stream transcript on workerd SQLite", () => {
         now,
       );
     });
+    return { toolCallId };
+  }
+
+  it("names the interrupted write it could not confirm, and repairs the batch anyway", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000706";
+    const attemptId = "workerd-write-attempt";
+    const attemptOwner = "workerd-write-attempt-owner";
+    const { toolCallId } = await seedInterruptedWriteBatch(stub, { receiptRunId, attemptId, attemptOwner });
 
     await evictDurableObject(stub);
     await runInDurableObject(stub, async (instance, state) => {
@@ -482,7 +501,8 @@ describe("work-stream transcript on workerd SQLite", () => {
         recoverInterruptedToolBatch(
           executionEnv: Env,
           input: WorkstreamWorkflowInput,
-          lease: { attemptId: string; owner: string; attemptNumber: number; leaseExpiresAt: number },
+          fence: { attemptId: string; owner: string },
+          lease?: { attemptId: string; owner: string; attemptNumber: number; leaseExpiresAt: number },
         ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null>;
         claimPersistentLoopExecution(): Promise<{
           input: WorkstreamWorkflowInput;
@@ -515,7 +535,8 @@ describe("work-stream transcript on workerd SQLite", () => {
       await expect(resident.recoverInterruptedToolBatch(
         createTestEnv({ PAYLOADS: env.PAYLOADS }),
         replacementClaim.input,
-        { attemptId, owner: attemptOwner, attemptNumber: 1, leaseExpiresAt: Date.now() + 60_000 },
+        { attemptId, owner: attemptOwner },
+        { attemptId, owner: attemptOwner, attemptNumber: 1, leaseExpiresAt: Date.now() + 600_000 },
       )).resolves.toBe("waiting_for_input");
 
       // The tool is named. A member reading `ambiguous_external_write` alone
@@ -563,6 +584,62 @@ describe("work-stream transcript on workerd SQLite", () => {
       // between the interruption and the repair would still execute. The value
       // is the ordering: any later refusal would report its own code here.
       expect(modelResult.data.reason).toBe("run_authority_lost");
+    });
+  });
+
+  it("will not ask an interrupted write anything without a claim to record the answer under", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000707";
+    const attemptId = "workerd-unleased-attempt";
+    const attemptOwner = "workerd-unleased-attempt-owner";
+    await seedInterruptedWriteBatch(stub, { receiptRunId, attemptId, attemptOwner });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      const resident = instance as unknown as {
+        activeLoopExecution: { runId: string; leaseOwner: string; executionEpoch: number } | null;
+        recoverInterruptedToolBatch(
+          executionEnv: Env,
+          input: WorkstreamWorkflowInput,
+          fence: { attemptId: string; owner: string },
+          lease?: { attemptId: string; owner: string; attemptNumber: number; leaseExpiresAt: number },
+        ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null>;
+        claimPersistentLoopExecution(): Promise<{
+          input: WorkstreamWorkflowInput;
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+      };
+      const replacementClaim = await resident.claimPersistentLoopExecution();
+      if (!replacementClaim) throw new Error("replacement_loop_claim_missing");
+      resident.activeLoopExecution = replacementClaim.execution;
+      state.storage.sql.exec(
+        "UPDATE runs SET legacy_attempt_id = ?, lease_owner = ?, lease_expires_at = ? WHERE run_id = ?",
+        attemptId,
+        attemptOwner,
+        Date.now() + 600_000,
+        receiptRunId,
+      );
+
+      // The failure-settlement caller reconstructs an owner rather than
+      // minting a lease, so it can fence a settlement but cannot hold one open
+      // across a tool call. Asking anyway would mean obtaining an answer with
+      // no claim to record it under, which is worse than not asking.
+      await resident.recoverInterruptedToolBatch(
+        createTestEnv({ PAYLOADS: env.PAYLOADS }),
+        replacementClaim.input,
+        { attemptId, owner: attemptOwner },
+      );
+
+      expect(state.storage.sql.exec<{ status: string; error_json: string | null } & Record<string, SqlStorageValue>>(
+        `SELECT status, error_json FROM tool_effects WHERE effect_intent_id = 'effect-publish'`,
+      ).one()).toMatchObject({
+        status: "ambiguous",
+        // Named, not silent: "nobody asked" and "the question failed" are
+        // different repairs, and only one of them is worth chasing.
+        error_json: expect.stringContaining("no_repair_lease"),
+      });
     });
   });
 

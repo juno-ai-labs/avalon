@@ -4280,7 +4280,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const interruptedReservation = await this.settleInterruptedAssistantReservation(input);
       const recoveredToolBatch = interruptedReservation
         ? null
-        : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease);
+        // The lease is both arguments: it fences every receipt settlement, and
+        // it is the claim a re-entry holds open while the tool runs.
+        : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease, claim.lease);
       // Only when nothing is waiting on a person: `recoverInterruptedToolBatch`
       // reports `waiting_for_input` ahead of `ambiguous`, so this arm is the
       // repaired-and-continuing case rather than every batch that held one.
@@ -4389,12 +4391,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async recoverInterruptedToolBatch(
     executionEnv: Env,
     input: WorkstreamWorkflowInput,
+    /** What every receipt settlement below is fenced on. */
+    fence: { attemptId: string; owner: string },
     /**
-     * The whole lease, not the two fields the receipt fence needs: re-entering
-     * an interrupted write settles its result through the same durable path a
-     * first-pass completion uses, and that path proves attempt ownership.
+     * The claim this repair holds, when it holds one.
+     *
+     * Only re-entry needs more than the fence: it settles a result through the
+     * same durable path a first-pass completion uses, which proves attempt
+     * ownership, and it holds the lease open while a tool runs. The
+     * failure-settlement caller reconstructs an owner rather than minting a
+     * lease — deliberately, as its own comment explains — so it has none to
+     * give, and an interrupted write there stays ambiguous exactly as it did
+     * before re-entry existed.
      */
-    lease: AttemptLease,
+    lease?: AttemptLease,
   ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null> {
     const projection = this.transcript.readBindProjection(input.loopId);
     if (!projection) return null;
@@ -4442,6 +4452,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         classification = receipt.status;
       } else if (receipt.mode !== "write") {
         classification = "failed";
+      } else if (!lease) {
+        // No claim to settle a result under, so there is no way to ask without
+        // being unable to record the answer.
+        classification = "ambiguous";
+        ambiguityReason = "no_repair_lease";
       } else {
         // An interrupted write is only unknowable if nobody asks. A tool that
         // declares itself re-enterable resolves its own durable effect before
@@ -4539,8 +4554,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           allowCancellationRequested: true,
           fence: {
             runId: input.harnessRunId,
-            attemptId: lease.attemptId,
-            owner: lease.owner,
+            attemptId: fence.attemptId,
+            owner: fence.owner,
           },
           now,
         });
