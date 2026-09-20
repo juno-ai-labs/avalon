@@ -2014,6 +2014,29 @@ was making it again over time. A membership settling now addresses the viewers
 of the Channel that moved; an archive and a restore still address everybody,
 because the Space's own disappearance is visible to them anyway.
 
+The remaining review items are the small ones: the **Restore archived space**
+modal lists only the Spaces this person could actually restore, so a change to
+what an archive stages cannot put a control there that can only fail; two
+comments said something no longer true (`canEdit` does not read `archived_at`,
+and the sidebar's `channelCount` is viewer-scoped for one of the three
+reaches); the walk's `active | reaching` is `MemberWalkReach` now, because it
+sat three lines from the viewer's own reach and a reader auditing the gate
+between them would conclude the page was already viewer-scoped; the refusal
+enumeration covers the two settlement RPCs it claimed to; and
+`space_access_denied`'s sentence is true of a read now, which is what a guest
+and a removed member get from the same gate.
+
+**Deploy the API before the desktop.** `reach` is the first *required* field
+added to the Space snapshot's shape, and `safeParseSocketEvent` tolerates
+fields a newer sender added but not ones a newer receiver requires — so a
+desktop that auto-updates ahead of its API rejects every
+`workspace_space_snapshot` and shows no Spaces at all. The silent drop is
+pre-existing and is now named: a message whose `type` a schema in the handler
+claims and whose body it then rejects is logged with the field
+`describeZodIssues` puts on it, rather than falling off the end of the chain.
+A message of a type nothing there knows stays silent, which is the ordinary
+forward-compatible case.
+
 Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
 ### 2026-09-19 — A Space's hidden conversation can be rebuilt from storage, and its failures have a name
