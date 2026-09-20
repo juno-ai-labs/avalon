@@ -9,7 +9,7 @@ original cast of a published live demo.
 | File | Responsibility |
 | --- | --- |
 | `apps/api/src/services/impersonation.ts` | Generic pair provisioning and exact relationship checks; canonical demo/operator eligibility. |
-| `packages/db/migrations/0115_impersonation_relationships.sql` | Regional identity delegation records. |
+| `packages/db/migrations/0116_impersonation_relationships.sql` | Regional identity delegation records. |
 
 | `apps/api/src/services/demo-sidecar.ts`, `routes/demo-sidecar.ts` | HTTP catalog and message adapter with dual-identity audit. |
 
@@ -50,42 +50,30 @@ the revocation predicate fails the direction/replay test.
 Missing or malformed demo identity/cast denies access. Replaying provisioning
 inserts missing pairs and preserves revoked ones.
 
+Product requirements: [impersonation PRD](PRDs/2026-09-19_impersonation-platform/prd.md).
+
 ## Changelog
 
-### 2026-09-20 — Minimal Breakout labels and audit correlation
+### 2026-09-20 — Audited HTTP messaging for the original demo cast
 
-Catalogs now read the parent's visible private-child inventory for names, then
-recheck ordinary child authority. Raw IDs were rejected as presenter-facing labels.
-Audit metadata includes a body digest, request ID, and API version without storing
-message text; ordinary turn IDs remain the correlation to admitted messages.
+**What changed:** Added directed relationships, canonical company/original-cast/demo
+checks, HTTP catalog and admission routes, operator-session revalidation at the
+conversation boundary, and preparation/retirement wiring. Catalogs use visible
+Breakout titles; audit records retain both identities, a body digest, request ID,
+API version, and the canonical turn reference without storing message text.
 
-### 2026-09-20 — HTTP represented admission
+**Why:** Live demos need participant sends without issuing another person's
+session or permitting represented sends in regular Organizations. HTTP retries
+must preserve ordinary message idempotency while sockets remain in Rally's
+conversation UI.
 
-**What changed:** Added catalog/send/eligibility routes, conversation-boundary
-reauthorization, content-free dual-identity audits, preparation and retirement wiring.
-
-**Why:** Socket ownership must stay in the ordinary Rally conversation UI, while
-an HTTP retry must preserve ordinary message idempotency and admission behavior.
-
-**Considered and rejected:** Direct transcript writes and trusting only the initial
-Worker authorization would bypass ordinary admission or miss a revoked session.
-
-**Consequences:** Both identities are carried only through authorization and audit;
-canonical messages and harness inputs retain the represented participant.
-
-
-### 2026-09-20 — Directed authority for the internal demo sidecar
-
-**What changed:** Added organization-scoped directed relationships and canonical
-company/original-cast/demo checks.
-
-**Why:** A live demo needs participant sends without issuing another person's
-session or permitting represented sends in regular organizations.
-
-**Considered and rejected:** Demo status alone cannot identify who may represent
-whom; a role or client marker cannot replace canonical relationship authority.
+**Considered and rejected:** Demo status or client markers cannot replace directed
+relationship authority. Direct transcript writes bypass ordinary admission;
+checking only initial Worker authorization misses a revoked operator session.
+Raw Breakout IDs are unsuitable presenter-facing labels.
 
 **Consequences:** Later surfaces may reuse the generic relationship but must define
-their own availability rules. Reprovisioning must preserve revocation.
-
-Product requirements: [impersonation PRD](PRDs/2026-09-19_impersonation-platform/prd.md).
+their own availability rules. Reprovisioning preserves revocations. Both identities
+travel only through authorization and audit; canonical messages and harness inputs
+retain the represented participant. Migration 0116 follows main's newly landed
+0115 and must be renumbered again if another branch claims it before merge.
