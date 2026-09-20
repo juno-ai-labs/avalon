@@ -1,7 +1,7 @@
 import type { CreateSpaceRequest, PersonalOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
@@ -28,7 +28,7 @@ import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { useWorkspaceSocket } from '../lib/workspace-socket';
+import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
 import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
@@ -46,6 +46,33 @@ interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
 }
 
+/** Keep async callbacks aligned with the route from the latest committed render. */
+export function useLatestCommittedValue<T>(value: T): React.RefObject<T> {
+  const current = useRef(value);
+  useLayoutEffect(() => {
+    current.current = value;
+  }, [value]);
+  return current;
+}
+
+/** Revoke async work before later layout effects can observe an unmounted shell. */
+export function useLayoutMountedRef(): React.RefObject<boolean> {
+  const mounted = useRef(true);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  return mounted;
+}
+
+/** Archive is writable only while this connection still owns a live Space snapshot. */
+export function hasLiveSpaceArchiveAuthority(
+  state: WorkspaceSocketState,
+  sidebarConnect: SidebarConnect | null,
+): boolean {
+  return state === 'connected' && sidebarConnect?.spacesLive === true;
+}
+
 /** Upsert a mutation response without duplicating an earlier socket push. */
 export function upsertSpaceDirectory(
   current: SpaceDirectory | undefined,
@@ -58,6 +85,83 @@ export function upsertSpaceDirectory(
     items: current?.items.some((item) => item.id === space.id)
       ? current.items.map((item) => item.id === space.id ? space : item)
       : [...(current?.items ?? []), space],
+  };
+}
+
+/** Move a current archive response between the two directories and leave its open route. */
+export function applyArchivedSpace(
+  queryClient: QueryClient,
+  archived: SpaceSummary,
+  pathname: string,
+  openFirstWorkstream: () => void,
+  wasActiveWhenRequested = false,
+): boolean {
+  const active = queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY);
+  const inactive = queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY);
+  const cachedSpace = [...(active?.items ?? []), ...(inactive?.items ?? [])]
+    .find((space) => space.id === archived.id);
+  const newerActiveSpace = active?.items.some(
+    (space) => space.id === archived.id && space.revision > archived.revision,
+  ) ?? false;
+  const newerInactiveSpace = inactive?.items.some(
+    (space) => space.id === archived.id && space.revision > archived.revision,
+  ) ?? false;
+  const removedBySocket = wasActiveWhenRequested
+    && active !== undefined
+    && inactive !== undefined
+    && cachedSpace === undefined;
+  const leaveArchivedRoute = (): void => {
+    if (pathname === `/spaces/${archived.id}`
+      || pathname.startsWith(`/spaces/${archived.id}/`)) {
+      openFirstWorkstream();
+    }
+  };
+  // The socket may have delivered a later restore or archive while this REST
+  // request was in flight. Preserve either its newer per-Space revision or its
+  // authoritative removal from both loaded directories: the REST response has
+  // no directory waterline and cannot distinguish that removal from old data.
+  if (newerActiveSpace) return false;
+  if (newerInactiveSpace || removedBySocket) {
+    leaveArchivedRoute();
+    return false;
+  }
+  queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+    ...current,
+    items: current.items.filter((space) => space.id !== archived.id),
+  } : current);
+  queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
+    ...current,
+    // The socket may win the race with this REST response. Replace that copy
+    // in place so later socket-owned archive ordering is not moved behind it.
+    items: current.items.some((space) => space.id === archived.id)
+      ? current.items.map((space) => space.id === archived.id ? archived : space)
+      : [archived, ...current.items],
+  } : current);
+  leaveArchivedRoute();
+  return true;
+}
+
+/** Build the archive callback around the route and cache state current at response time. */
+export function archiveSpaceMutationHandler(
+  api: Pick<RallyApi, 'archiveSpace'> | null,
+  queryClient: QueryClient,
+  currentPathname: () => string,
+  openFirstWorkstream: () => void,
+  requestStillCurrent: () => boolean = () => true,
+): (spaceId: string) => Promise<void> {
+  return async (spaceId) => {
+    if (!api) throw new Error('Your session is no longer active. Sign in again.');
+    const wasActiveWhenRequested = queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)
+      ?.items.some((space) => space.id === spaceId) ?? false;
+    const archived = await api.archiveSpace(spaceId);
+    if (!requestStillCurrent()) return;
+    applyArchivedSpace(
+      queryClient,
+      archived,
+      currentPathname(),
+      openFirstWorkstream,
+      wasActiveWhenRequested,
+    );
   };
 }
 
@@ -260,6 +364,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const currentPathname = useLatestCommittedValue(location.pathname);
+  const shellMounted = useLayoutMountedRef();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
@@ -449,7 +555,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
-  const { reconnect, setForegroundWorkstreamId, state: workspaceSocketState } = useWorkspaceSocket();
+  const { reconnect, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   useEffect(() => {
@@ -715,6 +821,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               : [...current.items, restored],
           } : current);
         }}
+        onArchiveSpace={!hasLiveSpaceArchiveAuthority(workspaceSocketState, sidebarConnect)
+          ? undefined : archiveSpaceMutationHandler(
+          api,
+          queryClient,
+          () => currentPathname.current,
+          openFirstWorkstream,
+          () => shellMounted.current,
+        )}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}

@@ -57,19 +57,21 @@ open, and the list that was missing it wrote the arrangement the pointer
 happened to build on its way past.
 
 The Space components follow the same split, one step further. A `SpaceRow` draws
-the geometry, the accordion and the motion keys, and
-takes the host's own navigation element as a slot — routing is a host decision
-under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
-treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
+the geometry, the accordion, an optional host-owned context menu and the motion
+keys, and takes the host's own navigation element as a slot — routing and which
+actions are admitted are host decisions under the Spaces PRD's design decision
+9, the way `NavigationRowContent` already treats a Channel row.
+`SpaceDashboardHeader` owns the rename *interaction*
 (double-click, F2, Enter to commit, Escape to abandon, blur to commit) because
 that is presentation; the host only ever learns the committed name. Nothing here
 fetches, and no component infers a capability from an omitted prop: a Space with
 no audience control is a host that decided not to draw one.
 
-`SpaceRow` still requires the drag handlers, but carries no creation action.
-Creation belongs to the host's global launcher, while the row presents a Space
-consistently whether the reader may write it or reaches it only through a Channel
-placed in it ([`spaces.md`](spaces.md#who-may-see-a-space-and-why)). The Space
+`SpaceRow` still requires the drag handlers, but carries no creation action and
+makes its context menu optional. Creation belongs to the host's global launcher,
+while row-local lifecycle actions belong only to a host with current authority;
+a reader who reaches a Space only through a Channel placed in it gets no menu
+([`spaces.md`](spaces.md#who-may-see-a-space-and-why)). The Space
 dashboard's Channel and breakout entries are host-owned links, not shared
 removable rows; the landing page draws both at full width and keeps placement
 management in its owning surfaces.
@@ -122,6 +124,24 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-20 — Space rows can carry host-owned context actions
+
+**What changed:** `SpaceRow` can wrap the visual Space row, excluding its
+expanded Channel placements, in the shared Radix context-menu surface while
+accepting menu items as a host-owned slot. The desktop uses that slot for the
+one destructive archive action; a host without a live, admitted action omits
+the menu entirely.
+
+**Why:** Right-clicking the Space row should behave like the Channel rows beside
+it while archive authority, confirmation, mutation and failure copy remain
+application concerns. Wrapping the expanded placement area was rejected because
+empty-state and list gutters are not the Space row; putting the archive mutation
+in the shared package was rejected because that package owns presentation, not
+transport or authorization.
+
+**Consequences:** Hosts decide both whether a Space row has a menu and which
+actions it contains. Expanded child rows retain their own independent targets.
 
 ### 2026-09-20 — Space rows stop advertising creation
 
