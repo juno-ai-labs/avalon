@@ -102,6 +102,8 @@ import {
 import {
   formatToolArgumentValidationError,
   normalizeToolArguments,
+  modelToolArgumentSchema,
+  omitUnspecifiedToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
 import { modelDefaultReasoningEffort } from "./model-inference-defaults";
@@ -1640,6 +1642,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               error: "Tool arguments were not valid JSON; correct them and try again",
             }) };
         }
+        // Decode the advertised unspecified/null alternative before hashing,
+        // validation, authorization and receipts. Semantic nulls remain intact.
         // Models sometimes serialize schema-declared numbers as JSON strings, and
         // blank an optional argument rather than omitting it. Normalize those two
         // unambiguous representations before hashing or durable planning, so that
@@ -1652,7 +1656,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         // can mean different things — clearing a field versus leaving it alone —
         // so nothing is dropped and the executor rejects it by name instead.
         args = normalizeToolArguments(
-          args,
+          omitUnspecifiedToolArguments(args, dispatched.tool.definition.inputSchema),
           dispatched.tool.definition.inputSchema,
           dispatched.tool.definition.mode,
         );
@@ -2996,7 +3000,7 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
         ? `${harnessTool.definition.description}\nThis call may take a while. Consider delegating it to keep the participant conversation available. If you are already a background agent, or the call returns without waiting, use it directly when appropriate.`
         : harnessTool.definition.description,
       schema: z.unknown(),
-      rawJsonSchema: harnessTool.definition.inputSchema,
+      rawJsonSchema: modelToolArgumentSchema(harnessTool.definition.inputSchema),
       annotations: {
         readOnlyHint: harnessTool.definition.mode === "read",
         destructiveHint: harnessTool.definition.mode === "write",

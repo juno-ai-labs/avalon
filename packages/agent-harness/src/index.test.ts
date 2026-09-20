@@ -4505,6 +4505,56 @@ describe("agent harness", () => {
     }
   });
 
+  it.each(["read", "write"] as const)("round-trips unspecified scalar arguments through Bind before %s execution and hashing", async (mode) => {
+    const requests: Array<{ tools?: Array<{ function: { name: string; parameters: Record<string, unknown> } }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(0, "load", "load_plugin", '{"pluginId":"rally_test"}')] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(
+        0, "generate", "test_generate", JSON.stringify({ query: "draw", brand_kit_id: null, clear: null }),
+      )] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const execute = vi.fn(async () => ({ output: { ok: true }, summary: "Generated" }));
+    const beforeToolCall = vi.fn(async () => ({ allowed: true as const }));
+    const events: HarnessEvent[] = [];
+    const schema = {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        brand_kit_id: { type: "string", minLength: 1 },
+        clear: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    };
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [testCorePlugin([{
+        definition: { name: "generate", description: "Generate", capability: "design.generate", mode,
+          idempotency: "safe", inputSchema: schema },
+        execute,
+      }])],
+      beforeToolCall,
+      onEvent: (event) => { events.push(event); },
+    });
+    expect(outcome).toMatchObject({ status: "completed", content: "done" });
+    const wire = requests[1]?.tools?.find((tool) => tool.function.name === "test_generate")?.function.parameters;
+    expect(requests[1]?.tools?.map((tool) => tool.function.name)).toContain("test_generate");
+    expect(wire).toBeDefined();
+    const modelSchema = z.fromJSONSchema(wire!);
+    expect(modelSchema.safeParse({ query: "draw", brand_kit_id: null, clear: null }).success).toBe(true);
+    expect(modelSchema.safeParse({ query: null }).success).toBe(false);
+    expect(execute).toHaveBeenCalledWith({ query: "draw", clear: null }, expect.anything());
+    expect(beforeToolCall).toHaveBeenCalledWith(expect.objectContaining({
+      inputHash: await canonicalToolInputHash({ query: "draw", clear: null }),
+    }));
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ type: "tool_started", input: { query: "draw", clear: null } })]));
+  });
+
   it("normalizes schema-declared numeric strings before receipts and execution", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;

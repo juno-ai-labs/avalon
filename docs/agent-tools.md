@@ -274,6 +274,18 @@ the key, and wrote down why: *"Schema says min but omit should maybe omit."*
 Prose loses to the machine-readable half, so the schema has to admit the
 answer.
 
+The harness also supplies an unspecified value for independent, optional,
+non-nullable **top-level scalar** arguments. It advertises `anyOf: [original,
+{ type: "null" }]` and removes that synthetic null before validation, hashing,
+receipts, or execution, for reads and writes alike. The original executor schema
+remains authoritative. An existing nullable field keeps its null semantics;
+required fields, nested fields, references without an explicit scalar type,
+and roots with composition, conditional, presence, or unknown constraints are
+not adapted. The adapter does not enable strict mode or make optional keys
+required. Do not rely on it to repair arbitrary placeholders: commas, spaces,
+and strings such as `"none"` remain literal values. Author explicit null semantics
+when a tool needs both omission and clearing.
+
 **Either spelling reaches the model as a union, and the guard covers every
 parameter.** Since `@juno-ai/bind` 14 the sanitizer rewrites
 `type: ["string", "null"]` to `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]`
@@ -1173,6 +1185,15 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
+
+Canva generation calls exposed another case of models filling optional IDs with
+punctuation despite an instruction to omit them. The harness now adds and decodes
+a null alternative for independent optional scalar arguments. Heuristic stripping
+of placeholder strings was rejected because a write could silently change intent.
+Existing semantic nulls must survive; coupled schemas are left unchanged rather
+than guessing which fields can disappear.
 
 ### 2026-09-19 — Re-enterability becomes a tool's own claim
 
