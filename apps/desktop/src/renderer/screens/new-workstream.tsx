@@ -1,5 +1,3 @@
-import { useSearchParams } from "react-router-dom";
-import { SessionImportDialog } from "../components/session-import-dialog";
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -196,7 +194,6 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
    */
   const owningSpaceIds = owningSpaceId === undefined ? [] : [owningSpaceId];
   const { api } = useAppSession();
-  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -281,6 +278,12 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
       && typeof location.state.returnTo === 'string'
       ? location.state.returnTo
       : null;
+  const channelName = typeof location.state === 'object'
+      && location.state !== null
+      && 'channelName' in location.state
+      && typeof location.state.channelName === 'string'
+      ? location.state.channelName.trim()
+      : '';
   const canCloseNewChat = Boolean(returnTo && returnTo !== location.pathname);
   const closeNewChat = useCallback((): void => {
     if (returnTo && returnTo !== location.pathname) {
@@ -327,6 +330,7 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
       // which is the only way every Channel can have a home without the
       // top-level composer asking somebody to choose one.
       return trace.step('create_request', () => api!.createWorkstream({
+        ...(channelName ? { title: channelName } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
         ...(owningSpaceIds.length > 0 ? { spaceIds: owningSpaceIds } : {}),
@@ -645,11 +649,8 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
         {launching && (
           <div className="workstream-header-left window-no-drag">
             <div className="workstream-title-block">
-              {/* The same skeleton the created work stream shows while the
-                  naming agent answers, so the header does not change hands at
-                  the swap — it is already waiting for the same name. */}
               <div className="workstream-title-line">
-                <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+                <h1>{channelName || <TitleSkeleton className="title-skeleton-header" />}</h1>
               </div>
             </div>
           </div>
@@ -724,9 +725,6 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new channel</h2>
-        {!launching && owningSpaceIds.length === 0 && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
-          if (!open) setSearchParams((params) => { params.delete('import'); return params; }, { replace: true, state: location.state });
-        }} />}
         {owningSpaceIds.length > 0 && <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Channel participants">
             {owningSpace?.scope === 'personal' ? (

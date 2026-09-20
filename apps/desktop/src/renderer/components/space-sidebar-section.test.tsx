@@ -1,14 +1,8 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { useState } from 'react';
 import { MemoryRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  SPACE_COLOR_KEYS,
-  SPACE_ICON_KEYS,
-  SpaceSummarySchema,
-  type SpaceSummary,
-} from '@rally/contracts';
+import { SpaceSummarySchema, type SpaceSummary } from '@rally/contracts';
 
 import { SpaceSidebarSection } from './space-sidebar-section';
 import type { WorkstreamSummary } from '../lib/types';
@@ -86,7 +80,6 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
           loading={false}
           loadingMoreChannels={false}
           onAddChannel={async () => undefined}
-          onCreate={async () => hiring}
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           onRetry={() => undefined}
@@ -103,42 +96,6 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
         <Routes><Route element={<Location />} path="*" /></Routes>
       </MemoryRouter>
     </Tooltip.Provider>,
-  );
-}
-
-function CreateFlowHarness({
-  onCreate,
-}: {
-  onCreate: React.ComponentProps<typeof SpaceSidebarSection>['onCreate'];
-}): React.JSX.Element {
-  const [spaces, setSpaces] = useState<SpaceSummary[]>([]);
-  return (
-    <>
-      <SpaceSidebarSection
-        hasMoreChannels={false}
-        inactiveSpaces={[]}
-        loading={false}
-        loadingMoreChannels={false}
-        onAddChannel={async () => undefined}
-        onCreate={async (input) => {
-          const created = await onCreate(input);
-          setSpaces((current) => [...current, created]);
-          return created;
-        }}
-        onReorder={async () => undefined}
-        onRestore={async () => undefined}
-        onRetry={() => undefined}
-        ordering={[]}
-        outOfDate={false}
-        ready
-        renderWorkstream={(workstream) => (
-          <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
-        )}
-        spaces={spaces}
-        workstreams={[]}
-      />
-      <Location />
-    </>
   );
 }
 
@@ -159,11 +116,11 @@ describe('the Spaces sidebar section', () => {
   // General is the Organization's fallback home and is in the directory like
   // any other Space, so the section needs no case for it — which is the thing
   // worth pinning, because a special case is what would drift.
-  it('given General in the directory, then it is an ordinary row with its own new-channel action', () => {
+  it('given General in the directory, then it is an ordinary row without a creation action', () => {
     renderSection({ spaces: [general, hiring] });
 
     expect(screen.getByRole('link', { name: /General/u })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New channel in General' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New channel in General' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Expand General' })).toHaveAttribute('aria-expanded', 'false');
   });
 
@@ -179,8 +136,6 @@ describe('the Spaces sidebar section', () => {
     expect(screen.getByRole('button', { name: 'Expand Hiring' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('No channels')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'New channel in Hiring' }));
-    expect(screen.getByTestId('location')).toHaveTextContent(`/spaces/${hiring.id}/workstreams/new`);
   });
 
   // A deep link, a restore, Back and Forward all arrive as a route rather than
@@ -196,7 +151,6 @@ describe('the Spaces sidebar section', () => {
             loading={false}
             loadingMoreChannels={false}
             onAddChannel={async () => undefined}
-            onCreate={async () => hiring}
             onReorder={async () => undefined}
             onRestore={async () => undefined}
             onRetry={() => undefined}
@@ -217,92 +171,36 @@ describe('the Spaces sidebar section', () => {
     expect(screen.getByRole('link', { name: 'Ship it' })).toBeVisible();
   });
 
-  it('given the new-space dialog, when choices are inspected, then blue is selected by default and all choices are named', () => {
-    renderSection({ spaces: [] });
-    fireEvent.click(screen.getByRole('button', { name: 'New space' }));
-    const dialog = screen.getByRole('dialog', { name: 'New space' });
-    for (const icon of SPACE_ICON_KEYS) {
-      const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
-      expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
-    }
-    for (const color of SPACE_COLOR_KEYS) {
-      const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
-      expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
-    }
-    expect(within(dialog).getByRole('button', { name: 'Blue' })).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Red' }));
-    expect(within(dialog).getByRole('button', { name: 'Briefcase' }).querySelector('svg'))
-      .toHaveAttribute('stroke', 'var(--av-sys-color-project-red)');
+  it('offers no creation button on the Spaces heading or an individual Space', () => {
+    renderSection({ spaces: [hiring] });
+    expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `New channel in ${hiring.name}` })).not.toBeInTheDocument();
   });
 
-  it('given space creation is pending, when it succeeds, then the dialog waits before opening and selecting the space', async () => {
-    const created = space('00000000-0000-7000-8000-0000000000f5', 'Planning');
-    let finishCreate!: (space: SpaceSummary) => void;
-    const onCreate = vi.fn(() => new Promise<SpaceSummary>((resolve) => { finishCreate = resolve; }));
-    render(
-      <Tooltip.Provider>
-        <MemoryRouter initialEntries={['/workstreams/new']}>
-          <CreateFlowHarness onCreate={onCreate} />
-        </MemoryRouter>
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'New space' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create space' }));
-
-    // A Space starts personal, with its creator as its participant; the server
-    // seats them, so the request says nothing about people.
-    expect(onCreate).toHaveBeenCalledWith({
-      colorKey: 'blue',
-      iconKey: 'briefcase',
-      name: 'Planning',
-      scope: 'personal',
-    });
-    expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/new');
-    expect(screen.getByRole('button', { name: 'Create space' })).toBeDisabled();
-
-    await act(async () => { finishCreate(created); });
-
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/spaces/${created.id}`));
-    expect(screen.getByRole('link', { name: /Planning/u })).toHaveClass('is-active');
-    expect(screen.getByRole('button', { name: 'Collapse Planning' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.queryByRole('dialog', { name: 'New space' })).not.toBeInTheDocument();
-  });
-
-  // Archived Spaces are absent from the section and from every picker; the one
-  // way back to one is the footer of the dialog that makes new ones.
-  it('given an archived space, when restore is opened from the new-space footer, then it is offered there and nowhere else', async () => {
+  it('offers archived Space recovery without restoring either removed plus button', async () => {
     const onRestore = vi.fn(async () => undefined);
     renderSection({ inactiveSpaces: [space(hiring.id, 'Hiring', { status: 'archived' })], onRestore, spaces: [general] });
 
     expect(screen.queryByRole('link', { name: /Hiring/u })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'New space' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore archived space' }));
     fireEvent.click(screen.getByRole('button', { name: /Hiring/u }));
 
     await waitFor(() => expect(onRestore).toHaveBeenCalledWith(hiring.id));
   });
 
-  it('given a failed restore, when recovery is closed and space creation opens, then the restore error stays out of the new-space form', async () => {
+  it('clears a failed restore when the recovery dialog is reopened', async () => {
     const onRestore = vi.fn(async () => { throw new Error('Resolve the space conflict'); });
     renderSection({ inactiveSpaces: [space(hiring.id, 'Hiring', { status: 'archived' })], onRestore, spaces: [] });
-    fireEvent.click(screen.getByRole('button', { name: 'New space' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Temporary' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Red' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore archived space' }));
     fireEvent.click(screen.getByRole('button', { name: /Hiring/u }));
     await screen.findByText('The space couldn’t be restored.');
     expect(screen.queryByText('Resolve the space conflict')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'New space' }));
-
+    fireEvent.click(screen.getByRole('button', { name: 'Restore archived space' }));
     expect(screen.queryByText('Resolve the space conflict')).not.toBeInTheDocument();
-    const reopened = screen.getByRole('dialog', { name: 'New space' });
-    expect(within(reopened).getByRole('button', { name: 'Blue' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(reopened).getByRole('textbox', { name: 'Name' })).toHaveValue('');
+    expect(screen.queryByText('The space couldn’t be restored.')).not.toBeInTheDocument();
   });
 
   it('given fixed server order, when Alt+Arrow moves a row, then the complete new order is saved', async () => {
@@ -481,7 +379,7 @@ describe('the Spaces sidebar section', () => {
     renderSection({ onAddChannel, spaces: [hiring, reached], workstreams: [placement] });
 
     expect(screen.getByRole('link', { name: /Theirs/u })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New channel in Hiring' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New channel in Hiring' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New channel in Theirs' })).not.toBeInTheDocument();
 
     fireEvent.drop(screen.getByRole('link', { name: /Theirs/u }).closest('.space-sidebar-item')!, {

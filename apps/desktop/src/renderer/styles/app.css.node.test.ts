@@ -1284,17 +1284,8 @@ describe('sidebar space rows', () => {
     expect(rule('.space-sidebar-workstream:hover')).toBeNull();
   });
 
-  it('hides the space-row plus until the row is hovered or focused', () => {
-    expect(rule('.space-sidebar-row .space-sidebar-row-action')).toContain('opacity: 0;');
-    const reveal = rule(
-      '.space-sidebar-row:hover .space-sidebar-row-action,\n'
-      + '.space-sidebar-row:focus-within .space-sidebar-row-action',
-    );
-    expect(reveal).toContain('opacity: 1;');
-  });
-
   it('starts placement rows where the accordion control ends', () => {
-    expect(rule('.sidebar-row.space-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
+    expect(rule('.sidebar-row.space-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr);');
     expect(rule('.space-accordion-control')).toContain('width: 18px;');
     expect(rule('.space-sidebar-workstreams')).toContain('padding-left: 18px;');
   });

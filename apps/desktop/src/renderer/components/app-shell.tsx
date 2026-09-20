@@ -668,6 +668,18 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
         }}
+        onCreateChannel={async ({ name, spaceId }) => {
+          void navigate(`/spaces/${spaceId}/workstreams/new`, {
+            state: { channelName: name, returnTo: location.pathname },
+          });
+        }}
+        onImportChannel={async ({ clientMessageId, name, spaceId, url }) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const preview = await api.previewSessionImport({ kind: 'link', url });
+          const id = await api.importSession(preview, clientMessageId, { title: name, spaceIds: [spaceId] });
+          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+          void navigate(`/workstreams/${id}`);
+        }}
         onCreateSpace={async (input: CreateSpaceRequest) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           const created = await api.createSpace(input);

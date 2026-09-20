@@ -40,7 +40,7 @@ them; the product design is in
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, **New space**, restore, and the Organization-opening card. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, restore, and the Organization-opening card. Creation lives in the sidebar's global plus menu. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
@@ -1071,10 +1071,10 @@ has no case for it.
 A guest is handed none. Guest access to Spaces is deferred, every Space RPC
 refuses a guest, and design decision 9 makes that the host's call rather than
 something the components infer from a refusal — so `spacesEnabledForSession`
-decides it once in the shell and the sidebar draws no heading, no **New space**,
-no **Add to space** and no draggable row. Absent is not empty: an empty
-directory is an Organization whose first Space has not been made yet, and it
-still gets all four.
+decides it once in the shell and the sidebar draws no heading, no Space choices
+in the global creation menu, no **Add to space** and no draggable row. Absent is
+not empty: an empty directory is an Organization whose first Space has not been
+made yet.
 
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
@@ -1092,10 +1092,9 @@ refusal to name. It is not offered under **Add to space** either. Every one of
 those is refused by the server by name, and drawing a control that can only
 fail teaches a reader that Rally's controls are suggestions.
 
-`SpaceRow`'s plus is therefore optional, which is the one capability
-[`shared-ui.md`](shared-ui.md) now lets a host withhold. The row's grid keeps
-its third column either way, so a list mixing the two kinds does not have its
-names in two different places. That is why
+`SpaceRow` carries no creation action: Channel and Space creation live in the
+one sidebar plus menu, and the row does not reserve a column for a control no
+host renders. That is why
 `spaceIds` travels on the *common* half of `workspace_workstream_state`: it is
 the Organization's fact about the Channel, not the reader's, and WorkspaceDO
 republishes the row after every membership settlement.
@@ -1184,8 +1183,8 @@ Space, so a refusal about the Space somebody just left would otherwise be read
 as being about the one they just opened.
 
 While `spacesReady` is false the sidebar section and the dashboard show the
-Organization-opening card *instead of* the hierarchy, and the **New space**
-control is not drawn: a Space directory missing General, or a Channel with no
+Organization-opening card *instead of* the hierarchy, and the global creation
+menu cannot select a destination Space: a Space directory missing General, or a Channel with no
 Space, is not a state any surface may render, and creation is refused with
 `space_bootstrap_pending` anyway. The Channel rows are handed no Space list
 while it is false for the same reason, which is what takes **Add to space** and
@@ -1550,8 +1549,8 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
-| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the one activity-ordered list of both kinds; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
+| `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, removal of both local plus controls, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
@@ -1881,6 +1880,31 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-20 — Consolidate creation in the sidebar launcher
+
+**What changed:** The desktop removed the plus from the Spaces heading and from
+every Space row. The main sidebar plus now starts a Channel, imports one, or
+creates a Space; Channel flows require an explicit destination Space, and a new
+Space uses the existing personal, blue-briefcase defaults. The launcher waits
+for Space bootstrap, is unavailable in a guest shell with no Space capability,
+and omits Spaces reached only through a shared Channel because those projections
+are readable but not editable.
+
+**Why:** Three placements of the same creation capability made the hierarchy
+itself look editable in place and split closely related actions across different
+menus. One launcher is the reversible UI primitive; Space membership and
+creation remain on their existing authoritative service paths.
+
+**Considered and rejected:** Retaining optional Space-row and section-heading
+actions for a future host. No host uses them after consolidation, so preserving
+them would keep dead component API and layout rather than a reusable primitive.
+
+**Consequences:** Creation requires the Space directory to be ready and uses
+the global launcher in every sidebar layout. Space rows no longer carry or
+reserve room for creation; any future row-local action is a new product choice.
+
+Shipped in #876.
 
 ### 2026-09-20 — The Space landing page is about Channels
 
