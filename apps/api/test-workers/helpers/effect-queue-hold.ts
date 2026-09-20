@@ -16,6 +16,13 @@
  * `conversation-effects.ts` deliver exactly those rows on demand. Any other
  * message kind passes through to the real binding untouched.
  *
+ * Patching `instance.env.ACTIVITY_QUEUE` inside `runInDurableObject` does not
+ * work for a later RPC or alarm: the next invocation rebinds `this.env` from
+ * the Worker, the proxy is gone, and the drain deletes the row under the
+ * assertion. That is how `conversation-effect-queue.test.ts` failed on main —
+ * two child effects in one batch, one remaining in the outbox. The prototype
+ * spy is the hold that survives that.
+ *
  * Refusing rather than delivering in place is deliberate: a test that wants to
  * assert the state *between* the two legs, or the order in which a parent saw
  * its children, needs the delivery to happen when it says so.
@@ -27,25 +34,44 @@ import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects"
 
 type QueueBinding = { sendBatch: (messages: Iterable<MessageSendRequest<unknown>>) => Promise<void> };
 
+export type EffectQueueHold = {
+  /** While true, effect `sendBatch` is refused so outbox rows stay pending. */
+  parked: boolean;
+};
+
 function isEffectBody(body: unknown): boolean {
   return EffectQueueMessageSchema.safeParse(body).success;
+}
+
+/**
+ * Hold effect envelopes on the binding prototype for the rest of this test.
+ *
+ * Flip `parked` off to hand the real drain back — that is how
+ * `conversation-effect-queue.test.ts` proves the alarm deletes the rows.
+ * Call once per test; a second call is a no-op so the first gate stays in
+ * force.
+ */
+export function holdEffectQueue(gate: EffectQueueHold = { parked: true }): EffectQueueHold {
+  const prototype = Object.getPrototypeOf(env.ACTIVITY_QUEUE) as QueueBinding;
+  if (vi.isMockFunction(prototype.sendBatch)) return gate;
+  const original = prototype.sendBatch;
+  vi.spyOn(prototype, "sendBatch").mockImplementation(async function (
+    this: QueueBinding,
+    messages: Iterable<MessageSendRequest<unknown>>,
+  ) {
+    const batch = [...messages];
+    if (gate.parked && batch.some((message) => isEffectBody(message.body))) {
+      throw new Error("effect_queue_held_by_test");
+    }
+    return original.call(this, batch);
+  });
+  return gate;
 }
 
 /** Hold every effect envelope produced during each test of the enclosing file. */
 export function useHeldEffectQueue(): void {
   beforeEach(() => {
-    const prototype = Object.getPrototypeOf(env.ACTIVITY_QUEUE) as QueueBinding;
-    const original = prototype.sendBatch;
-    vi.spyOn(prototype, "sendBatch").mockImplementation(async function (
-      this: QueueBinding,
-      messages: Iterable<MessageSendRequest<unknown>>,
-    ) {
-      const batch = [...messages];
-      if (batch.some((message) => isEffectBody(message.body))) {
-        throw new Error("effect_queue_held_by_test");
-      }
-      return original.call(this, batch);
-    });
+    holdEffectQueue();
   });
   afterEach(() => {
     vi.restoreAllMocks();

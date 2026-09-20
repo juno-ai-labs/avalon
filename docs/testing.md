@@ -673,6 +673,16 @@ real consumer. The real drain, with its delete on success, is proved once in
 `conversation-effect-queue.test.ts`; every other test only needs the effects to
 arrive when it says so.
 
+The hold is a spy on the binding's `sendBatch` prototype, not a proxy on
+`instance.env`. The next RPC or alarm rebinds `this.env` from the Worker, so an
+instance proxy is gone by the time the drain runs, and the row it was supposed
+to keep readable is deleted. That is how
+`retains private child unread locally without publishing it into Main's directory`
+failed on `main`: two child effects in one Queue batch, the drain between them,
+and the assertion seeing one queued `directory_user` envelope instead of two.
+`conversation-effect-queue.test.ts` uses the same prototype hold with a toggle
+(`parked`) so it can inspect the outbox and then hand the real drain back.
+
 ## Letting a run reach the model
 
 **Decide deliberately whether your test lets a run get as far as inference, and
