@@ -185,6 +185,7 @@ async function seedControlPlane(): Promise<void> {
     // `users` and `workspaces` this suite does not need — and, as in
     // production, no foreign key on `workspace_id`: the creating phase writes
     // it before the workspace row exists.
+    env.DB.prepare(`CREATE TABLE impersonation_relationships (workspace_id TEXT, operator_user_id TEXT, represented_user_id TEXT, authority_basis TEXT, created_at TEXT, revoked_at TEXT, PRIMARY KEY(workspace_id, operator_user_id, represented_user_id))`),
     env.DB.prepare(`CREATE TABLE demo_operations (
       operation_id TEXT PRIMARY KEY, company_name TEXT NOT NULL, presenter_user_id TEXT NOT NULL,
       pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE,

@@ -314,6 +314,7 @@ export async function seedDemoWorkspaceControlPlane(): Promise<void> {
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role, last_seen_at) VALUES
       (?, ?, 'active', 'member', NULL), (?, ?, 'active', 'member', NULL)`)
       .bind(DEMO_WORKSPACE_ID, DEMO_PRIYA_ID, DEMO_WORKSPACE_ID, DEMO_MARCUS_ID),
+    env.DB.prepare(`CREATE TABLE impersonation_relationships (workspace_id TEXT, authority_basis TEXT, revoked_at TEXT)`),
     env.DB.prepare(`CREATE TABLE demo_operations (
       operation_id TEXT PRIMARY KEY, company_name TEXT NOT NULL, presenter_user_id TEXT NOT NULL,
       pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE, status TEXT NOT NULL,

@@ -321,7 +321,9 @@ export interface IdentityAuthContext {
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "demo_seed";
+  principal?: "connector" | "demo_seed" | "impersonation";
+  /** Authenticated operator retained separately from the effective user. */
+  operatorUserId?: UserId | undefined;
   /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.

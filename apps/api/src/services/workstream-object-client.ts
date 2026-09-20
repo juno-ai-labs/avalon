@@ -238,6 +238,7 @@ export class WorkstreamObjectClient {
           // necessity — the room declares the key as optional and JSON would
           // drop an `undefined` anyway; the point is the contract.)
           ...(this.auth.principal ? { principal: this.auth.principal } : {}),
+          ...(this.auth.operatorUserId ? { operatorUserId: this.auth.operatorUserId } : {}),
         },
       },
       this.traced,

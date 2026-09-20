@@ -57,6 +57,7 @@ function freshWorkspaceId() {
  * operation is retired all the same.
  */
 async function publishDemo(workspaceId: string): Promise<void> {
+  await TEST_ENV.DB.prepare('CREATE TABLE IF NOT EXISTS impersonation_relationships (workspace_id TEXT, authority_basis TEXT, revoked_at TEXT)').run();
   await TEST_ENV.DB.prepare(
     `CREATE TABLE IF NOT EXISTS demo_operations (
        operation_id TEXT PRIMARY KEY,

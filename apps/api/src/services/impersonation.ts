@@ -1,5 +1,6 @@
+import type { AuthContext, Env } from '../env';
 import { z } from 'zod';
-import { UserIdSchema } from '@rally/contracts';
+import { UserIdSchema, asUserId } from '@rally/contracts';
 import { ApiError } from '../lib/api-error';
 import { DEMO_CAST_EMAIL_DOMAIN } from './demo-cast';
 import { DEMO_TEMPLATE_WORKSPACE_ID } from './demo-workspace-visibility';
@@ -53,3 +54,15 @@ export async function requireDemoOperator(db: D1Database, workspaceId: string, o
   if (!cast.includes(operatorId)) throw denied();
   return { operationId: row.operation_id, cast };
 }
+
+export async function representedDemoAuth(env: Env, operator: AuthContext, representedId: string): Promise<AuthContext> {
+  const demo = await requireDemoOperator(env.DB, operator.workspaceId, operator.userId, env.AVALON_REGION);
+  if (!demo.cast.includes(representedId)) throw new ApiError(403, 'impersonation_denied', 'Participant is not in the original demo cast');
+  await requireImpersonationRelationship(env.DB, operator.workspaceId, operator.userId, representedId);
+  const member = await env.DB.prepare(`SELECT role FROM workspace_members
+    WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`)
+    .bind(operator.workspaceId, representedId).first<{ role: 'owner' | 'admin' | 'member' }>();
+  if (!member) throw new ApiError(403, 'impersonation_denied', 'Participant is no longer an active member');
+  return { ...operator, principal: 'impersonation', operatorUserId: operator.userId, userId: asUserId(representedId), role: member.role };
+}
+
