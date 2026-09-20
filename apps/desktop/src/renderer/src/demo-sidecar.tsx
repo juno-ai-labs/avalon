@@ -1,0 +1,11 @@
+import { createRoot } from 'react-dom/client';
+import { installTheme, applyTheme, watchSystemAppearance } from '@rally/ui/lib/theme';
+import { DemoSidecarScreen } from '../screens/demo-sidecar';
+import '@rally/ui/styles/app.css';
+import '@rally/ui/styles/message-cards.css';
+installTheme();
+watchSystemAppearance();
+window.demoSidecar.onThemeChanged(applyTheme);
+const root = document.getElementById('root');
+if (!root) throw new Error('Demo sidecar root is missing');
+createRoot(root).render(<DemoSidecarScreen bridge={window.demoSidecar} />);

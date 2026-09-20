@@ -1,3 +1,4 @@
+import { desktopBridge } from '../lib/platform';
 import "../../../../../tests/isolated-region";
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -53,6 +54,19 @@ function openMenu(): void {
 }
 
 describe('organization account menu', () => {
+  it('offers Demo sidecar only after canonical eligibility and launches with the active organization', async () => {
+    const available = vi.fn(async () => true);
+    const open = vi.fn(async () => undefined);
+    const old = window.rally;
+    window.rally = { ...desktopBridge(), demoSidecarAvailable: available, openDemoSidecar: open };
+    try {
+      renderMenu({ presentation: 'grok' });
+      openMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Demo sidecar' }));
+      expect(open).toHaveBeenCalledWith({ userId: currentUser.id, workspaceId: active.id, region: active.region });
+    } finally { window.rally = old; }
+  });
+
   afterEach(() => vi.useRealTimers());
   it('keeps organization discovery and switching available in the Grok presentation', () => {
     const props = renderMenu({ presentation: 'grok' });

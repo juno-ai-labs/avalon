@@ -1,3 +1,6 @@
+import { DemoCatalogSchema, DemoMessageRequestSchema, DemoMessageResultSchema } from '@rally/contracts/demo-sidecar';
+import { DemoBindingSchema } from '../common/demo-sidecar-validation';
+import { DemoSidecarController, demoBindingKey, type DemoBinding } from './demo-sidecar-controller';
 import { startCanvaConnection } from './canva-loopback';
 import {
   ActivateWorkspaceRequestSchema,
@@ -479,6 +482,69 @@ let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
 let sidekicksWindow: BrowserWindow | null = null;
+class DemoSidecarAccessError extends Error {}
+const demoSidecarWindows = new Map<number, { window: BrowserWindow; binding: DemoBinding }>();
+const demoSidecarController = new DemoSidecarController(demoBindingEligible, createDemoSidecarWindow);
+
+async function demoBindingRequest(binding: DemoBinding, path: 'eligibility' | 'catalog' | 'messages', input?: unknown): Promise<Response> {
+  const authSet = await loadStoredAuthSet();
+  let credential = authSet ? activeStoredWorkspaceCredential(authSet, binding.workspaceId, binding.region) : null;
+  if (!credential || credential.binding.userId !== binding.userId) throw new DemoSidecarAccessError('Demo session ended');
+  const ask = (stored: StoredAuth): Promise<Response> => net.fetch(`${apiBaseForAuth(stored)}/demo-sidecar/${path}`, {
+    method: input === undefined ? 'GET' : 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${stored.accessToken}` },
+    ...(input === undefined ? {} : { body: JSON.stringify(input) }),
+  });
+  let response = await ask(credential);
+  if (response.status === 401) {
+    let session: WireSession;
+    try { session = await refreshStoredCredential(credential); }
+    catch { return response; } // The direct 401 admitted nothing; reauthenticate in Rally.
+    credential = storedAuthFromSession(session, regionForStoredSession(session));
+    if (credential.binding.userId !== binding.userId || credential.binding.workspaceId !== binding.workspaceId
+      || credential.binding.region !== binding.region) throw new DemoSidecarAccessError('Demo session changed');
+    response = await ask(credential);
+  }
+  return response;
+}
+async function demoBindingEligible(binding: DemoBinding): Promise<boolean> {
+  return (await demoBindingRequest(binding, 'eligibility')).ok;
+}
+async function activeDemoBinding(raw: unknown): Promise<DemoBinding> {
+  const binding = DemoBindingSchema.parse(raw);
+  const active = await loadStoredAuth();
+  if (!active || demoBindingKey(binding) !== demoBindingKey(DemoBindingSchema.parse(active.binding))) throw new Error('Organization changed');
+  return binding;
+}
+function sidecarOwner(event: IpcMainInvokeEvent): DemoBinding {
+  const owner = demoSidecarWindows.get(event.sender.id);
+  if (!owner || owner.window.isDestroyed() || event.senderFrame !== event.sender.mainFrame
+    || !rendererNavigationAllowed(event.senderFrame.url) || !demoSidecarController.mayUse(owner.binding)) throw new DemoSidecarAccessError('Demo sidecar session ended');
+  return owner.binding;
+}
+async function createDemoSidecarWindow(binding: DemoBinding): Promise<{ close(): void; focus(): void }> {
+  const target = new URL(rendererUrl());
+  target.pathname = '/demo-sidecar.html';
+  const window = new BrowserWindow({ width: 520, height: 760, minWidth: 400, minHeight: 420, show: false,
+    title: 'Rally Demo sidecar', backgroundColor: windowBackgroundColor(),
+    webPreferences: { preload: join(currentDirectory, '../preload/demo-sidecar.cjs'), contextIsolation: true,
+      sandbox: true, nodeIntegration: false, devTools: !app.isPackaged, webSecurity: true, allowRunningInsecureContent: false },
+  });
+  const ownerId = window.webContents.id;
+  demoSidecarWindows.set(ownerId, { window, binding });
+  window.setMenuBarVisibility(false);
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  window.webContents.on('will-redirect', event => event.preventDefault());
+  window.on('closed', () => { demoSidecarWindows.delete(ownerId); demoSidecarController.forget(binding); });
+  installWindowDiagnostics(window, 'demo-sidecar');
+  try { await loadRenderer(window, target.toString(), 'demo-sidecar'); }
+  catch (error) { window.close(); throw error; }
+  return { close: () => { if (!window.isDestroyed()) window.close(); }, focus: () => {
+    if (window.isMinimized()) window.restore(); window.show(); window.focus();
+  } };
+}
+
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -829,6 +895,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
+  void demoSidecarController.observe(value?.workspace ? { userId: value.user.id, workspaceId: value.workspace.id, region: value.workspace.region } : null);
   if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
@@ -3201,7 +3268,7 @@ function registerIpc(): void {
     // the Mac was already dark resolved to the same appearance, returned here,
     // and left every other window still believing it was following the Mac —
     // no visible difference in that moment, and the wrong one at sunrise.
-    for (const window of rallyWindows()) {
+    for (const window of [...rallyWindows(), ...[...demoSidecarWindows.values()].map(owner => owner.window)]) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
@@ -3474,6 +3541,39 @@ function registerIpc(): void {
     if (!request || !isArtifactUrl(request.url, artifactServingDomain())) return;
     openArtifactWindow(request);
   });
+  ipcMain.handle('demo-sidecar:available', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    try { return await demoBindingEligible(await activeDemoBinding(raw)); } catch { return false; }
+  });
+  ipcMain.handle('demo-sidecar:open', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const binding = await activeDemoBinding(raw);
+    await demoSidecarController.observe(binding);
+    await activeDemoBinding(binding);
+    await demoSidecarController.open(binding);
+  });
+  ipcMain.handle('demo-sidecar:catalog', async event => {
+    try {
+      const binding = sidecarOwner(event);
+      const response = await demoBindingRequest(binding, 'catalog');
+      sidecarOwner(event);
+      if (!response.ok) return { ok: false, kind: [401, 403, 404].includes(response.status) ? 'denied' : 'failed' };
+      const catalog = DemoCatalogSchema.parse(await readJsonBody(response));
+      if (catalog.workspaceId !== binding.workspaceId) return { ok: false, kind: 'denied' };
+      return { ok: true, data: catalog };
+    } catch (error) { return { ok: false, kind: error instanceof DemoSidecarAccessError ? 'denied' : 'unknown' }; }
+  });
+  ipcMain.handle('demo-sidecar:send', async (event, raw: unknown) => {
+    const input = DemoMessageRequestSchema.safeParse(raw);
+    if (!input.success) return { ok: false, kind: 'failed' };
+    try {
+      const binding = sidecarOwner(event);
+      const response = await demoBindingRequest(binding, 'messages', input.data);
+      sidecarOwner(event);
+      if (!response.ok) return { ok: false, kind: [401, 403, 404].includes(response.status) ? 'denied' : response.status >= 500 ? 'unknown' : 'failed' };
+      return { ok: true, data: DemoMessageResultSchema.parse(await readJsonBody(response)) };
+    } catch (error) { return { ok: false, kind: error instanceof DemoSidecarAccessError ? 'denied' : 'unknown' }; }
+  });
   ipcMain.handle('system:open-sidekicks', async (event, rawTarget: unknown) => {
     assertTrustedIpcSender(event);
     const target = rawTarget === undefined ? undefined : parseSidekicksWindowTarget(rawTarget);
@@ -3547,6 +3647,7 @@ function hardenWebContents(contents: WebContents): void {
   });
 
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
+    if (demoSidecarWindows.has(contents.id)) { event.preventDefault(); return; }
     // Artifact surfaces are never decided here. What a model-authored page may
     // do with a URL turns on transient user activation, which this broad fence
     // knows nothing about, and on the artifact's own origin, which it does not
@@ -3911,7 +4012,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'demo-sidecar',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -3972,7 +4073,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'demo-sidecar',
 ): Promise<void> {
   try {
     await window.loadURL(url);

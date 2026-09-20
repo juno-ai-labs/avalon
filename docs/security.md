@@ -87,6 +87,13 @@ same as desktop.
 
 ### Electron
 
+The [Demo sidecar](demo-sidecar.md) has a separate sandboxed preload and renderer.
+It is not admitted by the shared IPC sender check. Only its own main frame may
+request the pinned Organization's catalog or submit a strictly parsed message;
+credentials remain in main. Navigation, new windows, and remote renderer API
+connections are denied. Server eligibility and relationship checks still govern
+every catalog read and represented send.
+
 - `contextIsolation` is enabled, Node integration is disabled, and sandboxing is
   enabled.
 - The packaged preload is emitted as CommonJS so Electron can load it inside the
@@ -1025,6 +1032,15 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-09-20 — Isolated demo-sidecar window
+
+Added a separate renderer/preload with only catalog/send and theme notifications.
+The main process pins the launching identity/Organization and closes sidecars on
+sign-out or non-demo navigation. Sharing the broad Rally bridge was rejected
+because it would expose sessions and unrelated native capabilities to a surface
+that needs only HTTP message admission. No additional OAuth callback is introduced.
+
 
 ### 2026-09-19 — The secret gate scans the pull request, not the repository
 
