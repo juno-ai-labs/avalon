@@ -155,6 +155,12 @@ describe('Manage access', () => {
     expect(await screen.findByText('Side work')).toBeVisible();
     expect(screen.queryByText('A space you can’t see')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
+    // And no number beside the name. The count is the Channel's own record and
+    // stays on every other row, but for a personal Space it *is* the size of
+    // its participant list — which is what the summary this reader was handed
+    // withholds, and naming the Space is what would have made it theirs.
+    expect(screen.getByText('The people in this space reach this channel through it.')).toBeVisible();
+    expect(screen.queryByText('The 1 person in this space.')).not.toBeInTheDocument();
   });
 
   it('offers the public scope change on a channel whose own source is personal', async () => {

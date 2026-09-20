@@ -1093,12 +1093,20 @@ the opposite reason to the row above it: not because the row cannot say what
 leaving would change, but because leaving is not theirs to do and the server
 refuses it by name.
 
-The sentence under that row still counts the readers the Space source seated
-**on this Channel**, because that is what `ChannelAccessSources` answers and it
-is the Channel's own record rather than the Space's. It is not the Space
-summary's withheld `participants` arriving by another door: everyone it counts
-is a reader of a Channel this person can already open, which is the same set
-the conversation header names.
+**That row carries no number, and every other row does.** The sentence counts
+the readers the Space source seated **on this Channel** — the Channel's own
+record, which `ChannelAccessSources` answers and which everybody listed in it
+is a reader of a Channel this person can already open, the same set the
+conversation header names. What made it wrong on this one row is the name
+beside it. Before, a reader saw "a space you can't see — the 1 person in this
+space", which attaches a size to nothing; now the row names the Space, and for
+a *personal* Space that count is the size of its participant list, which is
+exactly what the summary such a reader is handed empties `participants` to
+withhold. So the count is drawn only for a Space this viewer is in or one the
+whole Organization is in — and for the reached-through row the sentence says
+only that the people in that Space reach the Channel through it. A Space the
+viewer's directory does not hold at all — a race, or one archived since — is
+the same answer for the stronger reason.
 
 The dialog offers **Make private** only while no Space source is
 Organization-wide. The server refuses that narrowing with
@@ -1805,7 +1813,8 @@ and `SpaceService.editable` guards the four operations that write on the
 Space's own object before WorkspaceDO sees them. The desktop draws such a Space
 as an ordinary sidebar row with no **+**, no drop, and no **Add to space**
 entry; its dashboard as header-and-list; and **Manage access** names it instead
-of saying "a space you can't see". The local cache's `directory` slice went to
+of saying "a space you can't see", without the participant count every other
+row on that screen keeps. The local cache's `directory` slice went to
 version 4.
 
 **Why:** Every Channel belongs to at least one Space, and the sidebar's whole
@@ -1898,6 +1907,16 @@ out. It is `canEdit` now, it answers that refusal apart from "no such Space" so
 `listSpaceMembers` can name it, and it says why there is no viewer-scoped
 variant to narrow to instead: every caller is a walk that has to reach the
 whole Space or it converges on nothing.
+
+**Manage access** was the same disclosure through the client. Its Space row
+carries a count of the readers that source seated on the Channel — the
+Channel's own record, and argued for above — but this change gave the row the
+Space's *name*, and for a personal Space the count is the size of its
+participant list. "A space you can't see — the 1 person in this space" attaches
+a number to nothing; "Side work — the 1 person in this space" is the
+participant count the PRD entry shipping in this change says such a viewer is
+never told. The number is now drawn only for a Space the viewer is in or one
+the whole Organization is in.
 
 The dashboard nudge was the third. Its `spaceIds` arm addresses everybody who
 can *see* a Space, which the third clause widened — so every Channel placed
