@@ -1,21 +1,17 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, FileText, FolderPlus, Plus, RotateCcw } from 'lucide-react';
+import { Archive, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import { NavLink, useParams } from 'react-router-dom';
 import {
   type SpaceColorKey,
-  type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceIconKey,
   type SpaceSummary,
 } from '@rally/contracts';
 import { SpaceAppearancePicker } from '@rally/ui/components/space-appearance-picker';
 import {
-  SpaceChannelRow,
   SpaceDashboardHeader,
   SpaceDashboardSection,
-  SpaceDefaultList,
-  type SpaceDefaultItem,
 } from '@rally/ui/components/space-dashboard';
 
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
@@ -35,28 +31,11 @@ import { useAppSession } from '../lib/app-session';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
-import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey, useSocketOwnedList } from '../lib/sidebar-list-store';
-import type { AutomationSummary, Workspace } from '../lib/types';
+import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey } from '../lib/sidebar-list-store';
+import type { Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
-
-/** What each kind of default calls itself on this screen. */
-const defaultCopy: Record<SpaceDefaultKind, { heading: string; description: string; empty: string; headingId: string }> = {
-  resource: {
-    heading: 'Resources',
-    description: 'Resources added here are attached to every channel in this space, now and later.',
-    empty: 'No resources',
-    headingId: 'space-resources-heading',
-  },
-  sidekick: {
-    heading: 'Sidekicks',
-    description: 'Sidekicks recommended here are offered in every channel in this space, now and later.',
-    empty: 'No Sidekicks',
-    headingId: 'space-sidekicks-heading',
-  },
-};
 
 /**
  * Where a refusal is shown, one slot per surface that can produce one.
@@ -69,17 +48,12 @@ type FailureSlot =
   | 'restore'
   | 'name'
   | 'archive'
-  | 'channels'
-  | 'addChannels'
-  | 'addDefault'
   | 'participants'
   | 'audience'
-  | 'appearance'
-  | `defaults:${SpaceDefaultKind}`;
+  | 'appearance';
 
 /**
- * A Space's own screen: what it is, who it is for, what is in it, and what it
- * hands down.
+ * A Space's own screen: what it is, who it is for, and what is in it.
  *
  * A Space has no feed. There is deliberately no composer, transcript, feed
  * socket, Main link or Breakout list here — the backing conversation exists,
@@ -87,11 +61,9 @@ type FailureSlot =
  */
 export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
-  const navigate = useNavigate();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
-  const workstreams = useWorkstreamsQuery();
   const spacesReady = useSpacesReady();
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
   const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
@@ -108,19 +80,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
-  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
-  const [defaultPicker, setDefaultPicker] = useState<SpaceDefaultKind | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // A Space has no socket of its own: what it paints is the Organization's
   // directory, and the directory the local cache seeded is what is showing
   // until the workspace socket's first subscribe answer replaces it.
   const workspaceSocket = useOptionalWorkspaceSocket();
   const directoryFromLocalCache = workspaceSocket !== null && workspaceSocket.sidebarConnect === null;
-  const resources = useQuery({
-    queryKey: ['space-resource-picker'],
-    queryFn: ({ signal }) => api!.listResources({ limit: 100, signal }),
-    enabled: Boolean(api),
-  });
   const workspaceMembers = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -135,10 +99,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(api) && Boolean(spaceId),
   });
-  // Subscribed rather than read: a `getQueryData` read of the same entry does
-  // not re-render when the socket replaces the list, so a Sidekick default
-  // rendered as "Sidekick" until something unrelated on this screen changed.
-  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data ?? [];
   // That page is the one thing on this screen the socket cannot replace, and
   // an activity-ordered, state-filtered list goes stale on far more than a
   // membership change: a message in a member Channel or breakout reorders it,
@@ -181,12 +141,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const isGeneral = space.systemRole === 'general';
   // This reader reaches the Space only because they can read a Channel placed
   // in it. They are told its mark and name so that Channel has somewhere to be
-  // drawn, and that is the whole of what this screen may say: the sections
-  // below are the Space's participants, its audience, its lifecycle and what it
-  // hands down, none of which is theirs to see and every one of which the
-  // server refuses them by name. What is left is the header and the list of
-  // conversations — and that list is already filtered to the Channels they can
-  // read, by the same predicate that let them see the Space at all.
+  // drawn, and that is the whole of what this screen may say. Its participants,
+  // audience and lifecycle are not theirs to see, and the server refuses every
+  // write by name. What is left is the header and the conversation list — and
+  // that list is already filtered to the Channels they can read, by the same
+  // predicate that let them see the Space at all.
   const reachedThroughChannel = space.reach === 'through_channel';
   // Owner and administrator are one gate everywhere a Space is edited, and the
   // role only decides which control is drawn: the server reauthorizes it.
@@ -245,36 +204,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const conversations = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
   const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
   const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
-  const resourcesById = new Map((resources.data?.items ?? []).map((resource) => [resource.id, resource]));
-  const sidekicksById = new Map(sidekicks.map((sidekick) => [sidekick.id, sidekick]));
-  const defaultItems = (kind: SpaceDefaultKind): SpaceDefaultItem[] => (
-    kind === 'resource'
-      ? space.defaultResourceIds.map((id) => ({
-        id,
-        title: resourcesById.get(id)?.title ?? 'Resource',
-        subtitle: resourcesById.get(id)?.provider ?? undefined,
-      }))
-      : space.defaultSidekickIds.map((id) => ({
-        id,
-        title: sidekicksById.get(id)?.name ?? 'Sidekick',
-        subtitle: sidekicksById.get(id)?.description ?? undefined,
-      }))
-  );
-  const pickerChoices = defaultPicker === 'resource'
-    ? (resources.data?.items ?? [])
-      .filter((resource) => !space.defaultResourceIds.includes(resource.id))
-      .map((resource) => ({ id: resource.id, title: resource.title, subtitle: `${resource.provider ?? 'Rally'} · ${resource.resourceType}` }))
-    : sidekicks
-      // The PRD's "Sidekick recommendations inherited by current and future
-      // member Channels": a Space default is offered in every Channel the
-      // Space holds, now and later. A `workstream`-scoped Sidekick belongs to
-      // one Channel and cannot be that, and a draft or paused one would be
-      // recommended everywhere while being unable to run.
-      .filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active')
-      .filter((sidekick) => !space.defaultSidekickIds.includes(sidekick.id))
-      .map((sidekick) => ({ id: sidekick.id, title: sidekick.name, subtitle: sidekick.description }));
-  const addableChannels = (workstreams.data ?? [])
-    .filter((workstream) => !workstream.spaceIds.includes(space.id) && workstream.archivedAt === undefined);
   return (
     <div className="space-dashboard-frame">
       <ConnectingCardSlot>
@@ -344,22 +273,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           })}
         />
 
-        <SpaceDashboardSection
-          {...(reachedThroughChannel ? {} : {
-            action: <div className="space-dashboard-header-actions">
-              <Button disabled={!editable} onClick={() => { report('addChannels', null); setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
-              <IconButton
-                disabled={space.status !== 'active'}
-                label={`New channel in ${space.name}`}
-                onClick={() => void navigate(`/spaces/${space.id}/workstreams/new`)}
-              >
-                <Plus aria-hidden="true" size={15} />
-              </IconButton>
-            </div>,
-          })}
-          heading="Channels"
-          headingId="space-channels-heading"
-        >
+        <SpaceDashboardSection heading="Channels" headingId="space-channels-heading">
           {channelPages.isPending
             ? <LoadingState label="Loading channels…" />
             : conversations.length === 0
@@ -370,89 +284,39 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               // there anything in here at all", while the list above is
               // "is any of it yours to deal with".
               ? space.channelCount === 0
-                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived space has no channels.'} />
+                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Channels will appear here when they need your attention.' : 'This archived space has no channels.'} />
                 : <EmptyState
                     description="Everything in this space has been read and nothing is running. Channels and breakouts show up here while they need you; the rest stay in the sidebar and in search."
                     title="Nothing here needs you right now"
                   />
               : <div className="waiting-workstream-list">
-                {conversations.map((conversation) => (
-                  <SpaceChannelRow
-                    key={conversation.id}
-                    link={conversation.breakoutOf
-                      ? <NavLink
-                          className="waiting-workstream-row space-breakout-row"
-                          to={`/workstreams/${conversation.breakoutOf.workstreamId}?substream=${conversation.breakoutOf.substreamId}`}
-                        >
-                          <StatusDot status={workstreamMarkerStatus(conversation)} />
-                          <span className="waiting-workstream-copy">
-                            <span aria-hidden="true" className="space-breakout-mark">↳</span>
-                            <strong>{conversation.title}</strong>
-                            <span>in {conversation.breakoutOf.title}</span>
-                          </span>
-                          <RelativeTime value={conversation.lastActivityAt} />
-                        </NavLink>
-                      : <NavLink className="waiting-workstream-row" to={`/workstreams/${conversation.id}`}>
-                          <StatusDot status={workstreamMarkerStatus(conversation)} />
-                          <span className="waiting-workstream-copy"><strong>{conversation.title}</strong>{conversation.preview && <span>{conversation.preview}</span>}</span>
-                          <RelativeTime value={conversation.lastActivityAt} />
-                        </NavLink>}
-                    // A breakout follows its Channel. There is nothing to take
-                    // it out of this Space that is not taking its Channel out,
-                    // and a control that looked like there was would be
-                    // offering an operation the Space authority has no word
-                    // for.
-                    // A breakout follows its Channel, and a reader who reaches
-                    // this Space through a Channel in it has no membership of
-                    // the Space to end. Both are drawn as the row's reserved,
-                    // hidden control column rather than as a second row shape.
-                    {...(conversation.breakoutOf || reachedThroughChannel ? {} : {
-                      onRemove: () => void save(
-                        'channels',
-                        () => api!.removeChannelFromSpace(space.id, conversation.id),
-                        'The channel could not be removed from this space.',
-                      ),
-                    })}
-                    removeDisabled={!editable || saving}
-                  />
-                ))}
+                {conversations.map((conversation) => conversation.breakoutOf
+                  ? <NavLink
+                      className="waiting-workstream-row space-breakout-row"
+                      key={conversation.id}
+                      to={`/workstreams/${conversation.breakoutOf.workstreamId}?substream=${conversation.breakoutOf.substreamId}`}
+                    >
+                      <StatusDot status={workstreamMarkerStatus(conversation)} />
+                      <span className="waiting-workstream-copy">
+                        <span aria-hidden="true" className="space-breakout-mark">↳</span>
+                        <strong>{conversation.title}</strong>
+                        <span>in {conversation.breakoutOf.title}</span>
+                      </span>
+                      <RelativeTime value={conversation.lastActivityAt} />
+                    </NavLink>
+                  : <NavLink className="waiting-workstream-row" key={conversation.id} to={`/workstreams/${conversation.id}`}>
+                      <StatusDot status={workstreamMarkerStatus(conversation)} />
+                      <span className="waiting-workstream-copy"><strong>{conversation.title}</strong>{conversation.preview && <span>{conversation.preview}</span>}</span>
+                      <RelativeTime value={conversation.lastActivityAt} />
+                    </NavLink>)}
               </div>}
           {channelPages.hasNextPage && (
             <p className="space-dashboard-muted">
               <Button disabled={channelPages.isFetchingNextPage} onClick={() => void channelPages.fetchNextPage()}>Load more</Button>
             </p>
           )}
-          {failures.channels && <InlineError>{failures.channels}</InlineError>}
         </SpaceDashboardSection>
 
-        {/* What the Space hands down is the Space's, and a reader who reaches
-            it through one Channel is told nothing about it — the summary they
-            are handed carries no defaults at all, so drawing the sections
-            would be drawing two empty lists and two controls that can only
-            fail. */}
-        {!reachedThroughChannel && (['resource', 'sidekick'] as const).map((kind) => (
-          <SpaceDashboardSection
-            action={<Button disabled={!editable || saving} onClick={() => { report('addDefault', null); setSelectedIds(new Set()); setDefaultPicker(kind); }}>
-              <FolderPlus aria-hidden="true" size={15} /> Add {kind === 'resource' ? 'resource' : 'Sidekick'}
-            </Button>}
-            description={defaultCopy[kind].description}
-            heading={defaultCopy[kind].heading}
-            headingId={defaultCopy[kind].headingId}
-            key={kind}
-          >
-            <SpaceDefaultList
-              disabled={!editable || saving}
-              emptyLabel={defaultCopy[kind].empty}
-              items={defaultItems(kind)}
-              onRemove={(id) => void save(
-                `defaults:${kind}`,
-                () => api!.removeSpaceDefault(space.id, kind, id),
-                'That could not be removed from this space.',
-              )}
-            />
-            {failures[`defaults:${kind}`] && <InlineError>{failures[`defaults:${kind}`]}</InlineError>}
-          </SpaceDashboardSection>
-        ))}
         {failures.restore && <InlineError>{failures.restore}</InlineError>}
 
         <Modal
@@ -497,94 +361,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               ))}
             </ul>
           )}
-        </Modal>
-
-        <Modal
-          description="Choose the channels to add to this space. They keep every space they are already in."
-          footer={<><Button disabled={saving} onClick={() => setChannelPickerOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || selectedIds.size === 0} onClick={() => {
-            void (async () => {
-              for (const workstreamId of selectedIds) {
-                await save(
-                  'addChannels',
-                  () => api!.addChannelToSpace(space.id, workstreamId),
-                  'The channel could not be added to this space.',
-                );
-              }
-              setSelectedIds(new Set());
-              setChannelPickerOpen(false);
-              void channelPages.refetch();
-            })();
-          }}>Add channels</Button></>}
-          onOpenChange={(open) => { if (!saving) setChannelPickerOpen(open); }}
-          open={channelPickerOpen}
-          title="Add channels"
-        >
-          {addableChannels.length === 0
-            ? <EmptyState title="No channels to add" description="Every channel loaded on this device is already in this space." />
-            : <div aria-label="Channels" className="member-picker-list" role="group">
-              {addableChannels.map((workstream) => (
-                <label className="member-picker-row" key={workstream.id}>
-                  <input
-                    checked={selectedIds.has(workstream.id)}
-                    onChange={() => setSelectedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(workstream.id)) next.delete(workstream.id); else next.add(workstream.id);
-                      return next;
-                    })}
-                    type="checkbox"
-                  />
-                  <span><strong>{workstream.title}</strong></span>
-                  <span aria-hidden="true" className="member-checkbox" />
-                </label>
-              ))}
-            </div>}
-          {failures.addChannels && <InlineError>{failures.addChannels}</InlineError>}
-        </Modal>
-
-        <Modal
-          description={defaultPicker === 'sidekick'
-            ? 'Every channel in this space is offered these Sidekicks.'
-            : 'Every channel in this space gets these resources attached.'}
-          footer={<><Button disabled={saving} onClick={() => setDefaultPicker(null)}>Cancel</Button><Button className="button-primary" disabled={saving || selectedIds.size === 0} onClick={() => {
-            const kind = defaultPicker;
-            if (!kind) return;
-            void (async () => {
-              for (const targetId of selectedIds) {
-                await save(
-                  'addDefault',
-                  () => api!.addSpaceDefault(space.id, kind, targetId),
-                  'That could not be added to this space.',
-                );
-              }
-              setSelectedIds(new Set());
-              setDefaultPicker(null);
-            })();
-          }}>Add</Button></>}
-          onOpenChange={(open) => { if (!saving && !open) setDefaultPicker(null); }}
-          open={defaultPicker !== null}
-          title={defaultPicker === 'sidekick' ? 'Add Sidekicks' : 'Add resources'}
-        >
-          {pickerChoices.length === 0
-            ? <EmptyState title="Nothing to add" description="Everything available is already a default in this space." />
-            : <div aria-label={defaultPicker === 'sidekick' ? 'Sidekicks' : 'Resources'} className="member-picker-list" role="group">
-              {pickerChoices.map((choice) => (
-                <label className="member-picker-row" key={choice.id}>
-                  <input
-                    checked={selectedIds.has(choice.id)}
-                    onChange={() => setSelectedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(choice.id)) next.delete(choice.id); else next.add(choice.id);
-                      return next;
-                    })}
-                    type="checkbox"
-                  />
-                  <span aria-hidden="true" className="resource-picker-icon"><FileText size={15} /></span>
-                  <span><strong>{choice.title}</strong><small>{choice.subtitle}</small></span>
-                  <span aria-hidden="true" className="member-checkbox" />
-                </label>
-              ))}
-            </div>}
-          {failures.addDefault && <InlineError>{failures.addDefault}</InlineError>}
         </Modal>
 
         <Modal
