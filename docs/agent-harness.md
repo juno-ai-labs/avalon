@@ -591,7 +591,11 @@ check the call before repeating it, and the model is the only reader able to act
 on it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
-tool's provider-facing JSON Schema and applies two normalizations. It normalizes
+tool's original execution JSON Schema and applies three normalizations. First,
+it removes synthetic nulls advertised for independent optional non-nullable
+top-level scalars. Existing semantic nulls and referenced properties stay intact.
+The model-facing schema supplies this explicit omission alternative; it does not
+change the executor contract. Next, it normalizes
 a string only where the field
 is exclusively numeric and the complete string is a finite JSON number. Unsafe
 integers and ambiguous string-or-number fields remain strings and fail or parse
@@ -622,7 +626,7 @@ a tool's schema, is
 [`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input).
 Executors remain the enforcement point.
 When one throws a Zod error, the harness checks the normalized input against the
-same JSON Schema the model saw and any code-authored `validateInput` refinement:
+tool's original execution JSON Schema and any code-authored `validateInput` refinement:
 a mismatch becomes a bounded `kind: "validation"` result from the closest union
 branch, while valid input means the failure came from downstream data.
 Validation failures are labelled `phase: "validation"` on the lifecycle event.
@@ -1394,7 +1398,10 @@ does not affect this explicit representation. No strict-mode setting changes.
 The pressure was Canva calls containing punctuation in an optional Brand Kit ID.
 Omission prose had not prevented the model inventing a value. Stripping punctuation
 would guess intent, so strings remain unchanged. Existing nullable arguments retain
-null (including clear operations). Nested values and roots with composition,
+null (including clear operations). Referenced properties are excluded because
+older schema dialects ignore scalar keywords beside `$ref`. Descriptions, titles
+and defaults remain on the outer property rather than being duplicated or moved
+inside its nullable alternative. Nested values and roots with composition,
 conditional, presence or unknown constraints are not adapted; broadening that
 scope must preserve both the authored null semantics and field dependencies.
 This supplies a valid representation, not a guarantee that a model will choose it

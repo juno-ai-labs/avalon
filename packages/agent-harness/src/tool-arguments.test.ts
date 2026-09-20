@@ -418,6 +418,32 @@ describe("model-facing unspecified arguments", () => {
     expect(z.fromJSONSchema(schema).safeParse({ query: "draw", brand_kit_id: null }).success).toBe(false);
   });
 
+  it("preserves referenced nulls even when a draft-07 reference has a scalar sibling", () => {
+    const referenced = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      definitions: { Clearable: { type: ["string", "null"] } },
+      properties: { clear: { $ref: "#/definitions/Clearable", type: "string" } },
+    };
+    expect(modelToolArgumentSchema(referenced)).toBe(referenced);
+    const input = { clear: null };
+    expect(omitUnspecifiedToolArguments(input, referenced)).toBe(input);
+  });
+
+  it("keeps annotations outside the nullable branch without duplicating descriptions", () => {
+    const original = { type: "object", properties: {
+      sort: { type: "string", enum: ["asc", "desc"], description: "Sort direction.", title: "Sort", default: "asc" },
+    } };
+    const before = structuredClone(original);
+    const adapted = modelToolArgumentSchema(original);
+    expect(adapted.properties).toEqual({ sort: {
+      title: "Sort", default: "asc",
+      description: "Sort direction.\nUse null or omit this field when unspecified; null is removed before execution.",
+      anyOf: [{ type: "string", enum: ["asc", "desc"] }, { type: "null" }],
+    } });
+    expect(original).toEqual(before);
+  });
+
   it("removes only synthetic nulls, preserving explicit clears and all other values", () => {
     expect(omitUnspecifiedToolArguments({
       query: null, brand_kit_id: null, count: null, enabled: null,
