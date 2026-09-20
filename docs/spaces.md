@@ -1886,7 +1886,10 @@ afterwards.
 **What changed:** The desktop removed the plus from the Spaces heading and from
 every Space row. The main sidebar plus now starts a Channel, imports one, or
 creates a Space; Channel flows require an explicit destination Space, and a new
-Space uses the existing personal, blue-briefcase defaults.
+Space uses the existing personal, blue-briefcase defaults. The launcher waits
+for Space bootstrap, is unavailable in a guest shell with no Space capability,
+and omits Spaces reached only through a shared Channel because those projections
+are readable but not editable.
 
 **Why:** Three placements of the same creation capability made the hierarchy
 itself look editable in place and split closely related actions across different

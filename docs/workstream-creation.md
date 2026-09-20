@@ -508,7 +508,10 @@ see
 **What changed:** The unified sidebar plus collects a required Space and Channel
 name, then hands both to the existing composer. The eventual `POST /workstreams`
 carries that settled title and Space alongside the opening message and chosen
-participants; no Channel is created by the setup dialog itself.
+participants; no Channel is created by the setup dialog itself. The picker is
+enabled only after Space bootstrap and contains only destinations the person may
+write, so it cannot carry a transient or `through_channel` placement into the
+composer.
 
 **Why:** Creation controls were scattered across the Spaces heading and every
 Space row, while the top-level launcher left placement implicit. A single setup
