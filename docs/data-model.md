@@ -18,7 +18,11 @@ row plus the external-event registrations that fan a connector event out. See
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent parent (`WorkstreamDO` for a work stream, `AutomationDO` for an
-automation) owns the aggregate metadata and the parent outbox. Legacy D1 workspace-product activity/opportunity rows are
+automation, `SpaceDO` — the same class as `WorkstreamDO` under a different role
+— for a Space) owns the aggregate metadata and the parent outbox. The stored
+`workstream.parent_kind` is the closed three-value vocabulary those three
+classes answer to, widened to admit `space` by conversation-object schema
+version 66. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
 becomes active. Migration 0090 removes those sources, the per-work-stream source
 tables, and their writer fences after the authority is open. Neither family is a
@@ -97,6 +101,20 @@ All arrive in `0101_private_access.sql`. These pre-workspace records have no
 workspace association; existing workspace deletion does not erase them. Both
 regions share schema, while this slice writes only Global. [Private access](private-access.md)
 owns their lookup, erasure, admission and delivery semantics.
+
+### Emailed link payloads
+
+`link_payloads` holds what a link's URL deliberately does not say: one row per
+issued link, keyed by the SHA-256 digest of its token, carrying the token's type
+(its prefix), the JSON that type's schema validates, and the expiry of whatever
+the link addresses. Scoped invitations are its first kind, `inv`; the table is
+shared because a URL that should not describe its subject is a recurring shape.
+Rows are pointers and confer nothing: the authority the payload names still
+decides every question the link leads to. A row with an expiry is dropped by a
+later issue; one without is retained, because a digest-keyed row is reachable
+only by the token that was never stored, so only its minter can delete it.
+[`scope-invitations.md`](scope-invitations.md) owns the invitation kind, and the
+store is `packages/db/src/link-payloads.ts`.
 
 ### Search projection state
 
@@ -265,8 +283,8 @@ SQL joins.
   each provisioned child carries the bounded root facts needed to authorize and
   project its own context, while `WorkstreamDO.workstream_metadata` is the
   Main-derived parent view. `workstream_key` is the conversation parent id and
-  `parent_kind` (v39) says whether that parent is a work stream or an
-  automation; `origin_type`, `automation_subscription_id`, `automation_run_id`,
+  `parent_kind` (v39, widened by v66) says whether that parent is a work stream,
+  an automation, or a Space; `origin_type`, `automation_subscription_id`, `automation_run_id`,
   and `planned_for` are dead columns, kept only because the released
   runtime-compat triggers name them. `objective` is the work
   stream's description; `description_source` records whether a person wrote it
@@ -397,13 +415,59 @@ SQL joins.
   removed from their audience cannot make it visible again.
   An archived or narrowed work stream contributes no row while remaining
   removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
-- `projects`, `project_participants`, and `workspace_project_order` in
-  WorkspaceDO hold project identity/presentation, project-level readers, and
-  each person's fixed server order. Presentation, audience, and lifecycle use
-  separate revisions so a rename does not stale an audience operation. Project
-  names are unique after normalization across active and inactive rows, and the
-  icon/color columns accept only the shared V1 registries. See
+- **WorkspaceDO migration 64 drops the eight Project tables** — `projects`,
+  `project_participants`, `workspace_project_order`, `workspace_project_state`,
+  `project_workstream_memberships`, `project_default_resources`,
+  `project_default_resource_targets` and `project_default_resource_publications`
+  — children-before-parents, because `PRAGMA foreign_keys = OFF` is a no-op once
+  a Durable Object event has touched SQLite. The same transaction settles every
+  undelivered default first — targets to `terminal` with `project_retired`,
+  publications to `accepted` — so a Queue message still in flight finds nothing
+  current and attaches nothing; the activity consumer's tombstone leg
+  acknowledges it. There is no barrier in front of the drops: an undelivered
+  Project default is discarded on purpose, because Projects are deleted rather
+  than converted. What the Project
+  mechanism already delivered to a Channel — an attached resource, a
+  recommended Sidekick, an audience — is the Channel's own and survives. See
   [`projects.md`](projects.md).
+- WorkspaceDO migration 63 adds the Space authority that replaced those rows:
+  `workspace_space_directory` and `workspace_space_viewers` are the *projection*
+  a Space's own object publishes, so they carry the generation, source version
+  and payload hash each effect is fenced on rather than being written by a
+  mutation; a reservation is written at source version zero so the first real
+  projection supersedes it. `workspace_container_order` is every list a person
+  arranges by hand, keyed by the container it belongs to — the Organization's
+  Spaces, one Space's Channels, one Channel's Breakouts — and
+  `workspace_space_state` is the one waterline both directories share.
+  `space_channel_memberships` is keyed by Space and Channel with **no**
+  uniqueness on the Channel, because a Channel belongs to as many Spaces as it
+  was added to. `space_intents` is one row per staged cross-object operation
+  with the three fences it was staged against. `space_defaults`,
+  `space_default_targets` and `space_default_publications` carry a `kind`
+  column, so a resource and a Sidekick recommendation share one staging, fence
+  and receipt. `space_bootstrap` is the singleton cutover row — phase, General's
+  id, the walk's cursor, the blocked Channels as JSON, and the
+  `not_before`/`attempts` retry gate the alarm claims on — seeded `pending` for
+  every Organization. A redelivered page costs nothing because the membership
+  row says what is already placed, so there is no receipt table beside it. The
+  same migration rebuilds `workspace_retirement_graph` so `parent_kind` admits
+  `'space'`, carrying its rows and their `retired_at` receipts through a scratch
+  table — migration 42 is released and is not edited. A unique partial index on
+  `system_role` makes General singular. See [`spaces.md`](spaces.md).
+- **WorkspaceDO migration 65 adds the Organization's view of a Channel's
+  breakouts.**
+  `workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
+  and `workspace_breakout_viewers` is its per-person half, both applied from
+  the `directory_common` and `directory_user` effects a Channel now forwards on
+  its breakouts' behalf, under the same generation-then-version fence and the
+  same `workspace_workstream_effect_receipts` receipt the Channel directory
+  uses. They are separate tables rather than a `substream_id` column on
+  `workspace_workstream_directory` because every other query over that table
+  reads it as one row per Channel. Their columns are spelled the way the
+  Channel directory spells the same facts, because one code-owned SQL predicate
+  is rendered against both. The dashboard's refresh signal has **no** table of
+  its own: a client is told to read its page again over the socket and nothing
+  is written. See [`spaces.md`](spaces.md#the-refresh-signal).
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the
@@ -1072,6 +1136,30 @@ acknowledgement in the same transaction as the grant and alarm. Source-side
 Substream migration 62 freezes legacy roster writers and records applied
 projection revisions. See [workstream authority](workstream-durable-object.md)
 for handoff and delivery ordering; live migration remains disabled.
+
+## Space-derived Channel access
+
+WorkstreamDO migration 18 makes each Channel the provenance authority for its
+own readers. `workstream_direct_audience` records the Channel's audience on its
+own account, backfilled from `workstream_metadata.scope` — which becomes the
+*effective* audience the moment a Space widens the Channel and can no longer
+answer the question. `workstream_space_access_sources` holds one row per Space
+that reaches the Channel, with the Space revision and membership generation it
+was applied on, and `workstream_space_supplied_readers` holds the readers each
+source *seated*, cascading with it. `workstream_access_operations` receipts
+every access operation on its exact request, in the shape
+`scope_grant_operations` uses. `scope_grants` gains `source_kind` and
+`source_id`; existing rows backfill as `direct` through the defaults, which is
+what they were.
+
+Every Space runs the same version: `SPACE_ROLE` applies
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS` under component `space_do`, so one appended
+version reaches both classes. No regional D1 table is involved: the provenance is
+Channel-local, and the audience it plans is still written by the main
+conversation's scope and participant rows or by the grant ledger. See
+[workstream authority](workstream-durable-object.md) for the union rule and
+[authorization](authorization.md) for what a Space-derived grant does and does
+not reach.
 
 ## Push devices
 

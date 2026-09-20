@@ -87,6 +87,8 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
+import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
   seedParticipantMessage,
@@ -186,13 +188,9 @@ beforeEach(async () => {
     `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000005a2`,
   );
   await reset();
-  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
-      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
-      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
-    )`).run();
+  await ensureAuditSchema();
   await env.DB.batch([
+    env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,

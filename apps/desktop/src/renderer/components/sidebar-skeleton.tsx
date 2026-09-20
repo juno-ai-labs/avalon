@@ -1,7 +1,7 @@
 /**
  * The sidebar's placeholder rows, in their own module because both the sidebar
- * and the Projects section it renders show them, and importing them from
- * `sidebar.tsx` would close a cycle with `project-sidebar-section.tsx`.
+ * and the Spaces section it renders show them, and importing them from
+ * `sidebar.tsx` would close a cycle with `space-sidebar-section.tsx`.
  */
 
 /**

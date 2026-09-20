@@ -69,6 +69,12 @@ export function migrationCommandDispatchers(env: Env): Record<
       durableObjectStubById(env, env.SUBSTREAM_AGENTS, objectId).forceMigration(command),
     WorkstreamDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSTREAM_DOS, objectId).forceMigration(command),
+    // Its own namespace and its own entry even though `SpaceDO` is
+    // `WorkstreamDO` under a role: the id in the command was minted against
+    // `SPACE_DOS`, and looking it up in `WORKSTREAM_DOS` would resolve a
+    // different object — creating an empty one rather than failing.
+    SpaceDO: (objectId, command) =>
+      durableObjectStubById(env, env.SPACE_DOS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
     // Commands already queued under the old class retain the same namespace.
@@ -90,6 +96,9 @@ export function migrationCommandDispatchers(env: Env): Record<
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
   WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
+  // The same ledger `WorkstreamDO` runs: a Space is that class under a role,
+  // and only its component and class name are its own.
+  SpaceDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
   AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
   SidekickDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),

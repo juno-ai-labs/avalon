@@ -136,6 +136,16 @@ export async function issueSocketTicket(
   options: IssueWorkstreamSocketTicketOptions = {},
 ): Promise<string> {
   assertSessionPrincipal(auth);
+  // A Space's conversation is a storage detail of the Space, not a product
+  // surface: it has no composer, no transcript and no Main link, and the
+  // object it belongs to refuses the upgrade a ticket would be spent on. The
+  // refusal is here as well as there because a ticket is a signed credential —
+  // minting one for a conversation nothing may open is the kind of thing that
+  // is later mistaken for authorization.
+  if (parent.kind === "space") {
+    throw new ApiError(403, "space_feed_socket_refused",
+      "A Space has no conversation feed to open");
+  }
   const now = options.issuedAt ?? Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",

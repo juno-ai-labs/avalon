@@ -123,7 +123,7 @@ immediately before committing its link, through the existing resource authorizer
 Product dispatch has already reloaded the current relationship; it does not trust
 a caller-supplied guest/member classification. Ordinary members keep the existing
 attachment path and personal-connection ownership check, without the added
-resource-authorizer round trip on project defaults or origin attachment. Guest
+resource-authorizer round trip on Space defaults or origin attachment. Guest
 metadata stays inside the mutation until its source check succeeds; a known
 resource ID is insufficient for a guest. Upload drafts must be sent with a message; existing
 attachment routes accept uploads after publication. Revoking the conversation
@@ -158,6 +158,61 @@ Resource mutations are
 scoped as described above: own draft upload/deletion, message publication and
 exact-conversation attachment/detachment are guest-enabled; broader management
 operations remain member-gated.
+
+### Space-derived access
+
+A Channel's readers are the union of one **direct** source — its own scope and
+its own participants — and every **Space** source that currently reaches it. A
+source can only widen: `workspace` anywhere makes the audience
+Organization-wide, and otherwise the readers are the union of every source's
+participants. `apps/api/src/lib/channel-audience.ts` is the only seam allowed to
+derive that union, and WorkstreamDO's migration-18 tables are the only record of
+which source supplied whom ([workstream
+authority](workstream-durable-object.md)).
+
+None of it admits anybody. `resolveScopedAccess` over the grant ledger, or the
+main conversation's scope and participant rows on a Channel that has never been
+shared, remains the whole decision. The provenance answers the question those
+cannot — *why* somebody may read — and therefore what has to be withdrawn when
+one Space stops reaching the Channel and what must not be. Every application
+and every withdrawal goes through the Channel's canonical scope and participant
+operations, so the retained-content containment preflight and its triggers stay
+the one fence and a Channel under grant authority writes a grant exactly as a
+direct share does.
+
+The provenance is committed **after** the audience it describes, not before:
+applying a source returns a plan, and the confirmation that follows the
+canonical operations is what records the source and the readers it seated. A
+source written first would survive a caller that never got to seat anybody and
+would then account for access nobody has. The order is therefore plan, apply,
+confirm — and a Channel that narrows must seat what a surviving source supplies
+*before* it narrows, whether the narrowing comes from a Space leaving or from
+the Channel's own scope going private.
+
+What a Space-derived grant does *not* do is enter the shared scope-grant
+directory. `scope_grants.source_kind` records it, and `ScopeGrantStorage`
+suppresses the directory writer for those rows. The directory is discovery, not
+admission: a Space-derived reader finds the Channel through the Organization's
+Space directory, and a directory row per reader per Channel would make
+General — which holds every Channel in the Organization — publish one row per
+member per Channel into a single flat candidate index.
+
+Direct provenance is sticky and wins in both directions, decided at the
+authority rather than by which mutation arrived last: a Space cannot claim a row
+the Channel already held directly, and a Space withdrawing from one leaves it
+active. So a grant the Channel also holds directly stays published and stays
+active when the Space leaves, whichever way the two writes race.
+
+The composition runs the other way too, and that direction grants nothing.
+**Being able to read a Channel discloses the mark and name of every Space it is
+placed in** — the Organization's fact about where the Channel lives, so a
+sidebar can draw it there — whether or not the reader is one of those Spaces'
+participants. That is a *discovery* disclosure and not an admission: it confers
+no read on the Space's other Channels, names none of its participants or
+defaults, counts only the Channels that reader can already see, and every write
+on the Space is refused `space_access_denied`.
+[`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns the predicate and
+what it withholds.
 
 ### Invitation admission
 
@@ -267,6 +322,18 @@ not a switch controlling which authorization implementation serves the request.
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
   dispatcher can retry without reconstructing permissions from an old payload.
+- A Space's own visibility is discovery, in both directions. A Space source
+  admits a reader to a Channel; a readable Channel discloses its Space's mark
+  and name. Neither admits anything else — the second confers no read on the
+  Space's other Channels and no write on the Space at all.
+- A Space supplies one source of a Channel's audience; it never owns it. A
+  reader the direct source or another Space still supplies survives a Space's
+  departure, and the scope narrows only when nothing remaining is
+  Organization-wide.
+- The scope-grant directory is complete for direct grants and deliberately
+  incomplete for Space-derived ones. Anything that treats an absent directory
+  row as absent access is wrong; the candidate index narrows a search, and the
+  owner's authorization read is still what decides.
 
 ## Boundary
 
@@ -412,6 +479,30 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-19 — A readable Channel discloses its Space's mark, and nothing else
+
+The composition now runs in both directions. A Space source admits a reader to
+a Channel, as this document already recorded; a Channel a person can read now
+also discloses the mark and name of every Space it is placed in, so the sidebar
+can draw the Channel where it lives instead of in a flat list of rows with no
+home. That is discovery rather than admission, and the invariant above says
+what it does not carry: no read on the Space's other Channels, no participant,
+no default, no count of what the reader cannot see, and no write. The reasoning
+and the predicate are in [`spaces.md`](spaces.md#changelog).
+
+### 2026-09-19 — A Space-derived grant is admission without discovery
+
+Space sources compose with a Channel's direct audience, and the grant a Space
+seats now carries `source_kind = 'space'` and is never published to the shared
+scope-grant directory. That makes this module's candidate index deliberately
+incomplete: it is complete for direct grants only, and an absent row no longer
+means absent access. The reasoning, and the provenance the composition is
+derived from, are in [workstream
+authority](workstream-durable-object.md#changelog) — in short, General holds
+every Channel in the Organization, so publishing a row per Space-derived reader
+per Channel would size one flat index at the Organization times its Channels,
+for discovery the Space directory already provides.
 
 ### 2026-09-16 — Bind shared scopes to the workspace relationship
 

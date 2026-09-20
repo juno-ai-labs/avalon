@@ -7,8 +7,8 @@ const target = {
   workspaceId: '00000000-0000-7000-8000-000000000001',
 };
 
-describe('workspace activation authorization', () => {
-  it('requests the control plane on every explicit activation, including the current workspace', async () => {
+describe('organization activation authorization', () => {
+  it('requests the control plane on every explicit activation, including the current organization', async () => {
     const request = vi.fn(async () => ({ workspace: target.workspaceId }));
     const dependencies = {
       nextSelectionIntent: vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(11),

@@ -1,7 +1,8 @@
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { ProjectSummarySchema } from '@rally/contracts';
+import { SpaceSummarySchema } from '@rally/contracts';
+import type { ClientSession } from '@rally/contracts/client-session';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
@@ -10,26 +11,28 @@ import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   invitationAccountMismatch,
-  upsertProjectDirectory,
+  spacesEnabledForSession,
+  upsertSpaceDirectory,
   windowControlsShellClass,
   batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
-const project = ProjectSummarySchema.parse({
+const space = SpaceSummarySchema.parse({
   id: '00000000-0000-7000-8000-0000000000f2',
   name: 'Hiring',
   iconKey: 'target',
   colorKey: 'green',
   scope: 'personal',
   status: 'active',
-  presentationRevision: 1,
-  audienceGeneration: 1,
-  lifecycleGeneration: 1,
+  systemRole: null,
+  revision: 1,
+  reach: 'participant',
   participants: [],
-  workstreamIds: [],
+  channelCount: 0,
   defaultResourceIds: [],
+  defaultSidekickIds: [],
   createdAt: '2026-08-27T00:00:00.000Z',
   updatedAt: '2026-08-27T00:00:00.000Z',
 });
@@ -51,12 +54,13 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-08-11T10:00:00.000Z',
   };
 }
 
 describe('openWorkstreamId', () => {
-  it('names the work stream the route has open', () => {
+  it('names the channel the route has open', () => {
     expect(openWorkstreamId(`/workstreams/${workstreamId}`)).toBe(workstreamId);
   });
 
@@ -82,11 +86,40 @@ describe('invitationAccountMismatch', () => {
   });
 });
 
-describe('upsertProjectDirectory', () => {
-  it('does not duplicate a project when its socket push beats the REST response', () => {
-    expect(upsertProjectDirectory({ waterline: 4, items: [project] }, project)).toEqual({
+describe('spacesEnabledForSession', () => {
+  const session: ClientSession = {
+    expiresAt: '2026-09-20T00:00:00.000Z',
+    apiBaseUrl: 'https://api.rally.test',
+    user: { id: '00000000-0000-7000-8000-0000000000a1', email: 'adam@example.com', name: 'Morgan Ellis' },
+    workspace: {
+      id: '00000000-0000-7000-8000-0000000000b1',
+      name: 'Rally Studio',
+      region: 'global',
+      role: 'member',
+    },
+  };
+
+  // Guest access to Spaces is deferred: every Space RPC refuses a guest, so the
+  // shell omits the navigation rather than drawing controls that only fail.
+  it('omits spaces for a guest, and keeps them for a member however the wire says so', () => {
+    expect(spacesEnabledForSession({
+      ...session,
+      workspace: { ...session.workspace!, accessClass: 'guest', role: null },
+    })).toBe(false);
+    expect(spacesEnabledForSession({
+      ...session,
+      workspace: { ...session.workspace!, accessClass: 'member' },
+    })).toBe(true);
+    // An absent `accessClass` is the legacy full-member representation.
+    expect(spacesEnabledForSession(session)).toBe(true);
+  });
+});
+
+describe('upsertSpaceDirectory', () => {
+  it('does not duplicate a space when its socket push beats the REST response', () => {
+    expect(upsertSpaceDirectory({ waterline: 4, items: [space] }, space)).toEqual({
       waterline: 4,
-      items: [project],
+      items: [space],
     });
   });
 });

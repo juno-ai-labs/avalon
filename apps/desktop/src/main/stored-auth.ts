@@ -55,21 +55,21 @@ const storedAuthSetSchema = z.object({
     context.addIssue({ code: 'custom', path: ['account'], message: 'must use the Global identity route' });
   }
   if (workspaceReferences.some(({ workspaceId }) => workspaceId === null)) {
-    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be workspace-scoped' });
+    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be organization-scoped' });
   }
   const keys = workspaceReferences
     .filter((reference): reference is { workspaceId: string; region: Region } => reference.workspaceId !== null)
     .map((reference) => workspaceReferenceKey(reference));
   if (new Set(keys).size !== keys.length) {
-    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique by region and workspace' });
+    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique by region and organization' });
   }
   if (value.activeWorkspace !== null && !keys.includes(workspaceReferenceKey(value.activeWorkspace))) {
-    context.addIssue({ code: 'custom', path: ['activeWorkspace'], message: 'must name a stored workspace' });
+    context.addIssue({ code: 'custom', path: ['activeWorkspace'], message: 'must name a stored organization' });
   }
   const recencyKeys = value.workspaceRecency.map((reference) => workspaceReferenceKey(reference));
   if (new Set(recencyKeys).size !== value.workspaceRecency.length
     || recencyKeys.some((key) => !keys.includes(key))) {
-    context.addIssue({ code: 'custom', path: ['workspaceRecency'], message: 'must contain unique stored workspaces' });
+    context.addIssue({ code: 'custom', path: ['workspaceRecency'], message: 'must contain unique stored organizations' });
   }
 });
 
@@ -85,7 +85,7 @@ const storedProfileSetSchema = z.object({
     ? workspaceReferenceKey({ workspaceId: profile.workspace.id, region: profile.workspace.region })
     : null);
   if (keys.some((key) => key === null) || new Set(keys).size !== keys.length) {
-    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique workspace profiles' });
+    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique organization profiles' });
   }
 });
 
@@ -256,7 +256,7 @@ export function storedProfileForCredential(
 
 export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string, region: Region): StoredAuthSet {
   if (!storedWorkspaceCredential(auth, workspaceId, region)) {
-    throw new Error('The selected workspace credential is not stored');
+    throw new Error('The selected organization credential is not stored');
   }
   const selected = { workspaceId, region };
   return {

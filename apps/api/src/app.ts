@@ -26,6 +26,7 @@ import { faviconRoutes } from "./routes/favicons";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { projectRoutes } from "./routes/projects";
+import { spaceRoutes } from "./routes/spaces";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
 import { resendInboundRoutes } from "./routes/resend";
@@ -169,6 +170,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/projects", projectRoutes);
+  protectedApi.route("/spaces", spaceRoutes);
   protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/push-devices", pushDeviceRoutes);
   protectedApi.route("/connections", connectionRoutes);

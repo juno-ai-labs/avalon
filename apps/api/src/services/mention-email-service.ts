@@ -57,7 +57,7 @@ export async function sendWorkstreamMentionEmail(
     ...(excerpt ? ["", `"${excerpt}"`] : []),
     "",
     `Open in Rally: ${workstreamUrl}`,
-    ...(replyTo ? ["", "Reply to this email to continue the work stream."] : []),
+    ...(replyTo ? ["", "Reply to this email to continue the channel."] : []),
   ].join("\n");
 
   return sendResendEmail(env, {
@@ -124,7 +124,7 @@ function mentionEmailHtml(input: {
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CEDC00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${excerpt}</td></tr>`
     : "";
   const reply = input.replyTo
-    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to continue the work stream.</td></tr>`
+    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to continue the channel.</td></tr>`
     : "";
   return `<!doctype html>
 <html lang="en">

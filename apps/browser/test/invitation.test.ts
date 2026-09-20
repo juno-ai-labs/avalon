@@ -6,15 +6,23 @@ const workspace = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const parent = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const child = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-it("validates invitation routing without treating its fragment as authentication", () => {
+it("carries an opaque token whole and names no deployment of its own", () => {
+  // Shaped like a minted token but deliberately low-entropy: a plausible
+  // 256-bit fixture reads as a leaked key to the repository's secret scan.
+  const token = `inv_${"this-is-not-a-real-token".padEnd(43, "0")}`;
+  expect(invitationFromFragment(token)).toEqual({ region: null, credential: { link: token } });
+  expect(invitationFromFragment("")).toBeNull();
+});
+
+it("validates an addressed fragment without treating it as authentication", () => {
   const fragment = new URLSearchParams({ region: "global", workspace, workstream: parent, invitation: child, token: "invitation-proof" });
-  expect(invitationFromFragment(fragment)).toEqual({ region: "global", request: {
+  expect(invitationFromFragment(fragment.toString())).toEqual({ region: "global", credential: {
     workspaceId: workspace, parentId: parent, invitationId: child, token: "invitation-proof",
   } });
   fragment.set("region", "unknown");
-  expect(invitationFromFragment(fragment)).toBeNull();
+  expect(invitationFromFragment(fragment.toString())).toBeNull();
   fragment.set("region", "global"); fragment.delete("token");
-  expect(invitationFromFragment(fragment)).toBeNull();
+  expect(invitationFromFragment(fragment.toString())).toBeNull();
 });
 
 it("opens a child-only share directly and represents Main through the canonical root path", () => {

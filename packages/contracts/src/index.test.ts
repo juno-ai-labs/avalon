@@ -35,6 +35,8 @@ import {
   WorkspaceSchema,
   WorkspaceSocketClientEventSchema,
   WorkstreamContextSchema,
+  SpaceChannelPageSchema,
+  SpaceConversationSchema,
   WorkstreamSchema,
   WorkstreamResourceSchema,
   TimestampSchema,
@@ -163,6 +165,11 @@ describe("boundary contracts", () => {
       ...base,
       openingMessage: "",
       attachmentIds: [],
+    }).success).toBe(false);
+    expect(CreateWorkstreamRequestSchema.safeParse({
+      ...base,
+      openingMessage: "Start",
+      spaceIds: [id, id],
     }).success).toBe(false);
     const attachmentOnly = CreateWorkstreamRequestSchema.parse({
       ...base,
@@ -1499,6 +1506,43 @@ describe("resource version provenance", () => {
       ...workstream,
       participantUserIds: ids,
     }).success).toBe(false);
+
+    // A Space's dashboard page is those same rows plus their kind, and stays
+    // closed: an empty cursor is not a cursor, and a missing one is not "there
+    // is no next page".
+    const channel = { ...workstream, kind: "channel" as const, breakoutOf: null };
+    expect(SpaceChannelPageSchema.safeParse({ items: [channel], nextCursor: null }).success).toBe(true);
+    expect(SpaceChannelPageSchema.safeParse({ items: [channel], nextCursor: "" }).success).toBe(false);
+    expect(SpaceChannelPageSchema.safeParse({ items: [channel] }).success).toBe(false);
+    expect(SpaceChannelPageSchema.safeParse({
+      items: [workstream.id], nextCursor: null,
+    }).success).toBe(false);
+
+    // The two kinds cannot be described wrongly. A breakout names its parent
+    // Channel and repeats its own substream id as the conversation id it is
+    // listed under; a Channel names neither. Both halves are asserted because
+    // a row that claimed to be a breakout with no parent would draw a link to
+    // `undefined`, and one that claimed to be a Channel while carrying a
+    // parent would offer **Remove** for a conversation the Space authority has
+    // no membership row for.
+    const breakoutId = "00000000-0000-7000-8000-0000000000bb";
+    const breakout = {
+      ...workstream,
+      id: breakoutId,
+      kind: "breakout" as const,
+      breakoutOf: { workstreamId: workstream.id, substreamId: breakoutId, title: "Launch" },
+    };
+    expect(SpaceConversationSchema.safeParse(breakout).success).toBe(true);
+    expect(SpaceConversationSchema.safeParse({ ...breakout, breakoutOf: null }).success).toBe(false);
+    expect(SpaceConversationSchema.safeParse({ ...breakout, kind: "channel" }).success).toBe(false);
+    expect(SpaceConversationSchema.safeParse({
+      ...breakout,
+      breakoutOf: { ...breakout.breakoutOf, substreamId: workstream.id },
+    }).success).toBe(false);
+    // A payload from a server that predates the kinds is not a legal row: the
+    // screen branches on `kind` for the destination, and a defaulted "channel"
+    // would send every breakout to its parent Channel's main conversation.
+    expect(SpaceConversationSchema.safeParse(workstream).success).toBe(false);
   });
 });
 

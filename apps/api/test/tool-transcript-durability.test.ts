@@ -69,6 +69,8 @@ const receiptRecord: ToolReceiptRecord = {
   errorJson: null,
   executionPlanHash: null,
   executionPlanJson: null,
+  idempotency: "safe",
+  providerIdempotencyKey: null,
   startedAt: Date.parse("2026-08-01T12:00:01.000Z"),
   settledAt: Date.parse("2026-08-01T12:00:04.000Z"),
   checkpointIndex: 0,

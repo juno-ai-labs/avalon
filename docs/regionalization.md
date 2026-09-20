@@ -22,7 +22,10 @@ this change does not provision them or add an enterprise management service.
 Global remains the identity endpoint and ordinary workspace-creation destination.
 Users choose a workspace, not a geographical region. The workspace's region stays
 in its session, routing records, links, provider OAuth state, and background
-messages. It does not change when a client switches workspaces.
+messages — except in a scoped invitation link, which names no region and is
+resolvable only by the deployment holding its row, so a second browser
+deployment has to give that link its own routing again rather than offering its
+token to every deployment in turn ([`scope-invitations.md`](scope-invitations.md)). It does not change when a client switches workspaces.
 
 Discovery visits configured deployments through the existing named RPC bridges.
 Provider ingresses use their existing opaque route directories to select a

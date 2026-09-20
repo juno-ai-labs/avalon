@@ -26,7 +26,7 @@ describe('SidekickSection', () => {
     expect(marker.querySelector('.tabler-icon-carambola')).not.toBeNull();
     expect(screen.queryByText('Recommended')).toBeNull();
     fireEvent.pointerMove(marker, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every substream in this work stream');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every breakout in this channel');
     expect(screen.getByRole('tooltip')).toHaveTextContent('isn’t automatically loaded');
   });
   it('opens a row and keeps removal in its right-click menu', () => {
@@ -42,7 +42,7 @@ describe('SidekickSection', () => {
     fireEvent.click(row);
     expect(openSidekicks).toHaveBeenCalledWith('one');
     fireEvent.contextMenu(row);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(remove).toHaveBeenCalledOnce();
   });
 
@@ -51,8 +51,8 @@ describe('SidekickSection', () => {
     renderSection({ items: [{ id: 'one', name: 'Editor', description: '', recommended: true,
       onRemoveRecommendation: remove }] });
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
-    expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove work stream recommendation' }));
+    expect(screen.queryByRole('menuitem', { name: 'Remove from this breakout' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove channel recommendation' }));
     expect(remove).toHaveBeenCalledOnce();
   });
 
@@ -76,7 +76,7 @@ describe('SidekickSection', () => {
     renderSection({ items: [{ id: 'one', name: 'Editor', description: 'Review wording' }] });
     expect(screen.queryByRole('button', { name: 'Remove Editor' })).toBeNull();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
-    expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Remove from this breakout' })).toBeNull();
   });
 
   it('leaves no heading behind for an empty answer or a pending one, and owns failure copy', () => {

@@ -84,7 +84,10 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `ConversationParentDurableObject`, the half of a conversation parent that is the same for both kinds: the child registry, per-child projections and receipts, cross-child aggregation, the parent outbox, and its drain onto `ACTIVITY_QUEUE`. Holds the shared table statements both parents' ledgers render. |
-| `apps/api/src/durable-objects/workstream-do.ts` | `WorkstreamDO`: the work-stream parent. Adds `workstream_metadata`, the control socket's complete metadata snapshots, viewer authorization from scope and participation, and the one synchronous provisional directory delivery at creation. |
+| `apps/api/src/durable-objects/workstream-do.ts` | `WorkstreamDO`: the work-stream parent, and — under a different role — the Space parent. Adds `workstream_metadata`, the control socket's complete metadata snapshots, viewer authorization from scope and participation, and the one synchronous provisional directory delivery at creation. |
+| `apps/api/src/durable-objects/workstream-do-schema.ts` | `WORKSTREAM_DO_SCHEMA_MIGRATIONS`, the one ledger both roles apply, in its own module so the role constants can name it without closing an import cycle with the class. |
+| `apps/api/src/durable-objects/conversation-parent-role.ts` | `ConversationParentRole` and the two role constants: every way a Space differs from a Channel, in one screen. |
+| `apps/api/src/durable-objects/space-do.ts` | `SpaceDO`: `WorkstreamDO` supplied with the space role, plus its retirement registration. It has no schema module of its own — the role points at the work-stream ledger. |
 | `apps/api/src/durable-objects/automation-do.ts`, `automation-do-protocol.ts` | `AutomationDO`: the automation parent. Adds the automation row, definition revisions, schedules, runs, and inbound-email receipts; forwards nothing its children say. Owned by [`automation-lifecycle.md`](automation-lifecycle.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
@@ -263,14 +266,24 @@ Names include region for operator clarity and deterministic routing:
 ```text
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
 WorkstreamDO      <region>:<workspace-id>:<workstream-id>                in WORKSTREAM_DOS
+SpaceDO           <region>:<workspace-id>:space:<space-id>               in SPACE_DOS
 AutomationDO      <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
 ```
 
+`SpaceDO` carries the role word `space` where `WorkstreamDO` carries nothing,
+even though both are otherwise `<region>:<workspace>:<uuid>`. The two ids come
+out of the same generator and live in different namespaces, so a collision would
+be harmless — but the name is also what an operator reads in a migration report,
+and one that cannot say which class it belongs to is useless for finding the
+object that is stuck. The word is in `FIXED_SEGMENTS`
+(`packages/contracts/src/durable-object-migrations.ts`), without which the
+report silently drops the name rather than refusing it.
+
 `conversationObjectName(region, workspaceId, parentId, substreamId = "0")` is the
 one constructor for a conversation object's name, and `parentId` is a work
-stream id or an automation id. The kind is deliberately not in the name: both
+stream id, an automation id, or a Space id. The kind is deliberately not in the name: both
 ids are UUIDs, and the object records which kind of parent it belongs to in its
 own root row (`workstream.parent_kind`, read back as
 `WorkstreamObjectIdentity = {workspaceId, parentKind, parentId}`). The main
@@ -297,9 +310,13 @@ Every request names `{workspaceId, parentId}` and the implementer asserts it
 against its own row (`assertParent`). The shared base,
 `ConversationParentDurableObject` in `durable-objects/conversation-parent-object.ts`,
 implements the last two and everything behind them; each class supplies
-`parentIdentity()`, `admitChildEnvelope()`, `forwardsChildEffect()`, and the
+`parentIdentity()`, `admitChildEnvelope()`, `forwardsChildEffect()`,
+`aggregatesChildProjection()` and `forwardsChildProjection()`, and the
 aggregate hooks `onChildCommonAggregate` / `onChildUserAggregate` /
-`afterChildEffects`. Table names are shared between the two classes on purpose:
+`afterChildEffects`. The last two hooks are the ones that are easy to confuse:
+`aggregatesChildProjection` asks whether this child counts toward the parent's
+own row, `forwardsChildProjection` asks whether the child gets a row of its own
+in the workspace, and a Channel answers no and yes for its breakouts. Table names are shared between the two classes on purpose:
 `WorkstreamDO`'s released migrations created them, and a second set of names
 would have put a table-name parameter on every statement for no reader's
 benefit.
@@ -335,6 +352,76 @@ substream id that reaches a socket route without a registration is not
 warmed and must not materialize an object merely because its parent is visible;
 `listChildren` is what access revocation and the parent's own reads walk, and a
 child nobody registered is one nobody can find or close.
+
+### A Space is this class under a role
+
+A **Space** groups Channels inside an Organization. It carries a name, icon,
+colour, audience, participants, resources and Sidekick recommendations, and it
+has a hidden main conversation that holds the participants and resources — which
+is exactly a work stream, minus every product surface. Rally never opens its
+feed, never runs an agent in it, and never lists its grants.
+
+So `SpaceDO` **is** `WorkstreamDO`, constructed with a different
+`ConversationParentRole` (`durable-objects/conversation-parent-role.ts`) and
+overriding nothing. Every field of that interface is a behavior the base class
+reads; none of it is advisory, so a field added without a reader is not a
+description of a difference that exists:
+
+| Role field | `WORKSTREAM_ROLE` | `SPACE_ROLE` |
+| --- | --- | --- |
+| `kind` | `workstream` | `space` — what `parentIdentity()` stamps on every effect, and what `admitChildEnvelope` holds a child to |
+| `namespace` / `objectName` | `WORKSTREAM_DOS`, `workstreamDOName` | `SPACE_DOS`, `spaceDOName` — the self-registration and every name this object derives |
+| `migration` | `workstream_do`, `WorkstreamDO`, `WORKSTREAM_DO_SCHEMA_MIGRATIONS` | `space_do`, `SpaceDO`, **the same array** — only the component and class name are the Space's own |
+| `admitsClientSockets` | yes | no — `GET /socket` answers 403 `space_socket_refused` before a ticket is read |
+| `publishesGrantDirectory` | yes | no — `ScopeGrantStorage` is handed a no-op writer, so grants commit and nothing reaches the shared grant directory |
+| `forwardsFeedEffects` | yes | no — only `directory_common` and `directory_user` leave the parent; activity events and notifications are dropped here, because anything reaching the outbox is delivered |
+| `wakesMainEagerly` | yes | no — nothing opens a Space's conversation, so warming it buys a cold start for nobody |
+
+**Why a role and not overrides.** The obvious shape is `class SpaceDO extends
+WorkstreamDO` with a dozen `override`s, and it fails on the thing subclassing is
+usually chosen for. A base method that hard-codes `env.WORKSTREAM_DOS`,
+`workstreamDOName`, the migration component, the eager child wake or the
+grant-directory writer is *silently* wrong for the subclass rather than visibly
+absent: every such site would have to be found by reading the class, and the
+four that mattered are spread across three hundred lines and two base classes.
+Making each one a field turns "did we cover every difference" into a question
+one file answers, and turns adding a difference into an addition there rather
+than an override elsewhere.
+
+**What the class itself may hold.** Nothing. `space-do.ts` is a constructor that
+supplies the role and a retirement registration, and a change that wants a
+method belongs in the role. The retirement call is not redundant even though
+dispositions resolve up the prototype chain: it registers the *same policy
+object* `WorkstreamDO` exports, and what it adds is the tombstone wrapping of any
+method `SpaceDO` comes to define itself — which is precisely the omission that
+would be invisible in a class that currently defines none.
+
+**Where a Space's directory effects land.** The same two effects a Channel
+publishes, routed by parent kind at the workspace handoff:
+`applyWorkstreamDirectoryEffects` partitions its envelopes and sends the `space`
+ones to the Space directory rather than to `workspace_workstream_directory`. A
+Space in the Channel directory would be a Space in the Channel sidebar, and the
+two directories answer different questions. Everything else about the Space
+relationship — membership, order, defaults, General — belongs to WorkspaceDO and
+is documented in [`spaces.md`](spaces.md); this class owns only what a Space
+*is*.
+
+**What the Space role does not change.** The schema — and it does not change it
+by running the *same array*. `SPACE_ROLE.migration.migrations` is
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS`, applied under component `space_do`, so a
+Space receipts every version a Channel does in its own
+`_sql_schema_migrations`. That is the whole of it: a table added for a Channel
+exists on every Space without anybody writing it twice, and an inherited method
+cannot meet a missing table. What a Space pays for it is replaying versions
+that describe history it never had, the three `durable_outbox` rebuilds among
+them, once, on its first construction.
+
+One version-numbered statement is not about a Space at all. Version 17 retires
+grant-directory deliveries a Channel had already queued; a Space has never
+queued one, because the role suppresses the directory. The `afterMigrations`
+hook in `workstream-do.ts` that runs it is therefore gated on
+`role.kind === "workstream"`, and that gate is the shape any future
+history-repairing migration has to take.
 
 ### Control plane and data plane
 
@@ -995,6 +1082,10 @@ SubstreamAgent SQLite product transaction
   -> parent alarm: ACTIVITY_QUEUE.sendBatch, envelope inline; rows deleted on success
   -> consumeActivityQueue, by effect kind:
        directory_common / directory_user  -> WorkspaceDO.applyWorkstreamDirectoryEffects
+                                             (the envelope's substreamId, when it
+                                              carries one, routes it to the
+                                              breakout tables instead of the
+                                              Channel directory)
        directory_automation               -> WorkspaceDO.applyAutomationDirectory
        activity_event, mention_notification, participant_notification
                                           -> WorkspaceDO.applyWorkstreamRegionalEffect,
@@ -1032,10 +1123,30 @@ cannot be delivered before that person's directory row has landed.
 `WorkstreamDO` forwards Main effects, plus mention and participant-added
 notifications addressed to current private-child members. It stamps these with
 the child ID, preserving the child's title and notification identity. Child
-common projections update only the private-child title registry; child activity
-and viewer state do not enter shared surfaces. Before forwarding a person
-notification, it ensures an unchanged Main viewer projection (or a neutral
-nonparticipant projection) supplies the existing delivery barrier. `AutomationDO`
+activity and viewer state do not enter shared surfaces, and a child common
+projection still updates only the private-child title registry — it is never
+merged into Main's. Before forwarding a person notification, it ensures an
+unchanged Main viewer projection (or a neutral nonparticipant projection)
+supplies the existing delivery barrier.
+
+**It also forwards a breakout's own `directory_common` and `directory_user`
+projections, unchanged, under keys of their own.** That is a second question
+from the one `aggregatesChildProjection` answers, and the base class asks it
+separately (`forwardsChildProjection`): whether a child counts toward the row
+the parent publishes *about itself*, and whether the child gets a row of its
+own up there, are independent, and a breakout answers no to the first and yes
+to the second. Its payload leaves under the projection key
+`substream:<id>:common` or `substream:<id>:user:<userId>` — so its versions are
+numbered independently of Main's and of every other child's — with the
+substream id on the envelope, which is what tells WorkspaceDO to store it
+beside the Channel directory rather than in it. A background agent is excluded,
+read from the flag on the child's own stored projection: it is a worker this
+object starts rather than a conversation anybody opens, and forwarding one
+would cost a Queue message and a workspace row per step it takes. A Space
+forwards none of this: its hidden main conversation is its only one.
+[`spaces.md`](spaces.md#breakouts-reach-the-organization) owns what the
+Organization does with them, which today is one list on one screen.
+`AutomationDO`
 forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
 the parent's own projections, and dropped. What the workspace hears from an
@@ -1277,6 +1388,8 @@ misrouted product statement now fails because the table or column is absent.
 - **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same; a child of an automation, or any substream other than `0`, additionally accepts the parent's forwarded viewer decision, because its own participant row is narrower than what the parent admits. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
+- **A Channel's readers are the union of one direct source and every Space source that still reaches it, and a source can only widen.** `lib/channel-audience.ts` is the only place that union is derived, and it is written over `sourceId` rather than over Spaces, so a second kind of source composes by being passed in. `workspace` anywhere makes the whole audience Organization-wide; otherwise the readers are the union of every source's participants, and nothing lets one source remove a reader another supplies. Withdrawing a source therefore removes only the readers *that source seated* who no remaining source still supplies, and narrows the scope only when nothing left is Organization-wide. A retraction that recomputed the audience instead of reading the provenance would take out somebody who was added directly or named in a message and happens to appear on the departing Space's roster. The readers a retraction *seats* are attributed the same way: to each remaining source that supplies them, never to the source that is leaving, whose row is gone by then and whose name the attribution could not commit under at all.
+- **This object records why somebody may read; it never admits them.** Admission is `resolveScopeAccess` over the grant ledger, or the main conversation's scope and participant rows on a Channel that has never been shared. The RPCs in `workstream-access-protocol.ts` return a *plan*, and applying it goes back through the Channel's canonical scope and participant operations — which is where `assertRetainedContentContains` and the retained-content triggers run. A second writer beside them would be a second place an audience could widen without the fence. `applySpaceAccessSource`'s `bornWithSourceApplied` is not one: it commits provenance for an audience `initialize` already wrote under those same operations, and it applies nothing itself.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1486,6 +1599,10 @@ remain bounded and exclude the supplemented rows.
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
 | `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`, `scope_grant_directory`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
+| `workstream_direct_audience` | Singleton, migration 18: the Channel's audience *on its own account*, as `personal` or `workspace`. Backfilled from `workstream_metadata.scope`, which stops being able to answer this the moment a Space widens the Channel — after that the metadata scope is the *effective* audience. `updated_at = 0` marks a row nothing has observed: an object created after migration 18 runs it in its constructor, before `reserveChild("0")` writes any metadata, so the backfill is a guess there and the first Space source replaces it with the reader audience the caller passes in. |
+| `workstream_space_access_sources` | One row per Space that currently reaches this Channel, with its scope, its participants, and the `space_revision` and `membership_generation` it was applied on. The fences are re-read inside the commit, so a staged application that lost a race cannot overwrite the newer one. |
+| `workstream_space_supplied_readers` | Which readers a Space *seated*, which is narrower than which it lists: somebody already here keeps whatever put them here. `ON DELETE CASCADE` from the source, so "a source that no longer exists stops granting" is true of the provenance as well as of the audience. |
+| `workstream_access_operations` | One receipt table for every access operation, in the shape `scope_grant_operations` uses: the identity is the operation id, the fence is the exact request, and a replay returns the first attempt's answer without reapplying it. A differing request under the same id throws `workstream_access_operation_conflict` — which includes an application redelivered under the other `bornWithSourceApplied` mode, because the two do different amounts of work and one answer cannot stand for both. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
 projection. No SQL crosses object databases; the child's envelope arrives by
@@ -1762,6 +1879,239 @@ stalled loop that offers nothing is reported once per wake through
 is the intended shape, and the 2026-09-14 entry's preference for a loud refusal
 over a silent stall does not survive here, because the refusal was never one
 signal. It was one per alarm, for ever.
+
+### 2026-09-19 — A Channel forwards its breakouts' own projections
+
+**What changed:** The shared parent gains `forwardsChildProjection` beside
+`aggregatesChildProjection`, and a Channel answers yes to it for every
+non-main, non-background-agent conversation. The child's own
+`directory_common` and `directory_user` payloads leave under their own
+projection keys, with the substream id on the `ParentEffectEnvelope`. Nothing
+about what is *aggregated* changed: a breakout's title, state and activity
+still never become the Channel's.
+
+**Why:** The Space dashboard lists the conversations in a Space that need the
+viewer, and most of the work that needs somebody is in a breakout — so the list
+could not be built without the Organization knowing a Channel's breakouts
+exist. Until now their projections reached this object's `substream_directory`
+and stopped there, which was right while nothing outside the Channel drew them
+and wrong the moment something did. Splitting the question in two rather than
+widening `aggregatesChildProjection` is what keeps a side thread from moving
+its Channel's row: the two were one flag because no parent had ever needed to
+answer them differently.
+
+**Considered and rejected:** Letting the workspace read a Channel's breakouts
+on demand, over an RPC per Channel on the page. That is a cross-object await
+per row on a read that is already bounded at 250 rows, for state the Channel
+already publishes on every change. And aggregating breakouts into the
+Channel's row so nothing new had to be forwarded — which is the bug the
+`substreamId === "0"` aggregate exists to prevent, and would have put a
+breakout's title in every sidebar.
+
+**Consequences:** A breakout's every projection is now a Queue message, where
+before it stopped at its Channel. Background agents are excluded on exactly
+that arithmetic, and the exclusion is read from the flag on the child's own
+stored projection rather than from a registry — a future child kind that should
+not be forwarded has to set that flag or add an arm to
+`forwardsChildProjection`. The envelope's `substreamId` is optional and absent
+on every envelope that predates this, which is what makes the change
+backward-compatible with an outbox row written before it.
+
+### 2026-09-19 — A Space is this class under an immutable role, and Space-derived access is provenance applied through the Channel's own operations
+
+**What changed:** `WorkstreamDO`'s constructor takes a
+`ConversationParentRole`, defaulting to `WORKSTREAM_ROLE`, and reads it for the
+eight things that used to be literals: the namespace and name it registers
+itself under, its migration component, class and ledger, whether `GET /socket`
+may upgrade, whether a committed grant reaches the shared grant directory,
+whether a child's non-directory effects are forwarded to the workspace, and
+whether construction warms the main conversation. `SpaceDO` supplies
+`SPACE_ROLE` and defines nothing else. The ledger moved to
+`workstream-do-schema.ts`, and both roles apply it: `space_do` receipts the
+same versions `workstream_do` does, under its own component.
+
+Migration 18 adds `workstream_direct_audience`,
+`workstream_space_access_sources`, `workstream_space_supplied_readers` and
+`workstream_access_operations`, and gives `scope_grants` a `source_kind` and
+`source_id` that existing rows backfill into as `direct`. Six RPCs read, record
+and withdraw those sources and return the audience delta each implies;
+`lib/channel-audience.ts` is the one function that derives the union. The
+application is a plan and a receipt; **the source row is committed by
+`confirmSpaceAccessSource`**, together with the readers it actually seated —
+except on the one path with nothing between the two, where
+`applySpaceAccessSource`'s `bornWithSourceApplied` commits it in the same
+transaction and one call serves a Channel's whole birth into a Space.
+`ChannelAccessService` applies every delta through the Channel's canonical
+`update`, `addParticipant` and `removeParticipant`, and `PATCH /workstreams/:id`
+and `POST /:id/participants` moved onto `WorkstreamService` so a direct scope
+change and a direct add are recorded as the Channel's own.
+
+WorkspaceDO's directory handoff admits `parentKind: "space"`
+beside `"workstream"` and routes those envelopes to the Space directory that
+migration 63 added, replacing the `space_directory_not_ready` refusal this
+object's effects used to meet. Nothing about the role or this class changed; the
+Organization-side authority, its tables and its invariants are
+[`spaces.md`](spaces.md).
+
+`ChannelAccessService.applyRetraction` reads the sources that
+survived the retraction and seats each survivor under one that actually supplies
+them — with no `spaceSourceId` at all when none does, because that reader is the
+direct source's — then attributes them with `confirmSpaceAccessSource` for
+*every* remaining Space that lists them.
+
+**Why:** Spaces replace Projects, and a Space needs the whole work-stream
+primitive — presentation, participants, resources, Sidekick recommendations,
+receipts, lifecycle, retirement — with none of its product surface. A sibling
+object would have forked every one of those capabilities into a second
+authority on the day it shipped.
+
+A Space grants its participants access to every Channel in it, and that
+access has to be withdrawable without touching access the Channel holds
+directly or gets from another Space. `workstream_metadata.scope` cannot carry
+that: once a Space has made a Channel Organization-wide it is the *effective*
+audience, and nothing is left saying what the Channel would be on its own. So
+this object became the provenance authority — which source reaches the Channel,
+and which readers each one seated — while the audience itself stays where it
+already was.
+
+A Space publishes the same `directory_common` and `directory_user`
+effects a Channel does — that is the point of it being this class — so both
+reach one handoff, and the only thing that can tell them apart there is the
+parent kind the effect already carries.
+
+It seated all of them under the departing Space and confirmed nothing.
+That is not a mislabelling that a later read could correct: the retraction has
+already deleted that source's row, so the attribution could not have committed
+even if it had been attempted — `confirmSpaceAccessSource` answers
+`space_not_found` for a source that is gone. The reader ends up seated with a
+grant naming a Space that does not exist and no `workstream_space_supplied_readers`
+row anywhere, so the Space that really supplies them retracts later with no
+provenance for them and leaves behind a reader the Channel itself never
+admitted. `narrowDirectScope` already seated and attributed per supplying Space;
+the other path into the same state did not.
+
+**Considered and rejected:** `class SpaceDO extends WorkstreamDO` with
+overrides, which is what the PRD's first sketch described. It fails on the thing
+subclassing is usually chosen for: a base method that hard-codes
+`env.WORKSTREAM_DOS`, `workstreamDOName` or `MIGRATION_COMPONENT` is silently
+wrong for the subclass rather than visibly absent, so the difference is only
+found by reading the class — and the four that mattered were three hundred lines
+and two base classes apart. Also rejected: sharing the `workstream_do` migration
+component, which would put two classes with different histories under one
+tracker rollup and make `forceMigration`'s class fence meaningless. **And
+rejected after it was written:** a hand-copied `space-do-schema.ts` rendering
+the work-stream ledger's current shape in one fresh version, so that a new
+Space did not replay three `durable_outbox` rebuilds. It bought one cold start
+per Space and charged a standing obligation for it — every table change had to
+be written into two ledgers, and the only thing holding them together was a
+Node test comparing `sqlite_master` object for object. Replaying a ledger costs
+milliseconds once; a dual-write obligation costs a correctness bug the first
+time somebody appends to one array and not the other.
+
+Recording Space sources in the scope-grant ledger
+alone, which is what design decision 4 of the PRD first described. That ledger
+only becomes the admission authority for a Channel after its first share; every
+other Channel is still admitted from its main conversation's scope and
+participant rows, so a Space would have granted nothing on most Channels. Also
+rejected: having this object write the audience itself. The retained-content
+containment preflight and its SQL triggers live on the canonical operations, and
+a second writer would have been the second place an audience could widen without
+them — so the RPCs plan and the service applies.
+
+**Provenance is committed at the confirmation, not at the application.** The
+application returns the delta the caller still has to apply through the
+canonical operations, so a source recorded there would, after any crash between
+the two, claim a Space reaches this Channel having seated nobody — provenance
+accounting for access that does not exist, which the next retraction acts on.
+The confirmation is the first moment the Channel's readers and its record of why
+can be made true together: it carries the source, re-runs the revision fence
+where the write lands, and seeds the Channel's own scope from what the caller
+observed *before* it applied the audience, because by then the Channel may
+already be Organization-wide through this very source. A confirmation with no
+source attributes readers to a Space that is already here, which is what a
+narrowing does; that is the one case that still answers `space_not_found`. The
+consequence worth stating: a failed application leaves nothing to unwind.
+
+The grant a Space seats carries `spaceSourceId` on the mutation, threaded from
+the object client through the conversation, rather than being inferred here.
+Nothing downstream can tell the two apart, and the difference decides one thing:
+a Space-derived grant is not published to the shared scope-grant directory. A
+reader finds the Channel through the Space, and a directory row per reader per
+Channel would make General's fan-out the size of the Organization times its
+Channels.
+
+**Direct provenance is sticky and wins in both directions, and the authority is
+where that is decided.** A Space writing over a grant the Channel already holds
+directly cannot turn it into a row that Space's departure deactivates, and a
+Space *withdrawing* from such a row leaves it active and answers `committed`
+with the grant as it stands. Deciding it at the authority rather than by RPC
+ordering is the point: otherwise whether a direct share survives a concurrent
+retraction comes down to which message arrived last, which is queue ordering
+nobody controls. The rebuild inside `authorizedGrantMutation` is the one place
+`spaceSourceId` can be lost on the way in, and losing it publishes every
+Space-seated grant on a migrated Channel.
+
+Carrying the suppliers in
+`SpaceAccessRetractionSchema`, so the plan said who to seat *and* under whose
+authority. It is the more honest shape — the applier genuinely cannot know —
+but it widens an RPC contract and its stored operation receipts to fix a caller,
+and the service already reads the sources on the neighbouring path. Reading them
+*after* the retraction, not before, is what makes the read exactly "the sources
+that survived", with no filtering and nothing to go stale between the plan and
+the attribution.
+
+**What a future change has to respect:** A difference between a Channel and a
+Space belongs in the role, where the base class reads it and where it sits
+beside the other seven — not in an override, which reintroduces exactly the
+invisibility this replaced. The ledger is not one of those differences: append
+a version to `WORKSTREAM_DO_SCHEMA_MIGRATIONS` and both components get it. A
+version that repairs *history* rather than describing shape is the exception,
+and it is gated in the `afterMigrations` hook on the role — version 17's
+grant-directory retirement is the worked example.
+
+The union is derived in one place and
+applied through the canonical operations; a path that writes an audience
+directly is a path with no containment fence. A retraction reads the provenance,
+never a recomputed audience, or it withdraws readers no Space ever supplied. And
+a retraction that narrows the scope has to *seat* the readers a surviving source
+supplies before it narrows: a source applied while the Channel was
+Organization-wide seated nobody, so its readers exist only as its roster until
+the audience stops being Organization-wide. The Channel's *own* scope going
+private is the same event by another route, and goes through the same seam —
+`ChannelAccessService.narrowDirectScope` — rather than a second copy of the
+rule. Either narrowing then publishes `workstream_audience_narrowed`, because
+the room closes sockets only for somebody it was told about and a narrowing
+names nobody ([access revocation](access-revocation.md)).
+
+The refusal is gone, so the first Space ever created is no
+longer born into an alarm retry loop. A Space's other effects are still refused
+at that handoff and still dropped by the role before they reach the outbox.
+
+A reader seated on behalf of a source
+is attributed to a source that exists, and to every one of them when several
+supply the same reader — access is the live union, so any one departing has to
+leave the others' claim standing. A survivor no source lists is seated as the
+Channel's own; giving them a Space would hand that Space's next retraction a
+licence to take them out.
+
+**Why the split has an exception.** The two calls exist to bracket the caller's
+canonical operations: the plan says who to seat, the canonical scope and
+participant operations seat them under the containment fence, and only then can
+the source row and the readers it supplied be made true together. A Channel
+being *born* into a Space has no such bracket — the creation coordinator
+derives the union of every named Space and hands it to `initialize`, so the
+conversation opens with that scope and roster already written — and the second
+call was therefore a same-object round trip per Space with nothing between it
+and the first. `bornWithSourceApplied` is the caller asserting exactly that, and
+the mode is part of the receipt's request fence, so a redelivery under the other
+mode is `workstream_access_operation_conflict` rather than a convergence on an
+answer computed for a Channel that was not born this way. The commit itself is
+**one private body** both methods call: the revision fence, the one-shot seeding
+of the Channel's own scope, the source row and the supplied readers are four
+rules that a second copy could drift on while each half still read correctly on
+its own. A future change adding a caller must ask the one question the mode
+answers — is there a canonical operation between the plan and the commit — and
+take the two calls whenever there is.
 
 ### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
 

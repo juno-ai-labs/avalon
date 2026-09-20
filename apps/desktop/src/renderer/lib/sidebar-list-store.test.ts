@@ -1,11 +1,15 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  applyVersionedProjectSnapshot,
+  applyContainerOrder,
+  applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
-import type { ProjectSnapshot } from '@rally/contracts';
+import type { PersonalOrder, SpaceSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
+
+const SPACE_ID = '00000000-0000-7000-8000-0000000000a1';
+const CHANNEL_ID = '00000000-0000-7000-8000-0000000000a2';
 
 function automation(id: string): AutomationSummary {
   return {
@@ -45,20 +49,97 @@ describe('applyVersionedSidebarList', () => {
     expect(applyVersionedSidebarList(queryClient, 'automations', 6, [automation('c')])).toBe(true);
   });
 
-  it('keeps a late project snapshot from replacing a newer directory', () => {
+  it('keeps a late space snapshot from replacing a newer directory', () => {
     const queryClient = new QueryClient();
     const newer = {
       active: { waterline: 8, items: [] },
       inactive: { waterline: 8, items: [] },
-    } satisfies ProjectSnapshot;
+    } satisfies SpaceSnapshot;
     const older = {
       active: { waterline: 7, items: [] },
       inactive: { waterline: 7, items: [] },
-    } satisfies ProjectSnapshot;
+    } satisfies SpaceSnapshot;
 
-    expect(applyVersionedProjectSnapshot(queryClient, newer)).toBe(true);
-    expect(applyVersionedProjectSnapshot(queryClient, older)).toBe(false);
-    expect(queryClient.getQueryData(['projects'])).toEqual(newer.active);
-    expect(queryClient.getQueryData(['projects-inactive'])).toEqual(newer.inactive);
+    const arranged = [{ container: { kind: 'space' as const, id: SPACE_ID }, itemIds: [CHANNEL_ID] }];
+
+    expect(applyVersionedSpaceSnapshot(queryClient, newer, arranged, true)).toBe(true);
+    expect(applyVersionedSpaceSnapshot(queryClient, older, [], true)).toBe(false);
+    expect(queryClient.getQueryData(['spaces'])).toEqual(newer.active);
+    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual(newer.inactive);
+    // The ordering rides the same waterline: a late payload that lost the
+    // arrangement must not take it off the screen either.
+    expect(queryClient.getQueryData(['personal-order'])).toEqual(arranged);
+  });
+
+  // `spacesReady` has no ledger of its own: a write can be the write that
+  // finishes the cutover, so it is only ever as current as the snapshot it
+  // arrived with. An older payload must not put the opening state back.
+  it('does not let an older snapshot reinstate the organization-opening state', () => {
+    const queryClient = new QueryClient();
+    const ready = {
+      active: { waterline: 8, items: [] },
+      inactive: { waterline: 8, items: [] },
+    } satisfies SpaceSnapshot;
+    const opening = {
+      active: { waterline: 7, items: [] },
+      inactive: { waterline: 7, items: [] },
+    } satisfies SpaceSnapshot;
+
+    applyVersionedSpaceSnapshot(queryClient, ready, [], true);
+    expect(applyVersionedSpaceSnapshot(queryClient, opening, [], false)).toBe(false);
+    expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
+  });
+
+  // The write's own answer goes in without a waterline, so the arrangement a
+  // drag committed is on screen in the frame between the response and the
+  // republication that carries it.
+  it('applies one container order without moving the ledger the snapshot is judged by', () => {
+    const queryClient = new QueryClient();
+    const snapshot = {
+      active: { waterline: 4, items: [] },
+      inactive: { waterline: 4, items: [] },
+    } satisfies SpaceSnapshot;
+    applyVersionedSpaceSnapshot(queryClient, snapshot, [], true);
+
+    applyContainerOrder(queryClient, {
+      container: { kind: 'space', id: SPACE_ID },
+      itemIds: [CHANNEL_ID],
+    });
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID] },
+    ]);
+
+    // One entry per container: a second write for the same one replaces it
+    // rather than leaving two answers to the same question.
+    applyContainerOrder(queryClient, { container: { kind: 'space', id: SPACE_ID }, itemIds: [] });
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
+    ]);
+
+    // And the ledger is untouched, so the republication that follows still
+    // applies over it.
+    expect(applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 5, items: [] },
+      inactive: { waterline: 5, items: [] },
+    }, [], true)).toBe(true);
+  });
+
+  it('does not let an older reorder response overwrite a newer snapshot', () => {
+    const queryClient = new QueryClient();
+    applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 4, items: [] }, inactive: { waterline: 4, items: [] },
+    }, [{ container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID] }], true);
+    const expected = queryClient.getQueryData<PersonalOrder>(['personal-order']);
+
+    applyVersionedSpaceSnapshot(queryClient, {
+      active: { waterline: 5, items: [] }, inactive: { waterline: 5, items: [] },
+    }, [{ container: { kind: 'space', id: SPACE_ID }, itemIds: [] }], true);
+    applyContainerOrder(queryClient, {
+      container: { kind: 'space', id: SPACE_ID }, itemIds: [CHANNEL_ID],
+    }, expected);
+
+    expect(queryClient.getQueryData(['personal-order'])).toEqual([
+      { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
+    ]);
   });
 });

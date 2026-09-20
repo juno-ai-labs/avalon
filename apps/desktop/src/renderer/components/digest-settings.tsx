@@ -198,7 +198,7 @@ export function DigestSettings({
       <div className="settings-pane-heading">
         <h2>Schedule</h2>
         <p>
-          A written summary of what moved since your last one — work streams you are in, anything
+          A written summary of what moved since your last one — channels you are in, anything
           that tagged you, and activity from your connected tools. {digestSummaryText(draft)}
         </p>
       </div>

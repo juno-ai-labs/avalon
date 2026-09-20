@@ -45,7 +45,7 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   // RTL wraps `rerender` in `act`, so opening and closing settles like a click.
   return { onSelect, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
 }
-describe('workspace search modal', () => {
+describe('organization search modal', () => {
   afterEach(() => { focusManager.setFocused(undefined); });
   it('presents an empty page as no matches without a partial-results state', async () => {
     setup(async () => ({ results: [] }));

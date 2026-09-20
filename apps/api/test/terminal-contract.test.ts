@@ -138,4 +138,33 @@ describe("Terminal plugin contract", () => {
     expect(globalVars.DAYTONA_TARGET).toBe("us");
     expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toMatch(/^[a-z0-9][a-z0-9._-]*$/u);
   });
+  // The production wiring, not a hand-built stand-in. Every other test of
+  // re-entry constructs its own plugin with `reenterable: true`, so deleting
+  // the spread in `createTerminalPlugin` left the whole suite green while the
+  // incident this whole mechanism exists for recurred verbatim. This is the
+  // assertion that fails when that line goes.
+  it("declares exactly the Terminal writes the host may re-enter", () => {
+    const plugin = createTerminalPlugin(executors);
+    expect(plugin.tools.filter((tool) => tool.reenterable).map((tool) => tool.definition.name).sort())
+      .toEqual(["checkout_repository", "publish_branch_and_pr", "publish_resource", "run_command"]);
+    // Named rather than counted, because the risk runs both ways: a write that
+    // quietly gains re-entry is as wrong as one that quietly loses it.
+    expect(plugin.tools.filter((tool) => !tool.reenterable).map((tool) => tool.definition.name).sort())
+      .toEqual(["apply_patch", "edit_file", "import_resource", "read_file", "write_file"]);
+  });
+
+  it("carries a reconciler for the one re-enterable tool that needs one", () => {
+    const reconcile = async () => ({ outcome: "not_landed" as const });
+    const plugin = createTerminalPlugin(executors, undefined, { publish_resource: reconcile });
+
+    // `publish_resource` resolves its effect by subject, so re-entry without a
+    // reconciler is a second write. The wiring that supplies one lives in
+    // `plugin.ts`; this asserts the seam it plugs into still reaches the tool.
+    expect(plugin.tools.find((tool) => tool.definition.name === "publish_resource")?.reconcileEffect)
+      .toBe(reconcile);
+    // And that it goes nowhere else: a reconciler silently attached to the
+    // wrong tool would answer a question about somebody else's effect.
+    expect(plugin.tools.filter((tool) => tool.reconcileEffect).map((tool) => tool.definition.name))
+      .toEqual(["publish_resource"]);
+  });
 });

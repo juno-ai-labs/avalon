@@ -9,6 +9,17 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from '../src/durable-objects/meeting-notes-retirement';
 
+/**
+ * The ledger's head, read rather than written down.
+ *
+ * Two cases here are about where a *later* migration sits relative to the
+ * retirement shim, not about any particular version, and a literal made every
+ * WorkspaceDO migration since fail this file for a reason unrelated to it.
+ */
+const LATEST_WORKSPACE_DO_VERSION = Math.max(
+  ...WORKSPACE_DO_SCHEMA_MIGRATIONS.map((migration) => migration.version),
+);
+
 const workspaceId = '00000000-0000-7000-8000-000000000da0';
 const resourceId = '00000000-0000-7000-8000-000000000cb1';
 const noteId = '00000000-0000-7000-8000-000000000cb0';
@@ -194,7 +205,7 @@ it('reports feature table and remaining-reference inventory through the real wor
   await stub.retiredMeetingInventory();
   await runInDurableObject(stub, async (_instance, state) => { await state.storage.put('unrelated-fixture', 'keep'); });
   const inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(62);
+  expect(inventory.schemaVersion).toBe(LATEST_WORKSPACE_DO_VERSION);
   expect(inventory.references).toEqual([]);
   expect(inventory.resources).toEqual([]);
   expect(inventory.featureTables).toEqual([]);
@@ -264,7 +275,7 @@ it('keeps populated pre-retirement workspaces reachable across cold starts and f
   expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
   await evictDurableObject(stub);
   inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(62);
+  expect(inventory.schemaVersion).toBe(LATEST_WORKSPACE_DO_VERSION);
   expect(inventory.featureTables).toEqual([]);
 });
 
@@ -276,11 +287,13 @@ it('removes the adopted-schema shim before running later migrations', async () =
     applyDurableObjectSqliteMigrations({ ...options, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version < 57) });
     state.storage.sql.exec('DROP TABLE automation_resources');
     applyMeetingRetirementMigrations({ ...options, migrations: [...WORKSPACE_DO_SCHEMA_MIGRATIONS, {
-      version: 63, description: 'test later migration observes original adopted schema', statements: [
+      version: LATEST_WORKSPACE_DO_VERSION + 1,
+      description: 'test later migration observes original adopted schema', statements: [
         'CREATE TABLE test_shim_guard (remaining INTEGER CHECK (remaining = 0)) STRICT',
         "INSERT INTO test_shim_guard SELECT COUNT(*) FROM sqlite_schema WHERE name = 'automation_resources'",
       ],
     }] });
-    expect(state.storage.sql.exec('SELECT MAX(version) AS version FROM _sql_schema_migrations').one()).toEqual({ version: 63 });
+    expect(state.storage.sql.exec('SELECT MAX(version) AS version FROM _sql_schema_migrations').one())
+      .toEqual({ version: LATEST_WORKSPACE_DO_VERSION + 1 });
   });
 });
