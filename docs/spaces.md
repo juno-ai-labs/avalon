@@ -1395,6 +1395,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 | *(none)* — attempts before an unsettleable intent stops being republished | no ceiling | How long a staged operation that can never succeed keeps costing an alarm wake and a dead-letter message. | What an operator is expected to do about a `last_error_code` that never changes, weighed against a ceiling abandoning work nobody agreed to abandon. |
 | *(none)* — items in one person's order for one container | no bound | How many rows one `PUT /workspace/order` writes, and how much of the `ordering` field one container can take up on every socket payload this person receives. | What the largest list somebody would actually arrange looks like — an Organization's Spaces, a Space's Channels, a Channel's Breakouts — against what a payload can carry. |
+| *(none)* — active memberships one Space may hold, which the third visibility clause scans for a viewer it cannot admit | no bound | How much work one Space snapshot publication does: a correlated existence test over that Space's active memberships, twice, per subscribed socket. | How many Channels one Space actually holds and how many sockets an Organization keeps open, against what a publication may cost — neither of which anybody here has. |
 | *(none)* — containers one person may have arranged at once | no bound | The `ordering` field's whole size, which rides the connect payload of every session and every republication to it, and the rows one person keeps in `workspace_container_order` for the life of their membership. | What the oldest plausible account looks like — how many Spaces an Organization has, how many of its Channels one person arranges Breakouts in over a year — against what a payload can carry, and what dropping the least recently touched container would cost somebody who comes back to it. |
 
 Each is a lower bound rather than a budget, and each is a transcription rather
@@ -1461,6 +1462,36 @@ whose real list is longer than it silently losing its tail, which is worse than
 the row it would prevent; what deciding one needs is the largest list somebody
 would actually arrange, against what one socket payload can carry. The guard is
 written open.
+
+**The third visibility clause is a correlated existence test, and nothing
+bounds what it scans.** `spaceReachedThroughChannelSql` is an `EXISTS` over
+`space_channel_memberships` for one Space, with a directory lookup and a viewer
+lookup per candidate row. `list()` renders the clause twice — once in
+`visibleSpaceIds` and once in `directory()` — and `spacesFor` runs `list()` per
+socket, which `publishSpaceSnapshot` does for every subscribed socket on every
+Space write in the Organization. So a publication costs
+
+> 2 × subscribed sockets × Σ over the Spaces each viewer *cannot* reach of
+> that Space's active membership count
+
+plus two indexed lookups per row scanned. A Space the viewer *can* reach costs
+almost nothing: `EXISTS` stops at the first visible member. The whole of the
+cost is the Spaces they cannot reach, because proving a negative means looking
+at every member — and a personal Space somebody else owns is exactly that case,
+on every socket but its participants'.
+
+**What bounds it is the index, and only as far as one Space.**
+`space_channel_memberships_space_state_idx` on `(space_id, state,
+workstream_id)` makes the scan a range over that one Space's active
+memberships rather than over the table, and it covers the subquery's own
+column. Past that there is no bound: nothing caps the Channels one Space holds,
+nothing caps the sockets an Organization keeps open, and no limit is set on
+either. Deciding one needs the two numbers nobody here has — how large a Space
+actually gets, and how many sockets a publication fans out to. If it has to
+come down, the thing to change is the shape rather than a ceiling: the reach
+could be materialized per (viewer, Space) the way the Channel viewer rows are,
+which is a durable write on the path that places and removes Channels in
+exchange for a lookup here.
 
 There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
