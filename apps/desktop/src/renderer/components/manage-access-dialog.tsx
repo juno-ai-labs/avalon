@@ -157,6 +157,16 @@ export function ManageAccessDialog({
               const source = bySpace.get(spaceId);
               const space = spaces.find((candidate) => candidate.id === spaceId);
               const member = (sources.spaceIds as string[]).includes(spaceId);
+              // Whether this row may put a *number* on a Space, which for a
+              // personal one is the size of its participant list. A Space this
+              // viewer is in, or one the whole Organization is in, tells them
+              // nothing they could not already read. A Space they reach only
+              // through this Channel tells them how many people are in a
+              // participants-only Space — the count the summary they were
+              // handed withholds, arriving on the row that now also names it.
+              // A Space their directory does not hold at all is the same
+              // answer for the stronger reason.
+              const countable = space !== undefined && space.reach !== 'through_channel';
               return (
                 <AccessSource
                   // A membership in a Space this viewer's directory does not
@@ -185,7 +195,9 @@ export function ManageAccessDialog({
                       ? 'Access from this space is still being applied.'
                       : source.scope === 'workspace'
                         ? 'Everyone in the organization, through this space.'
-                        : `The ${people(source.participantUserIds.length)} in this space.`}
+                        : countable
+                          ? `The ${people(source.participantUserIds.length)} in this space.`
+                          : 'The people in this space reach this channel through it.'}
                 />
               );
             })}
