@@ -9,7 +9,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, CreateSpaceRequest, PersonalOrder, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
+import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
@@ -20,6 +20,7 @@ import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-or
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
+import { spaceFailureOf } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
@@ -587,6 +588,8 @@ function WorkstreamRow({
   onTogglePin,
   onAddToSpace,
   onRemoveFromSpace,
+  onRemoveFromPlacement,
+  placementSpaceId,
   spaces,
 }: {
   debugEnabled: boolean;
@@ -601,6 +604,9 @@ function WorkstreamRow({
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
   onAddToSpace: (workstream: WorkstreamSummary, spaceId: string) => void;
   onRemoveFromSpace: (workstream: WorkstreamSummary, spaceId: string) => Promise<void>;
+  onRemoveFromPlacement: (workstream: WorkstreamSummary, spaceId: string) => void;
+  /** The Space whose placement this particular copy of the row represents. */
+  placementSpaceId?: string;
   /** The active Space directory: where this Channel could go, and where it is. */
   spaces: SpaceSummary[];
 }): React.JSX.Element {
@@ -685,6 +691,8 @@ function WorkstreamRow({
     ? spaces.filter((space) => space.reach !== 'through_channel'
       && !workstream.spaceIds.includes(space.id))
     : [];
+  const removablePlacement = isProductChannel && placementSpaceId !== undefined
+    && spaces.some((space) => space.id === placementSpaceId && space.reach !== 'through_channel');
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
@@ -955,6 +963,14 @@ function WorkstreamRow({
           )}
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
           <ContextMenu.Separator className="menu-separator" />
+          {removablePlacement && (
+            <ContextMenu.Item
+              className="menu-item"
+              onSelect={() => onRemoveFromPlacement(workstream, placementSpaceId)}
+            >
+              <FolderMinus aria-hidden="true" size={16} /> Remove from space
+            </ContextMenu.Item>
+          )}
           {/* Names its noun, as every other destructive item in these menus
               does — "Archive note", "Archive draft", "Archive Sidekick". A
               bare "Archive" under Mark as unread and Rename reads as archiving
@@ -1032,7 +1048,8 @@ export function orderPinnedWorkstreams(
   return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
 }
 
-type SidebarMenuFailure = 'archive' | 'add_to_space' | 'pin' | 'unpin' | 'reorder_pinned';
+type SidebarMenuFailure = 'archive' | 'add_to_space' | 'remove_from_space'
+  | 'remove_from_final_space' | 'pin' | 'unpin' | 'reorder_pinned';
 
 const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: string }> = {
   archive: {
@@ -1042,6 +1059,14 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
   add_to_space: {
     title: 'Channel could not be added to that space',
     copy: 'The channel is still in the spaces it was in. Try again in a moment.',
+  },
+  remove_from_space: {
+    title: 'Channel could not be removed from that space',
+    copy: 'The channel is still in that space. Try again in a moment.',
+  },
+  remove_from_final_space: {
+    title: 'Channel could not be removed from that space',
+    copy: 'A channel must be in at least one space.',
   },
   pin: {
     title: 'Channel could not be pinned',
@@ -1592,6 +1617,15 @@ export function Sidebar({
     void onAddChannelToSpace(spaceId, workstream.id).catch(() => setMenuFailure('add_to_space'));
   };
 
+  const removeFromPlacement = (workstream: WorkstreamSummary, spaceId: string): void => {
+    setMenuFailure(null);
+    void onRemoveChannelFromSpace(spaceId, workstream.id).catch((cause: unknown) => {
+      setMenuFailure(spaceFailureOf(cause) === 'space_membership_final'
+        ? 'remove_from_final_space'
+        : 'remove_from_space');
+    });
+  };
+
   const workstreamRowActions = {
     onAddToSpace: addToSpace,
     onArchive: setArchiveWorkstreamTarget,
@@ -1599,6 +1633,7 @@ export function Sidebar({
     onMarkUnread: (target: WorkstreamSummary) => void markWorkstreamUnread(target).catch(() => undefined),
     onRemoveFromSpace: (target: WorkstreamSummary, spaceId: string) =>
       onRemoveChannelFromSpace(spaceId, target.id),
+    onRemoveFromPlacement: removeFromPlacement,
     onRename: openRename,
     onTogglePin: (target: WorkstreamSummary, pin: boolean) => void togglePin(target, pin),
   };
@@ -1614,12 +1649,14 @@ export function Sidebar({
   const renderWorkstream = (
     workstream: WorkstreamSummary,
     drag?: WorkstreamRowDrag,
+    placementSpaceId?: string,
   ): React.JSX.Element => (
     <WorkstreamRow
       {...workstreamRowActions}
       debugEnabled={debugEnabled}
       {...(drag ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
+      {...(placementSpaceId ? { placementSpaceId } : {})}
       spaces={placementSpaces}
       workspace={workspace}
       workstream={workstream}

@@ -1881,6 +1881,22 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-20 — A Channel placement can be removed where it is shown
+
+**What changed:** A Channel row rendered under a Space now offers **Remove from
+space** in its context menu, immediately above **Archive channel**. The action
+removes that specific placement through the existing Space membership mutation.
+If it is the Channel's final placement, the server's `space_membership_final`
+refusal is shown in a modal as **A channel must be in at least one space.**
+
+**Why:** The membership authority already allowed a Channel to leave one of
+several Spaces, but the sidebar exposed that operation only through **Manage
+access**. A placement is the clearest place to name which Space is being left;
+deriving one from the Channel's membership list was rejected because the same
+Channel can be rendered under several Spaces at once. The authority remains the
+source of truth for the final-Space invariant rather than duplicating that
+decision in the client.
+
 ### 2026-09-20 — Consolidate creation in the sidebar launcher
 
 **What changed:** The desktop removed the plus from the Spaces heading and from
