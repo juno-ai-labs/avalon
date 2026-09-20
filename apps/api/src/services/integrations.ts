@@ -262,6 +262,8 @@ import {
   persistHarnessHostOutcome,
   persistRunPluginActivation,
   persistToolExecutionPlan,
+  RunCancelledError,
+  RunOwnershipLostError,
   recordInferenceAttempt,
   type AttemptLease,
   type ToolInvocationFailure,
@@ -6733,8 +6735,16 @@ async function reenterInterruptedWrite(input: {
     return null;
   }
   const recordedInput = parseJson(input.row.inputJson, {});
+  // The tool's own budget, applied here because this call does not go through
+  // Bind's dispatch and so never met `combinedDeadline`. Not an invented
+  // ceiling: it is the same `resolveTimeoutMs`/`timeoutMs` the interrupted
+  // attempt ran under, and without it a re-entry inherits only the caller's
+  // signal — which, from crash repair, is the attempt lease and nothing else.
+  const budgetMs = tool.resolveTimeoutMs?.(recordedInput) ?? tool.definition.timeoutMs;
+  const deadline = budgetMs === undefined ? null : toolReentryDeadline(input.context.signal, budgetMs);
   const callContext = {
     ...input.context,
+    ...(deadline ? { signal: deadline.signal } : {}),
     effectIntentId: input.row.id,
     ...(input.row.providerIdempotencyKey !== null
       ? { providerIdempotencyKey: input.row.providerIdempotencyKey }
@@ -6756,7 +6766,33 @@ async function reenterInterruptedWrite(input: {
       throw new HarnessToolEffectUnresolvedError(reconciled.reason);
     }
   }
-  return tool.execute(recordedInput, callContext);
+  try {
+    return await tool.execute(recordedInput, callContext);
+  } finally {
+    deadline?.dispose();
+  }
+}
+
+/**
+ * A tool's own timeout, combined with the caller's signal.
+ *
+ * Bind builds the same thing per dispatch; re-entry does not go through Bind,
+ * and a local copy is cheaper than exporting its internals across the package
+ * boundary for one caller.
+ */
+function toolReentryDeadline(parent: AbortSignal, timeoutMs: number): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`Re-entered tool timed out after ${timeoutMs}ms`, "TimeoutError")),
+    Math.max(1, timeoutMs),
+  );
+  return {
+    signal: AbortSignal.any([parent, controller.signal]),
+    dispose: () => { clearTimeout(timer); },
+  };
 }
 
 /**
@@ -6944,6 +6980,11 @@ export async function reenterInterruptedWriteForRecovery(
     // fallback since a `TerminalToolError`'s message is prose. Both are run
     // through `codeShaped` rather than trusted: this reason reaches a member
     // notice, and a code is schema shape while an adapter's text is data.
+    // Losing the lease, or the run being cancelled, is not a question about
+    // the write — it is this executor no longer being the one asking. Both
+    // have callers that handle them, and burying either in an ambiguity reason
+    // would settle a receipt on an authority this attempt no longer holds.
+    if (error instanceof RunOwnershipLostError || error instanceof RunCancelledError) throw error;
     const declared = readStructuredFailure(error)?.code;
     return {
       outcome: "unknown",
