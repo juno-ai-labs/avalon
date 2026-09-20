@@ -35,7 +35,7 @@ const MenuBarWorkstreamPageSchema = z.object({
 /** Shown for a work stream Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
  * wire is not written to be read. */
-const UNNAMED_WORKSTREAM_LABEL = 'Untitled work stream';
+const UNNAMED_WORKSTREAM_LABEL = 'Untitled channel';
 
 export interface MenuBarContentDependencies {
   /** Performs an authorized request against the account's regional API and
@@ -126,7 +126,7 @@ export class MenuBarContentStore {
     // page of ten carries the ten most recent *unpinned* streams and the whole
     // pinned list behind them.
     const page = await this.load(
-      'recent work streams',
+      'recent channels',
       `/workstreams?limit=${MENU_BAR_RECENT_LIMIT}`,
       MenuBarWorkstreamPageSchema,
     );

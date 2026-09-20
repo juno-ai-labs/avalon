@@ -9,9 +9,9 @@ function Location() {
   return <output>{location.pathname}{location.search}</output>;
 }
 
-describe('work stream creation menu', () => {
+describe('channel creation menu', () => {
   it.each([
-    ['start new work stream', '/workstreams/new'],
+    ['start new channel', '/workstreams/new'],
     ['import from ChatGPT or Claude', '/workstreams/new?import=session'],
   ])('routes %s from the plus popup', (label, destination) => {
     render(<MemoryRouter initialEntries={['/workstreams/current']}><Tooltip.Provider>

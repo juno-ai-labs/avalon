@@ -1,232 +1,114 @@
 # Projects
 
-Projects are workspace-owned containers that give people a stable way to group
-related work streams. `WorkspaceDO` is the authority for project identity,
-presentation, scope, participants, lifecycle generations, each person's
-project order, many-to-many membership, default-resource delivery targets, and
-reversible lifecycle state. The desktop presents V1 assignment as one active
-project per work stream while reads and storage remain plural-ready. This is the
-shipped Project mechanism; its product design is now superseded by the planned
-[Spaces and Organization hierarchy](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md),
-which defines the eventual cutover and retirement of this module.
+**Projects are deleted.** WorkspaceDO migration 64 dropped the eight tables that
+held them, and the service, storage, protocol, publisher, RPCs, routes, snapshot
+topic, alarm phase and Queue handler went with them. Nothing in the tree reads a
+Project any more. [`spaces.md`](spaces.md) is the module that replaced this one.
 
-## Where the code lives
+This document is kept for its changelog. The reasoning below is the only record
+of why several decisions in Spaces are shaped the way they are — a Space's
+default registry, its generation fences and its claim/send/accept publisher are
+the Project mechanism carried forward — and a reader who finds a fence there and
+wants to know what it was for will find the answer here. Do not build on
+anything it describes; the code is gone.
 
-| Path | Responsibility |
+## What was retired, and what survived
+
+`PROJECT_RETIREMENT_STATEMENTS` in
+`apps/api/src/durable-objects/workspace-do.ts` is the whole deletion, and it
+runs children-before-parents: `PRAGMA foreign_keys = OFF` is a no-op once a
+Durable Object event has touched SQLite, so the order is the only thing keeping
+a drop from failing on a reference.
+
+| Dropped in migration 64 | What it held |
 | --- | --- |
-| `packages/contracts/src/projects.ts` | Closed project IDs, icon/color registries, scopes, statuses, and wire shapes. |
-| `apps/api/src/durable-objects/workspace-do.ts` | WorkspaceDO schema migration and authenticated project RPC entry points. |
-| `apps/api/src/durable-objects/workspace-project-protocol.ts` | Strict RPC requests, results, and stable error codes. |
-| `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
-| `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |
-| `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
-| `apps/desktop/src/renderer/screens/project-space.tsx` | Project dashboard: work-stream list, default resources, inline presentation and audience controls. The Work streams heading plus opens the same **New project work stream** route as the sidebar row plus. |
-| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
-| `apps/desktop/src/renderer/components/sidebar-skeleton.tsx` | The sidebar's placeholder rows, shared by this section and the lists below it while the first answer is in flight. |
+| `projects` | Identity, presentation, scope, status, lifecycle generations. |
+| `project_participants` | The per-person roster. |
+| `workspace_project_order` | Each person's ordering. |
+| `workspace_project_state` | The directory waterline. |
+| `project_workstream_memberships` | The many-to-many placement rows. |
+| `project_default_resources` | The default registry and its generations. |
+| `project_default_resource_targets` | Staged delivery, one row per Channel. |
+| `project_default_resource_publications` | The outbox half of that delivery. |
 
-## How it works
+**What settles the undelivered effects.** A default still queued for delivery
+is work aimed at a Channel whose audience the Space cutover has just changed,
+so the statements invalidate every pending target and publication — targets to
+`terminal` with `last_error_code = 'project_retired'`, publications to
+`accepted` — in the same transaction that drops the tables. The activity
+consumer keeps a tombstone leg for the platform's retry window: a message
+published before the cutover finds nothing current, is acknowledged with
+`reason: "projects_retired"`, and attaches nothing.
 
-Project changes go up through authenticated HTTP mutations, which call typed
-WorkspaceDO RPCs with the workspace and user identifiers. The object rechecks
-active membership in regional D1, then performs the project mutation
-synchronously against its own SQLite authority. Creating a project writes the
-project, makes its creator an active participant, and appends it to that
-person's stored order in one transaction.
+**Those two are the whole shutdown, and there is no barrier beside them.** This
+shipped with one — a scratch table whose CHECK asserted no `pending` row was
+left — and it could not fire: it counted rows the statements directly above it
+had just settled, so the count was zero by construction. `finalizeSpaceBootstrap`
+carried a matching `project_effects_pending` gate that could not fire either,
+because migration 64 runs in the constructor and the tables are gone before any
+caller reaches it. Both are deleted. **An undelivered Project default is
+dropped**, which is what the PRD asks for: non-goal 5 deletes Projects rather
+than converting them, so a default that never reached a Channel is not owed to
+anybody.
 
-Project reads do not use HTTP. The workspace socket's subscribe response carries
-the viewer's active and inactive project directories. After every committed
-project mutation, WorkspaceDO reads that pair again for every subscribed user
-and pushes `workspace_project_snapshot`. Personal-project visibility and order
-are therefore evaluated separately for each socket. The active and inactive
-lists carry the same WorkspaceDO project waterline and land through one desktop
-receiver; a reconnect sends the same pair, and an equal or older pair is
-dropped. Removing somebody from a personal project reaches their open socket as
-a newer snapshot in which that project is absent.
+**What a Project did to a Channel survives it.** A resource that was delivered
+stays attached, a Sidekick that was recommended stays recommended, and a
+Channel's audience is whatever its own authority holds. What the drop deletes is
+the Organization's record of *why* a resource was delivered, never the delivery.
 
-Personal projects are returned only to active project participants. Workspace
-projects are returned to every active workspace member. The first time a person
-can see a project, its ID is appended to that person's order; reordering one
-person's rows cannot change another person's order. Presentation changes update
-the normalized name, icon, and color and advance only
-`presentation_revision`.
+**`/projects/*` still answers.** `apps/api/src/routes/projects.ts` is a single
+`410 client_update_required` naming `/spaces`, and it outlives the authority
+deliberately: a client that still speaks Project gets one honest answer instead
+of a 404 it would read as a wrong id. It reads nothing and writes nothing.
 
-A project's membership and the members it can show are not the same list.
-Archiving a work stream takes it out of every listing and leaves its membership
-untouched, so `ProjectSummary.workstreamIds` — what a screen counts and renders
-— is the active memberships whose work stream the workspace directory does not
-have archived, and `listProjectMembers` is how anything acting on the project's
-behalf reads the whole membership. An audience change fans out over the
-membership; a count on a screen reads the summary. Nothing on the wire carries
-the archived members: `ProjectSummary` is a strict schema nested in the socket's
-opening sidebar payload, and a field a shipped desktop build does not know makes
-it drop that payload whole.
+**What is still in the tree under a Project name:** the five appearance
+constants in `packages/contracts/src/projects.ts`, the frozen per-migration
+palette snapshots in `workspace-do.ts`, the `--av-sys-color-project-*` tokens
+and `lib/project-palette.ts` on the desktop. Those are a colour vocabulary
+rather than a module, they are what already-stored Space rows are spelled in,
+and [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) covers renaming
+them. `"projects"` also remains in `WORKSPACE_SYNC_TOPICS`, deliberately: a
+shipped client's exhaustive map still names it, and removing the value would
+break a rolling deploy for nothing.
 
-Adding an existing work stream is staged. WorkspaceDO first records a `joining`
-membership and determines whether a previous active project can remain until
-the final swap. The service enlarges the WorkstreamDO audience, attaches the
-current defaults with canonical resource-link deduplication, and only then
-activates the membership. Removing membership changes no WorkstreamDO audience
-or resource link.
+## Changelog
 
-Adding a default resource writes one generation-fenced pending target for every
-active membership and publishes those targets through the existing regional
-activity Queue. The consumer rereads project, membership, default, and active
-workspace-member authority before attaching. Duplicate delivery is safe; a
-removed default or archived project makes an old target stale; the existing
-regional activity DLQ remains the terminal failure signal.
-Before accepting the default, the service performs the ordinary authoritative
-resource read as every project reader. That read routes resource, connector,
-note, upload, and inbound-email visibility through WorkspaceDO; regional D1 is
-used only to enumerate active workspace members for a workspace-scoped project.
+### 2026-09-19 — The tables are dropped, and the barrier in front of them is deleted too
 
-Starting from a project sends an authorized project ID through ordinary
-work-stream creation. The coordinator derives scope, participants, and default
-resources from WorkspaceDO. WorkstreamDO writes those audience and resource
-rows in the initialization transaction that admits the first run, so the run
-cannot observe a pre-project resource set.
+**What changed:** WorkspaceDO migration 64 deleted the eight Project tables and
+everything that addressed them. The Queue's `project_default_resource` branch is
+now a tombstone: it parses a non-strict shape of its own, logs
+`reason: "projects_retired"` and acks, because a message published before the
+cutover is still in flight and a nack would retry it to the dead-letter queue
+forever.
 
-## Invariants
+**Why:** Phase 5's whole point. Two authorities answering "which container holds
+this Channel" is the state every Space invariant is written to exclude, and
+leaving the dormant one in place meant every future change to membership,
+audience or defaults had to be reasoned about twice.
 
-- WorkspaceDO is the sole project authority. Copying project state into D1 or a
-  child object would create two answers for authorization and ordering.
-- Every RPC rechecks active workspace membership before reading or mutating.
-  Without that check, a removed member could keep using a retained object stub.
-- Personal visibility requires an active participant row; workspace visibility
-  still requires active workspace membership. Scope never bypasses admission.
-- Names are display labels rather than identity. Duplicate visible and private
-  names are allowed; navigation and mutation use the project ID.
-- Icon and color keys come from the shared closed registries. Persisting an
-  arbitrary key would create rows no supported client can render consistently.
-- Presentation, audience, and lifecycle revisions advance independently. A
-  rename must not invalidate work whose safety depends only on audience or
-  lifecycle state.
-- Order belongs to `(user_id, project_id)` and is stored on the server. A device
-  restart or second device therefore observes the same order without imposing
-  it on another participant.
-- Membership is keyed by project and work stream. V1 moves one active
-  assignment at a time without a uniqueness constraint that would block later
-  multi-project editing.
-- Project effects are monotonic. Removing membership, removing a default, or
-  archiving never removes audience or resources already applied to a work
-  stream.
-- An active project fences direct participant removal; a workspace-scoped
-  project also fences direct work-stream scope narrowing. Audience changes go
-  through the project so retained work streams converge first.
-- Project mutation authorization is deliberately flat in V1: anyone who may
-  read a project may rename it, manage defaults, change its audience, archive
-  it, or restore it. A workspace project's creator has no extra privilege.
-  Removing another participant is the exception and requires a workspace owner
-  or admin; a regular member may remove only themselves.
-- Projects add no prompt text, project memory, or compaction snapshot.
-- Project state comes down the workspace socket. HTTP project routes mutate
-  only; a project sync event must carry the state itself and must never trigger
-  a project GET.
+Review found that the shutdown barrier in front of the drops could not fire:
+it counted `pending` rows immediately after the statements that settled every
+one of them, and `finalizeSpaceBootstrap`'s matching gate ran after the
+constructor had already dropped the tables. A barrier that reads its own writes
+is not a gate, and keeping it would have left two mechanisms claiming to
+enforce something neither one could. Both are deleted; the invalidation and the
+tombstone consumer, which do the work, stay.
 
-## Boundary
+**Considered and rejected:** Dropping the tables unconditionally and letting a
+queued default fail on a missing table. The durable half of an at-least-once
+delivery is exactly what stops a message still in flight from attaching a
+resource to a Channel whose audience the cutover has just changed, so the
+migration settles what it can before it drops anything. Also rejected: making
+the barrier *work*, by counting before the invalidation or by holding the
+cutover open until an operator drained the Queue. Nothing is owed — non-goal 5
+deletes Projects rather than converting them — so the gate would have held
+every Organization's hierarchy closed to protect work the PRD says to discard.
 
-This module owns project metadata and project-level authorization inside one
-workspace. It exposes validated contracts and WorkspaceDO RPCs; regional HTTP
-mutation routes call those RPCs instead of accessing SQLite, while WorkspaceDO
-publishes reads directly on the admitted workspace socket. Regional D1 remains
-the authority for active workspace membership and placement only.
-
-Workstream content and audience remain owned by WorkstreamDO, while resources
-remain owned by the existing regional resource authority. WorkspaceDO records
-the relationship and fenced delivery state; it never writes a child object's
-SQLite directly.
-
-## Failure modes and limits
-
-Malformed inputs fail strict contract parsing. An inactive workspace member
-receives `project_access_denied`, and an unreadable or inactive project receives
-`project_not_found`. Project names are not a shared workspace namespace:
-duplicate names are allowed because identity and navigation use project IDs,
-and a conflict would reveal the names of personal projects. Transactions are local to one WorkspaceDO, so a failed
-write leaves no partial project, participant, or ordering row.
-
-There is no product-level project-count, default-resource-count, or name-length
-ceiling in this slice. The prior eight-item `originResourceIds` transport cap
-was removed because project defaults use that initialization field and a hidden
-ninth-item failure would make an otherwise valid project unable to start a work
-stream. Choosing a product ceiling is a team decision; the implementation does
-not substitute the old attachment-oriented number for one. Those limits must
-not be invented as defensive details.
-
-## Testing
-
-`packages/contracts/src/projects.test.ts` proves the exact picker registries and
-closed schemas. `apps/api/test/workspace-project-schema.test.ts` applies the
-real migration ledger to SQLite and proves constraints through version 17.
-`apps/api/test-workers/project-authority.test.ts` runs the RPC behavior
-on workerd with real Durable Object storage and D1 membership rows.
-
-`apps/desktop/src/renderer/screens/project-space-screen.test.tsx` covers the
-Work streams heading plus, the empty-state copy for active and archived
-projects, and the other inline project-space mutations.
-`apps/api/test/workstream-project-start.test.ts` proves project-start audience
-resolution, including that a personal project seats its full roster, that
-current default resources are attached in the initialize payload, and that an
-origin already in the project's defaults is not attached twice.
-
-Run the focused checks with:
-
-```bash
-pnpm --filter @rally/contracts test -- projects.test.ts
-pnpm --filter @rally/api exec vitest run test/workspace-project-schema.test.ts
-pnpm --filter @rally/api exec vitest run test/workstream-project-start.test.ts
-pnpm --filter @rally/desktop exec vitest run src/renderer/screens/project-space-screen.test.tsx
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/project-authority.test.ts
-```
-
-The workerd fixture clears project state before each scenario but
-keeps one object identity, which catches accidental reliance on object creation
-order.
-
-## Data model
-
-`projects` stores one row per project, including its normalized display name,
-closed presentation keys, scope/status, creator, archive fields, timestamps,
-and three independent revisions. `project_participants` is keyed by project and
-user and carries a state plus per-membership generation. `workspace_project_order`
-is keyed by user and project and stores a non-negative position. Default target
-and publication rows share the target generation key, so their insertion is one
-SQLite transaction and Queue publication can resume after a failed send.
-Foreign keys
-are local to WorkspaceDO and cascade only from a deleted project.
-
-## Regional impact
-
-Each project's SQLite rows live in the WorkspaceDO selected by the workspace's
-immutable regional placement. The only external read is the same-region D1
-active-membership check. No project content or product state crosses between
-configured deployments.
-
-## Security and trust model
-
-RPC payloads are untrusted and parsed at the object boundary. Workspace identity
-is pinned by the object and asserted on every call. Active D1 membership is
-checked before project-level visibility is evaluated, and project storage never
-accepts SQL fragments or client-selected revision values.
-
-## Operations
-
-Migration version 17 is visible through the existing Durable Object migration
-tracker. A project RPC failing before its transaction returns its stable domain
-error; a migration or SQLite failure remains an object invocation failure and is
-handled by the existing Worker logging and migration reporting paths.
-
-## Performance and cost
-
-All authoritative writes are synchronous SQLite operations in one Durable
-Object. Directory reads lazily add missing order rows and then return the visible
-ordered set. Each write re-reads the viewer-shaped snapshot once per subscribed
-socket; this intentionally avoids a cache or secondary projection while the
-product has no project load history. Later pagination can extend the typed
-socket directory without moving authority or adding an HTTP read.
-Default-resource target publication is the one external await: the WorkspaceDO alarm claims at most 100 due outbox rows,
-advances their durable retry gates, and then sends one Queue batch. A rejected
-send leaves them pending for a later alarm; accepted messages remain safe to
-duplicate because the consumer rechecks target generations.
+**Consequences:** Migration 62 is released once it ships and is not edited.
+There is no operator step in front of it: the retirement is unconditional, and
+what an operator watches is the dead-letter queue, which [`runbook.md`](runbook.md)
+holds.
 
 ### 2026-09-18 — Project sidebar failures carry operations, not response text
 

@@ -278,6 +278,33 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   }
 
   /**
+   * Whether this child's *own* directory projection is carried to the
+   * workspace, **instead of** being folded into the parent's aggregate.
+   *
+   * The two hooks ask different questions — does this child count toward the
+   * row the parent publishes about itself, and does this child get a row of
+   * its own up there — but they are asked as an `if`/`else if`, so a child is
+   * aggregated, or forwarded, or neither. "Both" is not representable, and
+   * that is deliberate: a child folded into its Channel's title, state and
+   * activity *and* listed beside it would appear twice on one Space dashboard,
+   * once as itself and once as the thing it had just moved.
+   *
+   * The three outcomes that do exist are the three that are wanted. A Channel
+   * aggregates its main conversation and forwards its breakouts — a breakout
+   * must not move the Channel's row, and must still be listable — and answers
+   * neither for a background agent or for a Space's hidden child, which
+   * nothing draws. If a fourth outcome is ever needed, this coupling is the
+   * thing to undo, and undoing it means deciding what a doubly-published
+   * conversation looks like on the dashboard.
+   *
+   * Nothing but a Channel answers yes, which is why the default is no.
+   */
+  protected forwardsChildProjection(substreamId: string): boolean {
+    void substreamId;
+    return false;
+  }
+
+  /**
    * A child published its own shared row; still inside the transaction, and
    * called for every child whether or not this parent aggregates or forwards
    * it. The registry a parent keeps beside the projections — a child's title,
@@ -486,6 +513,14 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           const aggregate = this.aggregateCommon();
           this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection("common", aggregate, now);
+        // The child's own payload, under a key of its own, so its versions are
+        // numbered independently of the parent's aggregate and of every other
+        // child's. Read after the upsert above, because that is what decided
+        // whether this child is one whose projection leaves at all.
+        } else if (this.forwardsChildProjection(substreamId)) {
+          this.enqueueProjection(
+            `substream:${substreamId}:common`, envelope.effect, now, substreamId,
+          );
         }
       } else if (envelope.effect.kind === "directory_user") {
         this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
@@ -493,6 +528,13 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
+        } else if (this.forwardsChildProjection(substreamId)) {
+          this.enqueueProjection(
+            `substream:${substreamId}:user:${envelope.effect.userId}`,
+            envelope.effect,
+            now,
+            substreamId,
+          );
         }
       } else if (forwards) {
         this.enqueueImmutable(substreamId, envelope, now);
@@ -679,6 +721,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     projectionKey: string,
     effect: ParentEffect,
     now: number,
+    substreamId?: string,
   ): ParentEffectEnvelope | null {
     const identity = this.parentIdentity();
     if (!identity) throw new Error("conversation_parent_missing");
@@ -707,6 +750,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       workspaceId: identity.workspaceId,
       parentKind: identity.parentKind,
       parentId: identity.parentId,
+      ...(substreamId === undefined ? {} : { substreamId: asSubstreamId(substreamId) }),
       generation: identity.authorityGeneration,
       messageId,
       partitionKey: projectionKey,

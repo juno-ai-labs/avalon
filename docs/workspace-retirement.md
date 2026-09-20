@@ -47,13 +47,21 @@ boundary.
 So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
-properties of a prototype. The four object classes that can belong to a
-workspace — `WorkspaceDO`, `WorkstreamDO`, `SidekickDO` (deployed under the
-Cloudflare class name `AutomationDO`) and `SubstreamAgent` — extend
+properties of a prototype. The five object classes that can belong to a
+workspace — `WorkspaceDO`, `WorkstreamDO`, `SpaceDO`, `SidekickDO` (deployed
+under the Cloudflare class name `AutomationDO`) and `SubstreamAgent` — extend
 `ScheduledDurableObject`, so the tombstone and its two entry points live there;
-five gate policies are declared, one for the abstract
-`ConversationParentDurableObject` base the two parents share and one for each
-concrete class, and each declares only its exceptions. The gate does not wrap
+six gate policies are declared, one for the abstract
+`ConversationParentDurableObject` base the parents share and one for each
+concrete class, and each declares only its exceptions.
+
+`SpaceDO` is `WorkstreamDO` under a different role and overrides nothing, so a
+disposition it resolves is always `WorkstreamDO`'s — the lookup walks the
+prototype chain. Its registration is therefore not what classifies its doors;
+it registers the *same policy object* `WorkstreamDO` exports, and what it adds is
+the tombstone wrapping of any method `SpaceDO` comes to define itself. A class
+that defines none today is exactly where that omission would be invisible, and a
+second literal policy would have been two door lists to keep in step. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
 fenced; today every such getter delegates to a gated method.
 
@@ -89,11 +97,13 @@ Retirement runs in this order, and the order is the design:
    writes. From this instant no session into the workspace authenticates
    (`401 session_revoked` on its next request) and the workspace leaves every
    member's discovery.
-2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads both
-   directories while they still answer, writes each parent into
-   `workspace_retirement_graph`, and writes the tombstone. Doing this in one call
-   is what leaves no window in which a caller writes into a half-closed
-   workspace.
+2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads the
+   work-stream and automation directories and the Space ids while they still
+   answer, writes each parent into `workspace_retirement_graph` under its kind,
+   and writes the tombstone. Doing this in one call is what leaves no window in
+   which a caller writes into a half-closed workspace. Archived Spaces are
+   enumerated too: what is being closed is an object, not a product surface, and
+   an archived Space is still a `SpaceDO` holding a hidden main conversation.
 3. **Clear every wake reason, and close every socket.** The same transaction
    deletes `_internal_durable_alarms`, the platform alarm is deleted immediately
    after, and every socket the object holds is closed with `1008`, the code the
@@ -312,12 +322,12 @@ included.
 
 | Suite | Command | What it proves |
 | --- | --- | --- |
-| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all four object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
+| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all four socket-holding object classes rebuild themselves after eviction and revoke access while retired, that `SpaceDO` resolves the same door list `WorkstreamDO` declares, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, and the walk closes children before parents. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
-| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SubstreamAgent`'s recovery attempt stays a prototype method. |
+| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SpaceDO` delegates the whole gate to `WorkstreamDO` and adds no constructor work of its own; `SubstreamAgent`'s recovery attempt stays a prototype method. |
 | `apps/api/test/workspace-runtime-database.test.ts`, `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api exec vitest run test/<file>` | Retirement's tables are declared to the schema guards. |
 | `apps/ace/test/workspaces.test.ts`, `apps/ace/test/workspaces-client.test.tsx`, `apps/ace/test/directory.test.ts` | `pnpm --filter @rally/ace test` | Ace's relay refuses an unconfirmed retirement before asking the region, carries the confirmation when it does, names a contract mismatch as such, and answers a directory outage with a sentence; the tab's typed confirmation, its receipt, an incomplete pass kept armed and scoped to its workspace, a failed search shown as a failure, and a partial outage named. |
 
@@ -419,6 +429,62 @@ telemetry roles.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
+
+## Changelog
+
+### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
+
+**What changed:** `workspace_retirement_graph`'s `parent_kind` CHECK admits
+`'space'` beside `'workstream'` and `'automation'`, rebuilt in WorkspaceDO
+migration 61. The table is carried through a scratch table rather than
+re-derived, and this heading now sits over the entries below it.
+
+`beginWorkspaceRetirement` writes a `parent_kind = 'space'`
+node for every Space in the Organization, archived ones included, and
+`retireWorkspaceGraph` resolves a `space` node through `spaceDOName` against the
+work-stream namespace. That closes the gap the entry below named as known.
+
+**Why:** A Space is a conversation parent with a hidden main conversation and
+children of its own, so Organization retirement has to reach it — and the
+retirement graph is where a walk records what it has left to close. The CHECK
+was written when there were two kinds and nothing could produce a third.
+
+The widened CHECK admitted a kind nothing produced, so an Organization
+with Spaces still reported complete with every `SpaceDO` open and answering — a
+retirement that is not one. A Space is `WorkstreamDO` under a role and lives in
+the same namespace, so the only thing the walk needed was the right object
+*name*; the children-before-parents order already handles its hidden main
+conversation, because a Space is the same class.
+
+**Considered and rejected:** Re-deriving the graph from the directories during
+the rebuild. It is fewer statements and it loses the only thing the table
+actually holds: `retired_at` is the receipt that a node was already closed, and
+the graph is captured *before* the workspace tombstone precisely because the
+directories refuse afterwards. A rebuild that re-derived it would un-retire
+whatever the last pass finished, and a walk resumed after an interruption would
+close those children a second time.
+
+Enumerating only active Spaces, on the reading that
+an archived Space is already closed. It is not: archiving is a product state
+that leaves the object and its conversation intact, and a graph that skipped
+them would have moved the gap rather than closed it.
+
+**Consequences:** The widened CHECK is all that lands here. Nothing enumerates
+Spaces into the graph yet — `beginWorkspaceRetirement` still walks
+`workspace_workstream_directory` and `automation_directory` — so an Organization
+with Spaces reports complete without closing them. Phase 5 of
+[the Spaces plan](PRDs/2026-09-18_spaces-and-product-hierarchy/plan.md) adds the
+enumeration and the dispatcher hop; until it does, this is a known gap rather
+than a supported state.
+
+The entries below predate this heading and were filed, structurally, under
+**Open questions**. They are the record of how retirement came to work the way
+it does; what is *not* recorded anywhere is why the original CHECK named exactly
+two kinds, and that reasoning has not been reconstructed here.
+
+An Organization's node count now scales with its Spaces as
+well as its Channels and Sidekicks. Nothing else changes — a Space node is
+retired, receipted and resumed exactly like a Channel node.
 
 ### 2026-09-08 — The walk stamps the demo register
 

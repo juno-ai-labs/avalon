@@ -93,7 +93,7 @@ const workstreamId = '00000000-0000-7000-8000-000000000650';
 function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
   return {
     id: workstreamId,
-    title: 'Recovered work stream',
+    title: 'Recovered channel',
     titleStatus: 'settled',
     harnessStatus: 'idle',
     scope: 'personal',
@@ -155,7 +155,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
   return queryClient;
 }
 
-describe('socket-first work-stream open', () => {
+describe('socket-first channel open', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
@@ -175,7 +175,7 @@ describe('socket-first work-stream open', () => {
     });
   });
 
-  it('uses only the selected guest conversation roster despite a cached workspace directory', async () => {
+  it('uses only the selected guest conversation roster despite a cached organization directory', async () => {
     const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Shared person', email: 'shared@example.test', timezone: 'UTC' };
     session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: null, accessClass: 'guest' } };
     const childId = '00000000-0000-7000-8000-000000000662';
@@ -183,14 +183,14 @@ describe('socket-first work-stream open', () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     cache.setQueryData(workstreamDetailQueryKey(workstreamId, childId), boot);
     cache.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), boot.transcript);
-    cache.setQueryData(['workspace-members'], [{ ...member, id: 'hidden', name: 'Hidden workspace person' }]);
+    cache.setQueryData(['workspace-members'], [{ ...member, id: 'hidden', name: 'Hidden organization person' }]);
     render(<Tooltip.Provider><QueryClientProvider client={cache}><MemoryRouter>
       <ConversationSurface parentKind="workstream" parentId={workstreamId} substreamId={childId}
         renderHeader={({ openParticipantDialog }) => <button onClick={openParticipantDialog}>People</button>} />
     </MemoryRouter></QueryClientProvider></Tooltip.Provider>);
     fireEvent.click(await screen.findByRole('button', { name: 'People' }));
     expect(await screen.findByText('Shared person')).toBeVisible();
-    expect(screen.queryByText('Hidden workspace person')).not.toBeInTheDocument();
+    expect(screen.queryByText('Hidden organization person')).not.toBeInTheDocument();
     expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
     expect(api.getConnections).not.toHaveBeenCalled();
   });
@@ -206,7 +206,7 @@ describe('socket-first work-stream open', () => {
   }
 
   async function mainMenu(action: string): Promise<void> {
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to conversation: Recovered work stream' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to conversation: Recovered channel' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: action }));
   }
 
@@ -220,13 +220,13 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    const label = action === 'make_public' ? 'Make public to workspace' : action === 'rename' ? 'Rename' : 'Archive work stream';
+    const label = action === 'make_public' ? 'Make public to organization' : action === 'rename' ? 'Rename' : 'Archive channel';
     await mainMenu(label);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await screen.findByText(action === 'make_public'
-      ? 'The work stream couldn’t be made public. Try again.'
-      : `The work stream couldn’t be ${action === 'rename' ? 'renamed' : 'archived'}. Try again.`);
+      ? 'The channel couldn’t be made public. Try again.'
+      : `The channel couldn’t be ${action === 'rename' ? 'renamed' : 'archived'}. Try again.`);
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(report.mock.calls.filter(([event]) => event.kind === 'workstream_action_completed')).toHaveLength(0);
     if (action === 'make_public') {
@@ -255,8 +255,8 @@ describe('socket-first work-stream open', () => {
         { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
       ] });
     }, childId);
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to substream: Private investigation' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: action === 'rename' ? 'Rename' : 'Archive substream' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Go to breakout: Private investigation/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: action === 'rename' ? 'Rename' : 'Archive breakout' }));
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived)
@@ -267,7 +267,7 @@ describe('socket-first work-stream open', () => {
     // Re-enter the child after archiving it: the directory fixture remains so
     // this isolates the row target from the currently selected conversation.
     act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
-    await mainMenu(action === 'rename' ? 'Rename' : 'Archive work stream');
+    await mainMenu(action === 'rename' ? 'Rename' : 'Archive channel');
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameWorkstream : api.archiveWorkstream)
@@ -287,13 +287,13 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    await mainMenu('Copy work stream link');
+    await mainMenu('Copy channel link');
     await waitFor(() => expect(copy).toHaveBeenCalledOnce());
     if (next === 'navigate') act(() => navigateInTest('/workstreams/00000000-0000-7000-8000-000000000651'));
     else await mainMenu('Rename');
     await act(async () => rejectCopy(new Error('Clipboard unavailable')));
     expect(screen.queryByText('Clipboard unavailable')).not.toBeInTheDocument();
-    if (next === 'rename') expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+    if (next === 'rename') expect(screen.getByRole('dialog', { name: 'Rename channel' })).toBeVisible();
   });
 
   it('positions a laid-out opening before enabling automatic history requests', async () => {
@@ -503,7 +503,7 @@ describe('socket-first work-stream open', () => {
     // which is exactly the inheritance creation refuses. The composer here
     // pins nothing, so the honest seed is null.
     const childId = '00000000-0000-7000-8000-000000000675';
-    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New breakout', context: { parts: [] } });
     api.confirmSubstream.mockResolvedValue({
       substreamId: childId,
       title: 'Check the pricing page',
@@ -519,8 +519,8 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -530,9 +530,9 @@ describe('socket-first work-stream open', () => {
       .toBeNull();
   });
 
-  it('creates a substream from the launch composer and seeds the conversation it opens', async () => {
+  it('creates a breakout from the launch composer and seeds the conversation it opens', async () => {
     const childId = '00000000-0000-7000-8000-000000000670';
-    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New breakout', context: { parts: [] } });
     api.confirmSubstream.mockResolvedValue({
       substreamId: childId,
       title: 'Check the pricing page',
@@ -544,8 +544,8 @@ describe('socket-first work-stream open', () => {
     };
     const client = openConversation(2);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -566,13 +566,13 @@ describe('socket-first work-stream open', () => {
     expect(client.getQueryData(['substream-ordered-transcript', workstreamId, childId])).toBeDefined();
   });
 
-  it('holds a row in the rail for the substream being created, from the keystroke that creates it', async () => {
+  it('holds a row in the rail for the breakout being created, from the keystroke that creates it', async () => {
     // The wait is the two round trips of creation, and until this the rail said
     // nothing about it: the conversation on screen had no row, and the plus row
     // it was opened from was the only thing still claiming to be where the
     // reader was.
     const childId = '00000000-0000-7000-8000-000000000676';
-    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New breakout', context: { parts: [] } });
     let confirm: () => void = () => undefined;
     api.confirmSubstream.mockReturnValue(new Promise((resolve) => {
       confirm = () => resolve({
@@ -583,15 +583,15 @@ describe('socket-first work-stream open', () => {
     }));
     openConversation(2);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
     expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).not.toBeNull());
-    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('button', { name: 'New breakout' })).not.toHaveAttribute('aria-current');
     confirm();
     // Gone once the substream exists: from here the rail draws the child's own
     // row from the parent's directory.
@@ -604,7 +604,7 @@ describe('socket-first work-stream open', () => {
     // reserved id preparation answered with is what keeps that from being two
     // rows for one conversation.
     const childId = '00000000-0000-7000-8000-000000000677';
-    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New breakout', context: { parts: [] } });
     // Never resolves: the window under test is the one before confirmation
     // answers, which is the only time both rows could be drawn.
     api.confirmSubstream.mockReturnValue(new Promise(() => undefined));
@@ -617,21 +617,21 @@ describe('socket-first work-stream open', () => {
       ] });
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Check the retry budget' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalled());
-    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
     await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
     expect(within(sidebar).getAllByRole('button', { name: /Retry budget failures/ })).toHaveLength(1);
   });
 
-  it('shows no branch context when the substream is started from the sidebar', async () => {
+  it('shows no branch context when the breakout is started from the sidebar', async () => {
     openConversation(3);
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    expect(await screen.findByRole('textbox', { name: 'What should this substream work on?' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    expect(await screen.findByRole('textbox', { name: 'What should this breakout work on?' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
   });
 
@@ -640,31 +640,31 @@ describe('socket-first work-stream open', () => {
     // got past `prepare` leaves a child id and a spent summary behind it, and
     // the surface stays open over them. Leaving is what gives them back.
     api.prepareSubstream.mockResolvedValue({
-      operationId: 'op', substreamId: '00000000-0000-7000-8000-000000000674', title: 'New substream', context: { parts: [] },
+      operationId: 'op', substreamId: '00000000-0000-7000-8000-000000000674', title: 'New breakout', context: { parts: [] },
     });
-    const diagnostic = 'INTERNAL ROUTER RESPONSE: substream route does not exist';
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: breakout route does not exist';
     api.confirmSubstream.mockRejectedValue(new Error(diagnostic));
     api.cancelSubstream.mockResolvedValue(undefined);
     openConversation(1);
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await screen.findByText('The substream couldn’t be created. Try again.');
+    await screen.findByText('The breakout couldn’t be created. Try again.');
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.cancelSubstream).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel new substream' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel new breakout' }));
     await waitFor(() => expect(api.cancelSubstream)
       .toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId));
   });
 
-  it('retries a lost creation under the same identity rather than making a second substream', async () => {
+  it('retries a lost creation under the same identity rather than making a second breakout', async () => {
     const childId = '00000000-0000-7000-8000-000000000673';
     // The failure this covers: the response is lost after the server committed.
     // A retry that minted fresh ids would reserve a second child and say the
     // same message twice; under the same ids both halves resume.
-    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New breakout', context: { parts: [] } });
     const diagnostic = 'INTERNAL ROUTER RESPONSE: confirmation route does not exist';
     api.confirmSubstream.mockRejectedValueOnce(new Error(diagnostic));
     api.confirmSubstream.mockResolvedValue({
@@ -673,14 +673,14 @@ describe('socket-first work-stream open', () => {
       opening: { turnId: 'turn-child-1', clientMessageId: 'client-1', createdAt: '2026-08-26T14:05:00.000Z' },
     });
     openConversation(1);
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await screen.findByText('The substream couldn’t be created. Try again.');
+    await screen.findByText('The breakout couldn’t be created. Try again.');
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
 
-    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'What should this substream work on?' }), { key: 'Enter' });
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'What should this breakout work on?' }), { key: 'Enter' });
     await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalledTimes(2));
     const [first, second] = api.confirmSubstream.mock.calls;
     expect(second![1]).toBe(first![1]);
@@ -689,23 +689,23 @@ describe('socket-first work-stream open', () => {
       .toBe(api.prepareSubstream.mock.calls[0]![1].operationId);
   });
 
-  it('puts the message back in the composer when the substream could not be created', async () => {
+  it('puts the message back in the composer when the breakout could not be created', async () => {
     const diagnostic = 'INTERNAL ROUTER RESPONSE: preparation route does not exist';
     api.prepareSubstream.mockRejectedValue(new Error(diagnostic));
     openConversation(1);
-    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.click(await screen.findByRole('button', { name: 'New breakout' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this breakout work on?' });
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    expect(await screen.findByText('The substream couldn’t be created. Try again.')).toBeInTheDocument();
+    expect(await screen.findByText('The breakout couldn’t be created. Try again.')).toBeInTheDocument();
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this substream work on?' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this breakout work on?' }))
       .toHaveValue('Look at the invoice'));
     expect(api.confirmSubstream).not.toHaveBeenCalled();
   });
 
-  it('holds the substream initial-context entry in the cache, which nothing renders', async () => {
+  it('holds the breakout initial-context entry in the cache, which nothing renders', async () => {
     // The entry is written by the socket and read by `sendReady` and the
     // local-cache mirror, by key and never through a component. This observer
     // is the only thing keeping it: React Query collects an entry five minutes
@@ -727,7 +727,7 @@ describe('socket-first work-stream open', () => {
       ?.getObserversCount()).toBeGreaterThan(0);
   });
 
-  it('draws the open substream under its own name, not the one its parent still has for it', async () => {
+  it('draws the open breakout under its own name, not the one its parent still has for it', async () => {
     const childId = '00000000-0000-7000-8000-00000000066a';
     const sibling = '00000000-0000-7000-8000-00000000066b';
     const provisional = 'Generate new github pr header artifacts for the dashboard';
@@ -750,16 +750,16 @@ describe('socket-first work-stream open', () => {
     }, childId);
 
     expect(await screen.findByRole('heading', { name: 'New github pr header' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Go to substream: New github pr header' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: `Go to substream: ${provisional}` })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Go to breakout: New github pr header/u })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: new RegExp(`^Go to breakout: ${provisional}`, 'u') })).not.toBeInTheDocument();
     // The row beside it is the parent's to state: nothing in this window is
     // subscribed to a substream it is not showing, so the directory is still
     // the best answer there is for it.
-    expect(screen.getByRole('button', { name: 'Go to substream: Draft the launch note' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Go to breakout: Draft the launch note/u })).toBeInTheDocument();
     // And it follows the child, so a rename arriving while it is open moves the
     // row and the header in the same frame.
     act(() => client.setQueryData(['substream-workstream', workstreamId, childId], { ...child, title: 'Renamed while open' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Go to substream: Renamed while open' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Go to breakout: Renamed while open/u })).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Renamed while open' })).toBeInTheDocument();
   });
 
@@ -781,8 +781,8 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    expect(await screen.findByRole('button', { name: 'Manage substream participants' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member');
+    expect(await screen.findByRole('button', { name: 'Manage breakout participants' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Parent member');
     expect(screen.getByRole('heading', { name: 'Private child' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
@@ -791,13 +791,13 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage channel participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'New member participant actions' })).toBeVisible();
     await waitFor(() => expect(
-      screen.getAllByRole('button', { hidden: true, name: 'Manage work-stream participants' })[0],
+      screen.getAllByRole('button', { hidden: true, name: 'Manage channel participants' })[0],
     ).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
@@ -816,7 +816,7 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    const rail = await screen.findByRole('complementary', { name: 'Work-stream sidebar' });
+    const rail = await screen.findByRole('complementary', { name: 'Channel sidebar' });
     const mark = (): Element | null => rail.querySelector('.workstream-mark');
     expect(mark()).toHaveClass('lucide-megaphone');
     expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
@@ -831,7 +831,7 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
   });
 
-  it('manages the selected substream roster without changing parent participants', async () => {
+  it('manages the selected breakout roster without changing parent participants', async () => {
     const childId = '00000000-0000-7000-8000-000000000660';
     const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
     const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
@@ -845,21 +845,21 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-workstream', workstreamId, childId], child);
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
-    const manage = await screen.findByRole('button', { name: 'Manage substream participants' });
+    const manage = await screen.findByRole('button', { name: 'Manage breakout participants' });
     expect(manage).toHaveAccessibleDescription('Creator');
     expect(manage.closest('header')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Creator, New member');
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Creator, New member');
     fireEvent.click(manage);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to substream' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to breakout' }));
     await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator, New member'));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member participant actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from substream' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from breakout' }));
     await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator'));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Add New member to substream' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add New member to breakout' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([creator, newcomer]);
     expect(api.addParticipant).not.toHaveBeenCalled();
     expect(api.removeParticipant).not.toHaveBeenCalled();
@@ -884,7 +884,7 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-workstream', workstreamId, childId], child);
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
-    const composer = await screen.findByRole('textbox', { name: 'Message the work stream' });
+    const composer = await screen.findByRole('textbox', { name: 'Message the channel' });
     await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
     fireEvent.change(composer, { target: { value: 'Please ask @New member to review.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -902,7 +902,7 @@ describe('socket-first work-stream open', () => {
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {
     renderScreen();
 
-    expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
+    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0'));
   });
 
@@ -925,14 +925,14 @@ describe('socket-first work-stream open', () => {
 
   it('does not run payload effects until detail and transcript both belong to the route', async () => {
     const staleWorkstreamId = '00000000-0000-7000-8000-000000000649';
-    const staleBoot = recoveryBoot({ id: staleWorkstreamId, title: 'Stale work stream' });
+    const staleBoot = recoveryBoot({ id: staleWorkstreamId, title: 'Stale channel' });
     const { transcript: staleTranscript, ...staleDetail } = staleBoot;
     const queryClient = renderScreen((client) => {
       client.setQueryData<WorkstreamDetail>(['workstream', workstreamId], staleDetail);
       client.setQueryData(['ordered-transcript', workstreamId], staleTranscript);
     });
 
-    expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
+    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
     await act(async () => Promise.resolve());
     expect(scrollTranscriptToEnd).not.toHaveBeenCalled();
 
@@ -1052,7 +1052,7 @@ describe('socket-first work-stream open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage channel participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to main conversation' }));
     expect(await screen.findByText('That participant couldn’t be added.')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
@@ -1100,7 +1100,7 @@ describe('socket-first work-stream open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage channel participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
     const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
@@ -1111,7 +1111,7 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
   });
 
-  it('closes the participant dialog when the current person leaves a workspace-scoped room', async () => {
+  it('closes the participant dialog when the current person leaves an organization-scoped room', async () => {
     const adam = {
       id: '00000000-0000-7000-8000-000000000651',
       name: 'Adam',
@@ -1136,7 +1136,7 @@ describe('socket-first work-stream open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage channel participants' }))[0]!);
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
       button: 0,
       ctrlKey: false,
@@ -1160,7 +1160,7 @@ describe('socket-first work-stream open', () => {
     });
     renderScreen();
 
-    expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
+    expect(await screen.findByText('Channel could not be opened')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
@@ -1181,7 +1181,7 @@ describe('socket-first work-stream open', () => {
 
     renderScreen();
 
-    expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
+    expect(await screen.findByText('Channel could not be opened')).toBeInTheDocument();
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
   });
 
@@ -1192,7 +1192,7 @@ describe('socket-first work-stream open', () => {
       sendReady: true, state: 'connecting', workspaceSocketState: 'connecting',
     };
     retainedSocket.mockReturnValue(socket);
-    const boot = recoveryBoot({ title: 'Remembered work stream' });
+    const boot = recoveryBoot({ title: 'Remembered channel' });
     const { transcript, ...detail } = boot;
     const cache = renderScreen((client) => {
       client.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
@@ -1201,9 +1201,9 @@ describe('socket-first work-stream open', () => {
     });
 
     // The screen is not "Opening": the remembered conversation is on it.
-    expect(screen.queryByText('Opening work stream…')).not.toBeInTheDocument();
-    expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered work stream…');
-    const composer = screen.getByLabelText('Message the work stream');
+    expect(screen.queryByText('Opening channel…')).not.toBeInTheDocument();
+    expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered channel…');
+    const composer = screen.getByLabelText('Message the channel');
     fireEvent.change(composer, { target: { value: 'Typed while connecting' } });
     // The button says why on its own label, for whoever cannot see the card.
     expect(screen.getByRole('button', { name: 'Send message, available once Rally connects' })).toBeDisabled();
@@ -1216,7 +1216,7 @@ describe('socket-first work-stream open', () => {
     socket.state = 'connected';
     act(() => {
       cache.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
-      cache.setQueryData(['workstream', workstreamId], { ...detail, title: 'Live work stream' });
+      cache.setQueryData(['workstream', workstreamId], { ...detail, title: 'Live channel' });
     });
 
     await waitFor(() => expect(document.querySelector('.connecting-card')).toBeNull());
@@ -1231,7 +1231,7 @@ describe('socket-first work-stream open', () => {
       openingError: 'The live connection timed out after 3 attempts.',
       sendReady: false, state: 'unavailable', workspaceSocketState: 'connecting',
     });
-    const boot = recoveryBoot({ title: 'Remembered work stream' });
+    const boot = recoveryBoot({ title: 'Remembered channel' });
     const { transcript, ...detail } = boot;
     renderScreen((client) => {
       client.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
@@ -1239,7 +1239,7 @@ describe('socket-first work-stream open', () => {
       client.setQueryData(['ordered-transcript', workstreamId], transcript);
     });
 
-    expect(screen.queryByText('Work stream could not be opened')).not.toBeInTheDocument();
+    expect(screen.queryByText('Channel could not be opened')).not.toBeInTheDocument();
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(retryOpening).toHaveBeenCalledTimes(1);

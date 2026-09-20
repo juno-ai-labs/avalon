@@ -31,7 +31,7 @@ remain separate from this effect-ordering fence.
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | How a gated entry is reported, whichever object holds it: the attempt that warns, the one that logs an error, the one that notifies an operator, and what of a thrown error may leave. |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
 | `apps/api/src/durable-objects/migratable-durable-object.ts` | The base `ScheduledDurableObject` itself extends. It owns the schema half — the migration pass, its report, and `migrationsReady()`, which every method here awaits before touching `_internal_durable_alarms`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
-| `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, the opportunity/ranking product pass, and the three Space phases. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
@@ -51,8 +51,13 @@ takes the earliest of both:
   object's own tables. Use these when due times already live in tables with
   their own writers and no separate identity is needed: each outbox's
   `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
-  keep-alive lease. SubstreamAgent includes both regional-effect delivery and
-  semantic-realtime publication outboxes independently, plus separate candidates
+  keep-alive lease. WorkspaceDO's Space cutover is one of these: the
+  `space_bootstrap` row's `not_before`, which a fresh migration leaves at the
+  epoch on purpose — an Organization whose hierarchy is pending has work due
+  immediately, and that is how the fleet migration starts without anybody
+  signing in ([`spaces.md`](spaces.md) owns it). SubstreamAgent includes both
+  regional-effect delivery and semantic-realtime publication outboxes
+  independently, plus separate candidates
   for executable loop work and the oldest externally unsettled terminal run.
   Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.

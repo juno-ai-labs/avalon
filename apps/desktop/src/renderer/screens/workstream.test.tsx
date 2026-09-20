@@ -33,7 +33,7 @@ import { conversationActivityRow, conversationShowsStoppingRow } from './convers
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
-describe('workspace foreground presence', () => {
+describe('organization foreground presence', () => {
   const member = (id: string, name: string): WorkspaceMember => ({
     id,
     name,
@@ -81,8 +81,8 @@ describe('transcript cursor pagination', () => {
 
 });
 
-describe('work-stream route handoff', () => {
-  it('refuses to paint detail or transcript rows retained from another work stream', () => {
+describe('channel route handoff', () => {
+  it('refuses to paint detail or transcript rows retained from another channel', () => {
     const routeWorkstreamId = 'workstream-two';
     const workstream = { id: routeWorkstreamId };
     const transcript = {
@@ -129,6 +129,7 @@ const headerWorkstream: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
+  spaceIds: [],
   createdAt: '2026-08-07T12:00:00.000Z',
   participants: [],
   viewers: [],
@@ -137,7 +138,7 @@ const headerWorkstream: WorkstreamDetail = {
   backgroundTasks: [],
 };
 
-describe('running work-stream message delivery', () => {
+describe('running channel message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {
     expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
     expect(acceptedMessageOverlayDeliveryState('pending', 'queue')).toBe('queue_pending');
@@ -169,7 +170,7 @@ describe('running work-stream message delivery', () => {
     );
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
-    const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
+    const composer = screen.getByRole('textbox', { name: 'Message the channel' });
     fireEvent.change(composer, { target: { value: 'Add this context to the current conversation' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -307,7 +308,7 @@ describe('WorkstreamHeader GrokBot shell', () => {
 
   it('keeps the group tooltip neutral while the title is being named', async () => {
     renderWorkstreamHeader({ ...headerWorkstream, title: 'Create a private draft', titleStatus: 'naming', createdAt: new Date().toISOString() }, { grokBotMode: true });
-    fireEvent.focus(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.focus(screen.getByRole('button', { name: 'Manage channel participants' }));
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants of this conversation');
     expect(screen.queryByText(/Create a private draft/)).not.toBeInTheDocument();
   });
@@ -318,10 +319,10 @@ describe('WorkstreamHeader GrokBot shell', () => {
     expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show HyperSight' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'More work-stream actions' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Manage work-stream participants' }).closest('header')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'More channel actions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage channel participants' }).closest('header')).not.toBeNull();
 
-    expect(screen.queryByRole('button', { name: 'Work-stream context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Channel context' })).not.toBeInTheDocument();
   });
 });
 
@@ -349,11 +350,11 @@ describe('WorkstreamHeader origin affordances', () => {
     });
     renderWorkstreamHeader({ ...headerWorkstream, id: workstreamId });
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More channel actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work-stream link' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy channel link' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
       `https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/${workstreamId}`,
@@ -364,8 +365,8 @@ describe('WorkstreamHeader origin affordances', () => {
   it('does not offer the retained right sidebar in the standard header either', () => {
     renderWorkstreamHeader();
 
-    expect(screen.queryByRole('button', { name: 'Work-stream context' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Hide work-stream context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Channel context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide channel context' })).not.toBeInTheDocument();
   });
 
 });
@@ -380,7 +381,7 @@ describe('WorkstreamHeader inline rename', () => {
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    const input = screen.getByRole('textbox', { name: 'Channel name' });
     expect(input).toHaveValue('Daily product brief');
 
     fireEvent.change(input, { target: { value: '  Launch planning  ' } });
@@ -388,7 +389,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     await waitFor(() => expect(onRename).toHaveBeenCalledWith('Launch planning'));
     await waitFor(() =>
-      expect(screen.queryByRole('textbox', { name: 'Work stream name' })).not.toBeInTheDocument());
+      expect(screen.queryByRole('textbox', { name: 'Channel name' })).not.toBeInTheDocument());
   });
 
   it.each(['0', 'child'])('edits the compact title with one mouse click and form submission (%s)', async (substreamId) => {
@@ -397,7 +398,7 @@ describe('WorkstreamHeader inline rename', () => {
     const title = screen.getByRole('button', { name: 'Daily product brief' });
     expect(title).toHaveAttribute('title', 'Click to rename. Press Enter to save.');
     fireEvent.click(title, { detail: 1 });
-    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    const input = screen.getByRole('textbox', { name: 'Channel name' });
     fireEvent.change(input, { target: { value: 'Edited title' } });
     fireEvent.submit(input.closest('form')!);
     await waitFor(() => expect(onRename).toHaveBeenCalledWith('Edited title'));
@@ -409,13 +410,13 @@ describe('WorkstreamHeader inline rename', () => {
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Discarded' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Discarded' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel rename' }));
     expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Also discarded' } });
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work stream name' }), { key: 'Escape' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Also discarded' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Channel name' }), { key: 'Escape' });
 
     expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
     expect(onRename).not.toHaveBeenCalled();
@@ -426,19 +427,19 @@ describe('WorkstreamHeader inline rename', () => {
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    const input = screen.getByRole('textbox', { name: 'Channel name' });
     fireEvent.change(input, { target: { value: 'Half-converted name' } });
 
     // Escape abandons the IME's candidate, not the rename. Discarding here
     // throws away the whole draft, and nothing offers it back.
     fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Half-converted name');
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('Half-converted name');
 
     fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Half-converted name');
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('Half-converted name');
 
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.queryByRole('textbox', { name: 'Work stream name' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Channel name' })).not.toBeInTheDocument();
     expect(onRename).not.toHaveBeenCalled();
   });
 
@@ -450,27 +451,27 @@ describe('WorkstreamHeader inline rename', () => {
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    const input = screen.getByRole('textbox', { name: 'Channel name' });
     fireEvent.change(input, { target: { value: '   ' } });
     expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
 
     fireEvent.change(input, { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('That work stream couldn’t be renamed. Try again.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That channel couldn’t be renamed. Try again.');
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('Launch planning');
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('Launch planning');
   });
 
-  it('drops an open draft when the header moves to another work stream', () => {
+  it('drops an open draft when the header moves to another channel', () => {
     const { rerender } = renderWorkstreamHeader();
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Stale draft' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Stale draft' } });
 
     rerender(headerElement({ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }));
 
-    expect(screen.queryByRole('textbox', { name: 'Work stream name' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Channel name' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Another stream' })).toBeInTheDocument();
   });
 
@@ -496,7 +497,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     // Keyboard activation of a button reports a detail of 0.
     fireEvent.click(title, { detail: 0 });
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toBeInTheDocument();
   });
 
   it('holds the header for a name instead of showing the request it was created from', () => {
@@ -512,7 +513,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     // The heading is what carries the name, so it is the heading that has to
     // say a name is coming — a label on the placeholder itself reaches nobody.
-    expect(screen.getByRole('heading', { name: 'Rally is naming this work stream' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Rally is naming this channel' })).toBeInTheDocument();
     expect(screen.queryByText(/Create an email draft/u)).not.toBeInTheDocument();
     // Nothing to rename yet: the title on the row is a placeholder, and the
     // editor returns with the name a second later.
@@ -539,13 +540,13 @@ describe('WorkstreamHeader inline rename', () => {
         createdAt: created.toISOString(),
       });
 
-      expect(screen.getByRole('heading', { name: 'Rally is naming this work stream' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Rally is naming this channel' })).toBeInTheDocument();
 
       // Nothing refetches this query on its own, so a rename event that never
       // arrived would otherwise leave the skeleton up for good.
       act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
 
-      expect(screen.queryByRole('heading', { name: 'Rally is naming this work stream' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Rally is naming this channel' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Create an email draft to Danny from Mucker' })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -569,7 +570,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     fireEvent.keyDown(screen.getByRole('button', { name: 'Daily product brief' }), { key: 'F2' });
 
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toBeInTheDocument();
   });
 
   it('keeps the tooltip on the rename hint while the whole name is on screen', () => {
@@ -618,7 +619,7 @@ describe('WorkstreamHeader inline rename', () => {
       // than being taken once.
       fireEvent.click(screen.getByRole('button', { name: title }));
       stubElementWidths({ clientWidth: 400, scrollWidth: 260 });
-      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work stream name' }), { key: 'Escape' });
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Channel name' }), { key: 'Escape' });
 
       expect(screen.getByRole('button', { name: title }))
         .toHaveAttribute('title', 'Click to rename. Press Enter to save.');
@@ -652,7 +653,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
 
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveAttribute('maxlength', '180');
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveAttribute('maxlength', '180');
   });
 
   it('returns focus to the title when the editor closes, so the keyboard path can continue', async () => {
@@ -661,7 +662,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     // Escape.
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work stream name' }), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Channel name' }), { key: 'Escape' });
     expect(screen.getByRole('button', { name: 'Daily product brief' })).toHaveFocus();
 
     // Cancel.
@@ -671,7 +672,7 @@ describe('WorkstreamHeader inline rename', () => {
 
     // Save.
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Launch planning' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Daily product brief' })).toHaveFocus());
   });
@@ -683,10 +684,10 @@ describe('WorkstreamHeader inline rename', () => {
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    const input = screen.getByRole('textbox', { name: 'Work stream name' });
+    const input = screen.getByRole('textbox', { name: 'Channel name' });
     fireEvent.change(input, { target: { value: 'Rejected name' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('That work stream couldn’t be renamed. Try again.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That channel couldn’t be renamed. Try again.');
     expect(screen.queryByText('The request is invalid.')).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: 'Corrected name' } });
@@ -702,12 +703,12 @@ describe('WorkstreamHeader inline rename', () => {
     const { rerender } = renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Launch planning' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() => expect(onRename).toHaveBeenCalled());
 
     rerender(headerElement({ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }, { onRename }));
-    const elsewhere = screen.getByRole('button', { name: 'More work-stream actions' });
+    const elsewhere = screen.getByRole('button', { name: 'More channel actions' });
     elsewhere.focus();
 
     settle?.();
@@ -722,18 +723,18 @@ describe('WorkstreamHeader inline rename', () => {
     const onRename = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
     const { rerender } = renderWorkstreamHeader(headerWorkstream, { onRename });
     fireEvent.click(screen.getByRole('button', { name: headerWorkstream.title }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'First request' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'First request' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     rerender(headerElement({ ...headerWorkstream, id: 'other', title: 'Other' }, { onRename }));
     rerender(headerElement(headerWorkstream, { onRename }));
     fireEvent.click(screen.getByRole('button', { name: headerWorkstream.title }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'New draft' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'New draft' } });
     await act(async () => { finish?.(); });
-    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('New draft');
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('New draft');
     expect(screen.getByRole('button', { name: 'Save name' })).not.toBeDisabled();
   });
 
-  it('discards a rename that settles after the header moved to another work stream', async () => {
+  it('discards a rename that settles after the header moved to another channel', async () => {
     let settle: (() => void) | undefined;
     const onRename = vi.fn(() => new Promise<void>((_resolve, reject) => {
       settle = () => reject(new Error('The stale stream could not be renamed.'));
@@ -741,7 +742,7 @@ describe('WorkstreamHeader inline rename', () => {
     const { rerender } = renderWorkstreamHeader(headerWorkstream, { onRename });
 
     fireEvent.click(screen.getByRole('button', { name: 'Daily product brief' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Launch planning' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Launch planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() => expect(onRename).toHaveBeenCalledWith('Launch planning'));
 
@@ -754,7 +755,7 @@ describe('WorkstreamHeader inline rename', () => {
     // its editor must still be openable rather than stuck mid-save.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Another stream' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Renamed later' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Channel name' }), { target: { value: 'Renamed later' } });
     expect(screen.getByRole('button', { name: 'Save name' })).not.toBeDisabled();
   });
 });
@@ -828,7 +829,7 @@ describe('the read a conversation acknowledges', () => {
     manualUnreadGeneration: 0,
   };
 
-  it('acknowledges a private substream against itself, not against its parent', () => {
+  it('acknowledges a private breakout against itself, not against its parent', () => {
     // The waterline is the child object's own, and a child's ordinals are
     // deliberately not comparable to Main's. While this was a work stream's
     // fact the child's read went unrecorded, so the divider the child had
@@ -847,7 +848,7 @@ describe('the read a conversation acknowledges', () => {
     });
   });
 
-  it('keeps two children of one work stream on two keys', () => {
+  it('keeps two children of one channel on two keys', () => {
     // The in-flight key is what suppresses a duplicate request. Naming only
     // the work stream would call one child's read the other's.
     const shared = { parentId: 'workstream-one', highestVisibleSequence: 4, viewer };
@@ -1023,7 +1024,7 @@ describe('WorkstreamErrorState', () => {
     copyText.mockResolvedValue(undefined);
   });
 
-  it('offers the work-stream ID from a More menu so an unopenable work stream can still be reported', async () => {
+  it('offers the channel ID from a More menu so an unopenable channel can still be reported', async () => {
     const onRetry = vi.fn();
     render(
       <Tooltip.Provider>
@@ -1031,16 +1032,16 @@ describe('WorkstreamErrorState', () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByText('Work stream could not be opened')).toBeInTheDocument();
+    expect(screen.getByText('Channel could not be opened')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onRetry).toHaveBeenCalledOnce();
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More channel actions' }), {
       button: 0,
       ctrlKey: false,
     });
     const items = await screen.findAllByRole('menuitem');
-    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy work-stream ID']);
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy channel ID']);
 
     fireEvent.click(items[0]!);
     expect(copyText).toHaveBeenCalledWith('workstream-unopenable');
@@ -1361,7 +1362,7 @@ describe('workspaceMemberFromSession', () => {
   });
 });
 
-describe('what a substream shows of where it came from', () => {
+describe('what a breakout shows of where it came from', () => {
   const turn = (sequence: number): Message => ({
     id: `row-${sequence}`,
     transcriptTurnId: `turn-${sequence}`,
@@ -1384,7 +1385,7 @@ describe('what a substream shows of where it came from', () => {
       .toEqual(['Main turn 1', 'Main turn 2']);
   });
 
-  it('shows nothing for a substream started from the sidebar, or from a turn off the loaded window', () => {
+  it('shows nothing for a breakout started from the sidebar, or from a turn off the loaded window', () => {
     expect(branchProvenance(transcript, null)).toEqual([]);
     // Not the newest turns: a branch point this client cannot see is provenance
     // it does not have, and the last five turns are a different claim.

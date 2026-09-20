@@ -6,7 +6,7 @@ import { Button } from './primitives';
 export type ConnectingCardState = 'connecting' | 'offline' | 'failed';
 
 /** What the card is connecting to, for the sentence when the thing has no name yet. */
-export type ConnectingCardSubject = 'work stream' | 'substream' | 'Sidekick' | 'project';
+export type ConnectingCardSubject = 'channel' | 'breakout' | 'Sidekick' | 'space';
 
 export interface ConnectingCardProps {
   /** The title of what is opening, or null while Rally is still naming it. */

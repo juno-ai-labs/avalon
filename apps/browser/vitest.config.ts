@@ -20,5 +20,6 @@ export default defineConfig({
     // pool in the tree, `apps/api/vitest.workers.config.ts`: a hang still
     // fails, because the suite's own work is seconds.
     testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });

@@ -38,6 +38,7 @@ function detail(overrides: Partial<WorkstreamDetail> = {}): WorkstreamDetail {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    spaceIds: [],
     lastActivityAt: '2026-09-01T12:00:00.000Z',
     createdAt: '2026-09-01T11:00:00.000Z',
     participants: [],
@@ -191,7 +192,7 @@ describe('conversation cache', () => {
       .resolves.toBe('missing');
   });
 
-  it('reports a missing row, and one written under another workspace', async () => {
+  it('reports a missing row, and one written under another organization', async () => {
     await conversationSlice.write(otherScope, conversationCacheKey(parentId, '0'), {
       detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '',
     }, parentId);
@@ -262,7 +263,7 @@ describe('conversation cache', () => {
     ].sort());
   });
 
-  it('forgets a parent in every workspace, and one child on its own', async () => {
+  it('forgets a parent in every organization, and one child on its own', async () => {
     const row = { detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '' };
     await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), row, parentId);
     await conversationSlice.write(scope, conversationCacheKey(parentId, childId), row, parentId);

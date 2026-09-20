@@ -87,7 +87,7 @@ struct ConversationFeedScreen: View {
                 }
             }
         }
-        .navigationTitle(model.substreamLaunch != nil ? "New substream" : (model.currentWorkstream == nil ? "New chat" : model.conversationTitle))
+        .navigationTitle(model.substreamLaunch != nil ? "New breakout" : (model.currentWorkstream == nil ? "New chat" : model.conversationTitle))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
@@ -709,7 +709,7 @@ struct MessageActions: View {
                         .font(.system(size: 18))
                         .foregroundStyle(colors.textSecondary)
                 }
-                .accessibilityLabel("New substream")
+                .accessibilityLabel("New breakout")
             }
             Spacer()
         }

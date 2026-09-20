@@ -101,6 +101,17 @@ function workspaceStub() {
 async function initializedWorkspace() {
   const stub = workspaceStub();
   await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+  // Close the Space cutover, the way the path that opens a new Organization
+  // does before its first session. A `pending` one is due at the epoch — that
+  // is how the fleet migration starts without anybody signing in — so every
+  // assertion below about *which* instant the alarm is armed at would be
+  // measuring the cutover instead of the entry it scheduled.
+  await stub.finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+  // And take back the wake-up the pending cutover armed on the way through.
+  // The platform was told about it while the object was constructing, so it is
+  // delivered as a real `alarm()` — a second run of the whole handler, racing
+  // whichever one a case is about.
+  await runInDurableObject(stub, (_instance: WorkspaceDO, state) => state.storage.deleteAlarm());
   return stub;
 }
 
@@ -240,7 +251,13 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "recovery_rearm", alarmKind: undefined },
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
-        { phase: "project_default_publish", alarmKind: undefined },
+        // The Space authority's three phases sit where the Project one used to,
+        // before the sweep, for the same reason it did: each publishes onto the
+        // activity Queue, and a rejected send has to leave its rows claimed and
+        // pending rather than spin this alarm.
+        { phase: "space_default_publish", alarmKind: undefined },
+        { phase: "space_bootstrap", alarmKind: undefined },
+        { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },

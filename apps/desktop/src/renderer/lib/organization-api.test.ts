@@ -136,7 +136,7 @@ describe('organization and invitation API routing', () => {
     expect(headers.get('Authorization')).toBe(`Bearer ${session.accessToken}`);
   });
 
-  it('uses the server-authoritative workspace role when the cached session role is stale', async () => {
+  it('uses the server-authoritative organization role when the cached session role is stale', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({
       id: workspaceId,
       name: 'Europe Research',

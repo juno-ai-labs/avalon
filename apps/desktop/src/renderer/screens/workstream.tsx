@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
+import type { PersonalOrder } from '@rally/contracts';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
 import { desktopBridge } from '../lib/platform';
@@ -19,6 +20,9 @@ import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal } from '../components/primitives';
 
+import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
+import { applyContainerOrder, PERSONAL_ORDER_QUERY_KEY } from '../lib/sidebar-list-store';
+import { usePersonalOrder } from '../lib/use-space-directories';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
@@ -60,15 +64,20 @@ type WorkstreamSidebarFailure =
   | 'rename_workstream'
   | 'rename_substream'
   | 'archive_workstream'
-  | 'archive_substream';
+  | 'archive_substream'
+  | 'reorder_substreams';
 
 const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: string; copy: string }> = {
   copy_link: { title: 'The link couldn’t be copied', copy: 'The link couldn’t be copied. Try again.' },
-  make_public: { title: 'The work stream couldn’t be updated', copy: 'The work stream couldn’t be made public. Try again.' },
-  rename_workstream: { title: 'The work stream couldn’t be renamed', copy: 'The work stream couldn’t be renamed. Try again.' },
-  rename_substream: { title: 'The substream couldn’t be renamed', copy: 'The substream couldn’t be renamed. Try again.' },
-  archive_workstream: { title: 'The work stream couldn’t be archived', copy: 'The work stream couldn’t be archived. Try again.' },
-  archive_substream: { title: 'The substream couldn’t be archived', copy: 'The substream couldn’t be archived. Try again.' },
+  make_public: { title: 'The channel couldn’t be updated', copy: 'The channel couldn’t be made public. Try again.' },
+  rename_workstream: { title: 'The channel couldn’t be renamed', copy: 'The channel couldn’t be renamed. Try again.' },
+  rename_substream: { title: 'The breakout couldn’t be renamed', copy: 'The breakout couldn’t be renamed. Try again.' },
+  archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
+  archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
+  // Names the row that snapped back, the way the sidebar's reorder copy does:
+  // the rail is back in the order the Organization holds, which is the order
+  // this person's other windows are showing.
+  reorder_substreams: { title: 'The breakouts couldn’t be reordered', copy: 'The breakouts are back in the order they were in. Try again in a moment.' },
 };
 
 export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
@@ -136,7 +145,7 @@ export function WorkstreamScreen(): React.JSX.Element {
    * open child. `docs/substream-creation.md` holds why each of those is so, and
    * what writing it back cost when it was tried.
    */
-  const railChildren = children.data?.privateChildren?.map((child) =>
+  const namedChildren = children.data?.privateChildren?.map((child) =>
     child.substreamId === selectedSubstreamId && openChild.data?.title
       ? { ...child, title: openChild.data.title }
       : child);
@@ -148,6 +157,60 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuFailure, setSubstreamMenuFailure] = useState<WorkstreamSidebarFailure | null>(null);
+  const ordering = usePersonalOrder();
+  const [breakoutOrder, setBreakoutOrder] = useState<string[] | null>(null);
+  const draggingBreakoutId = useRef<string | null>(null);
+
+  /**
+   * The rail's rows, in the order this person put them in.
+   *
+   * Oldest first is the directory's order and stays the natural one: a
+   * Breakout nobody has dragged keeps arriving at the bottom, where the
+   * **New breakout** row leaves it. The stored arrangement goes in front of
+   * that, through the same helper the sidebar's Spaces and placements use, and
+   * an id it names that this rail is not drawing is dropped — WorkspaceDO
+   * cannot see a Channel's children, so it stores what it is given and this is
+   * where an id that names nothing stops.
+   */
+  const storedBreakouts = namedChildren === undefined ? undefined : orderByStoredIds(
+    namedChildren,
+    storedOrderFor(ordering, { kind: 'channel', id }),
+    (child) => child.substreamId,
+  );
+  const storedBreakoutIds: string[] = storedBreakouts?.map((child) => child.substreamId) ?? [];
+  // The rule is applied once. Running it again over its own output is
+  // idempotent and reads as a second rule.
+  const railChildren = namedChildren === undefined || breakoutOrder === null
+    ? storedBreakouts
+    : orderByStoredIds(namedChildren, breakoutOrder, (child) => child.substreamId);
+  const railChildIds: string[] = railChildren?.map((child) => child.substreamId) ?? [];
+  /**
+   * Send the arrangement whole, and drop it if the server refuses.
+   *
+   * The rail then shows what the Organization actually holds, which is what
+   * this person's other windows are showing — the same rollback the pinned
+   * list and the Spaces section make, because a local order the server never
+   * took would survive until the next reload and then vanish.
+   */
+  const commitBreakoutOrder = async (substreamIds: string[]): Promise<void> => {
+    if (!api) return;
+    setBreakoutOrder(substreamIds);
+    setSubstreamMenuFailure(null);
+    try {
+      const expected = queryClient.getQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY);
+      applyContainerOrder(queryClient, await api.reorderContainer({
+        container: { kind: 'channel', id },
+        itemIds: substreamIds,
+      }), expected);
+    } catch {
+      setSubstreamMenuFailure('reorder_substreams');
+    } finally {
+      // Only while this call's arrangement is the one on screen: two moves in
+      // quick succession overlap, and clearing unconditionally would snap the
+      // rail back to an order the second has already moved past.
+      setBreakoutOrder((current) => current === substreamIds ? null : current);
+    }
+  };
   /**
    * The substream being written, if any. Nothing has been reserved on the
    * server while this is set: preparation and confirmation both happen on the
@@ -342,7 +405,7 @@ export function WorkstreamScreen(): React.JSX.Element {
    */
   const createSubstream = async (opening: Parameters<SubstreamLaunchProps['onCreate']>[0]): Promise<void> => {
     const attempt = creationRef.current;
-    if (!api || !attempt) throw new Error('This work stream is not ready for a new substream.');
+    if (!api || !attempt) throw new Error('This channel is not ready for a new breakout.');
     const createdAt = new Date().toISOString();
     const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
     const startedAt = performance.now();
@@ -438,7 +501,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       // words with it.
       if (creationRef.current === attempt) {
         setLaunching(null);
-        setCreationError('The substream couldn’t be created. Try again.');
+        setCreationError('The breakout couldn’t be created. Try again.');
       }
       throw error;
     }
@@ -485,6 +548,50 @@ export function WorkstreamScreen(): React.JSX.Element {
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
             onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
           } : undefined}
+          // A guest is handed none: every ordering write is refused for a
+          // guest by the same gate every Space write is, so the rail offers
+          // them a gesture that could only fail. The host decides it, the way
+          // the sidebar's shell decides whether a session has Spaces at all.
+          {...(guest || !api ? {} : { substreamDrag: {
+            draggingSubstreamId: breakoutOrder === null ? null : draggingBreakoutId.current,
+            onDragStart: (substreamId: string) => {
+              draggingBreakoutId.current = substreamId;
+              setBreakoutOrder(railChildIds);
+            },
+            onDragOver: (targetId: string) => {
+              const dragged = draggingBreakoutId.current;
+              if (dragged === null || dragged === targetId) return;
+              setBreakoutOrder((current) => {
+                const ids = current ?? railChildIds;
+                const target = ids.indexOf(targetId);
+                if (target < 0 || ids.indexOf(dragged) === target) return ids;
+                return moveWithin(ids, dragged, target);
+              });
+            },
+            onDragEnd: (cancelled: boolean) => {
+              const arranged = breakoutOrder;
+              draggingBreakoutId.current = null;
+              if (arranged === null) return;
+              // Escape, or a release outside the rail, leaves `dropEffect` at
+              // `none` — and the arrangement built while the pointer crossed
+              // the other rows must be abandoned rather than saved, or backing
+              // out of a drag becomes the same thing as finishing it. The
+              // comparison is against `storedBreakoutIds`, never `railChildIds`
+              // — the latter *is* the arrangement this drag is building.
+              const committed = committedOrder(arranged, storedBreakoutIds, cancelled);
+              if (committed === null) {
+                setBreakoutOrder(null);
+                return;
+              }
+              void commitBreakoutOrder(committed);
+            },
+            onMove: (substreamId: string, direction: -1 | 1) => {
+              const from = railChildIds.indexOf(substreamId);
+              const to = from + direction;
+              if (from < 0 || to < 0 || to >= railChildIds.length) return;
+              void commitBreakoutOrder(moveWithin(railChildIds, substreamId, to));
+            },
+          } })}
           substreamActions={{
             onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
@@ -526,7 +633,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(renameTarget)}
-      title={renameTarget?.substreamId === '0' ? 'Rename work stream' : 'Rename substream'}
+      title={renameTarget?.substreamId === '0' ? 'Rename channel' : 'Rename breakout'}
     >
       {substreamMenuFailure && <InlineError>{workstreamSidebarFailureCopy[substreamMenuFailure].copy}</InlineError>}
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
@@ -543,7 +650,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(archiveTarget)}
-      title={archiveTarget?.substreamId === '0' ? 'Archive work stream' : 'Archive substream'}
+      title={archiveTarget?.substreamId === '0' ? 'Archive channel' : 'Archive breakout'}
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops

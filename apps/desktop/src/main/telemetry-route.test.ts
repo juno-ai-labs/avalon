@@ -12,7 +12,7 @@ const bootstrap = {
 };
 
 describe('desktop telemetry route gate', () => {
-  it('uses an explicit signed-in workspace binding without asking Global geolocation', async () => {
+  it('uses an explicit signed-in organization binding without asking Global geolocation', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     await expect(resolveTelemetryRoute({
       explicitRegion: 'enterprise', anonymousEpochId, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
