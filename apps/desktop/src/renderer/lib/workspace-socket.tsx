@@ -59,6 +59,42 @@ import {
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { retainQueryData } from './retain-query-data';
 import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
+import { logWarn } from '../../common/logger';
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
+import type { z } from 'zod';
+
+/**
+ * Say, by name, that a socket message this build understands the *type* of was
+ * dropped because its body did not parse.
+ *
+ * `safeParseSocketEvent` tolerates fields a newer sender added and nothing
+ * else, so a field a newer sender made *required* fails every receiver that
+ * predates it — and the handler's schema chain ends in a `return` either way.
+ * That silence is the defect: the first required field added to the Space
+ * snapshot would take every Space off the sidebar of a desktop running ahead
+ * of its API, with nothing in the log naming the field.
+ *
+ * The `type` the caller pairs with each attempt is what tells a schema that
+ * was never the right one to try from one that matched the event and rejected
+ * its body — read off the message rather than inferred from the failure,
+ * because two of these schemas are discriminated unions whose own failure
+ * lands on a second discriminator instead. A type nothing here claims stays
+ * silent: that is the ordinary forward-compatible case.
+ */
+function reportSocketContractSkew(
+  eventType: unknown,
+  attempts: readonly (readonly [string, string, { success: boolean; error?: z.ZodError }])[],
+): void {
+  for (const [type, name, attempt] of attempts) {
+    if (type !== eventType || attempt.success || !attempt.error) continue;
+    // `namesUnknownKeys`, because the sender is our own API and an added key
+    // it could not strip is the whole diagnosis of a version skew — the case
+    // that option exists to keep away from a *provider's* response.
+    logWarn('rally', `dropped a ${name} event this build cannot read: `
+      + describeZodIssues(attempt.error, { namesUnknownKeys: true }));
+    return;
+  }
+}
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
@@ -616,6 +652,33 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
+          // Nothing above claimed this message, and until now that ended the
+          // handler in silence. A message whose `type` no schema here knows is
+          // the ordinary forward-compatible case and stays silent; one whose
+          // `type` a schema *did* match and whose body it then rejected is a
+          // contract skew between two of our own components, and dropping it
+          // without a word is how a desktop built ahead of its API would show
+          // no Spaces at all with nothing anywhere saying `reach`.
+          //
+          // The message's own `type` is what picks the schema that should have
+          // read it; `describeZodIssues` then names the field it rejected,
+          // which is schema shape rather than the message's data.
+          reportSocketContractSkew(
+            typeof decoded === 'object' && decoded !== null && 'type' in decoded
+              ? (decoded as { type: unknown }).type
+              : undefined,
+            [
+              ['workspace_sync', 'sync', sync],
+              ['workspace_presence', 'presence', presence],
+              ['workspace_feature_flags', 'feature flags', featureFlags],
+              ['workspace_workstream_recency', 'channel recency', recency],
+              ['workspace_workstream_page', 'channel page', workstreamPage],
+              ['workspace_workstream_state', 'channel state', workstreamState],
+              ['workspace_sidebar_list', 'sidebar list', sidebarList],
+              ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
+              ['space_conversations_changed', 'space conversations nudge', spaceConversations],
+            ],
+          );
         });
         next.addEventListener('close', (event) => {
           if (socket !== next) return;

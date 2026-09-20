@@ -25,7 +25,7 @@ import { boundParameterChunks } from "./bound-parameters";
 import type {
   RemainingChannelAudience,
   SpaceMember,
-  SpaceMembershipReach,
+  MemberWalkReach,
   WorkspaceSpaceAudienceNoteRequest,
   WorkspaceSpaceDefaultRequest,
   WorkspaceSpaceDefaultResult,
@@ -1575,8 +1575,10 @@ export class WorkspaceSpaceStorage {
   /**
    * One page of the Channels this Space holds, archived ones included.
    *
-   * `reach` is the difference between what a surface means by a member and what
-   * a retraction fan-out is about. `prepareArchive` and `prepareMembershipRemoval`
+   * `walkReach` is the difference between what a surface means by a member and
+   * what a retraction fan-out is about — and it is not `SpaceSummary.reach`,
+   * which is a *viewer's* relationship to the Space and is what the gate two
+   * lines below reads. `prepareArchive` and `prepareMembershipRemoval`
    * flip a membership to `removing` *before* the Channel is asked to withdraw
    * the source, so the set a staged operation still has work for is
    * `active` plus `removing` — and an archive that read the active set would
@@ -1613,7 +1615,7 @@ export class WorkspaceSpaceStorage {
   members(
     userId: string,
     spaceId: string,
-    reach: SpaceMembershipReach = "active",
+    walkReach: MemberWalkReach = "active",
     cursor: string | null = null,
   ): SpaceMemberPage | "not_editable" | false {
     const viewerReach = this.reach(userId, spaceId);
@@ -1625,7 +1627,7 @@ export class WorkspaceSpaceStorage {
       workstream_id: string;
       generation: number;
     } & Record<string, SqlStorageValue>>(
-      reach === "reaching"
+      walkReach === "reaching"
         ? `SELECT workstream_id, generation FROM space_channel_memberships
             WHERE space_id = ? AND state IN ('active', 'removing')
               AND (? IS NULL OR workstream_id > ?)
@@ -2051,9 +2053,14 @@ export class WorkspaceSpaceStorage {
    */
   restore(workspaceId: string, userId: string, spaceId: string, now = Date.now()): SpaceSummary | false {
     return this.storage.transactionSync(() => {
-      // An archived Space, and one this person may change: a viewer who
-      // reaches it only through a Channel in it is told it exists so the
-      // Channel has somewhere to be drawn, and restoring it is not theirs.
+      // One this person may change: a viewer who reaches it only through a
+      // Channel in it is told it exists so the Channel has somewhere to be
+      // drawn, and restoring it is not theirs. Deliberately *not* also "an
+      // archived Space" — `canEdit` does not read `archived_at`, and it must
+      // not here, because a restore is one of the two operations that reach an
+      // archived Space on purpose. `AND archived_at IS NOT NULL` on the
+      // statement below is what refuses a Space that is not archived, and its
+      // empty `RETURNING` is the refusal.
       if (!this.canEdit(userId, spaceId)) return false;
       const restored = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE workspace_space_directory

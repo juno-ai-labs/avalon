@@ -31,7 +31,11 @@ import { ApiError } from './api';
 export type SpaceFailure = SpaceErrorCode | 'unavailable';
 
 export const spaceFailureCopy: Record<SpaceFailure, string> = {
-  space_access_denied: 'You don’t have permission to make that change.',
+  // A read refusal as well as a write one: the same code answers a guest or a
+  // removed member who cannot see a space at all, and somebody who reaches one
+  // through a channel in it and cannot change it. Naming only the change told
+  // the first the wrong thing.
+  space_access_denied: 'Your access to that space doesn’t allow this.',
   space_not_found: 'That space no longer exists.',
   space_protected: 'General’s audience can’t be changed.',
   space_membership_final: 'Every channel needs a space, and this would leave one with none. Add it to another space first.',

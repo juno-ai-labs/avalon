@@ -32,7 +32,7 @@ import {
   WorkspaceSpaceMutationResultSchema,
   type SpaceIntentKind,
   type SpaceMember,
-  type SpaceMembershipReach,
+  type MemberWalkReach,
   type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMutationResult,
 } from "../durable-objects/workspace-space-protocol";
@@ -77,8 +77,14 @@ export function spaceRefusal(
     ? SpaceRefusalDetailsSchema.parse({ channelIds: [...blockedChannelIds] })
     : undefined;
   switch (code) {
+    // True of a read as well as a write. This one code answers a guest and a
+    // removed member asking to *see* a Space — `spaceRefusalCode` refuses both
+    // at the same gate for every RPC, read or write — as well as somebody who
+    // reaches a Space through a Channel in it asking to change it. "You cannot
+    // change this Space" was written when only the second existed, and told
+    // the first the wrong thing about the wrong verb.
     case "space_access_denied":
-      return new ApiError(403, code, "You cannot change this Space");
+      return new ApiError(403, code, `Your access to ${subject} does not allow this`);
     case "space_not_found":
       return new ApiError(404, code, "Space not found");
     case "space_protected":
@@ -672,7 +678,7 @@ export class SpaceService {
    */
   async memberPage(
     spaceId: SpaceId,
-    reach: SpaceMembershipReach = "active",
+    reach: MemberWalkReach = "active",
     cursor: string | null = null,
   ): Promise<{ members: SpaceMember[]; nextCursor: string | null }> {
     const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
@@ -714,7 +720,7 @@ export class SpaceService {
     /** The intent whose cursor this walk advances. */
     operationId: string;
     pageReceipt: string;
-    reach?: SpaceMembershipReach;
+    reach?: MemberWalkReach;
     cursor: string | null;
     step: (member: SpaceMember) => Promise<"continue" | "abandon">;
   }): Promise<"walked" | "abandoned"> {

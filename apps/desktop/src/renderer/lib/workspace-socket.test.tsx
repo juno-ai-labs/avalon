@@ -1391,6 +1391,77 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
   });
 
+  // A required field added to a pushed event fails every receiver that predates
+  // it, and the handler's schema chain drops what it cannot read either way. A
+  // desktop running ahead of its API would therefore show no Spaces at all,
+  // with nothing anywhere naming the field that was missing.
+  it('names the field when a pushed event this build knows the type of does not parse', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    warn.mockClear();
+
+    // The skew this is about: an API that predates `reach`, whose Space rows
+    // arrive without it.
+    act(() => socket.message({
+      type: 'workspace_space_snapshot',
+      occurredAt: '2026-08-27T00:01:00.000Z',
+      spacesReady: true,
+      ordering: [],
+      spaces: {
+        active: {
+          waterline: 4,
+          items: [{
+            id: '00000000-0000-7000-8000-0000000000f2',
+            name: 'Hiring',
+            iconKey: 'briefcase',
+            colorKey: 'blue',
+            scope: 'personal',
+            status: 'active',
+            systemRole: null,
+            revision: 1,
+            participants: [],
+            channelCount: 0,
+            defaultResourceIds: [],
+            defaultSidekickIds: [],
+            createdAt: '2026-08-27T00:00:00.000Z',
+            updatedAt: '2026-08-27T00:00:00.000Z',
+          }],
+        },
+        inactive: { waterline: 4, items: [] },
+      },
+    }));
+
+    expect(queryClient.getQueryData(['spaces'])).toBeUndefined();
+    const line = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(line).toContain('space snapshot');
+    expect(line).toContain('reach');
+
+    // A message whose type no schema here knows is the ordinary
+    // forward-compatible case and says nothing at all.
+    warn.mockClear();
+    act(() => socket.message({ type: 'something_a_newer_server_sends', occurredAt: '2026-08-27T00:02:00.000Z' }));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   // The Space dashboard's page is fetched, not pushed, so WorkspaceDO sends a
   // nudge naming the Spaces to read again rather than the rows. This is the
   // only thing that invalidates that entry while the screen is open.
