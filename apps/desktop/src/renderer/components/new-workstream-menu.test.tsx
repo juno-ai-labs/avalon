@@ -22,8 +22,26 @@ const general = SpaceSummarySchema.parse({
   createdAt: '2026-09-20T00:00:00.000Z',
   updatedAt: '2026-09-20T00:00:00.000Z',
 });
+const planning = SpaceSummarySchema.parse({
+  ...general,
+  id: '00000000-0000-7000-8000-0000000000f1',
+  name: 'Planning',
+  systemRole: null,
+});
+const reachedThroughChannel = SpaceSummarySchema.parse({
+  ...planning,
+  id: '00000000-0000-7000-8000-0000000000f2',
+  name: 'Shared project',
+  reach: 'through_channel',
+});
 
-function renderMenu(callbacks = {
+type MenuCallbacks = {
+  onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateSpace: (name: string) => Promise<void>;
+  onImportChannel: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
+};
+
+function renderMenu(callbacks: MenuCallbacks = {
   onCreateChannel: vi.fn(async () => undefined),
   onCreateSpace: vi.fn(async () => undefined),
   onImportChannel: vi.fn(async () => undefined),
@@ -53,19 +71,21 @@ describe('sidebar creation menu', () => {
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General');
     expect(within(dialog).queryByRole('textbox', { name: 'URL' })).not.toBeInTheDocument();
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
+    const name = within(dialog).getByRole('textbox', { name: 'Name of channel' });
+    expect(name).toHaveAttribute('maxlength', '180');
+    fireEvent.change(name, { target: { value: 'Launch' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(callbacks.onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
   });
 
-  it('selects the first Space when the directory arrives after the dialog opens', async () => {
+  it('repairs a selection when the live directory removes its Space', async () => {
     const callbacks = {
       onCreateChannel: vi.fn(async () => undefined),
       onCreateSpace: vi.fn(async () => undefined),
       onImportChannel: vi.fn(async () => undefined),
     };
     const view = render(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[]} onStart={vi.fn()}>
+      <NewWorkstreamMenu {...callbacks} spaces={[general, planning]} onStart={vi.fn()}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
@@ -73,16 +93,52 @@ describe('sidebar creation menu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
+    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General');
 
     view.rerender(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[general]} onStart={vi.fn()}>
+      <NewWorkstreamMenu {...callbacks} spaces={[planning]} onStart={vi.fn()}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
 
-    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General'));
+    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Planning'));
     expect(within(dialog).getByRole('button', { name: 'Create' })).toBeEnabled();
+  });
+
+  it('omits Spaces reached only through a shared Channel', () => {
+    render(<Tooltip.Provider>
+      <NewWorkstreamMenu
+        onCreateChannel={vi.fn(async () => undefined)}
+        onCreateSpace={vi.fn(async () => undefined)}
+        onImportChannel={vi.fn(async () => undefined)}
+        onStart={vi.fn()}
+        spaces={[reachedThroughChannel, general]}
+      >
+        <button type="button">Plus</button>
+      </NewWorkstreamMenu>
+    </Tooltip.Provider>);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+    const select = screen.getByRole('combobox', { name: 'Space' });
+    expect(select).toHaveTextContent('General');
+    fireEvent.click(select);
+    expect(screen.queryByRole('option', { name: 'Shared project' })).not.toBeInTheDocument();
+  });
+
+  it('disables the launcher while Space capabilities are unavailable', () => {
+    render(<Tooltip.Provider>
+      <NewWorkstreamMenu
+        canCreateSpace={false}
+        onCreateChannel={vi.fn(async () => undefined)}
+        onCreateSpace={vi.fn(async () => undefined)}
+        onImportChannel={vi.fn(async () => undefined)}
+        onStart={vi.fn()}
+        spaces={[]}
+      >
+        <button type="button">Plus</button>
+      </NewWorkstreamMenu>
+    </Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Plus' })).toBeDisabled();
   });
 
   it('collects the required import fields', async () => {
@@ -92,9 +148,31 @@ describe('sidebar creation menu', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Research' } });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'URL' }), { target: { value: 'https://chatgpt.com/share/example' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(callbacks.onImportChannel).toHaveBeenCalledWith({
-      name: 'Research', spaceId: general.id, url: 'https://chatgpt.com/share/example',
-    }));
+    await waitFor(() => expect(callbacks.onImportChannel).toHaveBeenCalledWith(expect.objectContaining({
+      clientMessageId: expect.any(String), name: 'Research', spaceId: general.id, url: 'https://chatgpt.com/share/example',
+    })));
+  });
+
+  it('surfaces import errors and reuses the request identity for an unchanged retry', async () => {
+    const onImportChannel = vi.fn(async (input: {
+      clientMessageId: string; name: string; spaceId: string; url: string;
+    }) => { void input; throw new Error('This Claude URL requires sign-in.'); });
+    renderMenu({
+      onCreateChannel: vi.fn(async () => undefined),
+      onCreateSpace: vi.fn(async () => undefined),
+      onImportChannel,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import channel from Claude or ChatGPT' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Research' } });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'URL' }), { target: { value: 'https://claude.ai/share/example' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await screen.findByText('This Claude URL requires sign-in.');
+    const firstRequestId = onImportChannel.mock.calls[0]?.[0].clientMessageId;
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(onImportChannel).toHaveBeenCalledTimes(2));
+    expect(onImportChannel.mock.calls[1]?.[0].clientMessageId).toBe(firstRequestId);
   });
 
   it('creates a Space from its name alone', async () => {

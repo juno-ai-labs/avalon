@@ -327,6 +327,29 @@ describe("POST /spaces", () => {
   });
 });
 
+describe("POST /workstreams/import", () => {
+  it("settles the chosen title and places imported history in the selected Space", async () => {
+    const destination = await createSpace("personal", "Research");
+    const imported = await request("/workstreams/import", OWNER_AUTH, {
+      title: "Imported research",
+      source: { provider: "claude", url: null },
+      content: { messages: [
+        { role: "user", text: "What did we learn?" },
+        { role: "assistant", text: "The selected result." },
+      ] },
+      clientMessageId: "00000000-0000-7000-8000-00000000d205",
+      spaceIds: [destination.id],
+    });
+    expect(imported.status).toBe(201);
+    const workstream = (imported.body as {
+      workstream: { id: WorkstreamId; title: string; titleStatus: string };
+    }).workstream;
+    expect(workstream).toMatchObject({ title: "Imported research", titleStatus: "settled" });
+    expect(await channelSpaceSources(asWorkstreamId(workstream.id)))
+      .toEqual([expect.objectContaining({ spaceId: destination.id, scope: "personal" })]);
+  });
+});
+
 describe("PATCH /spaces/:id/audience", () => {
   it("widens a Space and narrows it again, carrying each answer to its member Channel", async () => {
     const created = await createSpace("personal", "Hiring");

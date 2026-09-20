@@ -24,7 +24,9 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 The sidebar's single plus menu offers **Start a new channel**, **Import channel
 from Claude or ChatGPT**, and **Create a new space**. The import dialog requires
 a Space, a Channel name, and a shared conversation URL; **Create** imports it in
-one action. It does not display an export picker or transcript preview.
+one action. Only Spaces the person may edit are offered, and the launcher stays
+disabled until the Space directory is ready. Channel names stop at the server's
+180-character limit. It does not display an export picker or transcript preview.
 Available attachments and artifact files are resolved automatically; missing file
 references remain visible in the imported conversation. The source roles stay
 intact; the byline says who imported them. The entered name is the settled
@@ -99,6 +101,9 @@ This provides an executable eval seam, not a scheduler or scoring database.
   remain recoverable under the same preparation identity.
 - Source request identity is hashed separately from materialized importer snapshots.
   The preparation receipt freezes materialized content across retries.
+- One unchanged form attempt retains its create identity after an uncertain
+  response; changing its name, Space, or URL starts a new identity. Placement
+  is creation semantics and stays out of the imported-content identity hash.
 - Uploaded user files and assistant artifact bytes use the existing resource authority.
 - Unavailable files remain readable references, never fake downloadable resources.
 - Extracted document text is a separately named text file; the original reference remains.
@@ -174,7 +179,9 @@ cannot reconstruct original files automatically.
 
 **What changed:** Import now collects its required Space, Channel name, and URL
 from the sidebar's one creation menu, and sends the chosen Space and settled name
-through the existing prepared-history creation path.
+through the existing prepared-history creation path. The menu waits for a
+writable Space directory, retains one request identity across an unchanged
+retry, and surfaces the API's actionable import refusal.
 
 **Why:** Space- and row-local plus buttons made creation depend on where somebody
 happened to be looking, while an import created into General and renamed itself
