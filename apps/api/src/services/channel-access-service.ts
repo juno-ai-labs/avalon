@@ -642,8 +642,11 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
       return new ApiError(503, code,
         `The Space that reaches “${channelTitle}” could not be reached; try again`);
     // Reachable only because this map is exhaustive over the shared union. No
-    // Channel access path is paginated, so no cursor reaches one.
+    // Channel access path is paginated, so no cursor reaches one, and no
+    // Channel access path changes a Space's audience.
     case "space_cursor_invalid":
       return new ApiError(400, code, "That page cursor is not one this Space issued");
+    case "space_audience_self_excluded":
+      return new ApiError(409, code, "A space cannot be made private without its own editor in it");
   }
 }

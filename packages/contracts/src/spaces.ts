@@ -490,6 +490,25 @@ export const SpaceErrorCodeSchema = z.enum([
    */
   "space_authority_unreachable",
   /**
+   * The audience this request asks for would leave its own caller out of the
+   * Space.
+   *
+   * A Space narrowed to `personal` admits its participants and nobody else, so
+   * a caller who leaves themselves off that list has just made a Space they
+   * can no longer change — and, when no Channel in it is one they can read, no
+   * longer see. Every following read of it answers them as somebody who is not
+   * in it: an empty participant roster, no defaults, and a Channel count taken
+   * over what they can see, which may be nothing.
+   *
+   * Refused rather than allowed and explained, because there is no undo. The
+   * Space's own authority would accept the change, the walk would carry it to
+   * every member Channel, and the person who asked for it would be the one
+   * person who cannot ask for it back. Removing *somebody else* is a different
+   * decision with a different rule — an Organization owner or admin may, and
+   * `participant_removal_denied` is what refuses anybody else.
+   */
+  "space_audience_self_excluded",
+  /**
    * The page cursor this request carried is not one this Space issued.
    *
    * Its own code rather than `space_not_found`, which is what a malformed
