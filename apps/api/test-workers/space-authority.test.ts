@@ -434,6 +434,64 @@ function nextWorkstreamStateFor(
   });
 }
 
+/**
+ * One viewer row published on a Channel, for a batch that changes exactly it.
+ *
+ * `sourceVersion` is the projection's own ordering, so each of these has to
+ * advance or the row is refused as superseded. The generation stays 1 because
+ * the Channel visibility predicate joins the viewer row on it: a mismatch
+ * hides the Channel for a reason that is not the one under test.
+ */
+async function publishViewerRow(
+  workstreamId: WorkstreamId,
+  userId: UserId,
+  sourceVersion: number,
+  viewer: { isParticipant: boolean; unreadCount?: number },
+): Promise<void> {
+  const effect: ParentEffect = {
+    kind: "directory_user",
+    userId,
+    isParticipant: viewer.isParticipant,
+    participantAddedAt: "2026-09-19T00:00:00.000Z",
+    unreadCount: viewer.unreadCount ?? 0,
+    youAreMentioned: false,
+    unseen: false,
+    listable: true,
+    seenAttentionOrdinal: 0,
+    manualUnreadFromOrdinal: null,
+    manualUnreadGeneration: 0,
+    latestMentionAttentionOrdinal: 0,
+  };
+  await workspace().applyWorkstreamDirectoryEffects({
+    workspaceId: WORKSPACE_ID,
+    envelopes: [ParentEffectEnvelopeSchema.parse({
+      kind: "parent_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: workstreamId,
+      generation: 1,
+      messageId: messageId(),
+      partitionKey: `user:${userId}`,
+      sourceVersion,
+      requiredProjectionVersion: null,
+      payloadHash: conversationEffectHash(effect),
+      effect,
+    })],
+  });
+}
+
+/** Every Space snapshot this socket is pushed, as the ids each one carries. */
+function collectSpaceSnapshots(socket: WebSocket): readonly (readonly string[])[] {
+  const seen: string[][] = [];
+  socket.addEventListener("message", (event: MessageEvent) => {
+    const decoded = WorkspaceSpaceSnapshotEventSchema.safeParse(JSON.parse(String(event.data)));
+    if (decoded.success) seen.push(decoded.data.spaces.active.items.map((item) => item.id));
+  });
+  return seen;
+}
+
 /** Give a socket that should already hold `count` nudges the chance to. */
 async function settleNudges(seen: readonly (readonly string[])[], count: number): Promise<void> {
   for (let attempt = 0; attempt < 200 && seen.length < count; attempt += 1) {
@@ -956,6 +1014,34 @@ describe("WorkspaceDO space authority", () => {
       ok: true,
       members: [{ workstreamId: CHANNEL_A }, { workstreamId: CHANNEL_B }],
     });
+  });
+
+  it("given the only Channel reaching a viewer into a Space, when their participation moves, then the Space leaves and returns without a reconnect", async () => {
+    const personal = await reserve("Side work", "personal");
+    // `CHANNEL_C` is this viewer's whole reach into the Space: a Channel only
+    // its participants can see, and they are one of them.
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+    await place(personal, CHANNEL_C);
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
+      .toEqual([personal]);
+
+    const member = await connectViewer(MEMBER, "f3");
+    const snapshots = collectSpaceSnapshots(member.socket);
+
+    // The Space's own predicate is live on every read, so nothing here was
+    // ever *readable* — what outlived the reach is the name, on the sidebar
+    // and, mirrored into the desktop's local cache, across a restart.
+    await publishViewerRow(CHANNEL_C, MEMBER, 2, { isParticipant: false });
+    await publishViewerRow(CHANNEL_C, MEMBER, 3, { isParticipant: true });
+    // An unread count arrives on every message in every Channel this person is
+    // in and moves no Space at all. Republishing on it would rebuild both
+    // directories for them on the hottest path this object has.
+    await publishViewerRow(CHANNEL_C, MEMBER, 4, { isParticipant: true, unreadCount: 3 });
+    await publishViewerRow(CHANNEL_C, MEMBER, 5, { isParticipant: false });
+
+    await settleNudges(snapshots, 3);
+    expect(snapshots).toEqual([[], [personal], []]);
+    member.socket.close();
   });
 
   it("given a Space reached through a Channel, when a Channel they cannot see moves in it, then no nudge names it", async () => {
