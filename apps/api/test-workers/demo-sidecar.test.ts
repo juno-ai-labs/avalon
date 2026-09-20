@@ -1,3 +1,10 @@
+import { Hono } from 'hono';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { requireAuth } from '../src/middleware/auth';
+import { issueAccessToken } from '../src/services/auth-service';
+import { demoSidecarRoutes } from '../src/routes/demo-sidecar';
+import { ApiError } from '../src/lib/api-error';
+import type { HonoAppEnv } from '../src/env';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject } from 'cloudflare:test';
@@ -16,6 +23,7 @@ beforeEach(async () => {
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: auth.sessionId });
   await env.DB.batch([
     env.DB.prepare('ALTER TABLE users ADD COLUMN platform_user_id TEXT'),
+    env.DB.prepare('ALTER TABLE users ADD COLUMN analytics_person_id TEXT'),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN name TEXT DEFAULT 'Demo'"),
     env.DB.prepare('UPDATE users SET email = ?, platform_user_id = ? WHERE id = ?').bind('operator@rallywith.ai', USER_ID, USER_ID),
     env.DB.prepare('INSERT INTO users (id, name, email, platform_user_id) VALUES (?, ?, ?, ?)').bind(represented, 'Represented', 'participant@rallywith.ai', represented),
@@ -49,7 +57,7 @@ it('admits and replays a represented turn through ordinary admission with operat
   const audit = await env.AUDIT_DB.prepare("SELECT actor_user_id, target_id, metadata_json FROM audit_events WHERE action = 'impersonation_admitted'").all<{ actor_user_id: string; target_id: string; metadata_json: string }>();
   expect(audit.results).toHaveLength(2);
   expect(audit.results[0]).toMatchObject({ actor_user_id: USER_ID, target_id: first.turnId });
-  expect(JSON.parse(audit.results[0]!.metadata_json)).toMatchObject({ representedUserId: represented });
+  expect(JSON.parse(audit.results[0]!.metadata_json)).toMatchObject({ representedUserId: represented, contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) });
   const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, WORKSTREAM_ID)));
   await runInDurableObject(stub, (_instance, state) => {
     const rows = state.storage.sql.exec('SELECT author_user_id FROM canonical_conversation_turn_details WHERE client_message_id = ?', input.clientMessageId).toArray();
@@ -83,6 +91,41 @@ it('lists only original-cast destinations and admits self-send with the self rel
 it('denies removed participants and unknown destinations', async () => {
   const input = { representedUserId: represented, workstreamId: '00000000-0000-7000-8000-000000000088', substreamId: asSubstreamId('0'), text: 'Hello', clientMessageId: crypto.randomUUID() };
   await expect(sendDemoMessage(env, auth, input)).rejects.toMatchObject({ status: 404 });
-  await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE user_id = ?").bind(represented).run();
+  await env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE user_id = ?").bind(represented).run();
   await expect(sendDemoMessage(env, auth, { ...input, workstreamId: WORKSTREAM_ID })).rejects.toMatchObject({ status: 403 });
+});
+it('labels only the represented participant’s visible Breakouts', async () => {
+  const childId = asSubstreamId('00000000-0000-4000-8000-000000000077');
+  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName('global', WORKSPACE_ID, WORKSTREAM_ID)));
+  await runInDurableObject(parent, (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO conversation_children
+      (substream_id, kind, title, created_by_user_id, status, created_at, updated_at)
+      VALUES (?, 'child', 'Pricing review', ?, 'ready', 1, 1)`, childId, represented);
+    state.storage.sql.exec(`INSERT INTO private_child_memberships
+      (substream_id, user_id, active, version, updated_at, added_by_user_id, added_at) VALUES (?, ?, 1, 1, 1, ?, 1)`, childId, represented, represented);
+  });
+  const catalog = await demoCatalog(env, auth);
+  expect(catalog.participants.find(person => person.userId === represented)?.destinations).toContainEqual({ workstreamId: WORKSTREAM_ID, substreamId: childId, label: 'Fixture / Pricing review' });
+  expect(catalog.participants.find(person => person.userId === USER_ID)?.destinations).not.toContainEqual(expect.objectContaining({ substreamId: childId }));
+});
+
+it('serves authenticated HTTP admission and rejects forged authority fields and regular organizations', async () => {
+  const app = new Hono<HonoAppEnv>();
+  app.onError(error => new Response(JSON.stringify({ code: error instanceof ApiError ? error.code : 'unknown' }), { status: error instanceof ApiError ? error.status : 500 }));
+  app.use('*', requireAuth);
+  app.route('/demo-sidecar', demoSidecarRoutes);
+  const context = createExecutionContext();
+  const token = await issueAccessToken(env, auth);
+  const input = { representedUserId: represented, workstreamId: WORKSTREAM_ID, substreamId: '0', text: 'HTTP participant turn', clientMessageId: crypto.randomUUID() };
+  const request = (body: unknown, authenticated = true) => app.fetch(new Request('https://rally.test/demo-sidecar/messages', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(authenticated ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env, context);
+  expect((await request(input, false)).status).toBe(401);
+  expect((await request({ ...input, operatorUserId: represented })).status).toBe(400);
+  const sent = await request(input);
+  expect(sent.status).toBe(200);
+  expect(await sent.json()).toHaveProperty('turnId');
+  await env.DB.prepare('DELETE FROM demo_operations').run();
+  expect((await request({ ...input, clientMessageId: crypto.randomUUID() })).status).toBe(403);
+  await waitOnExecutionContext(context);
 });

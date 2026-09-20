@@ -52,6 +52,13 @@ inserts missing pairs and preserves revoked ones.
 
 ## Changelog
 
+### 2026-09-20 — Minimal Breakout labels and audit correlation
+
+Catalogs now read the parent's visible private-child inventory for names, then
+recheck ordinary child authority. Raw IDs were rejected as presenter-facing labels.
+Audit metadata includes a body digest, request ID, and API version without storing
+message text; ordinary turn IDs remain the correlation to admitted messages.
+
 ### 2026-09-20 — HTTP represented admission
 
 **What changed:** Added catalog/send/eligibility routes, conversation-boundary

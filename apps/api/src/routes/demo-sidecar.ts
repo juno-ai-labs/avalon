@@ -14,4 +14,4 @@ demoSidecarRoutes.get('/eligibility', async c => {
 });
 demoSidecarRoutes.get('/catalog', async c => c.json(DemoCatalogSchema.parse(await demoCatalog(c.env, getAuth(c)))));
 demoSidecarRoutes.post('/messages', zValidator('json', DemoMessageRequestSchema), async c =>
-  c.json(DemoMessageResultSchema.parse(await sendDemoMessage(c.env, getAuth(c), c.req.valid('json')))));
+  c.json(DemoMessageResultSchema.parse(await sendDemoMessage(c.env, getAuth(c), c.req.valid('json'), c.get('requestId')))));
