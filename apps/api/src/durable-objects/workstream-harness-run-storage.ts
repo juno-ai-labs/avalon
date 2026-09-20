@@ -1802,14 +1802,10 @@ export class WorkstreamHarnessRunStorage {
       // no longer have a live producer. All of this shares the transaction
       // with the run row below so a terminal run can never retain a clock or
       // streaming overlay that still claims it is active.
-      this.#closeExecutionActivities(input.runId, "failed", input.now);
+      this.#closeExecutionActivities(input.runId, "failed", input.leaseExpiresAt);
       this.sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, input.runId);
       this.sql.exec(`DELETE FROM active_agent_compaction WHERE run_id = ?`, input.runId);
-      this.sql.exec(
-        `DELETE FROM inference_delay_status WHERE run_id = ? OR execution_id = ?`,
-        input.runId,
-        input.runId,
-      );
+      this.sql.exec(`DELETE FROM inference_delay_status WHERE run_id = ?`, input.runId);
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,
