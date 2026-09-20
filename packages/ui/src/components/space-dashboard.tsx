@@ -1,9 +1,9 @@
-import { Trash2, UserPlus } from 'lucide-react';
+import { UserPlus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
-import { AvatarStack, Button, DropdownSelect, InlineError } from './primitives';
+import { AvatarStack, DropdownSelect, InlineError } from './primitives';
 import { SpaceIcon, type SpaceAppearance } from './space-appearance-picker';
 
 /**
@@ -157,18 +157,9 @@ export function SpaceDashboardHeader({
   );
 }
 
-/**
- * One titled band of the dashboard.
- *
- * Channels, resources and Sidekicks are the same shape — a heading, a sentence
- * about what the section inherits, one action, and a list — so they are one
- * component with three sets of contents rather than three near-identical
- * sections that drift apart the first time one of them is adjusted.
- */
-export function SpaceDashboardSection({ action, children, description, heading, headingId }: {
-  action?: ReactNode;
+/** One titled band around the Space dashboard's Channel list. */
+export function SpaceDashboardSection({ children, heading, headingId }: {
   children: ReactNode;
-  description?: string;
   heading: string;
   headingId: string;
 }): React.JSX.Element {
@@ -177,57 +168,9 @@ export function SpaceDashboardSection({ action, children, description, heading, 
       <div className="space-dashboard-section-heading">
         <div className="space-dashboard-section-copy">
           <h2 id={headingId}>{heading}</h2>
-          {description && <p className="space-dashboard-muted">{description}</p>}
         </div>
-        {action}
       </div>
       {children}
     </section>
-  );
-}
-
-/** A thing a Space hands down, in the list of things of its kind. */
-export interface SpaceDefaultItem {
-  id: string;
-  title: string;
-  subtitle?: string | undefined;
-}
-
-/**
- * The resources and the Sidekicks a Space hands down, as one list.
- *
- * They are the same mechanism on the server — one registry keyed by `kind`,
- * one delivery, one generation — and they are the same list here: a named
- * thing with a **Remove** beside it. This component is deliberately not told
- * which kind it is drawing, because nothing about the drawing depends on it;
- * the kind branches where it actually matters, in the host's copy table and in
- * the two `/spaces/:id/defaults` calls. Two components would be two places to
- * fix the next time a default grows a state.
- */
-export function SpaceDefaultList({ disabled, emptyLabel, items, onRemove }: {
-  disabled: boolean;
-  emptyLabel: string;
-  items: SpaceDefaultItem[];
-  onRemove: (id: string) => void;
-}): React.JSX.Element {
-  if (items.length === 0) return <p className="space-dashboard-muted">{emptyLabel}</p>;
-  return (
-    <ul className="space-default-list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <span>
-            <strong>{item.title}</strong>
-            {item.subtitle && <small>{item.subtitle}</small>}
-          </span>
-          <Button
-            aria-label={`Remove ${item.title}`}
-            disabled={disabled}
-            onClick={() => onRemove(item.id)}
-          >
-            <Trash2 aria-hidden="true" size={14} /> Remove
-          </Button>
-        </li>
-      ))}
-    </ul>
   );
 }

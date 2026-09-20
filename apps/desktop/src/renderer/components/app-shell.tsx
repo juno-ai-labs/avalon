@@ -1,6 +1,6 @@
 import type { CreateSpaceRequest, PersonalOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
@@ -12,6 +12,7 @@ import {
   useAppSession,
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
+import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { desktopBridge } from '../lib/platform';
@@ -57,6 +58,47 @@ export function upsertSpaceDirectory(
     items: current?.items.some((item) => item.id === space.id)
       ? current.items.map((item) => item.id === space.id ? space : item)
       : [...(current?.items ?? []), space],
+  };
+}
+
+/**
+ * The Space-placement callbacks handed to the sidebar.
+ *
+ * Kept as one tested adapter because both identifiers are strings at the API
+ * boundary: reversing `spaceId` and `workstreamId` typechecks while sending the
+ * mutation to the wrong route. The shell uses this returned pair directly, so
+ * the test covers the same callbacks the sidebar invokes.
+ */
+export function channelSpaceMutationHandlers(
+  api: Pick<RallyApi, 'addChannelToSpace' | 'removeChannelFromSpace'> | null,
+  queryClient: QueryClient,
+): {
+  onAddChannelToSpace: (spaceId: string, workstreamId: string) => Promise<void>;
+  onRemoveChannelFromSpace: (spaceId: string, workstreamId: string) => Promise<void>;
+} {
+  const activeApi = (): Pick<RallyApi, 'addChannelToSpace' | 'removeChannelFromSpace'> => {
+    if (!api) throw new Error('Your session is no longer active. Sign in again.');
+    return api;
+  };
+  const applySpace = (updated: SpaceSummary): void => {
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+      ...current,
+      items: current.items.map((space) => space.id === updated.id ? updated : space),
+    } : current);
+  };
+  return {
+    // A Channel keeps every Space it is already in: adding is additive, and
+    // the placement it produces is a second one rather than a move.
+    onAddChannelToSpace: async (spaceId, workstreamId) => {
+      applySpace(await activeApi().addChannelToSpace(spaceId, workstreamId));
+      // The placement is on the Channel's row, which only WorkspaceDO writes;
+      // its socket push is what puts the row under the Space.
+      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+    },
+    onRemoveChannelFromSpace: async (spaceId, workstreamId) => {
+      applySpace(await activeApi().removeChannelFromSpace(spaceId, workstreamId));
+      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+    },
   };
 }
 
@@ -635,28 +677,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           );
           return created;
         }}
-        // A Channel keeps every Space it is already in: adding is additive, and
-        // the placement it produces is a second one rather than a move.
-        onAddChannelToSpace={async (spaceId, workstreamId) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const updated = await api.addChannelToSpace(spaceId, workstreamId);
-          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
-            ...current,
-            items: current.items.map((space) => space.id === updated.id ? updated : space),
-          } : current);
-          // The placement is on the Channel's row, which only WorkspaceDO
-          // writes; its socket push is what puts the row under the Space.
-          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        }}
-        onRemoveChannelFromSpace={async (spaceId, workstreamId) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const updated = await api.removeChannelFromSpace(spaceId, workstreamId);
-          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
-            ...current,
-            items: current.items.map((space) => space.id === updated.id ? updated : space),
-          } : current);
-          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        }}
+        {...channelSpaceMutationHandlers(api, queryClient)}
         ordering={ordering}
         // One write for all three hand-arranged lists. The authority answers
         // with what it actually stored — a request may name an item the

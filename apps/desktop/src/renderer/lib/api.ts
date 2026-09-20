@@ -61,7 +61,6 @@ import {
   type ChannelAccess,
   type ContainerOrder,
   type CreateSpaceRequest,
-  type SpaceDefaultKind,
   type SpaceSummary,
   type UpdateSpacePresentationRequest,
   type SpaceScope,
@@ -1328,28 +1327,6 @@ export class RallyApi {
   removeChannelFromSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
     return this.request(
       `/spaces/${encodeURIComponent(spaceId)}/channels/${encodeURIComponent(workstreamId)}`,
-      { method: 'DELETE', schema: WireSpaceSummarySchema },
-    );
-  }
-
-  /**
-   * A resource or a Sidekick recommendation every member Channel inherits.
-   *
-   * One pair of methods rather than two, keyed by `kind` the way the server's
-   * registry, delivery target and Queue message are. A second pair would be the
-   * same request with a different literal in it.
-   */
-  addSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(spaceId)}/defaults`, {
-      method: 'POST',
-      body: { kind, targetId },
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  removeSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
-    return this.request(
-      `/spaces/${encodeURIComponent(spaceId)}/defaults/${kind}/${encodeURIComponent(targetId)}`,
       { method: 'DELETE', schema: WireSpaceSummarySchema },
     );
   }
