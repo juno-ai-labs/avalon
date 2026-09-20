@@ -5,7 +5,7 @@ import { ConfiguredRegionSchema } from "@rally/contracts/regions";
 /** Adapt server metadata to the shared collaboration view without fake tokens. */
 export function cookieClientSession(region: string, session: BrowserSession): CookieClientSession {
   ConfiguredRegionSchema.parse(region);
-  if (session.workspace && session.workspace.region !== region) throw new Error("Workspace deployment does not match the browser session");
+  if (session.workspace && session.workspace.region !== region) throw new Error("Organization deployment does not match the browser session");
   return {
     authentication: "cookie",
     apiBaseUrl: `/regional/${region}/browser/api/${session.workspace?.id ?? "_"}`,

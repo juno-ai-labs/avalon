@@ -71,7 +71,7 @@ describe('browser fallback single-platform identity boundary', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('accepts one Global login and validates the regional workspace session before installing it', async () => {
+  it('accepts one Global login and validates the regional organization session before installing it', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(jsonResponse(identityWireSession) as Response);
     const bridge = desktopBridge();
@@ -98,7 +98,7 @@ describe('browser fallback single-platform identity boundary', () => {
     expect(regionalSession).not.toHaveProperty('refreshToken');
   });
 
-  it('rejects a login response that bypasses platform workspace discovery', async () => {
+  it('rejects a login response that bypasses platform organization discovery', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(jsonResponse({
       ...identityWireSession,
@@ -116,7 +116,7 @@ describe('browser fallback single-platform identity boundary', () => {
     await expect(bridge.getSession()).resolves.toBeNull();
   });
 
-  it('rejects a regional session whose endpoint or workspace does not match the request', async () => {
+  it('rejects a regional session whose endpoint or organization does not match the request', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(jsonResponse(identityWireSession) as Response);
     const bridge = desktopBridge();
@@ -130,11 +130,11 @@ describe('browser fallback single-platform identity boundary', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse({
       ...identityWireSession,
-      workspace: { id: 'workspace-global', name: 'Wrong Workspace', region: 'global', role: 'member' },
+      workspace: { id: 'workspace-global', name: 'Wrong Organization', region: 'global', role: 'member' },
     }) as Response);
 
     await expect(bridge.activateWorkspace({ region: 'enterprise', workspaceId: 'workspace-enterprise' }))
-      .rejects.toThrow('did not match this workspace request');
+      .rejects.toThrow('did not match this organization request');
   });
 
   it('rejects a regional shadow user for another verified email', async () => {
@@ -157,6 +157,6 @@ describe('browser fallback single-platform identity boundary', () => {
     }) as Response);
 
     await expect(bridge.activateWorkspace({ region: 'enterprise', workspaceId: 'workspace-enterprise' }))
-      .rejects.toThrow('did not match this workspace request');
+      .rejects.toThrow('did not match this organization request');
   });
 });

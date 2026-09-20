@@ -62,6 +62,7 @@ describe("Slack work stream creator attribution", () => {
       // Real parent grant initialization is covered in workerd conversation-creation.
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
+        flushProvisionalDirectory: async () => undefined,
       } }),
       AVALON_REGION: "global",
     });
@@ -137,6 +138,7 @@ describe("Slack work stream creator attribution", () => {
       // Real parent grant initialization is covered in workerd conversation-creation.
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
+        flushProvisionalDirectory: async () => undefined,
       } }),
       AVALON_REGION: "global",
     });
@@ -174,6 +176,7 @@ describe("Slack work stream creator attribution", () => {
       // Real parent grant initialization is covered in workerd conversation-creation.
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
+        flushProvisionalDirectory: async () => undefined,
       } }),
       AVALON_REGION: "global",
     });

@@ -34,7 +34,7 @@ function show(element: React.ReactNode) {
   </QueryClientProvider>);
 }
 
-describe('workspace event controls', () => {
+describe('organization event controls', () => {
   it.each(['current', 'action_required'] as const)('keeps %s technical recovery controls out of the main view', async (state) => {
     const api = new RallyApi('https://api.example.test', null);
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state,
@@ -45,12 +45,12 @@ describe('workspace event controls', () => {
     await screen.findByText(state === 'current' ? 'Connected' : 'Needs attention');
     expect(screen.getByRole('button', { name: 'Test' })).toBeVisible();
     expect(screen.queryByLabelText('Existing provider webhook ID')).toBeNull();
-    expect(screen.queryByText('Replace workspace API key')).toBeNull();
+    expect(screen.queryByText('Replace organization API key')).toBeNull();
     expect(screen.queryByText(/Configuration/u)).toBeNull();
     expect(screen.queryByText(/Destination:/u)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     expect(screen.getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Replace workspace API key')).toBeVisible();
+    expect(screen.getByText('Replace organization API key')).toBeVisible();
     expect(test).not.toHaveBeenCalled(); expect(change).not.toHaveBeenCalled();
   });
 
@@ -159,10 +159,10 @@ describe('workspace event controls', () => {
     const input = document.querySelector('input[type="password"]');
     if (!input) throw new Error('The API key must use a password field');
     fireEvent.change(input, { target: { value: 'fixture-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await screen.findByText('Connection unavailable');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect for workspace' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect for organization' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(create.mock.calls).toEqual([['fixture-key', attemptId], ['fixture-key', attemptId]]);
   });
@@ -170,11 +170,11 @@ describe('workspace event controls', () => {
   it('recovers a reserved setup after a lost response without creating another installation', async () => {
     const api = new RallyApi('https://api.example.test', null);
     const create = vi.spyOn(api, 'createAshbyWorkspaceConnection').mockRejectedValue(new Error('Response lost'));
-    vi.spyOn(api, 'getConnections').mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby workspace events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
+    vi.spyOn(api, 'getConnections').mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby organization events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
     const recovered = vi.fn();
     show(<AshbyWorkspaceSetup api={api} attemptId={installation().attemptId} onSuccess={() => {}} onClose={() => {}} onRecovered={recovered} />);
-    fireEvent.change(screen.getByLabelText('Ashby workspace API key'), { target: { value: 'fixture-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
+    fireEvent.change(screen.getByLabelText('Ashby organization API key'), { target: { value: 'fixture-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await waitFor(() => expect(recovered).toHaveBeenCalledWith(connectionId));
     expect(create).toHaveBeenCalledTimes(1);
   });
@@ -185,12 +185,12 @@ describe('workspace event controls', () => {
     const read = vi.spyOn(api, 'getConnections').mockRejectedValue(new Error('Offline'));
     const recovered = vi.fn();
     show(<AshbyWorkspaceSetup api={api} attemptId={installation().attemptId} onSuccess={() => {}} onClose={() => {}} onRecovered={recovered} />);
-    fireEvent.change(screen.getByLabelText('Ashby workspace API key'), { target: { value: 'fixture-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
+    fireEvent.change(screen.getByLabelText('Ashby organization API key'), { target: { value: 'fixture-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await screen.findByText('Existing installations could not be checked. Check again before retrying setup.');
-    fireEvent.change(screen.getByLabelText('Ashby workspace API key'), { target: { value: 'corrected-key' } });
-    expect(screen.getByRole('button', { name: 'Connect for workspace' })).toBeDisabled();
-    read.mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby workspace events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
+    fireEvent.change(screen.getByLabelText('Ashby organization API key'), { target: { value: 'corrected-key' } });
+    expect(screen.getByRole('button', { name: 'Connect for organization' })).toBeDisabled();
+    read.mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby organization events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
     fireEvent.click(screen.getByRole('button', { name: 'Find existing installation' }));
     await waitFor(() => expect(recovered).toHaveBeenCalledWith(connectionId));
     expect(create).toHaveBeenCalledTimes(1);
@@ -240,7 +240,7 @@ describe('workspace event controls', () => {
     const replace = vi.spyOn(api, 'replaceInstallationApiKey').mockResolvedValue(undefined as never);
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
-    fireEvent.click(screen.getByText('Replace workspace API key'));
+    fireEvent.click(screen.getByText('Replace organization API key'));
     const field = screen.getByLabelText('New API key');
 
     fireEvent.paste(field);
@@ -267,7 +267,7 @@ describe('workspace event controls', () => {
     const replace = vi.spyOn(api, 'replaceInstallationApiKey').mockResolvedValue(undefined as never);
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
-    fireEvent.click(screen.getByText('Replace workspace API key'));
+    fireEvent.click(screen.getByText('Replace organization API key'));
     const field = screen.getByLabelText('New API key');
     fireEvent.paste(field);
     fireEvent.change(field, { target: { value: 'opaque-ashby-key' } });
@@ -288,7 +288,7 @@ describe('workspace event controls', () => {
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     expect(screen.getByRole('button', { name: 'Refresh status' })).toBeVisible();
-    expect(screen.queryByText('Replace workspace API key')).toBeNull();
+    expect(screen.queryByText('Replace organization API key')).toBeNull();
   });
 
   // Typing a key is not pasting a wrong one: the verdict waits for the field
@@ -300,7 +300,7 @@ describe('workspace event controls', () => {
       state: 'current', selectedEvents: ['note.generated'], registrations: [registration('note.generated', 'current', 'whe_1')] } });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
-    fireEvent.click(screen.getByText('Replace workspace API key'));
+    fireEvent.click(screen.getByText('Replace organization API key'));
     const field = screen.getByLabelText('New API key');
     for (const typed of ['g', 'gr', 'grn']) fireEvent.change(field, { target: { value: typed } });
     expect(screen.queryByRole('alert')).toBeNull();
@@ -309,7 +309,7 @@ describe('workspace event controls', () => {
   });
 });
 
-describe('workspace installation cleanup', () => {
+describe('organization installation cleanup', () => {
   it('offers no cleanup retry where no registration has a provider identity to remove', async () => {
     const api = new RallyApi('https://api.example.test', null);
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: {

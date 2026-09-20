@@ -73,7 +73,7 @@ class FakeSocket implements RealtimeSocketClient {
 describe('realtimeSocketTargetAllowed', () => {
   const apiBaseUrls = ['https://api.rallywith.ai', 'https://enterprise.api.rallywith.ai'];
 
-  it('allows only the declared work-stream socket shape on configured regional origins', () => {
+  it('allows only the declared channel socket shape on configured regional origins', () => {
     expect(realtimeSocketTargetAllowed(openInput(), apiBaseUrls)).toBe(true);
     expect(realtimeSocketTargetAllowed(openInput('substream_feed'), apiBaseUrls)).toBe(true);
     expect(realtimeSocketTargetAllowed({
@@ -277,7 +277,7 @@ describe('desktop realtime socket validation', () => {
 });
 
 describe('RealtimeSocketBroker', () => {
-  it('starts a work-stream control socket and its feed socket without waiting for either handshake', () => {
+  it('starts a channel control socket and its feed socket without waiting for either handshake', () => {
     const sockets = [new FakeSocket(), new FakeSocket()];
     const createSocket = vi.fn<RealtimeSocketFactory>(() => sockets.shift()!);
     const broker = new RealtimeSocketBroker(createSocket);

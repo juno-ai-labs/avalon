@@ -26,6 +26,9 @@ test("rejects direct Durable Object namespace routing operations", () => {
     assert.match(messages[0].message, /durableObjectStubForWorkspace/u);
   }
   assert.equal(lint(`env.CRASH_SYMBOLICATOR.getByName(crashId)`).length, 1);
+  // A Space lives in its Organization's region like everything else it groups,
+  // so its namespace is routed through the same placement-aware resolver.
+  assert.equal(lint(`env.SPACE_DOS.getByName(spaceName)`).length, 1);
 });
 
 test("rejects computed, optional, aliased, and typed namespace routing", () => {

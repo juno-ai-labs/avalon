@@ -27,7 +27,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
-| `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
+| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a Space, Channel, Project or person may hold is in `spaces.ts` and `projects.ts`, which draw from it. |
 | `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 

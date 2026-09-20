@@ -22,7 +22,7 @@ import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/con
 import { workstreamDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { pendingBindToolBatch } from "@rally/agent-harness";
+import { pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -52,6 +52,7 @@ import {
   asWorkspaceId,
   ServerSocketEventSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamAppearancePatchSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
@@ -101,6 +102,7 @@ import {
 } from "../observability/tracing";
 import { latestMigrationVersion } from "./migration-reporting";
 import {
+  type AttemptLease,
   claimHarnessAttempt,
   repairTerminalResidualReceipts,
   reapStaleHarnessRuns,
@@ -118,6 +120,7 @@ import {
 } from "./workstream-resident-context-protocol";
 import {
   loadToolReplayOutput,
+  reenterInterruptedWriteForRecovery,
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
@@ -370,6 +373,19 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
 });
+/**
+ * A proposed audience, asked about rather than applied.
+ *
+ * Read-only by construction: it names the audience a caller is *considering*,
+ * and the answer is a boolean. A Space audience change reaches several Channels
+ * and widening cannot be taken back, so every one of them is asked before any
+ * of them is changed.
+ */
+const PreviewAudienceContainmentRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  audience: WorkstreamReaderAudienceSchema,
+});
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentKind: ConversationParentKindSchema,
@@ -407,25 +423,60 @@ const ProductAuthSchema = z.strictObject({
   // only by server code; `IdentityAuthContext.principal` says why.
   principal: z.enum(["connector", "demo_seed"]).optional(),
 });
+/**
+ * One product operation, with the two fields every one of them carries.
+ *
+ * `parentKind` is which authority the caller believes owns this conversation's
+ * parent, and `runProductRequest` refuses a request whose answer disagrees with
+ * the object's own identity. It is needed because a conversation is addressed
+ * by *id*: `WorkstreamObjectClient` derives the object name from the id alone,
+ * so without this a Space's hidden main conversation — which the PRD gives no
+ * product surface at all, no feed, no transcript, no search result — is
+ * reachable through `/workstreams/:id` by anybody holding a Space id, and every
+ * member is handed every Space id on the workspace socket. A Space id is not a
+ * secret; what it must not be is an address for a Channel operation.
+ *
+ * Defaulted to `workstream` so the wire shape is unchanged for every existing
+ * caller, all of which mean a Channel.
+ */
+function productOperation<Shape extends z.ZodRawShape>(shape: Shape) {
+  return z.strictObject({
+    auth: ProductAuthSchema,
+    parentKind: ConversationParentKindSchema.default("workstream"),
+    ...shape,
+  });
+}
+
 const ProductRequestSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("initialize"),
     input: InitializeWorkstreamObjectInputSchema }),
-  z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("search_links"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("get") }),
+  productOperation({ operation: z.literal("boot") }),
+  productOperation({ operation: z.literal("search_links"),
     links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
-  z.strictObject({ operation: z.literal("search_link"), auth: ProductAuthSchema, turnId: TranscriptTurnIdSchema, linkId: z.string() }),
-  z.strictObject({ operation: z.literal("search_turns"), auth: ProductAuthSchema, turnIds: z.array(TranscriptTurnIdSchema) }),
-  z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
-  z.strictObject({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }),
-  z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
+  productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
+  productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
+  productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
+  productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
+  productOperation({ operation: z.literal("mark_unread") }),
+  productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
-  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
-  z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
-  z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
+  // `spaceSourceId` names the Space a participant change is being made on
+  // behalf of. It changes nothing about admission — the same roster or grant
+  // row is written either way — only where the resulting grant is published,
+  // and it is carried here because nothing downstream can infer it.
+  productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  // The appearance write over the product request. A Space admits no feed
+  // socket, so the socket command that carries this for a Channel cannot reach
+  // it; the write itself is the same one.
+  productOperation({ operation: z.literal("set_appearance"),
+    operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
+  productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
+    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+  productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
 ]);
 /**
@@ -471,6 +522,12 @@ interface AuthRoleRow {
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
+/**
+ * What a caller puts on the wire, where `parentKind` may be absent because the
+ * parse supplies `workstream`. Every existing caller means a Channel and says
+ * nothing; the Space authority is the one that has to say so.
+ */
+export type SubstreamProductRequestInput = z.input<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
 export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
@@ -1012,14 +1069,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
-      if (this.objectStore.identity()) {
+      const constructedIdentity = this.objectStore.identity();
+      if (constructedIdentity) {
         const persistedSubstream = this.state.storage.sql.exec<{
           external_substream_id: string;
         }>(
           `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
         ).toArray()[0];
         if (!persistedSubstream) this.ensureSubstreamIdentity("0");
-        this.ensurePersistentLoop();
+        // A Space's hidden conversation has no loop to recover, and asking for
+        // one here is not a no-op: `ensurePersistentLoop` refuses a Space
+        // parent by design, and a throw inside the constructor's
+        // `blockConcurrencyWhile` breaks the object's input gate. So the first
+        // time a Space's conversation was rebuilt from storage — which is
+        // every time, because nothing opens it and it is evicted seconds after
+        // it is made — it could not be constructed at all, and every Space
+        // operation that addresses it answered 500: its audience, its name and
+        // appearance, its participants and its defaults, and the drain that
+        // carries its own directory projection to the Organization.
+        //
+        // The guard is here rather than in `ensurePersistentLoop` because the
+        // refusal is right everywhere else: a Space with an agent loop is the
+        // thing that must not exist, and every other caller is asking to run
+        // something. This one is only asking to *recover*, and there is
+        // nothing of the kind to recover.
+        if (constructedIdentity.parentKind !== "space") this.ensurePersistentLoop();
       }
     });
     const initialRecovery = this.initialized;
@@ -1169,6 +1243,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private ensurePersistentLoop() {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
+    // A Space's hidden conversation is its participant and resource authority
+    // and nothing else: no composer reaches it, no socket opens it, and no
+    // agent runs in it. This is the one place a loop is minted, so it is the
+    // one place that has to say so — every other branch that excludes a Space
+    // from a run path is excluding something that could not have started.
+    if (identity.parentKind === "space") throw new Error("substream_loop_space_parent_refused");
     const substreamId = this.externalSubstreamId();
     const loopId = substreamLoopId(asWorkstreamId(identity.parentId), substreamId);
     const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
@@ -1778,7 +1858,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * caller's by async context. The flag only decides whether to open them.
    */
   async handleProductRequest(
-    input: SubstreamProductRequest,
+    input: SubstreamProductRequestInput,
     traced = false,
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
@@ -2205,6 +2285,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
+  }
+
+  /**
+   * Whether this conversation's retained content would still be contained by a
+   * proposed audience.
+   *
+   * `null` when this object is not the addressed Channel's main conversation,
+   * the way `readerAudience` answers: a misaddressed call is a refusal rather
+   * than a wrong answer, and a preflight that read `false` as "no fences" would
+   * be the one place a fence could be skipped.
+   *
+   * It writes nothing and is not the fence. The fence is the canonical scope
+   * and participant operations, which run the same predicate inside the
+   * transaction that changes the audience; this only lets a caller stop before
+   * it has widened Channels it cannot un-widen.
+   */
+  async previewAudienceContainment(
+    input: z.input<typeof PreviewAudienceContainmentRequestSchema>,
+  ): Promise<boolean | null> {
+    await this.initialized;
+    const request = parseRpcInput(
+      PreviewAudienceContainmentRequestSchema, input, "preview_audience_containment",
+    );
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") return null;
+    return this.product.retainedContentContains(request.audience);
   }
 
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
@@ -3198,6 +3307,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     request: SubstreamProductRequest,
     span: FlowSpan,
   ): Promise<Response> {
+    // The parent kind first, before the session read and before any other
+    // object is addressed. A conversation is reached by *id*, so this is the
+    // only place that can tell a Channel's main conversation from a Space's
+    // hidden one — and a Space's has no product surface to offer: no feed, no
+    // transcript, no archive, no scope. Every member holds every Space id off
+    // the workspace socket, so without this `PATCH /workstreams/<spaceId>`
+    // archives General or makes it personal behind the Space authority's back.
+    //
+    // Ahead of authentication deliberately. This is a statement about the
+    // address rather than about the caller — the answer is the same for
+    // everybody — and running it first keeps a misaddressed request from
+    // costing a D1 round trip. `not found` rather than a refusal that confirms
+    // the id: the caller asked a question about a Channel, and there is no
+    // Channel here.
+    const identity = this.objectStore.identity();
+    if (identity && identity.parentKind !== request.parentKind) {
+      span.setError("conversation_parent_kind_mismatch");
+      return jsonResponse({
+        error: "conversation_parent_kind_mismatch",
+        message: "Work stream not found",
+      }, 404);
+    }
     // Two principals, two verifications. A login session is re-verified against
     // its `sessions` row, which is what makes a revoked or expired login stop
     // working mid-flight. A connector principal has no `sessions` row to check
@@ -3301,7 +3432,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           }),
         });
       }
-      const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
@@ -3331,7 +3461,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId },
+          ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) });
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
@@ -3347,6 +3478,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
         await this.publishLocalProductEvent(identity, { type: "participant_removed", userId: request.userId });
+        return jsonResponse({ ok: true });
+      }
+      if (request.operation === "set_appearance") {
+        await this.product.setAppearance(current, request.operationId, request.patch);
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
@@ -4278,7 +4413,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const interruptedReservation = await this.settleInterruptedAssistantReservation(input);
       const recoveredToolBatch = interruptedReservation
         ? null
-        : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease);
+        // The lease is both arguments: it fences every receipt settlement, and
+        // it is the claim a re-entry holds open while the tool runs.
+        : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease, claim.lease);
+      // Only when nothing is waiting on a person: `recoverInterruptedToolBatch`
+      // reports `waiting_for_input` ahead of `ambiguous`, so this arm is the
+      // repaired-and-continuing case rather than every batch that held one.
+      if (recoveredToolBatch === "ambiguous") {
+        // Recorded, then carried on. The repair has already written every
+        // call's outcome into the protocol transcript — the ambiguous one as a
+        // failed tool result that names the call and says to check it before
+        // repeating it — and the model's next turn reads them. Failing here
+        // withheld that account from the only reader able to act on it, and
+        // threw away every completed call in the same batch, in exchange for a
+        // safety it did not buy: a member who re-sends gets a fresh run with
+        // fresh receipt coordinates, and nothing in the receipt layer connects
+        // the new call to the abandoned one. The stop cost a work stream its
+        // afternoon on 2026-09-19 and prevented no second write.
+        logWarn(this.env, "harness_ambiguous_recovery_continued", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          substream_id: this.externalSubstreamId(),
+          harness_run_id: input.harnessRunId,
+        });
+      }
       outcome = interruptedReservation === "stopped"
         ? {
             status: "stopped",
@@ -4289,14 +4447,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           }
         : recoveredToolBatch === "waiting_for_input"
           ? { status: "needs_input" }
-        : recoveredToolBatch === "ambiguous"
-          ? {
-              status: "failed",
-              error: {
-                code: "ambiguous_external_write",
-                message: "Rally stopped this cycle because it could not confirm whether an interrupted external action completed",
-              },
-            }
         : await runWorkstreamHarness(
           executionEnv,
           input,
@@ -4374,7 +4524,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async recoverInterruptedToolBatch(
     executionEnv: Env,
     input: WorkstreamWorkflowInput,
-    lease: { attemptId: string; owner: string },
+    /** What every receipt settlement below is fenced on. */
+    fence: { attemptId: string; owner: string },
+    /**
+     * The claim this repair holds, when it holds one.
+     *
+     * Only re-entry needs more than the fence: it settles a result through the
+     * same durable path a first-pass completion uses, which proves attempt
+     * ownership, and it holds the lease open while a tool runs. The
+     * failure-settlement caller reconstructs an owner rather than minting a
+     * lease — deliberately, as its own comment explains — so it has none to
+     * give, and an interrupted write there stays ambiguous exactly as it did
+     * before re-entry existed.
+     */
+    lease?: AttemptLease,
   ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null> {
     const projection = this.transcript.readBindProjection(input.loopId);
     if (!projection) return null;
@@ -4409,14 +4572,94 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         toolCallId: call.receiptToolCallId,
       });
       let classification: "completed" | "failed" | "ambiguous" | "not_run";
+      // Set only when this repair re-entered the tool and it answered. The
+      // receipt is already `completed` by then, so the result is carried here
+      // rather than re-read from a row that has just moved underneath us.
+      let reenteredResult: HarnessToolResult | null = null;
+      let ambiguityReason: string | null = null;
       if (!receipt) {
         classification = "not_run";
       } else if (receipt.status === "admitted") {
         classification = "not_run";
-      } else if (receipt.status === "executing") {
-        classification = receipt.mode === "write" ? "ambiguous" : "failed";
-      } else {
+      } else if (receipt.status !== "executing") {
         classification = receipt.status;
+      } else if (receipt.mode !== "write") {
+        classification = "failed";
+      } else if (!lease) {
+        // No claim to settle a result under, so there is no way to ask without
+        // being unable to record the answer.
+        classification = "ambiguous";
+        ambiguityReason = "no_repair_lease";
+      } else {
+        // An interrupted write is only unknowable if nobody asks. A tool that
+        // declares itself re-enterable resolves its own durable effect before
+        // acting — `run_command` reattaches to the provider task its receipt
+        // names, `publish_resource` finds the document its path identity
+        // already holds — so running it again over the same receipt returns
+        // what the interrupted attempt did rather than doing it twice. Only a
+        // tool that cannot be asked, or an attempt to ask that failed, keeps
+        // `ambiguous_external_write`.
+        const reentry = await reenterInterruptedWriteForRecovery(
+          executionEnv,
+          input,
+          {
+            effectIntentId: receipt.effectIntentId,
+            toolCallId: receipt.toolCallId,
+            toolName: receipt.toolName,
+            status: receipt.status,
+            requestHash: receipt.requestHash,
+            inputJson: receipt.inputJson,
+            executionPlanJson: receipt.executionPlanJson,
+            startedAt: receipt.startedAt ?? 0,
+            providerIdempotencyKey: receipt.providerIdempotencyKey,
+          },
+          lease,
+          // The attempt authority, so the re-entry can hold its lease open and
+          // abort the moment it cannot. No ceiling of this repair's own beyond
+          // that: the tools reached here carry their own provider budgets, and
+          // a number invented on top would be one nobody has measured. See
+          // `docs/adding-security-defensive-and-other-limits.md`.
+          createHarnessRunObjectPort(
+            executionEnv,
+            input.workspaceId,
+            input.parentId,
+            undefined,
+            input.substreamId ?? "0",
+          ),
+          this.localRuntimeResourceAttacher(input.workspaceId, input.parentId),
+        );
+        if (reentry.outcome === "completed") {
+          classification = "completed";
+          reenteredResult = reentry.result;
+        } else {
+          classification = "ambiguous";
+          ambiguityReason = reentry.reason;
+        }
+        // Named for the attempt rather than the outcome, which travels in
+        // `recovery`. The previous name asserted recovery on both branches, so
+        // counting repairs by grepping it over-counted by every failure — and
+        // the failure is the line worth finding.
+        logWarn(this.env, "harness_interrupted_write_reentry", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          substream_id: this.externalSubstreamId(),
+          harness_run_id: input.harnessRunId,
+          tool_invocation_id: receipt.effectIntentId,
+          tool_name: receipt.toolName,
+          idempotency: receipt.idempotency,
+          recovery: classification,
+          ...(ambiguityReason ? { reason: ambiguityReason } : {}),
+        });
+      }
+      if (receipt && classification === "completed" && reenteredResult) {
+        // Re-entry settled the receipt itself, through the same durable result
+        // path a first-pass completion uses. Re-read it so the lifecycle row
+        // below describes what was actually stored.
+        receipt = this.toolReceipts.receiptForCall({
+          runId: input.harnessRunId,
+          toolCallId: call.receiptToolCallId,
+        });
+        if (!receipt) throw new Error("recovered_tool_receipt_missing");
       }
       if (receipt && (receipt.status === "admitted" || receipt.status === "executing")) {
         const status = classification === "ambiguous" ? "ambiguous" : "failed";
@@ -4425,10 +4668,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           : classification === "ambiguous"
             ? "ambiguous_external_write"
             : "tool_execution_interrupted";
+        // Named, not coded. `CLAUDE.md` calls a generic code on a path that
+        // had the reason in hand a defect, and this path holds the tool, its
+        // idempotency class, and why asking it failed. An operator reading
+        // `ambiguous_external_write` alone had none of that and had to go to
+        // the receipts to learn which call it was about.
         const message = classification === "not_run"
           ? "The interrupted tool call definitely did not start"
           : classification === "ambiguous"
-            ? "Rally could not confirm whether the interrupted external write completed"
+            ? `Rally could not confirm whether the interrupted ${receipt.toolName} write completed${ambiguityReason ? ` (${ambiguityReason})` : ""}`
             : "The interrupted tool call ended before Rally accepted a result";
         const settlement = this.toolReceipts.fail({
           effectIntentId: receipt.effectIntentId,
@@ -4439,8 +4687,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           allowCancellationRequested: true,
           fence: {
             runId: input.harnessRunId,
-            attemptId: lease.attemptId,
-            owner: lease.owner,
+            attemptId: fence.attemptId,
+            owner: fence.owner,
           },
           now,
         });
@@ -4458,15 +4706,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       let participantSafeResult: unknown;
       let participantError: string | null = null;
       if (classification === "completed" && receipt) {
-        const exactOutput = receipt.outputRef
-          ? await loadToolReplayOutput(executionEnv, receipt.outputRef)
-          : null;
+        const exactOutput = reenteredResult?.output
+          ?? (receipt.outputRef ? await loadToolReplayOutput(executionEnv, receipt.outputRef) : null);
         const data = exactOutput ?? {
           summary: receipt.outputSummary ?? "The tool completed, but its detailed result is unavailable.",
           resultAvailability: "summary_only",
         };
         result = { success: true, data };
-        participantSafeResult = receipt.outputSummary ?? "Completed";
+        participantSafeResult = reenteredResult?.summary ?? receipt.outputSummary ?? "Completed";
       } else {
         const durableError = recoveredToolReceiptError(receipt?.errorJson ?? null);
         const code = classification === "not_run"
@@ -4475,15 +4722,33 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             ? "ambiguous_external_write"
             : durableError.code ?? "tool_execution_interrupted";
         participantError = classification === "ambiguous"
-          ? "Rally could not confirm whether this external action completed"
+          ? `Rally could not confirm whether ${receipt?.toolName ?? "this external action"} completed. Check its result before running it again.`
           : classification === "not_run"
             ? "Rally did not run this tool after recovering the interrupted turn"
             : durableError.message ?? "The interrupted tool did not produce an accepted result";
+        // The model gets the same account the member does, and for the same
+        // reason the cycle no longer stops here: continuing is only defensible
+        // if the reader who could repeat the write is told not to. This
+        // carried `{ code, recovery }` alone — a code with no tool name, no
+        // reason, and no instruction — which is the generic-code defect
+        // `AGENTS.md` names, on a path holding all three. A receipt coordinate
+        // is per turn, so nothing downstream stops a blind repeat; this text
+        // is what stands between an unconfirmed write and a second one.
         result = {
           success: false,
           kind: classification === "ambiguous" ? "ambiguous_external_write" : "external",
           error: code,
-          data: { code, recovery: classification },
+          data: {
+            code,
+            recovery: classification,
+            ...(receipt ? { toolName: receipt.toolName } : {}),
+            ...(classification === "ambiguous" && ambiguityReason ? { reason: ambiguityReason } : {}),
+            ...(classification === "ambiguous"
+              ? {
+                  instruction: `Rally could not confirm whether ${receipt?.toolName ?? "this call"} reached the far side, so it may already have taken effect. Do not repeat it. Read back the thing it would have changed, say what you found, and only then decide.`,
+                }
+              : {}),
+          },
         };
         participantSafeResult = participantError;
       }
@@ -4536,7 +4801,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     await this.flushSemanticRealtimeOutboxBestEffort();
-    return ambiguous ? "ambiguous" : hasWithheldElicitation ? "waiting_for_input" : "recovered";
+    // A withheld elicitation outranks a residual ambiguity, and the order is
+    // load-bearing rather than cosmetic. While `ambiguous` failed the cycle
+    // outright the two could not collide; now that it continues, reporting it
+    // over `waiting_for_input` would discard the one state this repair
+    // deliberately declines to settle — the elicitation's protocol result is
+    // still withheld pending a human answer, so the assistant turn has a tool
+    // call with no result, and entering the harness there hands the provider
+    // exactly that. The ambiguity is already recorded either way: on the
+    // receipt, in the transcript, and in the per-call line above.
+    return hasWithheldElicitation
+      ? "waiting_for_input"
+      : ambiguous ? "ambiguous" : "recovered";
   }
 
   /**
@@ -5000,8 +5276,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : null;
     // An automation's conversations are named by the automation, not by a
     // naming pass over their transcripts, and nothing outside Rally is
-    // waiting on a run's outcome the way Slack waits on a room's.
-    if (input.parentKind !== "automation") {
+    // waiting on a run's outcome the way Slack waits on a room's. A Space's
+    // hidden conversation has no surface that shows a title or a description at
+    // all, so it is excluded for the stronger version of the same reason —
+    // positively, `=== "workstream"`, so a fourth parent kind has to opt in.
+    if (input.parentKind === "workstream") {
       // Addressed at the conversation that ran, not at its parent. A private
       // child is named from its own transcript now that it is created with an
       // instruction and starts in `naming`; before that it was born settled,
@@ -5092,7 +5371,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return settlementDiagnosticCode;
     }
 
-    if (input.parentKind === "automation") return settlementDiagnosticCode;
+    // Only a Channel's run has a Slack thread waiting on its outcome.
+    if (input.parentKind !== "workstream") return settlementDiagnosticCode;
     const slack = new SlackAgentService(this.env);
     await slack.deliverWorkstreamOutcome(
       input.workspaceId,

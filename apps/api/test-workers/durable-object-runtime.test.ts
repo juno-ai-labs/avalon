@@ -114,7 +114,7 @@ async function seedOpenAuthority(): Promise<void> {
       abandoned_at TEXT
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (incarnation TEXT DEFAULT 'existing-member',
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       status TEXT NOT NULL,

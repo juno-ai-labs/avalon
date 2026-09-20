@@ -5,6 +5,10 @@ import { authorizationResourceKey,
 
 export const AuthorizationLocationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
+  // Deliberately narrower than `ConversationParentKindSchema`: a Space's
+  // hidden conversation has no place in the authorization universe, and
+  // `projectAuthorization` refuses one before it reaches here. This is the
+  // second fence, and the one that names the field if the first is ever removed.
   parentKind: z.enum(['workstream', 'automation']),
   mutationAt: z.number().int().nonnegative().optional(),
   revision: z.number().int().nonnegative(), validatedAt: z.number().int().nonnegative(),

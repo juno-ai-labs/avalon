@@ -65,7 +65,7 @@ function labels(items: MenuItemConstructorOptions[]): (string | undefined)[] {
  * lands inside "Last hour" and "Today" and the recent limit is what cuts it. */
 const workstreams = Array.from({ length: 12 }, (_value, index) => ({
   id: `workstream-${index}`,
-  title: `Work stream ${index}`,
+  title: `Channel ${index}`,
   lastActivityAt: at(index * 30 * MINUTE),
 }));
 
@@ -80,7 +80,7 @@ describe('menu bar menu', () => {
     // belongs in the app, which the last two rows open.
     const drawn = labels(template({ recents: workstreams }));
 
-    for (const label of ['New Meeting/Note', 'New Work Stream', 'New Automation']) {
+    for (const label of ['New Meeting/Note', 'New Channel', 'New Automation']) {
       expect(drawn).not.toContain(label);
     }
     // Nothing precedes the first header, so the leading rule has to be
@@ -144,10 +144,10 @@ describe('menu bar menu', () => {
 
     // A pin is a standing choice, and the recent list is ten rows: a section
     // underneath one that long is a section nobody scans to.
-    expect(drawn.indexOf('Pinned')).toBeLessThan(drawn.indexOf('Work stream 0'));
+    expect(drawn.indexOf('Pinned')).toBeLessThan(drawn.indexOf('Channel 0'));
   });
 
-  it('groups the recent work streams the way the sidebar groups them', () => {
+  it('groups the recent channels the way the sidebar groups them', () => {
     const items = template({
       recents: [
         { id: 'a', title: 'Just now', lastActivityAt: at(MINUTE) },
@@ -158,7 +158,7 @@ describe('menu bar menu', () => {
 
     expect(labels(items)).toEqual([
       'Pinned',
-      'Pin a work stream to see it here',
+      'Pin a channel to see it here',
       '—',
       'Last hour',
       'Just now',
@@ -198,7 +198,7 @@ describe('menu bar menu', () => {
 
   it('says how the Pinned section gets filled rather than hiding it', () => {
     const items = template({ recents: workstreams });
-    const empty = items.find((item) => item.label === 'Pin a work stream to see it here');
+    const empty = items.find((item) => item.label === 'Pin a channel to see it here');
 
     // A section that is simply absent teaches nobody about a feature they have
     // not found yet.
@@ -229,15 +229,15 @@ describe('menu bar menu', () => {
     expect(menuActions.openWorkstream).toHaveBeenCalledWith('pinned-a');
   });
 
-  it('shows no more than ten recent work streams', () => {
+  it('shows no more than ten recent channels', () => {
     const items = template({ recents: workstreams });
-    const recentLabels = labels(items).filter((label) => label?.startsWith('Work stream'));
+    const recentLabels = labels(items).filter((label) => label?.startsWith('Channel'));
 
     expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
     expect(MENU_BAR_RECENT_LIMIT).toBe(10);
     // Cut from the end of the recency order, so it is the oldest two that go.
-    expect(recentLabels).not.toContain('Work stream 10');
-    expect(recentLabels).not.toContain('Work stream 11');
+    expect(recentLabels).not.toContain('Channel 10');
+    expect(recentLabels).not.toContain('Channel 11');
   });
 
   it('names the recent section only when it has nothing to head', () => {
@@ -274,8 +274,8 @@ describe('menu bar menu', () => {
     const items = template(emptyMenuBarContent);
 
     for (const [title, empty] of [
-      ['Pinned', 'Pin a work stream to see it here'],
-      ['Recent', 'No recent work streams'],
+      ['Pinned', 'Pin a channel to see it here'],
+      ['Recent', 'No recent channels'],
     ]) {
       expect(items.find((item) => item.label === title)?.type).toBe('header');
       expect(labels(items).indexOf(title!)).toBe(labels(items).indexOf(empty!) - 1);
@@ -322,7 +322,7 @@ describe('menu bar menu', () => {
 
   it('says why the lower half is empty rather than dropping it', () => {
     const signedIn = template(emptyMenuBarContent, { signedIn: true });
-    expect(signedIn.find((item) => item.label === 'No recent work streams')?.enabled).toBe(false);
+    expect(signedIn.find((item) => item.label === 'No recent channels')?.enabled).toBe(false);
 
     const signedOut = template(emptyMenuBarContent, { signedIn: false });
     expect(signedOut.find((item) => item.label === 'Sign in to Rally')?.enabled).toBe(false);

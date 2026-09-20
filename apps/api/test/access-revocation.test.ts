@@ -21,6 +21,7 @@ import { AuthService } from "../src/services/auth-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { ChannelAccessService } from "../src/services/channel-access-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -206,16 +207,23 @@ describe("removing a room participant", () => {
     const database = seed();
     const { env, sent } = environment(database);
     const ROOM = "00000000-0000-7000-8000-0000000000a1";
-    const removed = vi.fn(async () => undefined);
+    database.exec(`
+      UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${NOW}' WHERE id = 1;
+      INSERT INTO workspace_product_authority_routes (workspace_id, generation, state, updated_at)
+        VALUES ('${WORKSPACE}', 1, 'pending', '${NOW}');
+      UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'verified';
+      UPDATE workstream_authority_control SET phase = 'maintenance_verified' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'active';
+      UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1 WHERE id = 1;
+    `);
+    const removed = vi.spyOn(ChannelAccessService.prototype, "removeDirectReader")
+      .mockResolvedValue(true);
     const service = new WorkstreamService(env, auth(OWNER, "owner"));
-    vi.spyOn(service as unknown as { authoritativeClient: () => Promise<unknown> }, "authoritativeClient")
-      .mockResolvedValue({ removeParticipant: removed });
-    vi.spyOn(service as unknown as { projectConstraints: () => Promise<unknown> }, "projectConstraints")
-      .mockResolvedValue({ activeProject: null });
 
     await service.removeParticipant(ROOM, MEMBER);
 
-    expect(removed).toHaveBeenCalledWith(MEMBER);
+    expect(removed).toHaveBeenCalledWith(ROOM, MEMBER);
     const revocations = sent
       .map((published) => AccessRevocationMessageSchema.safeParse(published.body))
       .flatMap((parsed) => parsed.success ? [parsed.data] : []);
@@ -631,6 +639,7 @@ describe("carrying one revocation to the objects", () => {
     substreamIds?: string[];
     automationChildren?: string[];
     ownedAutomationIds?: string[];
+    narrowedUserIds?: string[];
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -650,6 +659,11 @@ describe("carrying one revocation to the objects", () => {
             visits.push({ name: id.toString(), revocation });
             if (options.failAt) throw new Error("object unreachable");
             return answer();
+          },
+          revokeNarrowedAudienceAccess: async (request: unknown) => {
+            listed.push({ name: id.toString(), request });
+            if (options.failAt) throw new Error("object unreachable");
+            return { closedUserIds: options.narrowedUserIds ?? [] };
           },
           automationIdsOwnedByWorkstream: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -685,6 +699,7 @@ describe("carrying one revocation to the objects", () => {
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
       AUTOMATION_DOS: namespace(() => undefined),
+      SPACE_DOS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },
@@ -759,6 +774,24 @@ describe("carrying one revocation to the objects", () => {
     ]);
   });
 
+  it("publishes a message for every conversation a Space names, and closes none of its own", async () => {
+    const SPACE = "00000000-0000-7000-8000-0000000000f1";
+    const { env, visits, listed, sent } = fanOut({ automationChildren: ["0"] });
+    await applyAccessRevocation(env, message({ scope: "space", spaceId: SPACE }));
+
+    // A Space admits no client socket, so there is nothing here to close and
+    // the hop never asks. Its hidden main conversation is an ordinary
+    // `SubstreamAgent` that does hold what was opened against it, and only the
+    // Space can name it — addressed under the Space's own id, the way an
+    // automation's conversations are addressed under its.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: SPACE });
+    expect(targetsOf(sent)).toEqual([
+      { scope: "substream", workstreamId: SPACE, substreamId: "0" },
+    ]);
+  });
+
   it("turns a lost room into one hop per automation the room owns", async () => {
     const OWNED = "00000000-0000-7000-8000-0000000000d2";
     const { env, visits, listed, sent } = fanOut({ ownedAutomationIds: [OWNED] });
@@ -772,6 +805,68 @@ describe("carrying one revocation to the objects", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
     expect(targetsOf(sent)).toEqual([{ scope: "automation", automationId: OWNED }]);
+  });
+
+  it("turns a narrowed audience into one ordinary hop per reader still holding a socket", async () => {
+    const READER = "00000000-0000-7000-8000-0000000000b1";
+    const { env, visits, listed, sent } = fanOut({ narrowedUserIds: [READER] });
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    // The hop arrives naming nobody, because a narrowing takes access from
+    // every member who is not a participant. Only the room can say which of
+    // them is holding a socket, so it decides and answers with the names; from
+    // there each one is the ordinary per-user revocation, which is what
+    // reaches the substreams and the automations the room owns.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: WORKSTREAM });
+    expect(targetsOf(sent)).toEqual([
+      { scope: "workstream", workstreamId: WORKSTREAM },
+      { scope: "workstream_automations", workstreamId: WORKSTREAM },
+    ]);
+    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
+      .toEqual([READER, READER]);
+  });
+
+  it("publishes nothing for a narrowing nobody was reading through", async () => {
+    const { env, sent } = fanOut();
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    expect(sent).toEqual([]);
+  });
+
+  it("refuses a message that names a user and a narrowing, or neither", async () => {
+    // The two are mutually exclusive by construction: a per-user hop that lost
+    // its user would close every socket it found, and a narrowing carrying one
+    // would close only that person's while leaving the rest reading.
+    const base = {
+      kind: "access_revoked", reason: "workspace_membership_removed",
+      workspaceId: WORKSPACE, sessionId: null, occurredAt: NOW,
+    };
+    const named = AccessRevocationMessageSchema.safeParse({
+      ...base, userId: MEMBER, target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+    });
+    expect(named.success).toBe(false);
+    expect(named.error?.issues.map((issue) => issue.path.join("."))).toEqual(["userId"]);
+    expect(AccessRevocationMessageSchema.safeParse({
+      ...base, userId: null, target: { scope: "workstream", workstreamId: WORKSTREAM },
+    }).success).toBe(false);
   });
 
   it("stops at an automation with no conversations of its own", async () => {

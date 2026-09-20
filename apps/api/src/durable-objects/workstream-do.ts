@@ -4,9 +4,10 @@ import { ScopeSharingOptionsRequestSchema, ScopeSharingOptionsSchema, type Scope
 import { ListScopeInvitationsSchema } from "@rally/contracts/scope-grants";
 import { SharedWorkstreamRequestSchema, SharedWorkstreamSchema } from "@rally/contracts/scope-grants";
 import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
-import { SCOPE_INVITATION_SCHEMA_STATEMENTS, SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
+import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import { CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
-  ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
+  DescribeScopeInvitationSchema, ScopeInvitationDescriptionSchema,
+  ScopeInvitationResultSchema, type ScopeInvitationDescription, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import { parseRpcInput } from "../lib/rpc-input";
 import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
@@ -22,7 +23,6 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asWorkspaceId,
-  asWorkstreamId,
   asSubstreamId,
   WorkstreamControlMetadataSchema,
   WorkstreamControlSocketClientEventSchema,
@@ -88,7 +88,7 @@ import {
 } from "@rally/contracts/conversation-parent";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
-import { SCOPE_GRANT_SCHEMA_STATEMENTS, SCOPE_GRANT_DIRECTORY_ALARM, ScopeGrantStorage, PARTICIPANT_PROJECTION_ALARM, MAIN_PARTICIPANT_MIGRATION_ALARM, CHILD_PARTICIPANT_MIGRATION_ALARM, ParticipantProjectionDeliverySchema } from "./scope-grant-storage";
+import { SCOPE_GRANT_DIRECTORY_ALARM, ScopeGrantStorage, PARTICIPANT_PROJECTION_ALARM, MAIN_PARTICIPANT_MIGRATION_ALARM, CHILD_PARTICIPANT_MIGRATION_ALARM, ParticipantProjectionDeliverySchema } from "./scope-grant-storage";
 import { ParticipantTransferSnapshotSchema } from "./participant-authority-transfer";
 import { ScopeAccessRequestSchema, ScopeAccessResultSchema, ScopeGrantMutationSchema,
   ParticipantGrantMutationSchema, type ParticipantGrantMutation,
@@ -105,22 +105,14 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import { logWarn } from "../observability/logger";
+import { applyDurableObjectSqliteMigrations } from "./sqlite-migrations";
 import {
-  applyDurableObjectSqliteMigrations,
-  type DurableObjectSqliteMigration,
-} from "./sqlite-migrations";
-import {
-  OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
   retiredObjectResponse,
 } from "./object-retirement";
-import {
-  SCHEDULED_ALARM_SCHEMA_STATEMENTS,
-  type ScheduledAlarm,
-} from "./scheduled-alarms";
+import type { ScheduledAlarm } from "./scheduled-alarms";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
-  CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
   ConversationParentDurableObject,
   type ConversationParentIdentity,
   type DirectoryCommonEffect,
@@ -130,6 +122,10 @@ import {
   workspaceDOName,
   workstreamDOName,
 } from "./names";
+import {
+  WORKSTREAM_ROLE,
+  type ConversationParentRole,
+} from "./conversation-parent-role";
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import {
   revocationClosesSession,
@@ -218,451 +214,55 @@ interface PrivateChildMembershipEffectRow extends Record<string, SqlStorageValue
   membership_version: number;
 }
 
-export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
-  version: 1,
-  description: "workstream control-plane metadata, HyperSight coordination, and regional effects",
-  statements: [
-    `PRAGMA foreign_keys = ON`,
-    `CREATE TABLE workstream_metadata (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      workspace_id TEXT NOT NULL,
-      workstream_id TEXT NOT NULL UNIQUE,
-      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
-      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
-      revision INTEGER NOT NULL DEFAULT 0,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      preview TEXT NOT NULL,
-      email_address TEXT,
-      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
-      exact_state TEXT NOT NULL CHECK (exact_state IN (
-        'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',
-        'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',
-        'idle', 'archived', 'deleting', 'restoring'
-      )),
-      origin_type TEXT NOT NULL DEFAULT 'ad_hoc'
-        CHECK (origin_type IN ('ad_hoc', 'automation')),
-      created_by_user_id TEXT,
-      automation_subscription_id TEXT,
-      automation_run_id TEXT,
-      planned_for INTEGER CHECK (planned_for IS NULL OR planned_for >= 0),
-      title_status TEXT NOT NULL DEFAULT 'settled'
-        CHECK (title_status IN ('naming', 'automatic', 'settled')),
-      system_kind TEXT CHECK (system_kind IS NULL OR system_kind = 'digest'),
-      last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= 0),
-      completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
-      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
-      latest_attention_ordinal INTEGER NOT NULL DEFAULT 0
-        CHECK (latest_attention_ordinal >= 0),
-      unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0
-        CHECK (unread_tracking_start_ordinal >= 0),
-      next_wakeup_due_at INTEGER CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0),
-      next_wakeup_prompt TEXT,
-      next_terminal_action_at INTEGER
-        CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0),
-      source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),
-      source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE substream_directory (
-      substream_id TEXT PRIMARY KEY,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      payload_hash TEXT NOT NULL,
-      effect_json TEXT NOT NULL CHECK (
-        json_valid(effect_json) AND length(CAST(effect_json AS BLOB)) <= 1900000
-      ),
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE substream_user_directory (
-      substream_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      payload_hash TEXT NOT NULL,
-      effect_json TEXT NOT NULL CHECK (
-        json_valid(effect_json) AND length(CAST(effect_json AS BLOB)) <= 1900000
-      ),
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (substream_id, user_id)
-    ) STRICT`,
-    `CREATE INDEX substream_user_directory_user_idx
-      ON substream_user_directory(user_id, substream_id)`,
-    `CREATE TABLE child_effect_receipts (
-      substream_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      payload_hash TEXT NOT NULL,
-      received_at INTEGER NOT NULL,
-      PRIMARY KEY (substream_id, message_id)
-    ) STRICT`,
-    `CREATE TABLE projection_keys (
-      projection_key TEXT PRIMARY KEY,
-      next_version INTEGER NOT NULL CHECK (next_version > 0),
-      last_payload_hash TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE workstream_state_clock (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      next_sequence INTEGER NOT NULL CHECK (next_sequence > 0),
-      last_event_time INTEGER NOT NULL CHECK (last_event_time >= 0)
-    ) STRICT`,
-    `INSERT INTO workstream_state_clock(id, next_sequence, last_event_time)
-      VALUES (1, 1, 0)`,
-    `CREATE TABLE workstream_state_changes (
-      sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
-      state_key TEXT NOT NULL CHECK (length(state_key) BETWEEN 1 AND 180),
-      waterline INTEGER NOT NULL CHECK (waterline > 0),
-      event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) BETWEEN 1 AND 180),
-      payload_hash TEXT NOT NULL,
-      state_json TEXT NOT NULL CHECK (json_valid(state_json) AND length(state_json) <= 262144),
-      occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
-      UNIQUE (state_key, waterline)
-    ) STRICT`,
-    `CREATE INDEX workstream_state_changes_latest_idx
-      ON workstream_state_changes(state_key, waterline DESC)`,
-    `CREATE TABLE durable_outbox (
-      message_id TEXT PRIMARY KEY,
-      partition_key TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
-      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
-        'directory_common', 'directory_user', 'suggestion_feedback',
-        'activity_event', 'mention_notification'
-      )),
-      -- The payload budget matches the producing child outbox bound (just
-      -- under the platform's 2 MB per-row BYTE ceiling, measured in bytes —
-      -- length() on TEXT counts characters) so an envelope the child could
-      -- commit is never one this parent must reject: a mid-chain rejection of
-      -- an already durable effect is a permanent poison retry.
-      payload_json TEXT NOT NULL CHECK (
-        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
-      ),
-      payload_hash TEXT NOT NULL,
-      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
-      attempts INTEGER NOT NULL CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE INDEX durable_outbox_delivery_idx
-      ON durable_outbox(state, not_before, created_at, message_id)`,
-    `CREATE TABLE workstream_socket_ticket_receipts (
-      ticket_id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      consumed_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE INDEX workstream_socket_ticket_receipts_expiry_idx
-      ON workstream_socket_ticket_receipts(expires_at, ticket_id)`,
-    `CREATE TABLE block_dashboard_configuration_versions (
-      configuration_version_id TEXT PRIMARY KEY,
-      version_number INTEGER NOT NULL UNIQUE CHECK (version_number > 0),
-      blocks_json TEXT NOT NULL CHECK (json_valid(blocks_json) AND length(blocks_json) <= 262144),
-      created_by_user_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE block_dashboard_block_runs (
-      block_run_id TEXT PRIMARY KEY,
-      configuration_version_id TEXT NOT NULL
-        REFERENCES block_dashboard_configuration_versions(configuration_version_id) ON DELETE CASCADE,
-      block_id TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
-      harness_run_id TEXT NOT NULL UNIQUE,
-      status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'stopped')),
-      markdown TEXT,
-      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
-      created_at INTEGER NOT NULL,
-      started_at INTEGER,
-      completed_at INTEGER,
-      UNIQUE (configuration_version_id, block_id, trigger_sequence)
-    ) STRICT`,
-    `CREATE INDEX block_dashboard_block_runs_latest_idx
-      ON block_dashboard_block_runs(block_id, trigger_sequence DESC, created_at DESC)`,
-    `CREATE TABLE block_dashboard_user_preferences (
-      user_id TEXT PRIMARY KEY,
-      visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE block_dashboard_dispatch_outbox (
-      block_run_id TEXT PRIMARY KEY REFERENCES block_dashboard_block_runs(block_run_id) ON DELETE CASCADE,
-      block_id TEXT NOT NULL,
-      dispatch_json TEXT NOT NULL CHECK (json_valid(dispatch_json) AND length(dispatch_json) <= 262144),
-      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE INDEX block_dashboard_dispatch_outbox_due_idx
-      ON block_dashboard_dispatch_outbox(not_before, created_at, block_run_id)`,
-    `CREATE TABLE block_dashboard_block_result_receipts (
-      block_run_id TEXT PRIMARY KEY REFERENCES block_dashboard_block_runs(block_run_id) ON DELETE CASCADE,
-      block_id TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      payload_hash TEXT NOT NULL,
-      received_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE block_dashboard_source_refresh_outbox (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      trigger_sequence INTEGER NOT NULL CHECK (trigger_sequence >= 0),
-      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-  ],
-}, {
-  version: 2,
-  description: "shared multi-alarm index behind this object's single alarm",
-  statements: [...SCHEDULED_ALARM_SCHEMA_STATEMENTS],
-}, {
-  version: 3,
-  description: "carry the participant-added notification through this object's outbox",
-  statements: [
-    // The outbox enumerates the effect kinds it will hold, and a person being
-    // added to a work stream is a new one. Enumerating them is worth keeping:
-    // this row is what a poison delivery would be stuck on, and a kind nobody
-    // downstream handles should fail here rather than in a Queue consumer.
-    //
-    // SQLite cannot widen a CHECK in place, so the table is rebuilt. Version 1
-    // still creates the narrow shape and must — its statements are hashed into
-    // every deployed object's `_sql_schema_migrations` receipt, and editing
-    // them throws `workstream_do_schema_hash_mismatch:1` in the constructor of
-    // every work stream that ran an earlier release.
-    `CREATE TABLE durable_outbox_kinds (
-      message_id TEXT PRIMARY KEY,
-      partition_key TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
-      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
-        'directory_common', 'directory_user', 'suggestion_feedback',
-        'activity_event', 'mention_notification', 'participant_notification'
-      )),
-      payload_json TEXT NOT NULL CHECK (
-        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
-      ),
-      payload_hash TEXT NOT NULL,
-      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
-      attempts INTEGER NOT NULL CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    // An effect mid-flight keeps its place in the queue rather than being
-    // dropped and rediscovered: this runs in the constructor, before the
-    // object serves anything, so the copy is of a settled table.
-    `INSERT INTO durable_outbox_kinds
-       (message_id, partition_key, source_version, source_epoch, effect_kind,
-        payload_json, payload_hash, state, attempts, not_before, created_at)
-     SELECT message_id, partition_key, source_version, source_epoch, effect_kind,
-        payload_json, payload_hash, state, attempts, not_before, created_at
-       FROM durable_outbox`,
-    `DROP TABLE durable_outbox`,
-    `ALTER TABLE durable_outbox_kinds RENAME TO durable_outbox`,
-    `CREATE INDEX durable_outbox_delivery_idx
-      ON durable_outbox(state, not_before, created_at, message_id)`,
-  ],
-}, {
-  version: 4,
-  description: "retire context-suggestion deliveries from the durable outbox",
-  statements: [
-    `CREATE TABLE durable_outbox_without_suggestions (
-      message_id TEXT PRIMARY KEY,
-      partition_key TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
-      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
-        'directory_common', 'directory_user', 'activity_event',
-        'mention_notification', 'participant_notification'
-      )),
-      payload_json TEXT NOT NULL CHECK (
-        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
-      ),
-      payload_hash TEXT NOT NULL,
-      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
-      attempts INTEGER NOT NULL CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `INSERT INTO durable_outbox_without_suggestions
-       (message_id, partition_key, source_version, source_epoch, effect_kind,
-        payload_json, payload_hash, state, attempts, not_before, created_at)
-     SELECT message_id, partition_key, source_version, source_epoch, effect_kind,
-            payload_json, payload_hash, state, attempts, not_before, created_at
-       FROM durable_outbox WHERE effect_kind != 'suggestion_feedback'`,
-    `DROP TABLE durable_outbox`,
-    `ALTER TABLE durable_outbox_without_suggestions RENAME TO durable_outbox`,
-    `CREATE INDEX durable_outbox_delivery_idx
-      ON durable_outbox(state, not_before, created_at, message_id)`,
-  ],
-}, {
-  version: 5,
-  description: "remove retired block dashboard product state and pending deliveries",
-  statements: [
-    `DROP TABLE IF EXISTS block_dashboard_source_refresh_outbox`,
-    `DROP TABLE IF EXISTS block_dashboard_dispatch_outbox`,
-    `DROP TABLE IF EXISTS block_dashboard_block_result_receipts`,
-    `DROP TABLE IF EXISTS block_dashboard_block_runs`,
-    `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
-    `DROP TABLE IF EXISTS block_dashboard_user_preferences`,
-  ],
-}, {
-  version: 6,
-  description: "register a child conversation before its first effect arrives",
-  statements: [
-    // Until now a child existed here only once its first `directory_common`
-    // effect landed. Creation now reserves the main conversation before the
-    // child object is initialized, and a run or side conversation is reserved
-    // the same way, so the parent can list its children without waiting for
-    // each to say something. The projection tables keep their shape; this is
-    // the registry beside them.
-    ...CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
-  ],
-}, {
-  version: 7,
-  description: "make private work-stream children parent-owned and retryable",
-  statements: [
-    `ALTER TABLE conversation_children ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'
-      CHECK (status IN ('reserved', 'ready', 'failed'))`,
-    `ALTER TABLE conversation_children ADD COLUMN title TEXT`,
-    `ALTER TABLE conversation_children ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`,
-    `CREATE TABLE private_child_preparations (
-      operation_id TEXT PRIMARY KEY,
-      substream_id TEXT NOT NULL UNIQUE REFERENCES conversation_children(substream_id) ON DELETE CASCADE,
-      creator_user_id TEXT NOT NULL,
-      request_json TEXT NOT NULL CHECK (json_valid(request_json)),
-      capture_json TEXT CHECK (capture_json IS NULL OR json_valid(capture_json)),
-      completed_parts_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(completed_parts_json)),
-      prepared_context_json TEXT CHECK (prepared_context_json IS NULL OR json_valid(prepared_context_json)),
-      status TEXT NOT NULL CHECK (status IN ('preparing', 'prepared', 'confirming', 'ready', 'failed')),
-      error_code TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE TABLE private_child_memberships (
-      substream_id TEXT NOT NULL REFERENCES conversation_children(substream_id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL,
-      active INTEGER NOT NULL CHECK (active IN (0, 1)),
-      version INTEGER NOT NULL CHECK (version > 0),
-      added_by_user_id TEXT NOT NULL,
-      added_at INTEGER NOT NULL,
-      removed_at INTEGER,
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (substream_id, user_id)
-    ) STRICT`,
-    `CREATE INDEX private_child_memberships_user_idx
-      ON private_child_memberships(user_id, active, substream_id)`,
-    `CREATE TABLE private_child_membership_effects (
-      operation_id TEXT PRIMARY KEY,
-      substream_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      actor_user_id TEXT NOT NULL,
-      active INTEGER NOT NULL CHECK (active IN (0, 1)),
-      membership_version INTEGER NOT NULL CHECK (membership_version > 0),
-      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight', 'delivered')),
-      attempts INTEGER NOT NULL CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `CREATE INDEX private_child_membership_effects_due_idx
-      ON private_child_membership_effects(state, not_before, created_at, operation_id)`,
-  ],
-}, {
-  version: 8,
-  description: "record a permanent retirement tombstone",
-  statements: [
-    // A retired workspace never reopens, and the fence in front of every
-    // method here reads this table. It lives in the object rather than D1
-    // because the gate answers during constructor recovery, before anything
-    // else this object could consult is admitted.
-    ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
-  ],
-}, {
-  version: 9,
-  description: "let a private child be archived the way its work stream can be",
-  statements: [
-    // Archive is independent of creation readiness. Adding a timestamp preserves
-    // the existing child roster and preparation rows without rebuilding their parent.
-    `ALTER TABLE conversation_children
-       ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
-  ],
-}, {
-  version: 10,
-  description: "durably deliver private child archive state to its executing room",
-  statements: [
-    `ALTER TABLE conversation_children ADD COLUMN lifecycle_version INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE conversation_children ADD COLUMN lifecycle_delivered_version INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE conversation_children ADD COLUMN lifecycle_not_before INTEGER NOT NULL DEFAULT 0`,
-  ],
-}, { version: 11, description: "allow configured deployment identifiers", statements: [
-  "PRAGMA defer_foreign_keys = ON",
-  "CREATE TABLE \"_region_copy_workstream_metadata\" AS SELECT * FROM \"workstream_metadata\"",
-  "DELETE FROM \"workstream_metadata\"",
-  "DROP TABLE \"workstream_metadata\"",
-  "CREATE TABLE workstream_metadata (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      workspace_id TEXT NOT NULL,\n      workstream_id TEXT NOT NULL UNIQUE,\n      region TEXT NOT NULL,\n      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),\n      revision INTEGER NOT NULL DEFAULT 0,\n      title TEXT NOT NULL,\n      description TEXT NOT NULL,\n      preview TEXT NOT NULL,\n      email_address TEXT,\n      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),\n      exact_state TEXT NOT NULL CHECK (exact_state IN (\n        'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',\n        'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',\n        'idle', 'archived', 'deleting', 'restoring'\n      )),\n      origin_type TEXT NOT NULL DEFAULT 'ad_hoc'\n        CHECK (origin_type IN ('ad_hoc', 'automation')),\n      created_by_user_id TEXT,\n      automation_subscription_id TEXT,\n      automation_run_id TEXT,\n      planned_for INTEGER CHECK (planned_for IS NULL OR planned_for >= 0),\n      title_status TEXT NOT NULL DEFAULT 'settled'\n        CHECK (title_status IN ('naming', 'automatic', 'settled')),\n      system_kind TEXT CHECK (system_kind IS NULL OR system_kind = 'digest'),\n      last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= 0),\n      completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),\n      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),\n      latest_attention_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (latest_attention_ordinal >= 0),\n      unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (unread_tracking_start_ordinal >= 0),\n      next_wakeup_due_at INTEGER CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0),\n      next_wakeup_prompt TEXT,\n      next_terminal_action_at INTEGER\n        CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0),\n      source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),\n      source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL\n    ) STRICT",
-  "INSERT INTO \"workstream_metadata\" SELECT * FROM \"_region_copy_workstream_metadata\"",
-  "DROP TABLE \"_region_copy_workstream_metadata\"",
-  "PRAGMA defer_foreign_keys = OFF"
-]
-}, {
-  version: 12, description: "freeze private child historical content before publication", statements: [
-    // Previously claimed operations had no prepared-history input. Null keeps their replay semantics.
-    `ALTER TABLE private_child_preparations ADD COLUMN prepared_conversation_hash TEXT
-      CHECK (prepared_conversation_hash IS NULL OR (length(prepared_conversation_hash) = 24 AND substr(prepared_conversation_hash, 1, 8) = 'fnv1a64:'))`,
-  ],
-}, {
-  version: 13,
-  description: "workspace Sidekicks recommended for a workstream",
-  statements: [
-    `CREATE TABLE workstream_sidekick_attachments (sidekick_id TEXT PRIMARY KEY, attached_at INTEGER NOT NULL) STRICT`,
-  ],
-}, {
-  version: 14,
-  description: "store versioned scope grants and preserve restricted child audiences",
-  statements: [
-    ...SCOPE_GRANT_SCHEMA_STATEMENTS,
-    ...SCOPE_INVITATION_SCHEMA_STATEMENTS,
-    `ALTER TABLE conversation_children ADD COLUMN audience TEXT NOT NULL DEFAULT 'restricted'
-      CHECK (audience IN ('restricted', 'inherits_workstream'))`,
-  ],
-}, {
-  version: 15,
-  description: "deliver scope grant discovery through the parent outbox",
-  statements: [
-    `CREATE TABLE durable_outbox_with_scope_grants (
-      message_id TEXT PRIMARY KEY,
-      partition_key TEXT NOT NULL,
-      source_version INTEGER NOT NULL CHECK (source_version > 0),
-      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
-      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
-        'directory_common', 'directory_user', 'activity_event',
-        'mention_notification', 'participant_notification', 'scope_grant_directory'
-      )),
-      payload_json TEXT NOT NULL CHECK (
-        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
-      ),
-      payload_hash TEXT NOT NULL,
-      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
-      attempts INTEGER NOT NULL CHECK (attempts >= 0),
-      not_before INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    ) STRICT`,
-    `INSERT INTO durable_outbox_with_scope_grants
-       SELECT * FROM durable_outbox`,
-    `DROP TABLE durable_outbox`,
-    `ALTER TABLE durable_outbox_with_scope_grants RENAME TO durable_outbox`,
-    `CREATE INDEX durable_outbox_delivery_idx
-      ON durable_outbox(state, not_before, created_at, message_id)`,
-  ],
-}, {
-  version: 16,
-  description: "receipt connector audience admission under grant authority",
-  statements: [
-    `CREATE TABLE connector_participant_admissions (
-      event_id TEXT PRIMARY KEY, request_json TEXT NOT NULL CHECK(json_valid(request_json))
-    ) STRICT`,
-  ],
-}, {
-  version: 17,
-  description: "retire intermediate grant discovery deliveries",
-  statements: ["DELETE FROM scope_grant_deliveries WHERE delivered_at IS NOT NULL"],
-}];
+import {
+  audienceSourceApplicationPlan,
+  audienceSourceRetractionPlan,
+  type AudienceSource,
+} from "../lib/channel-audience";
+import {
+  ApplySpaceAccessSourceRequestSchema,
+  ApplySpaceAccessSourceResultSchema,
+  ConfirmSpaceAccessSourceRequestSchema,
+  ConfirmSpaceAccessSourceResultSchema,
+  NoteChannelDirectReaderRequestSchema,
+  ReadChannelAccessSourcesRequestSchema,
+  RetractSpaceAccessSourceRequestSchema,
+  RetractSpaceAccessSourceResultSchema,
+  SetChannelDirectScopeRequestSchema,
+  SetChannelDirectScopeResultSchema,
+  type ApplySpaceAccessSourceResult,
+  type ConfirmedAccessSource,
+  type ConfirmSpaceAccessSourceResult,
+  type ObservedChannel,
+  type RetractSpaceAccessSourceResult,
+  type SetChannelDirectScopeResult,
+} from "./workstream-access-protocol";
+import { WorkstreamAccessStorage } from "./workstream-access-storage";
+import { ChannelAccessSourcesSchema, type ChannelAccessSources, type SpaceId } from "@rally/contracts";
+
+export { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "./workstream-do-schema";
+
+/**
+ * Whether a Space source already on this Channel is newer than the work being
+ * applied, which is the one fence every Space-source write re-reads inside its
+ * own transaction.
+ *
+ * One predicate because two calls read it — the plan and the commit — and a
+ * copy that drifted would refuse the application while the commit installed
+ * the stale roster it had just planned, or the reverse. The retraction carries
+ * a fence of its own shape and is deliberately not this one: it has only the
+ * revision the caller staged against, because the row it is about is the row
+ * it deletes.
+ */
+function spaceAccessSourceSuperseded(
+  existing: { spaceRevision: number; membershipGeneration: number } | null,
+  staged: { spaceRevision: number; membershipGeneration: number },
+): boolean {
+  if (!existing) return false;
+  return existing.spaceRevision > staged.spaceRevision
+    || (existing.spaceRevision === staged.spaceRevision
+      && existing.membershipGeneration > staged.membershipGeneration);
+}
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
   return cursor.toArray()[0] ?? null;
@@ -723,28 +323,26 @@ export { workstreamDOName };
  * enqueue external activity/notification effects. That prevents one work
  * stream with many substreams from exposing conflicting sidebar versions.
  */
-/**
- * The migration runner's component key for this class.
- *
- * One constant because two call sites need the identical value: the runner
- * keys the object's schema ledger by it, and the migration report keys the
- * tracker's component rollup by it. Two literals that drift put an object
- * under a component its own ledger does not use, which shows up as a silent
- * miscount rather than an error.
- */
-const MIGRATION_COMPONENT = "workstream_do";
-
 export class WorkstreamDO extends ConversationParentDurableObject {
   private readonly state: DurableObjectState;
-  /** This object's own `WORKSTREAM_DOS` name; see {@link selfObjectName}. */
+  /** This object's own name in its role's namespace; see {@link selfObjectName}. */
   private objectName: string | null = null;
   private readonly initialized: Promise<void>;
+
+  /**
+   * What this instance is: `WORKSTREAM_ROLE` for a Channel's control object,
+   * `SPACE_ROLE` for a Space. Fixed here and never read from storage — the
+   * migration component it decides is consulted before any row is readable.
+   */
+  protected readonly role: ConversationParentRole;
 
   constructor(
     state: DurableObjectState,
     env: Env,
+    role: ConversationParentRole = WORKSTREAM_ROLE,
   ) {
     super(state, env);
+    this.role = role;
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     // Everything downstream is handed this environment or one derived from it,
@@ -756,7 +354,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     // constructor cannot hand the unregistered environment to something
     // long-lived.
     this.env = env = withDurableObjectSelf(env, {
-      namespace: env.WORKSTREAM_DOS,
+      namespace: role.namespace(env),
       name: () => this.selfObjectName(),
       id: state.id,
       instance: this,
@@ -767,15 +365,21 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     // control socket wakes this object while the feed socket wakes that one —
     // so waking them in sequence pays for two cold starts a person waits
     // through end to end.
-    this.wakeMainSubstream(env);
+    if (role.wakesMainEagerly) this.wakeMainSubstream(env);
     this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
-        component: MIGRATION_COMPONENT,
+        migrations: role.migration.migrations,
+        component: role.migration.component,
         workerVersionId: env.APP_VERSION ?? "unknown",
         afterMigrations: (_sql, applied) => {
-          if (!applied.includes(17)) return;
+          // Version 17 retires deliveries a *Channel* had already queued into
+          // the shared grant directory. A Space applies the same version on
+          // its first construction and has nothing to retire: it has never
+          // published a delivery, because the role suppresses the directory
+          // entirely. Running it anyway would hand a no-op writer rows it was
+          // built never to see.
+          if (this.role.kind !== "workstream" || !applied.includes(17)) return;
           this.retireGrantDirectoryDeliveries();
         },
       }));
@@ -785,11 +389,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   protected override migrationPlan(): DurableObjectMigrationPlan {
-    return {
-      component: MIGRATION_COMPONENT,
-      className: "WorkstreamDO",
-      migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
-    };
+    return { ...this.role.migration };
   }
 
   protected override migrationsReady(): Promise<void> {
@@ -802,9 +402,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (!metadata) throw new Error("scope_grant_directory_parent_missing");
       this.state.storage.transactionSync(() => {
         const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
+        // Through the role's writer, like every other publication. Enqueueing
+        // here directly is how a Space's grants would reach the shared
+        // directory from the one path that does not go through `mutate`.
+        const publish = this.grantDirectoryWriter();
         for (const { grant } of store.pendingDeliveries()) {
-          const scopeKey = grant.target.kind === "workstream" ? "workstream" : `conversation:${grant.target.substreamId}`;
-          this.enqueueProjection(`grant:${grant.userId}:${scopeKey}`, { kind: "scope_grant_directory", grant }, Date.now());
+          publish(grant, Date.now());
           store.acknowledgeDelivery(grant.revision);
         }
       });
@@ -995,7 +598,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   /**
-   * This object's own name in `WORKSTREAM_DOS`, or `null` before it has one.
+   * This object's own name in its role's namespace, or `null` before it has one.
    *
    * Memoized: the metadata row's identity is written once and never changes,
    * and this is read on every name resolution the object performs. The read is
@@ -1013,10 +616,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return null;
     }
     if (!identity) return null;
-    this.objectName = workstreamDOName(
+    this.objectName = this.role.objectName(
       this.env.AVALON_REGION,
       asWorkspaceId(identity.workspace_id),
-      asWorkstreamId(identity.workstream_id),
+      identity.workstream_id,
     );
     return this.objectName;
   }
@@ -1064,12 +667,20 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     await this.initialized;
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && (path === "/socket" || path === "/")) {
+      // A Space has no feed, so there is nothing for a client socket to carry.
+      // Refused here rather than in `acceptSocket` because the ticket, the
+      // identity headers and the replay receipt are all work done on the way to
+      // an answer this role cannot give. The code names the role, not the flag:
+      // an operator reading a 403 needs to know which product object answered.
+      if (!this.role.admitsClientSockets) {
+        return json({ error: `${this.role.kind}_socket_refused` }, 403);
+      }
       return this.acceptSocket(request);
     }
     if (request.method === "GET" && path === "/health") {
       return json({
         ok: true,
-        role: "workstream-control",
+        role: `${this.role.kind}-control`,
         databaseBytes: this.state.storage.sql.databaseSize,
       });
     }
@@ -1122,6 +733,335 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       this.parentSql.exec(`DELETE FROM workstream_sidekick_attachments WHERE sidekick_id = ?`, request.sidekickId);
     }
     return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Space access provenance.
+  //
+  // This object records *why* somebody may read the Channel; it does not admit
+  // them. Admission is still `resolveScopeAccess` over the grant ledger, or the
+  // main conversation's scope and participant rows on a Channel that has never
+  // been shared. What these methods own is the question neither of those can
+  // answer — which Space currently reaches this Channel, and which readers it
+  // seated — because that is what decides what has to be withdrawn when one
+  // Space stops reaching it, and what must not be.
+  //
+  // They plan rather than apply. Applying goes back through the Channel's
+  // canonical scope and participant operations, which is where the
+  // retained-content containment preflight and its SQL triggers run, so there
+  // is one fence rather than a second audience writer beside it.
+  // ---------------------------------------------------------------------------
+
+  private channelAccess(): WorkstreamAccessStorage {
+    return new WorkstreamAccessStorage(this.state.storage);
+  }
+
+  /**
+   * The Channel's own audience: its recorded scope, and the roster with every
+   * reader a Space seated taken out of it.
+   *
+   * The scope falls back to what the caller observed when nothing has recorded
+   * one, which is exact: the record is written the first time a Space reaches
+   * this Channel, and until then the effective audience *is* the direct one.
+   */
+  private directSource(access: WorkstreamAccessStorage, channel: ObservedChannel): AudienceSource {
+    const supplied = new Set(access.sources().flatMap((source) => access.suppliedReaders(source.sourceId)));
+    const recorded = access.directAudience();
+    return {
+      scope: recorded.observed ? recorded.scope : channel.readers.scope,
+      participantUserIds: channel.participantUserIds.filter((userId) => !supplied.has(userId)),
+    };
+  }
+
+  async readAccessSources(input: z.infer<typeof ReadChannelAccessSourcesRequestSchema>): Promise<ChannelAccessSources> {
+    await this.initialized;
+    const request = parseRpcInput(ReadChannelAccessSourcesRequestSchema, input, "channel_access_sources");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const direct = this.directSource(access, request.channel);
+    // Listed rather than merged: removing one source is only legal when the
+    // others still cover the readers it supplied, and a merged audience cannot
+    // answer that.
+    return ChannelAccessSourcesSchema.parse({
+      direct: { scope: direct.scope, participantUserIds: direct.participantUserIds },
+      spaces: access.sources().map((source) => ({
+        spaceId: source.sourceId,
+        scope: source.scope,
+        participantUserIds: source.participantUserIds,
+      })),
+    });
+  }
+
+  /**
+   * Record what the Channel's audience is on its own account.
+   *
+   * Refused while an active Space source is Organization-wide: the effective
+   * audience would stay Organization-wide anyway, so the narrowing would be a
+   * write that changed nothing a reader could see, and the record would then
+   * disagree with the Channel.
+   */
+  async setDirectScope(input: z.infer<typeof SetChannelDirectScopeRequestSchema>): Promise<SetChannelDirectScopeResult> {
+    await this.initialized;
+    const request = parseRpcInput(SetChannelDirectScopeRequestSchema, input, "channel_direct_scope");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    return access.operate({
+      operationId: request.operationId,
+      // Normalized before it becomes the receipt's fence, so a caller that
+      // omitted it and one that passed `true` are the same request.
+      request: { kind: "set_direct_scope", scope: request.scope, observed: request.observed ?? true },
+      resultSchema: SetChannelDirectScopeResultSchema,
+      now,
+      body: () => {
+        const previous = access.directAudience();
+        if (request.scope === "personal"
+          && access.sources().some((source) => source.scope === "workspace")) {
+          return { ok: false as const, code: "channel_scope_locked_by_space" as const };
+        }
+        access.recordDirectScope(request.scope, now, request.observed ?? true);
+        return {
+          ok: true as const,
+          previousScope: previous.scope,
+          previousObserved: previous.observed,
+        };
+      },
+    });
+  }
+
+  /**
+   * Stop attributing this reader to any Space.
+   *
+   * A direct add is the Channel taking responsibility for somebody. Whichever
+   * Space seated them first, they are here on the Channel's own account now,
+   * and a Space leaving must not take them with it.
+   */
+  async noteDirectReader(input: z.infer<typeof NoteChannelDirectReaderRequestSchema>): Promise<{ ok: true }> {
+    await this.initialized;
+    const request = parseRpcInput(NoteChannelDirectReaderRequestSchema, input, "channel_direct_reader");
+    this.assertParent(request.workspaceId, request.parentId);
+    this.channelAccess().claimReaderAsDirect(request.userId);
+    return { ok: true };
+  }
+
+  /**
+   * The audience delta this source's arrival asks for, and — only when the
+   * Channel was born with that audience — the commit of the source as well.
+   *
+   * Provenance is ordinarily committed at `confirmSpaceAccessSource`, because a
+   * source row written here would, after any crash before the audience was
+   * applied, claim a Space reaches this Channel while that Space had seated
+   * nobody — access the provenance accounts for and that does not exist. The
+   * receipt this earns is what a redelivery converges on; the fence below still
+   * refuses a plan the Channel has already moved past, so a stale application
+   * never reaches the canonical operations at all.
+   *
+   * `bornWithSourceApplied` is the caller saying there are no canonical
+   * operations between the two halves: the conversation opened with this
+   * source's scope and roster already written, so the crash window the split
+   * exists to close does not exist on that path. It commits through the same
+   * body `confirmSpaceAccessSource` uses, inside this call's own transaction,
+   * and the mode is part of the receipt's fence so a redelivery under the other
+   * mode is a caller defect rather than a silent convergence.
+   */
+  async applySpaceAccessSource(input: z.infer<typeof ApplySpaceAccessSourceRequestSchema>): Promise<ApplySpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(ApplySpaceAccessSourceRequestSchema, input, "space_access_source");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    // Normalized before it becomes the receipt's fence, so a caller that
+    // omitted it and one that passed `false` are the same request.
+    const bornWithSourceApplied = request.bornWithSourceApplied ?? false;
+    return access.operate({
+      operationId: request.operationId,
+      request: {
+        kind: "apply_space_source", spaceId: request.spaceId, scope: request.scope,
+        participantUserIds: request.participantUserIds, spaceRevision: request.spaceRevision,
+        membershipGeneration: request.membershipGeneration,
+        bornWithSourceApplied,
+      },
+      resultSchema: ApplySpaceAccessSourceResultSchema,
+      now,
+      body: () => {
+        // Re-read inside the transaction, after every external boundary the
+        // caller crossed to get here. A staged application that lost the race
+        // with a newer one must not overwrite it with the Space it saw.
+        if (spaceAccessSourceSuperseded(access.source(request.spaceId), request)) {
+          return { ok: false as const, code: "space_revision_conflict" as const };
+        }
+        const plan = audienceSourceApplicationPlan({
+          current: request.channel.readers,
+          source: { scope: request.scope, participantUserIds: request.participantUserIds },
+        });
+        if (!bornWithSourceApplied) return { ok: true as const, plan };
+        // The same body the confirmation runs, in this transaction: the plan
+        // named the readers this source adds, and at birth they are already
+        // seated, so committing here is the whole of the second call.
+        const committed = this.commitSpaceAccessSource(access, {
+          spaceId: request.spaceId,
+          source: {
+            scope: request.scope,
+            participantUserIds: request.participantUserIds,
+            spaceRevision: request.spaceRevision,
+            membershipGeneration: request.membershipGeneration,
+            channel: request.channel,
+          },
+          seatedUserIds: plan.seatUserIds,
+          operationId: request.operationId,
+          now,
+        });
+        if (!committed.ok) return committed;
+        return { ok: true as const, plan, suppliedUserIds: committed.suppliedUserIds };
+      },
+    });
+  }
+
+  /**
+   * Commit a Space source and the readers it seated, or say why it cannot.
+   *
+   * One body for both callers rather than two that agree today. It holds the
+   * revision fence, the one-shot seeding of the Channel's own scope, the source
+   * row and the supplied readers — and every one of those is a rule a copy
+   * could drift on while each half still looked right on its own.
+   *
+   * A `null` source is the narrowing case: readers attributed to a Space that
+   * was committed when it arrived. That is the one place `space_not_found` is
+   * still the answer — the Space was withdrawn under this call, so the readers
+   * just seated would otherwise be attributed to nothing.
+   */
+  private commitSpaceAccessSource(
+    access: WorkstreamAccessStorage,
+    input: {
+      spaceId: SpaceId;
+      source: ConfirmedAccessSource | null;
+      seatedUserIds: readonly UserId[];
+      operationId: string;
+      now: number;
+    },
+  ): ConfirmSpaceAccessSourceResult {
+    const source = input.source;
+    if (!source) {
+      if (!access.source(input.spaceId)) {
+        return { ok: false as const, code: "space_not_found" as const };
+      }
+    } else {
+      // The same fence the application ran, re-read here because this is where
+      // the write lands. A confirmation that crossed a boundary behind a newer
+      // one must not commit the Space it saw.
+      if (spaceAccessSourceSuperseded(access.source(input.spaceId), source)) {
+        return { ok: false as const, code: "space_revision_conflict" as const };
+      }
+      // The first Space to reach this Channel is the last moment the effective
+      // audience is known to be the direct one, and `channel` is what the
+      // caller saw before it applied this one. Seeding here is what makes the
+      // record exact for a Channel created after migration 18 ran, whose
+      // backfill could only guess.
+      if (!access.directAudience().observed && access.sources().length === 0) {
+        access.recordDirectScope(source.channel.readers.scope, input.now);
+      }
+      access.upsertSource({
+        spaceId: input.spaceId,
+        scope: source.scope,
+        participantUserIds: source.participantUserIds,
+        spaceRevision: source.spaceRevision,
+        membershipGeneration: source.membershipGeneration,
+        operationId: input.operationId,
+        now: input.now,
+      });
+    }
+    access.recordSuppliedReaders(input.spaceId, input.seatedUserIds);
+    return { ok: true as const, suppliedUserIds: access.suppliedReaders(input.spaceId) };
+  }
+
+  /**
+   * Commit this source, and record which readers it actually seated.
+   *
+   * This is where provenance is written, not the application — because it is
+   * the only moment both halves are true at once. The plan says who *should*
+   * be seated and the canonical participant operation decides who was, so a
+   * source recorded before that leaves a Space claiming to reach this Channel
+   * with a seating that may never have happened; a crash in between leaves
+   * provenance accounting for access nobody has.
+   *
+   * A confirmation with no `source` attributes readers to a source that is
+   * already here, which is what a narrowing does. That is the one case where
+   * `space_not_found` is still the answer: the Space was withdrawn under it,
+   * the readers just seated are attributed to nothing, and the caller has to
+   * retract again rather than have this silently converge.
+   */
+  async confirmSpaceAccessSource(input: z.infer<typeof ConfirmSpaceAccessSourceRequestSchema>): Promise<ConfirmSpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(ConfirmSpaceAccessSourceRequestSchema, input, "space_access_confirmation");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    return access.operate({
+      operationId: request.operationId,
+      // The observed Channel is deliberately not part of the receipt's fence,
+      // for the reason the application's is not: a redelivery that saw a
+      // Channel which has since moved on has to converge on the first
+      // attempt's answer rather than be rejected as a different request.
+      request: {
+        kind: "confirm_space_source", spaceId: request.spaceId, seatedUserIds: request.seatedUserIds,
+        source: request.source
+          ? {
+            scope: request.source.scope, participantUserIds: request.source.participantUserIds,
+            spaceRevision: request.source.spaceRevision,
+            membershipGeneration: request.source.membershipGeneration,
+          }
+          : null,
+      },
+      resultSchema: ConfirmSpaceAccessSourceResultSchema,
+      now,
+      body: () => this.commitSpaceAccessSource(access, {
+        spaceId: request.spaceId,
+        source: request.source ?? null,
+        seatedUserIds: request.seatedUserIds,
+        operationId: request.operationId,
+        now,
+      }),
+    });
+  }
+
+  async retractSpaceAccessSource(input: z.infer<typeof RetractSpaceAccessSourceRequestSchema>): Promise<RetractSpaceAccessSourceResult> {
+    await this.initialized;
+    const request = parseRpcInput(RetractSpaceAccessSourceRequestSchema, input, "space_access_retraction");
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    return access.operate({
+      operationId: request.operationId,
+      request: { kind: "retract_space_source", spaceId: request.spaceId },
+      resultSchema: RetractSpaceAccessSourceResultSchema,
+      now: Date.now(),
+      body: () => {
+        // The fence the application and the confirmation run, on the one step
+        // that has to carry it here instead. A retract-then-apply deletes the
+        // row those two compare against, so an older audience change that
+        // reached this Channel behind a newer one would find nothing to be
+        // refused by and would then apply its stale roster unfenced.
+        const existing = access.source(request.spaceId);
+        if (request.expectedSpaceRevision !== undefined && existing
+          && existing.spaceRevision > request.expectedSpaceRevision) {
+          return { ok: false as const, code: "space_revision_conflict" as const };
+        }
+        // Retracting a source that is already gone converges rather than
+        // refusing: access is live, a source that does not exist grants
+        // nothing, and a retraction reissued under a new operation id after a
+        // crash has to be able to finish.
+        const suppliedByDeparting = access.suppliedReaders(request.spaceId);
+        const remainingSources = access.sources()
+          .filter((source) => source.sourceId !== request.spaceId);
+        const plan = audienceSourceRetractionPlan({
+          direct: this.directSource(access, request.channel),
+          remainingSources,
+          currentReaders: request.channel.readers,
+          suppliedByDeparting,
+        });
+        access.deleteSource(request.spaceId);
+        return { ok: true as const, plan };
+      },
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1205,7 +1145,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const metadata = this.metadataRow();
     if (metadata) {
       const legacy = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
-      for (const { grant } of legacy.pendingDeliveries()) this.enqueueGrantDirectory(grant, Date.now());
+      const publish = this.grantDirectoryWriter();
+      for (const { grant } of legacy.pendingDeliveries()) publish(grant, Date.now());
     } else if (this.parentSql.exec("SELECT 1 FROM scope_grant_deliveries LIMIT 1").toArray().length) {
       throw new Error("scope_grant_directory_parent_missing");
     }
@@ -1214,7 +1155,22 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   private scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage {
-    return new ScopeGrantStorage(this.state.storage, address, (grant, now) => this.enqueueGrantDirectory(grant, now));
+    return new ScopeGrantStorage(this.state.storage, address, this.grantDirectoryWriter());
+  }
+
+  /**
+   * The writer `ScopeGrantStorage` publishes a committed grant through.
+   *
+   * A role that does not publish still supplies one: `mutate` throws
+   * `scope_grant_directory_writer_required` when handed nothing, and a Space's
+   * grants must still *commit*. Only their discovery is suppressed — a Space is
+   * found through the Organization's Space directory, and a grant row in the
+   * shared work-stream grant directory would make its hidden conversation
+   * reachable from a surface that has no business listing it.
+   */
+  private grantDirectoryWriter(): (grant: ScopeGrant, now: number) => void {
+    if (!this.role.publishesGrantDirectory) return () => undefined;
+    return (grant, now) => this.enqueueGrantDirectory(grant, now);
   }
 
   private enqueueGrantDirectory(grant: ScopeGrant, now: number): void {
@@ -1226,7 +1182,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return new ScopeInvitationService(this.env, this.state.storage,
       (request, relationship) => this.resolveScopeAccess(request, relationship),
       (request) => this.completeWorkstreamCoverage(request.targets),
-      (grant, now) => this.enqueueGrantDirectory(grant, now));
+      this.grantDirectoryWriter());
   }
 
   private completeWorkstreamCoverage(targets: readonly ScopeGrantTarget[]): boolean {
@@ -1392,6 +1348,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const result = await this.scopeInvitations().accept(request);
     await this.armNextAlarm();
     return ScopeInvitationResultSchema.parse(result);
+  }
+
+  async describeScopeInvitation(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
+    await this.initialized;
+    const request = parseRpcInput(DescribeScopeInvitationSchema, input, "describe_scope_invitation");
+    this.assertParent(request.workspaceId, request.parentId);
+    return ScopeInvitationDescriptionSchema.parse(await this.scopeInvitations().describe(request));
   }
 
   async revokeScopeInvitation(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {
@@ -1604,7 +1567,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     }
     const result = ScopeGrantMutationResultSchema.parse(useCurrentRevision
       ? store.mutateCurrent(ParticipantGrantMutationSchema.parse({ operationId:request.operationId,actorUserId:request.actorUserId,
-        userId:request.userId,target:request.target,active:request.active }), recipient?.incarnation ?? null)
+        userId:request.userId,target:request.target,active:request.active,
+        // Provenance travels with the mutation, and the rebuild above is the
+        // one place it can be lost. Dropped here, every grant a Space seats on
+        // a Channel under grant authority is written `direct` and published to
+        // the shared scope-grant directory, which is what PRD acceptance 18
+        // forbids. Spread rather than passed as `undefined`: the schema is
+        // strict and the field is optional.
+        ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) }), recipient?.incarnation ?? null)
       : store.mutate(request, recipient?.incarnation ?? null));
     await this.armNextAlarm();
     return result;
@@ -2468,14 +2438,16 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return row ? {
       region: row.region,
       workspaceId: asWorkspaceId(row.workspace_id),
-      parentKind: "workstream",
+      parentKind: this.role.kind,
       parentId: row.workstream_id,
       authorityGeneration: row.authority_generation,
     } : null;
   }
 
   protected override admitChildEnvelope(envelope: ConversationEffectEnvelope, now: number): void {
-    if (envelope.parentKind !== "workstream") throw new Error("workstream_effect_parent_kind_mismatch");
+    // The child stamps its own kind; this object knows its own. A mismatch is a
+    // conversation addressed at the wrong parent, which no retry fixes.
+    if (envelope.parentKind !== this.role.kind) throw new Error("workstream_effect_parent_kind_mismatch");
     const metadata = this.metadataRow();
     // Identity is the workspace and the work stream. The generation is an
     // epoch that this row *follows*, not a gate: it is stamped once when the
@@ -2499,6 +2471,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
 
   /** Only recipient-addressed child notifications leave this parent. */
   protected override forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean {
+    if (!this.role.forwardsFeedEffects) {
+      // A Space publishes what the Space directory is built from and nothing
+      // else. An activity event, a mention, or a participant notification from
+      // a conversation no product surface can open has no destination; dropping
+      // it here is what keeps it out of the outbox, because anything that
+      // reaches the outbox is delivered.
+      return effect.kind === "directory_common" || effect.kind === "directory_user";
+    }
     if (substreamId === "0") return true;
     return isPersonNotificationEffect(effect);
   }
@@ -2516,6 +2496,42 @@ export class WorkstreamDO extends ConversationParentDurableObject {
 
   protected override aggregatesChildProjection(substreamId: string): boolean {
     return substreamId === "0";
+  }
+
+  /**
+   * A Channel's breakouts get a row of their own in the Organization; a
+   * Space's children and the background agents do not.
+   *
+   * The Space dashboard lists every conversation in the Space that needs the
+   * viewer, breakouts included, and the Organization cannot answer that
+   * without holding each breakout's own title, activity and per-person state —
+   * which until now reached this object's `substream_directory` and stopped
+   * there. Forwarding the child's payload under its own key is what carries
+   * it; it stays out of `aggregateCommon`, so a side thread's title or state
+   * still never becomes the Channel's.
+   *
+   * A background agent is excluded because it is not a conversation anybody
+   * opens: it is a worker this object starts, counted in the Channel's
+   * `backgroundAgentCount` and drawn nowhere as a row. Forwarding those would
+   * put one Queue message and one workspace row on every step a worker takes.
+   * The flag is read back from the child's own stored projection, which the
+   * caller has just upserted, so a common effect is classified by the payload
+   * that arrived with it and a viewer effect by the last one that did. A
+   * viewer row that beats its own common row up is harmless: the page joins
+   * the breakout directory, so a viewer row with no row beside it lists
+   * nothing.
+   *
+   * A Space says no on its own account. Its hidden main conversation is the
+   * only conversation it has, and the PRD gives it no breakout surface at all.
+   */
+  protected override forwardsChildProjection(substreamId: string): boolean {
+    if (!this.role.forwardsFeedEffects) return false;
+    if (substreamId === "0") return false;
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_directory
+        WHERE substream_id = ? AND json_extract(effect_json, '$.backgroundAgent') = 1`,
+      substreamId,
+    )) === null;
   }
 
   protected override childCommonProjections(): DirectoryCommonEffect[] {
@@ -2606,7 +2622,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return {
       workspace_id: metadata?.workspace_id ?? null,
       workstream_id: metadata?.workstream_id ?? null,
-      parent_kind: "workstream",
+      // The role, not the class. Every log line a Space writes through this
+      // base class would otherwise claim to come from a Channel, which is the
+      // one field that tells the two apart in a log search.
+      parent_kind: this.role.kind,
     };
   }
 
@@ -3093,6 +3112,57 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * what carries the revocation onward is the consumer's business, not this
    * object's.
    */
+  /**
+   * Drop the sockets this object can no longer admit, and say whose they were.
+   *
+   * The narrowing counterpart of `revokeSocketAccess`. A work stream that
+   * stops being Organization-wide takes access from every member who is not a
+   * participant, which is a set nobody outside can enumerate and nobody wants
+   * to publish one message per name for. What is enumerable is who is holding
+   * a socket right now, and only this object knows that — so it re-asks its
+   * own admission question per holder and answers with the ones it refused.
+   *
+   * Re-asking is not the polling `docs/access-revocation.md` rules out: this
+   * runs once, because the audience it is about was just written, and it is
+   * the same `authorizeViewer` a reconnect would run. A holder whose answer
+   * cannot be trusted is closed rather than spared, for the reason
+   * `revocationClosesSocket` gives — that costs a reconnect, where sparing
+   * keeps a reader reading a room that no longer admits them.
+   */
+  async revokeNarrowedAudienceAccess(input: { workspaceId: string; parentId: string }): Promise<{ closedUserIds: string[] }> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }),
+      input, "workstream_audience_narrowed");
+    this.assertParent(request.workspaceId, request.parentId);
+    const holders = new Map<string, Array<{ socket: WebSocket; attachment: WorkstreamSocketAttachment }>>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readSocketAttachment(socket);
+      if (!attachment) continue;
+      holders.set(attachment.userId, [...holders.get(attachment.userId) ?? [], { socket, attachment }]);
+    }
+    const closedUserIds: string[] = [];
+    for (const [userId, sockets] of holders) {
+      const viewer = await this.authorizeViewer({
+        workspaceId: request.workspaceId, parentId: request.parentId, userId: UserIdSchema.parse(userId),
+      });
+      if (viewer.authorized) continue;
+      closedUserIds.push(userId);
+      for (const held of sockets) {
+        try {
+          held.socket.serializeAttachment({ ...held.attachment, subscribed: false });
+        } catch {
+          // An unreadable attachment already fails the broadcast filter.
+        }
+        try {
+          held.socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+        } catch {
+          // Already closing; the runtime owns the rest of the teardown.
+        }
+      }
+    }
+    return { closedUserIds };
+  }
+
   async revokeSocketAccess(
     revocation: SocketAccessRevocation,
   ): Promise<{ substreamIds: string[] }> {
@@ -3166,7 +3236,18 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 }
 
-applyRetirementGate(WorkstreamDO, {
+/**
+ * How this class classifies the doors it overrides for itself.
+ *
+ * Exported so `SpaceDO` registers the *same object* rather than a copy.
+ * Dispositions resolve up the prototype chain, so a subclass that declares
+ * nothing already inherits these — what its own registration adds is the
+ * wrapping of any method it comes to define itself, which an inherited
+ * registration cannot reach. A second literal would have bought that at the
+ * price of two door lists to keep in step, and a door missing from one of them
+ * is a retired object still answering.
+ */
+export const WORKSTREAM_RETIREMENT_POLICY = {
   // The shared classification is inherited from ConversationParentDurableObject;
   // this call is what wraps the doors *this* class overrides for itself.
   drop: {
@@ -3183,4 +3264,6 @@ applyRetirementGate(WorkstreamDO, {
     webSocketError: () => Promise.resolve(),
     alarm: () => Promise.resolve(),
   },
-});
+} as const;
+
+applyRetirementGate(WorkstreamDO, WORKSTREAM_RETIREMENT_POLICY);

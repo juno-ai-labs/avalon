@@ -11,12 +11,12 @@ export function NewWorkstreamMenu({ children, returnTo, onStart, tooltipSide = "
   onStart: () => void;
 }): React.JSX.Element {
   return <DropdownMenu.Root>
-    <Tip describesTrigger={false} label="New work stream" side={tooltipSide}><DropdownMenu.Trigger asChild>{children}</DropdownMenu.Trigger></Tip>
+    <Tip describesTrigger={false} label="New channel" side={tooltipSide}><DropdownMenu.Trigger asChild>{children}</DropdownMenu.Trigger></Tip>
     <DropdownMenu.Portal>
       <DropdownMenu.Content className="menu-content" align="start" sideOffset={6}>
         <DropdownMenu.Item asChild>
           <NavLink className="menu-item" to="/workstreams/new" state={returnTo ? { returnTo } : undefined} onClick={onStart}>
-            start new work stream
+            start new channel
           </NavLink>
         </DropdownMenu.Item>
         <DropdownMenu.Item asChild>

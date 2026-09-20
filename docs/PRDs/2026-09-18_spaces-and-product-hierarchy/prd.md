@@ -4,7 +4,8 @@
 >
 > Replace Projects with Spaces, organize every non-deleted Channel under at least
 > one Space, and rename Rally's product hierarchy to Organizations, Spaces,
-> Channels, and Breakouts. Companion: [state](state.md). Supersedes the
+> Channels, and Breakouts. Companions: [state](state.md) and [plan](plan.md).
+> Supersedes the
 > [Projects PRD](../2026-08-26_projects/prd.md). Related subsystem references:
 > [Projects](../../projects.md), [authorization](../../authorization.md),
 > [scope-grant directory](../../scope-grant-directory.md),
@@ -321,7 +322,428 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
-None yet.
+### 2026-09-19 — A Space's icon, colour and name are visible to anyone who can see a conversation inside it
+
+**Decided:** A person who can read at least one Channel placed in a Space sees
+that Space's **icon, colour and name**, even when the Space is
+participants-only and they are not a participant. (A breakout is visible only
+when its parent Channel is, so "or a breakout" reduces to the same rule.)
+
+That is the whole of the disclosure. Nothing else about the Space reaches them:
+not its participants, not its audience setting beyond the lock the mark already
+carries, not its resources, not its Sidekick recommendations, not the Channels
+in it they could not already read, and not how many Channels are in it — the
+count they are handed is of the Channels *they* can see. No control on any
+surface offers them a write: the sidebar row has no **+**, is not a drop target
+and is not offered under **Add to space**; its dashboard is the header and the
+conversation list, with no audience, participants, archive, **Add channel**,
+Resources or Sidekicks section and no **Remove** on a row; **Manage access**
+names the Space where it used to say "a space you can't see" and still offers
+no **Remove from space**. Every one of those is refused by the server by name.
+
+Arranging such a Space, and the Channels under it, stays available: an
+arrangement is that person's own view preference, stored under their user id
+and read by nobody else.
+
+**Why:** Space navigation (section 3) says the sidebar's job is to say where
+every Channel lives, and until now it could not for the one case that matters
+most — a Channel somebody shared into a Space of their own. Its only placement
+was invisible to every other reader of that Channel, so the Channel fell into
+the flat **Other channels** list, and the product's answer to "where does this
+live?" was a list that declined to say. The name of the folder a conversation
+you can already read sits in is the smallest thing that answers it.
+
+The cost is real and is accepted: **a Space's name is now something its
+participants choose that every reader of its member Channels will see.** A
+Space called "Performance review — Sam" placed over a Channel Sam can read
+tells Sam that. That is a naming consequence people can act on, and it is a
+better trade than a hierarchy that cannot describe itself. What is *not*
+accepted is the count: the size of a participants-only Space is inferable from
+nothing, which is why the count a reached-through viewer is handed is narrowed
+to what they can see.
+
+**Changes:** Nothing in sections 1 to 6. Space navigation gains a third way a
+Space becomes visible, beside its own Organization-wide scope and the viewer's
+participation in it, and `SpaceSummary` gains one field — `reach`
+(`participant`, `organization`, `through_channel`) — that every surface decides
+from. **Other channels** narrows to two transient states, an Organization still
+opening and a Channel whose every Space is archived, rather than the standing
+case it was introduced for in the 2026-09-19 entry below. An archived Space is
+*not* reachable this way: an archive stages every membership out of `active`
+before it commits, and no surface draws a Channel under an archived Space, so
+there would be nothing for the mark and name to explain.
+[`docs/spaces.md`](../../spaces.md#who-may-see-a-space-and-why) owns the
+predicate and the refusals; [`docs/authorization.md`](../../authorization.md)
+records that the disclosure is discovery and grants nothing.
+
+### 2026-09-19 — No recency list for members, and every list a person can see is theirs to arrange
+
+**Decided:** Four product decisions, taken together because each is the reason
+the next one works.
+
+The sidebar's time-sorted list of Channels goes for a member session. Every
+Channel belongs to at least one Space, so the hierarchy above it already says
+where each Channel lives; a second list of the same rows ordered by time was the
+same sidebar twice, and the reader had to decide each time which of the two they
+were meant to be reading. The group headings go with it, and their **Mark all as
+read** / **Archive all** actions go with the headings. One line of that list's
+copy stays: a member with no Channels at all is still told **No channels yet**,
+under the Spaces, because the alternative is a sidebar that has stopped talking
+rather than one that is empty.
+
+Every Channel stays reachable. A member can read a Channel whose only Spaces are
+ones they cannot see — someone else's personal Space, which **Manage access**
+already draws as a Space the viewer cannot see — and that Channel would
+otherwise be in the sidebar nowhere at all. One flat section after the Spaces,
+**Other channels**, holds exactly those: ordered by recency, no group headings,
+absent when empty, which is the ordinary state.
+
+A person may arrange three lists by hand, by drag and by keyboard: the
+Organization's Spaces, the Channels placed in one Space, and the Breakouts under
+one Channel. The arrangement is that person's alone, is stored on the server,
+and follows them to every session they have open — a drag in one window moves
+the list in the other without a reload.
+
+A guest is unchanged. A guest is handed no Space directory, so there is no
+hierarchy to say where anything lives; their sidebar keeps the flat time-grouped
+list exactly as it is, headings and bulk actions included, and no ordering
+gesture — their ordering write is refused by the same gate every Space write is
+behind.
+
+**Why:** The hierarchy is what the rest of this PRD is for. Until it existed the
+recency list was the only thing that could say where a Channel was; now it is a
+duplicate view that competes with the answer the product just built, and keeping
+it "just in case" would mean shipping the old navigation and the new one at once
+and letting each reader work out which is authoritative.
+
+Ordering follows from the same place. A hierarchy is only useful if the person
+reading it can put the things they use most where they look first, and that is a
+*view preference* rather than a fact about the Organization — which is why it is
+stored per person rather than per Space, and why a drag by one member moves
+nothing for anybody else.
+
+**Changes:** Nothing in sections 1 to 6. Space navigation gains a per-person
+order of Spaces, of the Channels placed in each, and of a Channel's Breakouts,
+and the sidebar's Channel list is replaced by the Spaces section plus **Other
+channels**. The Space dashboard's paginated Channel list is explicitly *not*
+arranged per person: ordering a list whose later pages have not arrived is a
+different feature, and the client could only ever order the page in front of it.
+The per-person pinned-Channel list is unchanged and keeps its own table.
+
+### 2026-09-19 — The cutover has no audience pass, because placing a Channel in General is the widening
+
+**Decided:** The cutover's phases are `general` → `preflight` → `memberships` →
+`finalize`. There is no separate pass that makes formerly personal Channels
+Organization-wide after they are placed: applying General's Organization-wide
+source through `ChannelAccessService` *is* that change, and it runs inside the
+placement. The read-only `preflight` pass takes the slot such a pass would have
+had, walking the same page and cursor and writing nothing.
+
+**Why:** A separate audience pass running after the memberships would have
+given every fenced Channel a membership row first and only then discovered it
+could not be widened — a partial mutation the Existing Organizations section
+forbids. Running the containment preflight in front of the placement instead
+means a fenced Channel gets no membership row and no mutation at all. And the
+Organization-level preflight had to exist for its own reason: rollout step 3
+asks for every blocker to be identified *before* promotion, and a walk that
+discovered blockers one placement at a time left every Channel ahead of the
+fenced one already Organization-wide.
+
+**Changes:** Nothing in the agreed goals. Rollout step 4's single walk becomes
+two passes over the same machinery, and `memberships` is reachable only from a
+`preflight` that recorded nothing.
+
+### 2026-09-19 — A Space audience change composes as retract-then-apply
+
+**Decided:** Changing an active Space's audience converges each member Channel
+by withdrawing that Space's source and applying the new one, rather than
+re-applying a smaller roster. The retraction carries the Space revision it was
+staged against and is refused `space_revision_conflict` when the source it is
+about to delete is newer; a removal and an archive withdraw without a revision,
+because no newer application exists for them to lose to. The retraction plan
+seats every surviving reader before it narrows anything.
+
+**Why:** Design decision 4's composition rule is a union, so
+`audienceSourceApplicationPlan` only ever widens and seats — a source that could
+narrow would be able to revoke access another source still supplies. Re-applying
+a shrunken roster would therefore leave the readers it no longer names seated
+with nothing accounting for them. The revision on the retraction is not
+symmetry: the retraction deletes the source row that the application and its
+confirmation fence on, so an older audience change interleaved behind a newer
+one would otherwise find nothing to be refused by and install its stale roster
+unfenced.
+
+**Changes:** Nothing in the agreed goals. The Data model's "Space audience
+changes" row is implemented as a retraction followed by an application rather
+than as one recomputation.
+
+### 2026-09-19 — The old-client refusal is a declared client contract, not an `Origin` check
+
+**Decided:** `GET /workspace/socket` and `GET /workstreams` — the two surfaces
+whose payloads changed — answer `426 client_update_required` when the request
+carries no `x-rally-client-contract` header or one below
+`MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` is not the gate: it only separates a
+browser context from a native one, so a request carrying neither header is
+admitted.
+
+**Why:** There was no version signal at all, and the desktop renderer is the
+only client whose payload schemas are strict — it rejects an object carrying a
+field it has never heard of rather than ignoring it, so a pre-cutover build
+renders an empty sidebar and keeps asking for one. iOS and the desktop main
+process decode with schemas that ignore unknown keys, so a blanket refusal would
+break working clients to protect them from a problem they do not have.
+
+**What it does not distinguish**, stated plainly: it does not identify a build,
+a platform or a version beyond that one integer, and it does not know whether a
+given client would actually drop the payload — a browser-context request with no
+contract header is refused on the assumption that it is a pre-cutover renderer.
+Nor is `426` an update prompt: no build shipped before this release knows the
+code, so a pre-cutover desktop shows whatever it shows for a transport failure.
+The prompt belongs to builds shipped *after* this, which declare a contract and
+can read the answer. Rollout step 6's "explicit update-required response rather
+than a malformed or partial payload" is met by refusing, not by what the old
+build draws.
+
+**Changes:** Nothing in the agreed goals. Rollout step 6 gains a header and two
+constants — what this tree speaks and the oldest a Worker still answers —
+because the Worker deploys first and a Worker requiring the newest client would
+refuse every shipped build for the length of a rollout.
+
+### 2026-09-19 — The Slack workspace creation path places its own Channel in General
+
+**Decided:** `SlackWorkspaceWorkstreamService` calls
+`placeConnectorChannelInGeneral` for the Channel it provisions, before the
+opening message, so the audience is settled when that message lands. It is best
+effort and never throws, and a refusal reopens the Organization's cutover so the
+ordinary walk reaches the Channel.
+
+**Why:** Goal 4 names connectors explicitly. The Slack agent opens a Channel for
+a Slack member who has no Rally identity and provisions the conversation itself
+rather than through `WorkstreamObjectCreationService`, so it is the one
+production creation path the coordinator's placement does not cover. Best effort
+because the person's Slack message has already produced a Channel and a run, and
+a placement that could not be made must not turn that into an error they see —
+but logging and stopping would have left the Channel homeless for good, since a
+`complete` Organization is never walked again and this path has no page behind
+it.
+
+**Changes:** Nothing in the agreed goals. It is the second path, beside
+`openGeneralSpaceForNewWorkspace`, that takes a cutover step outside a page.
+
+### 2026-09-19 — The cutover keeps no receipt table; the membership row is the receipt
+
+**Decided:** `space_bootstrap_receipts` is deleted. What a redelivered page
+skips is decided by the `space_channel_memberships` row itself, and the
+`space_bootstrap` row carries the phase, the cursor, the retry gate and the
+blocked Channels.
+
+**Why:** The table recorded one row per placed Channel per phase and nothing
+ever read it back. `bootstrapPage` decides what is already done from the
+membership row, which is the state a placement actually produces and therefore
+cannot disagree with; a second record of the same fact is a second thing to keep
+in step. It also could not be the completion gate: a Channel created by the
+ordinary creation path while the cutover is running is placed without a receipt,
+so counting receipts against the directory would hold every such Organization
+one short of complete.
+
+**Changes:** The Data model's "resumable bootstrap receipts" are the
+`space_bootstrap` row and the membership rows rather than a receipts table. The
+PRD's idempotency requirement is unchanged and is met by the same state.
+
+### 2026-09-19 — The Project audience fence was removed inside this branch, ahead of the tables
+
+**Decided:** The Project rules in `WorkstreamObjectProductService.update` and
+`removeParticipant` — and the `projectEffect` exemption that went with them —
+were deleted in the change that introduced `ChannelAccessService`, several
+phases before migration 64 drops the Project tables. The Space rule replaced
+them in the same change: a Channel that is Organization-wide through a Space
+cannot be made private.
+
+**Why:** The branch ships as one unflagged cutover (Rollout), so there is never
+a deployed build in which both authorities decide a Channel's audience. Keeping
+the Project fence alive until the tables went would have meant two rules
+competing over the same narrowing for the length of the branch, and the Project
+one exists because a Project *owned* its members' audiences and had to exempt
+its own fan-out — an exemption that is wrong for a Space, which supplies one
+source of an audience it does not own.
+
+**Changes:** Nothing in the agreed goals. Rollout steps 2 and 7 describe
+draining and deleting Project *data*; this records that the Project audience
+*rule* went earlier, with the code that superseded it.
+
+### 2026-09-19 — A Channel created without a named Space is born Organization-wide
+
+**Decided:** Empty `spaceIds` means General, General is Organization-wide, and
+a Space source only ever widens — so the Channel opens `workspace` whatever
+scope the caller asked for. This is the behavior, not a defect to correct: the
+top-level composer, a connector ingress that resolved a personal scope, session
+import, `createFromOpportunity` with a personal audience, and the demo seeder
+all create Organization-wide Channels unless they name a Space. A Channel that
+is meant to stay personal must be born in a personal Space.
+
+**Why:** It follows from three sentences already agreed. Channel membership:
+"Creating a Channel from a top-level composer, connector, import, demo,
+recovery, or scheduled automation or Sidekick path assigns it to General when
+no Space was supplied." General: it "is Organization-wide, and cannot be
+archived or made personal." Audience: "Adding it to an Organization-wide Space
+makes the Channel Organization-wide." Design decision 6 chose a protected
+fallback over asking every creation surface for a bespoke Space, and the
+composition rule in decision 4 is a union — a narrower direct scope cannot
+subtract from a broader source. Deriving the birth audience any other way would
+mean a Channel whose Space's audience does not apply to it, which the Existing
+Organizations section rejects for the cutover for the same reason.
+
+**Changes:** Nothing in the agreed goals, and no behavior change. It is
+recorded because it is not obvious from any one sentence and because it has one
+consequence worth naming: the demo seeder now refuses a pack room declared
+`personal` by name rather than seeding it Organization-wide, since the
+readiness barrier compares against the scope the pack stated.
+
+### 2026-09-19 — Space-derived access is provenance in WorkstreamDO, applied through the Channel's canonical audience operations
+
+**Decided:** WorkstreamDO records which Space sources currently reach a Channel
+and which readers each supplied, and the one effective-audience function
+derives the Channel's readers from its direct source plus those Space sources.
+Every expansion or retraction is applied through the Channel's existing scope
+and participant operations on its main conversation, which is where the
+retained-content containment preflight and its SQL triggers already run. Grant
+rows written for a Space source carry that provenance and are never published
+to the shared scope-grant directory.
+
+**Why:** Design decision 4 extends "the WorkstreamDO grant authority". On
+`main` that ledger only becomes the admission authority for a Channel after its
+first share; every other Channel is still admitted from the scope and
+participant rows its main conversation holds. Recording Space sources only in
+the grant ledger would grant nothing on most Channels. Recording provenance in
+WorkstreamDO and applying it through the canonical operations reaches both
+kinds of Channel with one preflight.
+
+**Changes:** Nothing in the agreed goals. Design decision 4 is implemented as
+provenance beside the grant ledger rather than inside it; the "one effective
+grant" is the audience the canonical operations converge to.
+
+### 2026-09-19 — Space wire scope keeps the `workspace` value
+
+**Decided:** `SpaceScope` is `personal | workspace`, the vocabulary every
+Channel scope, grant, and directory row already uses. The product word is
+Organization on every surface.
+
+**Why:** Composing an Organization-wide Space source with a Channel's direct
+scope is a comparison between two scope values; two spellings of the same
+audience would need a translation at every seam. Non-goal 7 keeps internal
+tenancy vocabulary.
+
+**Changes:** Nothing in scope.
+
+### 2026-09-19 — WorkspaceDO's default registry is the delivery authority
+
+**Decided:** A Space's default resources and Sidekicks are attached to the
+Space's own authority (its hidden main conversation for resources, its parent
+for Sidekick recommendations) and registered in WorkspaceDO with a generation.
+The registry is what stages, fences, and settles delivery to member Channels;
+the Space's own attachments are the inheritance record a person sees.
+
+**Why:** Delivery needs a generation to fence stale Queue work, and the Space's
+own attachment tables have no such counter. Keeping the counter beside the
+membership generations, in the object that already coordinates them, avoids a
+second fence that would have to be read across an RPC boundary.
+
+**Changes:** Nothing in scope.
+
+### 2026-09-19 — The conversation-object migration is 66 and internal names keep their words
+
+**Decided:** The closed `space` parent kind lands as conversation-object schema
+version 66, not "after 62": `main` reached 65 before implementation started.
+The `--av-sys-color-project-*` design tokens, the `project` colour helpers, and
+the stored `workspace` and `workstream` identifiers are kept; only visible copy
+changes. New Space surfaces use `space` in their own class and file names.
+
+**Why:** A token rename touches every glyph and avatar in the desktop client
+for no visible change. Non-goal 7 and design decision 8 already keep internal
+vocabulary where renaming it buys nothing.
+
+**Changes:** Nothing in scope.
+
+### 2026-09-19 — SpaceDO shares WorkstreamDO's migration ledger under its own component
+
+**Decided:** `SPACE_ROLE.migration.migrations` is
+`WORKSTREAM_DO_SCHEMA_MIGRATIONS` — the array `WorkstreamDO` applies — run
+under component `space_do` and class name `SpaceDO`. A Space receipts every
+version a Channel does, in its own `_sql_schema_migrations`. A migration that
+repairs history rather than describing shape is gated on the role in the
+`afterMigrations` hook; version 17, which retires grant-directory deliveries a
+Space has never queued, is the one that exists.
+
+**Why:** Design decision 1 asks that a Space reuse the work-stream primitive,
+which includes its schema. Implementation first rendered that schema's current
+shape into a separate one-version `space-do-schema.ts` so a new Space would not
+replay three `durable_outbox` rebuilds. That bought milliseconds once per Space
+and charged a standing obligation for it: every future table change had to be
+written into two ledgers, with only a Node test comparing `sqlite_master`
+holding them together. The components stay separate — the tracker rolls up by
+component and `forceMigration` fences on class name — but the statements are
+one array.
+
+**Changes:** Nothing in the agreed goals or in the acceptance criteria.
+`space-do-schema.ts` and its test are deleted; `space_do`'s head is
+`workstream_do`'s head.
+
+### 2026-09-19 — The Space dashboard lists conversations that need the viewer, not memberships
+
+**Decided:** The dashboard's Channels list becomes the list of every
+conversation in the Space that currently needs the viewer: member **Channels
+and their breakouts, in one list**, ordered by most recent activity first, with
+everything stale for that viewer hidden entirely rather than ranked down.
+Stale is decided by each conversation's current state *for that person*, not by
+age: live is a harness status of `scheduled`, `running` or `needs_input`, or
+unread, or unseen, or mentioned — exactly the markers ranked above `completed`
+in `MARKER_PRECEDENCE`. Hidden conversations stay reachable from the sidebar
+under their Space and from search.
+
+The predicate is defined once, as `conversationNeedsViewer` in
+`@rally/contracts`, over the four summary fields, and WorkspaceDO's page query
+mirrors it in SQL. **The SQL is the authority**, because it decides the page;
+the contracts function is the definition it is held to, and nothing on the
+client calls it — the desktop draws the rows the server already filtered. A
+workerd test walks every combination of the four inputs and asserts the two
+agree; that test is what keeps them equal.
+
+A breakout reaches the Organization through the pipeline a Channel already has
+— its own `directory_common` and `directory_user` projections, forwarded over
+the outbox with the substream id on the envelope — and lands in two new
+WorkspaceDO tables beside the Channel ones, in migration 63. A breakout row
+carries no **Remove**: a breakout follows its Channel. `GET
+/spaces/:id/channels` keeps its path and answers conversations. One per-viewer
+waterline on the Space summary is the dashboard's single refresh signal, and it
+subsumes `channelCount`.
+
+**Why:** Section 4's dashboard lists "active Channels", which in an
+Organization of any size is a list nobody reads: General holds every Channel,
+the order was the Channel id, and the thing a person opens a Space to find out
+— what in here wants me — was not answerable from it at all. Breakouts are
+where most of the work that is waiting on somebody actually sits, and section
+5's hierarchy already makes a Breakout a first-class part of the product, so a
+Space surface that could not name one was describing half the hierarchy it
+introduced. Age was rejected as the staleness input in both directions: a run
+that has waited three weeks for an answer still wants it, and a conversation
+that was busy a minute ago and has been read wants nothing — and an age window
+needs a number nobody here can derive. Filtering on the client was rejected
+because the page is server-ordered and paginated: a client-side filter makes
+every page arbitrarily short and the cursor a promise about rows the client has
+already discarded.
+
+**Changes:** Section 4's "active Channels with controls to create, add, or
+remove a Channel" narrows to the conversations that need the viewer, and gains
+breakout rows that have no remove control. Section 4's statement that the
+dashboard "contains no … Breakout list" still holds as written — it is about
+the Space's *own* hidden conversation, which still has no surface; what the
+dashboard now lists is member Channels' breakouts. Section 5's product
+hierarchy is unchanged. The `GET /spaces/:id/channels` response in section 7
+gains `kind` and, for a breakout, its parent Channel, its substream id and the
+parent's title; the dashboard is refetched on a `space_conversations_changed`
+socket nudge and on reconnect, with nothing durable behind it. Nothing in the
+agreed goals or non-goals moves. Guest access to Spaces stays deferred, so a
+guest sees none of this.
 
 ## Key design decisions
 

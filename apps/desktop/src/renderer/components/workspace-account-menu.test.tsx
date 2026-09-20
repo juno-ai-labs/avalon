@@ -52,9 +52,9 @@ function openMenu(): void {
   fireEvent.pointerDown(screen.getByRole('button', { name: /Ada/u }), { button: 0, ctrlKey: false });
 }
 
-describe('workspace account menu', () => {
+describe('organization account menu', () => {
   afterEach(() => vi.useRealTimers());
-  it('keeps workspace discovery and switching available in the Grok presentation', () => {
+  it('keeps organization discovery and switching available in the Grok presentation', () => {
     const props = renderMenu({ presentation: 'grok' });
     openMenu();
     expect(props.onMenuOpen).toHaveBeenCalledOnce();
@@ -63,7 +63,7 @@ describe('workspace account menu', () => {
     expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
     expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
   });
-  it.each([true, false])('keeps compact account actions ordered and usable with workspaces enabled=%s', (enabled) => {
+  it.each([true, false])('keeps compact account actions ordered and usable with organizations enabled=%s', (enabled) => {
     const invite = {
       id: 'invite-1', workspaceId: 'workspace-invited', workspaceName: 'Invited Studio',
       region: 'global' as const, email: currentUser.email, role: 'member' as const,
@@ -85,7 +85,7 @@ describe('workspace account menu', () => {
     expect(items.at(-1)).toBe(logout);
     expect(menu.lastElementChild).toBe(logout);
     expect(within(menu).getAllByRole('separator')).toEqual([logout.previousElementSibling]);
-    for (const name of ['About', 'Help Center', 'Send Feedback', 'Create a workspace']) {
+    for (const name of ['About', 'Help Center', 'Send Feedback', 'Create an organization']) {
       expect(within(menu).queryByRole('menuitem', { name })).not.toBeInTheDocument();
     }
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Settings' }));
@@ -98,12 +98,12 @@ describe('workspace account menu', () => {
   it('shows background attention, a cross-region tag, and one-action switching', () => {
     const props = renderMenu();
 
-    expect(screen.getByRole('button', { name: /Ada.*attention in another workspace/u }))
+    expect(screen.getByRole('button', { name: /Ada.*attention in another organization/u }))
       .toBeVisible();
     openMenu();
 
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('Workspaces')).toBeVisible();
+    expect(within(menu).getByText('Organizations')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
     const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*enterprise.*3 mentions waiting for you/u });
     // One dot for any activity, never a count.
@@ -160,11 +160,11 @@ describe('workspace account menu', () => {
       },
     });
 
-    expect(screen.getByRole('button', { name: /Ada.*Global Studio.*unread activity in another workspace/u }))
+    expect(screen.getByRole('button', { name: /Ada.*Global Studio.*unread activity in another organization/u }))
       .toBeVisible();
   });
 
-  it('does not mark a same-id workspace in another region as current', () => {
+  it('does not mark a same-id organization in another region as current', () => {
     const regionalCollision = { ...enterprise, id: active.id };
     const props = renderMenu({ attention: {}, workspaces: [active, regionalCollision] });
 
@@ -191,22 +191,22 @@ describe('workspace account menu', () => {
     expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
   });
 
-  it('keeps the legacy one-workspace anatomy while the flag is off', () => {
+  it('keeps the legacy one-organization anatomy while the flag is off', () => {
     renderMenu({ enabled: false, workspaces: [active], attention: {} });
     openMenu();
 
-    expect(screen.queryByText('Workspaces')).not.toBeInTheDocument();
+    expect(screen.queryByText('Organizations')).not.toBeInTheDocument();
     expect(screen.getByText('ada@example.com')).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Settings…' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   });
 
-  it('names the active workspace\'s data region by deployment identifier under the account, and offers no reconnect item', () => {
+  it('names the active organization\'s data region by deployment identifier under the account, and offers no reconnect item', () => {
     renderMenu({ attention: {} });
     openMenu();
 
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('Workspace')).toBeVisible();
+    expect(within(menu).getByText('Organization')).toBeVisible();
     expect(within(menu).queryByRole('menuitem', { name: /Reconnect/u })).not.toBeInTheDocument();
     expect(within(menu).queryByText(/Reconnect your account/u)).not.toBeInTheDocument();
   });
@@ -241,12 +241,12 @@ describe('workspace account menu', () => {
     const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
     expect(within(europe).getByText('Sign in could not be completed: access denied')).toBeVisible();
     expect(within(europe).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
-    expect(within(europe).getByLabelText('Opening workspace')).toBeVisible();
+    expect(within(europe).getByLabelText('Opening organization')).toBeVisible();
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).not.toHaveBeenCalled();
   });
 
-  it('confirms an invitation and creates a workspace from the same menu', async () => {
+  it('confirms an invitation and creates an organization from the same menu', async () => {
     const invite = {
       id: 'invite-1', workspaceId: 'workspace-invited', workspaceName: 'Invited Studio',
       region: 'global' as const, email: currentUser.email, role: 'member' as const,
@@ -262,13 +262,13 @@ describe('workspace account menu', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Join Invited Studio' })).not.toBeInTheDocument());
 
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    const workspaceName = within(create).getByLabelText('Workspace name');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    const workspaceName = within(create).getByLabelText('Organization name');
     expect(workspaceName).toHaveFocus();
     expect(workspaceName).toHaveAttribute('maxlength', '120');
     fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     expect(props.onCreateWorkspace).toHaveBeenCalledWith(
       { name: 'New Lab', region: 'global' }, expect.any(String), { onSignInRequired: expect.any(Function) },
     );
@@ -283,11 +283,11 @@ describe('workspace account menu', () => {
     ) => new Promise<void>(() => { progress = hooks; }));
     renderMenu({ onCreateWorkspace });
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
     expect(within(create).queryByRole('radio')).not.toBeInTheDocument();
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(progress).not.toBeNull());
     expect(within(create).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
 
@@ -295,7 +295,7 @@ describe('workspace account menu', () => {
 
     expect(within(create).getByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
     // The person may have closed the browser instead: both ways out stay open.
-    expect(within(create).getByRole('button', { name: 'Create workspace' })).toBeEnabled();
+    expect(within(create).getByRole('button', { name: 'Create organization' })).toBeEnabled();
     expect(within(create).getByRole('button', { name: 'Cancel' })).toBeEnabled();
   });
 
@@ -314,16 +314,16 @@ describe('workspace account menu', () => {
       .mockImplementationOnce(() => new Promise<void>(() => undefined));
     const props = renderMenu({ onCreateWorkspace });
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(progress).not.toBeNull());
     expect(within(create).getByRole('button', { name: 'Cancel' })).toBeDisabled();
     act(() => progress!.onSignInRequired());
     expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
 
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(onCreateWorkspace).toHaveBeenCalledTimes(2));
     // The first attempt stands down as a newer sign-in supersedes it, and says
     // nothing in the dialog the second attempt now owns.
@@ -343,10 +343,10 @@ describe('workspace account menu', () => {
     ) => new Promise<void>(() => { progress = hooks; }));
     const props = renderMenu({ onCreateWorkspace });
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(progress).not.toBeNull());
     act(() => progress!.onSignInRequired());
     expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
@@ -354,15 +354,15 @@ describe('workspace account menu', () => {
     fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
 
     expect(props.onAbandonSignIn).toHaveBeenCalledOnce();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create a workspace' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create an organization' })).not.toBeInTheDocument());
   });
 
-  it('submits workspace creation with Enter but leaves an IME composition alone', async () => {
+  it('submits organization creation with Enter but leaves an IME composition alone', async () => {
     const props = renderMenu();
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    const workspaceName = within(create).getByLabelText('Workspace name');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    const workspaceName = within(create).getByLabelText('Organization name');
     fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
 
     fireEvent.keyDown(workspaceName, { key: 'Enter', isComposing: true });
@@ -380,13 +380,13 @@ describe('workspace account menu', () => {
       .mockResolvedValueOnce(undefined);
     renderMenu({ onCreateWorkspace });
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    const create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
     expect(await within(create).findByText('response lost')).toBeVisible();
 
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
 
     await waitFor(() => expect(onCreateWorkspace).toHaveBeenCalledTimes(2));
     expect(onCreateWorkspace.mock.calls[1]?.[1]).toBe(onCreateWorkspace.mock.calls[0]?.[1]);
@@ -396,23 +396,23 @@ describe('workspace account menu', () => {
     renderMenu({
       onCreateWorkspace: vi.fn(async () => {
         throw new Error(
-          "Error invoking remote method 'onboarding:create-workspace': Error: Sign in again to create a workspace",
+          "Error invoking remote method 'onboarding:create-organization': Error: Sign in again to create an organization",
         );
       }),
     });
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    let create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
-    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    let create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
 
-    expect(await within(create).findByText('Sign in again to create a workspace')).toBeVisible();
+    expect(await within(create).findByText('Sign in again to create an organization')).toBeVisible();
     expect(within(create).queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
     fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
-    create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    expect(within(create).queryByText('Sign in again to create a workspace')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create an organization' }));
+    create = await screen.findByRole('dialog', { name: 'Create an organization' });
+    expect(within(create).queryByText('Sign in again to create an organization')).not.toBeInTheDocument();
   });
 
   it('surfaces a signed-in invitation prompt without requiring the menu to open', async () => {

@@ -1,4 +1,12 @@
-import type { ArtifactId, AutomationId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
+import type {
+  ArtifactId,
+  AutomationId,
+  Region,
+  SpaceId,
+  SubstreamId,
+  WorkspaceId,
+  WorkstreamId,
+} from "@rally/contracts";
 
 /** One regional workspace control object. */
 export function workspaceDOName(region: Region, workspaceId: WorkspaceId): string {
@@ -24,10 +32,30 @@ export function workstreamDOName(
 }
 
 /**
+ * One Space object: the parent of a Space's hidden main conversation.
+ *
+ * It carries the `space` role word where `workstreamDOName` carries nothing,
+ * even though both are `<region>:<workspace>:<uuid>` otherwise. A Space id and
+ * a work-stream id are both bare UUIDs drawn from the same generator, and the
+ * two live in different namespaces where an accidental collision would be
+ * harmless — but the name is also what an operator reads in a migration report,
+ * and a name that cannot say which of the two it is makes the report useless
+ * for finding the object that is stuck. The word is in
+ * `FIXED_SEGMENTS`, without which the report silently drops the name.
+ */
+export function spaceDOName(
+  region: Region,
+  workspaceId: WorkspaceId,
+  spaceId: SpaceId,
+): string {
+  return `${region}:${workspaceId}:space:${spaceId}`;
+}
+
+/**
  * One conversation object per substream, named by its parent.
  *
- * `parentId` is a work stream id or an automation id; the kind is not in the
- * name because both are UUIDs and the object records its own kind. The main
+ * `parentId` is a work stream id, an automation id, or a Space id; the kind is
+ * not in the name because all three are UUIDs and the object records its own kind. The main
  * substream (`"0"`) deliberately retains the historical WorkstreamRoom name, so
  * no deployed object moved when the parent became typed. Additional substreams
  * receive independent objects suffixed by their substream id.

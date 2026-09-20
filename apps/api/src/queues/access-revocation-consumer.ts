@@ -1,6 +1,7 @@
 import {
   asArtifactId,
   asAutomationId,
+  asSpaceId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -10,6 +11,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
   workstreamDOName,
 } from "../durable-objects/names";
@@ -47,15 +49,48 @@ import {
  */
 export async function applyAccessRevocation(env: Env, message: AccessRevocationMessage): Promise<void> {
   const workspaceId = asWorkspaceId(message.workspaceId);
-  const revocation: SocketAccessRevocation = {
+  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
+  const target = message.target;
+  const carried = {
     reason: message.reason,
     workspaceId: message.workspaceId,
-    userId: message.userId,
     sessionId: message.sessionId,
     ...(message.membershipIncarnation ? { membershipIncarnation:message.membershipIncarnation } : {}),
   };
-  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
-  const target = message.target;
+
+  if (target.scope === "workstream_audience_narrowed") {
+    // The one hop that arrives without a name. The room closes what it can no
+    // longer admit and answers with whose sockets those were; from there each
+    // one is an ordinary per-user revocation, which is what reaches the
+    // substreams and the automations the room owns. Nobody holding a socket
+    // means nobody to publish for — the members who lost access and were not
+    // connected have nothing open to close.
+    const workstream = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSTREAM_DOS,
+      workspaceId,
+      workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(target.workstreamId)),
+      placementAffinity,
+    );
+    const { closedUserIds = [] } = await workstream.revokeNarrowedAudienceAccess({
+      workspaceId,
+      parentId: target.workstreamId,
+    });
+    await publishDescendantRevocations(env, closedUserIds.flatMap((userId) => [
+      descendantRevocation({ ...carried, userId }, { scope: "workstream", workstreamId: target.workstreamId }),
+      descendantRevocation({ ...carried, userId },
+        { scope: "workstream_automations", workstreamId: target.workstreamId }),
+    ]));
+    return;
+  }
+
+  // Every other target is about one person, and the schema has already
+  // refused a message that lost them. Named rather than asserted non-null, so
+  // a future target added without a hop says which field it is missing.
+  if (message.userId === null) {
+    throw new Error(`access_revocation_user_required:${target.scope}`);
+  }
+  const revocation: SocketAccessRevocation = { ...carried, userId: message.userId };
 
   if (target.scope === "workspace") {
     const workspace = await durableObjectStubForWorkspace(
@@ -126,6 +161,30 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
       scope: "substream",
       workstreamId: target.automationId,
+      substreamId: child.substreamId,
+    })));
+    return;
+  }
+
+  if (target.scope === "space") {
+    // No `revokeSocketAccess` call: a Space admits no client socket, so there
+    // is nothing here to close and asking would be a subrequest whose answer is
+    // always empty. Its children are addressed by the Space id exactly as a
+    // work stream's substreams are addressed by its own.
+    const space = await durableObjectStubForWorkspace(
+      env,
+      env.SPACE_DOS,
+      workspaceId,
+      spaceDOName(env.AVALON_REGION, workspaceId, asSpaceId(target.spaceId)),
+      placementAffinity,
+    );
+    const { children } = await space.listChildren({
+      workspaceId,
+      parentId: target.spaceId,
+    });
+    await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
+      scope: "substream",
+      workstreamId: target.spaceId,
       substreamId: child.substreamId,
     })));
     return;

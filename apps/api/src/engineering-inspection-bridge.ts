@@ -1,5 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asSpaceId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
@@ -17,6 +17,10 @@ import {
   ListEngineeringWorkspacesResultSchema,
   SidekickInspectionInputSchema,
   SidekickSqlInspectionInputSchema,
+  SpaceInspectionInputSchema,
+  SpaceSqlInspectionInputSchema,
+  EngineeringSpaceListLookupSchema,
+  EngineeringSpaceTargetLookupSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
   WorkspaceInspectionInputSchema,
@@ -28,6 +32,8 @@ import {
   type EngineeringArtifactTargetLookup,
   type EngineeringSidekickListLookup,
   type EngineeringSidekickTargetLookup,
+  type EngineeringSpaceListLookup,
+  type EngineeringSpaceTargetLookup,
   type EngineeringSqlLookup,
   type EngineeringSubstreamListLookup,
   type EngineeringSubstreamTargetLookup,
@@ -43,6 +49,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
 } from "./durable-objects/names";
 import {
@@ -93,6 +100,14 @@ const ArtifactRegistryRowSchema = z.strictObject({
   updated_at: z.number().int().nonnegative(),
 });
 
+const SpaceDirectoryRowSchema = z.strictObject({
+  space_id: z.string(),
+  title: z.string(),
+  scope: z.string(),
+  system_role: z.string().nullable(),
+  archived_at: z.number().int().nonnegative().nullable(),
+});
+
 const SidekickDirectoryRowSchema = z.strictObject({
   automation_id: z.string(),
   lifecycle: z.string(),
@@ -110,6 +125,15 @@ async function workspaceStub(env: Env, workspaceId: string) {
     env.WORKSPACE_DOS,
     workspaceId,
     workspaceDOName(env.AVALON_REGION, brandedWorkspaceId),
+  );
+}
+
+async function spaceStub(env: Env, workspaceId: string, spaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.SPACE_DOS,
+    workspaceId,
+    spaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(spaceId)),
   );
 }
 
@@ -178,6 +202,40 @@ async function resolveInspectionSidekickRoute(
     sql: `SELECT automation_id FROM automation_directory
            WHERE automation_id = ? AND workspace_id = ?`,
     bindings: [input.sidekickId, input.workspaceId],
+  });
+  return directory.rows.length === 0 ? null : route;
+}
+
+/**
+ * A Space is fenced by its workspace and then by the Organization's own record
+ * of it.
+ *
+ * The same fence a Sidekick has: `workspace_space_directory` is the row that
+ * proves the object exists, read from an object that is already open, so a miss
+ * is answered without naming anything in `SPACE_DOS`. Naming a Durable Object
+ * creates it, and an id that is not a Space would otherwise leave an empty
+ * object behind in the namespace and a phantom in the migration tracker's
+ * `SpaceDO` count.
+ *
+ * The workspace route is still read first — the same
+ * `workstream_authority_routes`-backed resolver every other target starts from
+ * — because it is what proves this region serves this Organization at all.
+ */
+async function resolveInspectionSpaceRoute(
+  env: Env,
+  input: { workspaceId: string; spaceId: string },
+  expectedGeneration?: number,
+): Promise<InspectionWorkspaceRoute | null> {
+  const route = await resolveInspectionWorkspaceRoute(
+    env,
+    input.workspaceId,
+    expectedGeneration,
+  );
+  if (!route) return null;
+  const workspace = await workspaceStub(env, input.workspaceId);
+  const directory = await workspace.runInspectionSql({
+    sql: `SELECT space_id FROM workspace_space_directory WHERE space_id = ?`,
+    bindings: [input.spaceId],
   });
   return directory.rows.length === 0 ? null : route;
 }
@@ -360,6 +418,45 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  /**
+   * Every Space in a workspace, archived ones included.
+   *
+   * Read from `workspace_space_directory` the way `listSidekicks` reads
+   * `automation_directory`: the Organization's projection is what says a Space
+   * exists, and an archived Space is a common inspection target even though no
+   * product list shows it.
+   */
+  async listSpaces(input: unknown): Promise<EngineeringSpaceListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSpaces");
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
+      return { found: false };
+    }
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const result = await workspace.runInspectionSql({
+      sql: `SELECT space_id, title, scope, system_role, archived_at
+              FROM workspace_space_directory
+             ORDER BY created_at, space_id`,
+      bindings: [],
+    });
+    return EngineeringSpaceListLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        items: z.array(SpaceDirectoryRowSchema).parse(result.rows).map((row) => ({
+          workspaceId: request.workspaceId,
+          spaceId: row.space_id,
+          region: this.env.AVALON_REGION,
+          name: row.title,
+          scope: row.scope,
+          status: row.archived_at === null ? "active" : "archived",
+          systemRole: row.system_role,
+          archivedAt: row.archived_at,
+        })),
+      },
+    });
+  }
+
   async listArtifacts(input: unknown): Promise<EngineeringArtifactListLookup> {
     const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listArtifacts");
     if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
@@ -450,6 +547,21 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
         sidekickId: request.sidekickId,
+        authorityGeneration: route.authority_generation,
+      },
+    });
+  }
+
+  async resolveSpace(input: unknown): Promise<EngineeringSpaceTargetLookup> {
+    const request = parseRpcInput(SpaceInspectionInputSchema, input, "resolveSpace");
+    const route = await resolveInspectionSpaceRoute(this.env, request);
+    if (!route) return { found: false };
+    return EngineeringSpaceTargetLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        spaceId: request.spaceId,
         authorityGeneration: route.authority_generation,
       },
     });
@@ -564,6 +676,27 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         sidekickId: request.sidekickId,
         result: await sidekick.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  async runSpaceSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(SpaceSqlInspectionInputSchema, input, "runSpaceSql");
+    if (!await resolveInspectionSpaceRoute(
+      this.env,
+      request,
+      request.authorityGeneration,
+    )) return { found: false };
+    const space = await spaceStub(this.env, request.workspaceId, request.spaceId);
+    return EngineeringSqlLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        spaceId: request.spaceId,
+        result: await space.runInspectionSql(request.query),
       },
     });
   }

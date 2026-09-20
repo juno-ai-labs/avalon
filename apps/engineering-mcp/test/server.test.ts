@@ -32,6 +32,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listArtifacts: vi.fn<EngineeringInspectionRpcBinding["listArtifacts"]>(
       async () => ({ found: false }),
     ),
+    listSpaces: vi.fn<EngineeringInspectionRpcBinding["listSpaces"]>(
+      async () => ({ found: false }),
+    ),
     resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
       async () => ({ found: false }),
     ),
@@ -47,6 +50,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     resolveArtifact: vi.fn<EngineeringInspectionRpcBinding["resolveArtifact"]>(
       async () => ({ found: false }),
     ),
+    resolveSpace: vi.fn<EngineeringInspectionRpcBinding["resolveSpace"]>(
+      async () => ({ found: false }),
+    ),
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
       async () => ({ found: false }),
     ),
@@ -60,6 +66,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
       async () => ({ found: false }),
     ),
     runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
+      async () => ({ found: false }),
+    ),
+    runSpaceSql: vi.fn<EngineeringInspectionRpcBinding["runSpaceSql"]>(
       async () => ({ found: false }),
     ),
   };
@@ -112,11 +121,13 @@ describe("Rally engineering MCP tools", () => {
       "list_workstreams",
       "list_substreams",
       "list_sidekicks",
+      "list_spaces",
       "list_artifacts",
       "run_workspace_sql",
       "run_workstream_sql",
       "run_substream_sql",
       "run_sidekick_sql",
+      "run_space_sql",
       "run_artifact_sql",
     ]);
     for (const tool of result.tools.filter((item) => item.name.startsWith("run_"))) {

@@ -60,6 +60,7 @@ import {
   type OriginResourceDescriptor,
 } from "../src/services/workstream-origin-resource";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { spaceCreationRoomRpcs, spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const memberId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -552,10 +553,11 @@ function environment(database: DatabaseSync): Env {
       },
     }),
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: parentCreationRpcs(),
+      extra: { ...parentCreationRpcs(), ...spaceCreationRoomRpcs() },
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
+        ...spaceCreationWorkspaceRpcs(),
         opportunityOriginEvents: vi.fn(async (request: { opportunityId: string }) => {
           const rows = database.prepare(
             `SELECT a.*, c.connector_type

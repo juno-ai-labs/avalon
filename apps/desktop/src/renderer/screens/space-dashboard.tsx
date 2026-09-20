@@ -1,0 +1,676 @@
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Archive, FileText, FolderPlus, Plus, RotateCcw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import {
+  type SpaceColorKey,
+  type SpaceDefaultKind,
+  type SpaceDirectory,
+  type SpaceIconKey,
+  type SpaceSummary,
+} from '@rally/contracts';
+import { SpaceAppearancePicker } from '@rally/ui/components/space-appearance-picker';
+import {
+  SpaceChannelRow,
+  SpaceDashboardHeader,
+  SpaceDashboardSection,
+  SpaceDefaultList,
+  type SpaceDefaultItem,
+} from '@rally/ui/components/space-dashboard';
+
+import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
+import { SpacesOpeningCard } from '../components/space-sidebar-section';
+import { RelativeTime } from '../components/relative-time';
+import {
+  Avatar,
+  Button,
+  EmptyState,
+  IconButton,
+  InlineError,
+  LoadingState,
+  Modal,
+  StatusDot,
+} from '../components/primitives';
+import { useAppSession } from '../lib/app-session';
+import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
+import { workstreamMarkerStatus } from '../lib/format';
+import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
+import { SIDEBAR_LIST_QUERY_KEYS, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey, useSocketOwnedList } from '../lib/sidebar-list-store';
+import type { AutomationSummary, Workspace } from '../lib/types';
+import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+
+/** What each kind of default calls itself on this screen. */
+const defaultCopy: Record<SpaceDefaultKind, { heading: string; description: string; empty: string; headingId: string }> = {
+  resource: {
+    heading: 'Resources',
+    description: 'Resources added here are attached to every channel in this space, now and later.',
+    empty: 'No resources',
+    headingId: 'space-resources-heading',
+  },
+  sidekick: {
+    heading: 'Sidekicks',
+    description: 'Sidekicks recommended here are offered in every channel in this space, now and later.',
+    empty: 'No Sidekicks',
+    headingId: 'space-sidekicks-heading',
+  },
+};
+
+/**
+ * Where a refusal is shown, one slot per surface that can produce one.
+ *
+ * Scoped rather than shared: a single `error` string was rendered in the body
+ * and in every open modal at once, so a failed rename appeared inside the
+ * participant picker, and closing one modal carried the sentence to the next.
+ */
+type FailureSlot =
+  | 'restore'
+  | 'name'
+  | 'archive'
+  | 'channels'
+  | 'addChannels'
+  | 'addDefault'
+  | 'participants'
+  | 'audience'
+  | 'appearance'
+  | `defaults:${SpaceDefaultKind}`;
+
+/**
+ * A Space's own screen: what it is, who it is for, what is in it, and what it
+ * hands down.
+ *
+ * A Space has no feed. There is deliberately no composer, transcript, feed
+ * socket, Main link or Breakout list here — the backing conversation exists,
+ * and nothing in the product opens it.
+ */
+export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const { api } = useAppSession();
+  const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
+  const { spaceId } = useParams<{ spaceId: string }>();
+  const queryClient = useQueryClient();
+  const workstreams = useWorkstreamsQuery();
+  const spacesReady = useSpacesReady();
+  const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
+  const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  // The Channels the last blocked archive named. Held apart from the refusal
+  // sentence because it is a list rather than a sentence, and cleared by the
+  // next attempt rather than by closing the modal: a person who reopens it
+  // should still see what they were told to move.
+  const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [editIconKey, setEditIconKey] = useState<SpaceIconKey>('briefcase');
+  const [editColorKey, setEditColorKey] = useState<SpaceColorKey>(PROJECT_COLOR_DEFAULT);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
+  const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
+  const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
+  const [defaultPicker, setDefaultPicker] = useState<SpaceDefaultKind | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // A Space has no socket of its own: what it paints is the Organization's
+  // directory, and the directory the local cache seeded is what is showing
+  // until the workspace socket's first subscribe answer replaces it.
+  const workspaceSocket = useOptionalWorkspaceSocket();
+  const directoryFromLocalCache = workspaceSocket !== null && workspaceSocket.sidebarConnect === null;
+  const resources = useQuery({
+    queryKey: ['space-resource-picker'],
+    queryFn: ({ signal }) => api!.listResources({ limit: 100, signal }),
+    enabled: Boolean(api),
+  });
+  const workspaceMembers = useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api),
+  });
+  // The Space's membership is paginated: General holds every Channel in the
+  // Organization, so it is the one Space read that cannot ride the socket.
+  const channelPages = useInfiniteQuery({
+    queryKey: spaceConversationsQueryKey(spaceId),
+    queryFn: ({ pageParam, signal }) => api!.listSpaceChannels(spaceId!, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(api) && Boolean(spaceId),
+  });
+  // Subscribed rather than read: a `getQueryData` read of the same entry does
+  // not re-render when the socket replaces the list, so a Sidekick default
+  // rendered as "Sidekick" until something unrelated on this screen changed.
+  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data ?? [];
+  // That page is the one thing on this screen the socket cannot replace, and
+  // an activity-ordered, state-filtered list goes stale on far more than a
+  // membership change: a message in a member Channel or breakout reorders it,
+  // a run finishing drops a row out of it, and opening one takes it off this
+  // reader's list and nobody else's. All of it arrives as one
+  // `space_conversations_changed` nudge, which `workspace-socket.tsx`
+  // invalidates this entry on — so there is one refetch trigger for Channels
+  // and breakouts rather than one each.
+  //
+  // This effect is the other half: a nudge sent while the socket was away is
+  // never re-sent, and nothing durable records that it happened, so a fresh
+  // connect payload is the client's only evidence that it may have missed one.
+  // `sidebarConnect.generation` is what the directory query already reads a
+  // reconnect from. The generation the screen mounted at is taken as observed:
+  // the query's own mount fetch is that read.
+  const connectGeneration = workspaceSocket?.sidebarConnect?.generation ?? null;
+  const observedConnect = useRef(connectGeneration);
+  useEffect(() => {
+    if (spaceId === undefined || connectGeneration === null) return;
+    if (connectGeneration === observedConnect.current) return;
+    observedConnect.current = connectGeneration;
+    void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+  }, [queryClient, spaceId, connectGeneration]);
+  // A refusal belongs to the Space it was about. This screen is one component
+  // for every Space, so without this "That space no longer exists" followed
+  // the reader onto the next Space's dashboard and stayed there.
+  useEffect(() => {
+    setFailures({});
+    setBlockedChannelIds([]);
+  }, [spaceId]);
+  if (spaces.data === undefined || inactiveSpaces.data === undefined) {
+    return <LoadingState label="Opening space…" />;
+  }
+  if (!spacesReady) {
+    return <div className="space-dashboard-screen"><SpacesOpeningCard /></div>;
+  }
+  const space = spaces.data.items.find((item) => item.id === spaceId)
+    ?? inactiveSpaces.data.items.find((item) => item.id === spaceId);
+  if (!space) return <EmptyState title="Space not found" description="It may have been archived or you may no longer have access." />;
+  const isGeneral = space.systemRole === 'general';
+  // This reader reaches the Space only because they can read a Channel placed
+  // in it. They are told its mark and name so that Channel has somewhere to be
+  // drawn, and that is the whole of what this screen may say: the sections
+  // below are the Space's participants, its audience, its lifecycle and what it
+  // hands down, none of which is theirs to see and every one of which the
+  // server refuses them by name. What is left is the header and the list of
+  // conversations — and that list is already filtered to the Channels they can
+  // read, by the same predicate that let them see the Space at all.
+  const reachedThroughChannel = space.reach === 'through_channel';
+  // Owner and administrator are one gate everywhere a Space is edited, and the
+  // role only decides which control is drawn: the server reauthorizes it.
+  const isAdministrator = ['owner', 'admin'].includes(workspace.currentUser.role ?? '');
+  // Every Space edit sends the whole record back, so an edit made against the
+  // seed would carry fields another client may have changed since the row was
+  // written. A remembered Space is read-only until the directory is live.
+  const editable = space.status === 'active' && !directoryFromLocalCache && !reachedThroughChannel;
+  const report = (slot: FailureSlot, sentence: string | null): void => setFailures((current) => {
+    const next = { ...current };
+    if (sentence === null) delete next[slot];
+    else next[slot] = sentence;
+    return next;
+  });
+  const applySpace = (updated: SpaceSummary): void => {
+    for (const queryKey of [SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY] as const) {
+      queryClient.setQueryData<SpaceDirectory>(queryKey, (current) => current ? {
+        ...current,
+        items: current.items.map((item) => item.id === updated.id ? updated : item),
+      } : current);
+    }
+  };
+  /**
+   * Make one change, and say whether it landed.
+   *
+   * The answer matters because each of these sentences is rendered *inside*
+   * the dialog that asked for the change: a dialog that closes on the refusal
+   * closes over the only place the person would have read it.
+   */
+  const save = async (
+    slot: FailureSlot,
+    change: () => Promise<SpaceSummary>,
+    fallback: string,
+  ): Promise<boolean> => {
+    setSaving(true);
+    report(slot, null);
+    try {
+      applySpace(await change());
+      return true;
+    } catch (cause) {
+      // Never the server's own sentence: it is a diagnostic a Worker wrote for
+      // a log, in the Organization's internal words, and it changes whenever
+      // the server's wording does. `fallback` is this action's own sentence,
+      // used when the refusal carried no Space code to name.
+      report(slot, spaceFailureSentence(cause, fallback));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  // The Space's own answer, not the device's directory page filtered by it: a
+  // Space holds Channels this device has never listed, and naming only the ones
+  // it happens to hold made the section under-report every Space bigger than
+  // one page of the sidebar. Breakouts are in the same list for the same
+  // reason — this device has never listed most of them either.
+  const conversations = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
+  const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
+  const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
+  const resourcesById = new Map((resources.data?.items ?? []).map((resource) => [resource.id, resource]));
+  const sidekicksById = new Map(sidekicks.map((sidekick) => [sidekick.id, sidekick]));
+  const defaultItems = (kind: SpaceDefaultKind): SpaceDefaultItem[] => (
+    kind === 'resource'
+      ? space.defaultResourceIds.map((id) => ({
+        id,
+        title: resourcesById.get(id)?.title ?? 'Resource',
+        subtitle: resourcesById.get(id)?.provider ?? undefined,
+      }))
+      : space.defaultSidekickIds.map((id) => ({
+        id,
+        title: sidekicksById.get(id)?.name ?? 'Sidekick',
+        subtitle: sidekicksById.get(id)?.description ?? undefined,
+      }))
+  );
+  const pickerChoices = defaultPicker === 'resource'
+    ? (resources.data?.items ?? [])
+      .filter((resource) => !space.defaultResourceIds.includes(resource.id))
+      .map((resource) => ({ id: resource.id, title: resource.title, subtitle: `${resource.provider ?? 'Rally'} · ${resource.resourceType}` }))
+    : sidekicks
+      // The PRD's "Sidekick recommendations inherited by current and future
+      // member Channels": a Space default is offered in every Channel the
+      // Space holds, now and later. A `workstream`-scoped Sidekick belongs to
+      // one Channel and cannot be that, and a draft or paused one would be
+      // recommended everywhere while being unable to run.
+      .filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active')
+      .filter((sidekick) => !space.defaultSidekickIds.includes(sidekick.id))
+      .map((sidekick) => ({ id: sidekick.id, title: sidekick.name, subtitle: sidekick.description }));
+  const addableChannels = (workstreams.data ?? [])
+    .filter((workstream) => !workstream.spaceIds.includes(space.id) && workstream.archivedAt === undefined);
+  return (
+    <div className="space-dashboard-frame">
+      <ConnectingCardSlot>
+        {directoryFromLocalCache && (
+          <ConnectingCard
+            detail={space.status === 'active' ? 'Editing is available once Rally connects' : undefined}
+            name={space.name}
+            state={workspaceSocket.state === 'unavailable' ? 'offline' : 'connecting'}
+            subject="space"
+          />
+        )}
+      </ConnectingCardSlot>
+      <div className="space-dashboard-screen">
+        <div className="screen-drag-strip window-drag" />
+        <SpaceDashboardHeader
+          actions={reachedThroughChannel ? undefined : space.status === 'active'
+            // General is the Organization's fallback home. Its identity,
+            // lifecycle and audience are immutable; its name and mark are not.
+            ? (!isGeneral && <IconButton
+              className="icon-button-danger"
+              disabled={!editable}
+              label="Archive space"
+              onClick={() => { report('archive', null); setArchiveConfirmOpen(true); }}
+            >
+              <Archive aria-hidden="true" size={15} />
+            </IconButton>)
+            : <Button disabled={directoryFromLocalCache || saving} onClick={() => void save(
+              'restore',
+              () => api!.restoreSpace(space.id),
+              'The space could not be restored.',
+            )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
+          appearance={space}
+          {...(isGeneral || reachedThroughChannel ? {} : {
+            audience: {
+              scope: space.scope,
+              onChange: (scope: 'personal' | 'workspace') => {
+                if (scope === space.scope) return;
+                report('audience', null);
+                setPendingScope(scope);
+              },
+            },
+          })}
+          editable={editable}
+          key={space.id}
+          name={space.name}
+          nameError={failures.name ?? null}
+          onEditAppearance={() => {
+            report('appearance', null);
+            setEditIconKey(space.iconKey);
+            setEditColorKey(space.colorKey);
+            setAppearanceOpen(true);
+          }}
+          onRename={(name) => void save(
+            'name',
+            () => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }),
+            'The space name could not be saved.',
+          )}
+          {...(isGeneral || reachedThroughChannel ? {} : {
+            participants: {
+              members: spaceMembers,
+              onManage: () => {
+                report('participants', null);
+                setEditParticipants(new Set(participantIds));
+                setParticipantsOpen(true);
+              },
+            },
+          })}
+        />
+
+        <SpaceDashboardSection
+          {...(reachedThroughChannel ? {} : {
+            action: <div className="space-dashboard-header-actions">
+              <Button disabled={!editable} onClick={() => { report('addChannels', null); setSelectedIds(new Set()); setChannelPickerOpen(true); }}>Add channel</Button>
+              <IconButton
+                disabled={space.status !== 'active'}
+                label={`New channel in ${space.name}`}
+                onClick={() => void navigate(`/spaces/${space.id}/workstreams/new`)}
+              >
+                <Plus aria-hidden="true" size={15} />
+              </IconButton>
+            </div>,
+          })}
+          heading="Channels"
+          headingId="space-channels-heading"
+        >
+          {channelPages.isPending
+            ? <LoadingState label="Loading channels…" />
+            : conversations.length === 0
+              // Two empty states, because they are two different facts and
+              // telling a reader "no channels yet" about a Space with forty of
+              // them would send them looking for a bug. The count is what
+              // separates them: it is the Organization's own answer to "is
+              // there anything in here at all", while the list above is
+              // "is any of it yours to deal with".
+              ? space.channelCount === 0
+                ? <EmptyState title="No channels yet" description={space.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived space has no channels.'} />
+                : <EmptyState
+                    description="Everything in this space has been read and nothing is running. Channels and breakouts show up here while they need you; the rest stay in the sidebar and in search."
+                    title="Nothing here needs you right now"
+                  />
+              : <div className="waiting-workstream-list">
+                {conversations.map((conversation) => (
+                  <SpaceChannelRow
+                    key={conversation.id}
+                    link={conversation.breakoutOf
+                      ? <NavLink
+                          className="waiting-workstream-row space-breakout-row"
+                          to={`/workstreams/${conversation.breakoutOf.workstreamId}?substream=${conversation.breakoutOf.substreamId}`}
+                        >
+                          <StatusDot status={workstreamMarkerStatus(conversation)} />
+                          <span className="waiting-workstream-copy">
+                            <span aria-hidden="true" className="space-breakout-mark">↳</span>
+                            <strong>{conversation.title}</strong>
+                            <span>in {conversation.breakoutOf.title}</span>
+                          </span>
+                          <RelativeTime value={conversation.lastActivityAt} />
+                        </NavLink>
+                      : <NavLink className="waiting-workstream-row" to={`/workstreams/${conversation.id}`}>
+                          <StatusDot status={workstreamMarkerStatus(conversation)} />
+                          <span className="waiting-workstream-copy"><strong>{conversation.title}</strong>{conversation.preview && <span>{conversation.preview}</span>}</span>
+                          <RelativeTime value={conversation.lastActivityAt} />
+                        </NavLink>}
+                    // A breakout follows its Channel. There is nothing to take
+                    // it out of this Space that is not taking its Channel out,
+                    // and a control that looked like there was would be
+                    // offering an operation the Space authority has no word
+                    // for.
+                    // A breakout follows its Channel, and a reader who reaches
+                    // this Space through a Channel in it has no membership of
+                    // the Space to end. Both are drawn as the row's reserved,
+                    // hidden control column rather than as a second row shape.
+                    {...(conversation.breakoutOf || reachedThroughChannel ? {} : {
+                      onRemove: () => void save(
+                        'channels',
+                        () => api!.removeChannelFromSpace(space.id, conversation.id),
+                        'The channel could not be removed from this space.',
+                      ),
+                    })}
+                    removeDisabled={!editable || saving}
+                  />
+                ))}
+              </div>}
+          {channelPages.hasNextPage && (
+            <p className="space-dashboard-muted">
+              <Button disabled={channelPages.isFetchingNextPage} onClick={() => void channelPages.fetchNextPage()}>Load more</Button>
+            </p>
+          )}
+          {failures.channels && <InlineError>{failures.channels}</InlineError>}
+        </SpaceDashboardSection>
+
+        {/* What the Space hands down is the Space's, and a reader who reaches
+            it through one Channel is told nothing about it — the summary they
+            are handed carries no defaults at all, so drawing the sections
+            would be drawing two empty lists and two controls that can only
+            fail. */}
+        {!reachedThroughChannel && (['resource', 'sidekick'] as const).map((kind) => (
+          <SpaceDashboardSection
+            action={<Button disabled={!editable || saving} onClick={() => { report('addDefault', null); setSelectedIds(new Set()); setDefaultPicker(kind); }}>
+              <FolderPlus aria-hidden="true" size={15} /> Add {kind === 'resource' ? 'resource' : 'Sidekick'}
+            </Button>}
+            description={defaultCopy[kind].description}
+            heading={defaultCopy[kind].heading}
+            headingId={defaultCopy[kind].headingId}
+            key={kind}
+          >
+            <SpaceDefaultList
+              disabled={!editable || saving}
+              emptyLabel={defaultCopy[kind].empty}
+              items={defaultItems(kind)}
+              onRemove={(id) => void save(
+                `defaults:${kind}`,
+                () => api!.removeSpaceDefault(space.id, kind, id),
+                'That could not be removed from this space.',
+              )}
+            />
+            {failures[`defaults:${kind}`] && <InlineError>{failures[`defaults:${kind}`]}</InlineError>}
+          </SpaceDashboardSection>
+        ))}
+        {failures.restore && <InlineError>{failures.restore}</InlineError>}
+
+        <Modal
+          footer={<><Button onClick={() => setArchiveConfirmOpen(false)}>Cancel</Button><Button className="button-danger" disabled={saving} onClick={() => {
+            report('archive', null);
+            setSaving(true);
+            void api!.archiveSpace(space.id).then((archived) => {
+              setArchiveConfirmOpen(false);
+              queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+                ...current,
+                items: current.items.filter((item) => item.id !== archived.id),
+              } : current);
+              queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
+                ...current,
+                items: current.items.some((item) => item.id === archived.id)
+                  ? current.items.map((item) => item.id === archived.id ? archived : item)
+                  : [archived, ...current.items],
+              } : current);
+              openFirstWorkstream();
+            }).catch((cause: unknown) => {
+              setBlockedChannelIds(spaceRefusalChannelIds(cause));
+              report('archive', spaceFailureSentence(cause, 'The space could not be archived.'));
+            }).finally(() => setSaving(false));
+          }}>Archive space</Button></>}
+          onOpenChange={setArchiveConfirmOpen}
+          open={archiveConfirmOpen}
+          title="Archive space?"
+        >
+          <p>Its channels keep the resources and Sidekicks they already have, and stay in every other space they belong to. A channel whose only space is this one has to be moved first.</p>
+          {failures.archive && <InlineError>{failures.archive}</InlineError>}
+          {/* The Channels the refusal named, which is what turns "some channel
+              has to move" into something a person can act on. It can be empty
+              even on a refusal: the server names only the Channels this viewer
+              may already read, and the sentence above stands without it.
+              An id with no title is one this device has not loaded a page for —
+              not one the viewer cannot see, which the server would not have
+              named. */}
+          {blockedChannelIds.length > 0 && (
+            <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
+              {blockedChannelIds.map((id) => (
+                <li key={id}>{conversations.find((conversation) => conversation.id === id)?.title ?? 'A channel not loaded on this device'}</li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+
+        <Modal
+          description="Choose the channels to add to this space. They keep every space they are already in."
+          footer={<><Button disabled={saving} onClick={() => setChannelPickerOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || selectedIds.size === 0} onClick={() => {
+            void (async () => {
+              for (const workstreamId of selectedIds) {
+                await save(
+                  'addChannels',
+                  () => api!.addChannelToSpace(space.id, workstreamId),
+                  'The channel could not be added to this space.',
+                );
+              }
+              setSelectedIds(new Set());
+              setChannelPickerOpen(false);
+              void channelPages.refetch();
+            })();
+          }}>Add channels</Button></>}
+          onOpenChange={(open) => { if (!saving) setChannelPickerOpen(open); }}
+          open={channelPickerOpen}
+          title="Add channels"
+        >
+          {addableChannels.length === 0
+            ? <EmptyState title="No channels to add" description="Every channel loaded on this device is already in this space." />
+            : <div aria-label="Channels" className="member-picker-list" role="group">
+              {addableChannels.map((workstream) => (
+                <label className="member-picker-row" key={workstream.id}>
+                  <input
+                    checked={selectedIds.has(workstream.id)}
+                    onChange={() => setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(workstream.id)) next.delete(workstream.id); else next.add(workstream.id);
+                      return next;
+                    })}
+                    type="checkbox"
+                  />
+                  <span><strong>{workstream.title}</strong></span>
+                  <span aria-hidden="true" className="member-checkbox" />
+                </label>
+              ))}
+            </div>}
+          {failures.addChannels && <InlineError>{failures.addChannels}</InlineError>}
+        </Modal>
+
+        <Modal
+          description={defaultPicker === 'sidekick'
+            ? 'Every channel in this space is offered these Sidekicks.'
+            : 'Every channel in this space gets these resources attached.'}
+          footer={<><Button disabled={saving} onClick={() => setDefaultPicker(null)}>Cancel</Button><Button className="button-primary" disabled={saving || selectedIds.size === 0} onClick={() => {
+            const kind = defaultPicker;
+            if (!kind) return;
+            void (async () => {
+              for (const targetId of selectedIds) {
+                await save(
+                  'addDefault',
+                  () => api!.addSpaceDefault(space.id, kind, targetId),
+                  'That could not be added to this space.',
+                );
+              }
+              setSelectedIds(new Set());
+              setDefaultPicker(null);
+            })();
+          }}>Add</Button></>}
+          onOpenChange={(open) => { if (!saving && !open) setDefaultPicker(null); }}
+          open={defaultPicker !== null}
+          title={defaultPicker === 'sidekick' ? 'Add Sidekicks' : 'Add resources'}
+        >
+          {pickerChoices.length === 0
+            ? <EmptyState title="Nothing to add" description="Everything available is already a default in this space." />
+            : <div aria-label={defaultPicker === 'sidekick' ? 'Sidekicks' : 'Resources'} className="member-picker-list" role="group">
+              {pickerChoices.map((choice) => (
+                <label className="member-picker-row" key={choice.id}>
+                  <input
+                    checked={selectedIds.has(choice.id)}
+                    onChange={() => setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(choice.id)) next.delete(choice.id); else next.add(choice.id);
+                      return next;
+                    })}
+                    type="checkbox"
+                  />
+                  <span aria-hidden="true" className="resource-picker-icon"><FileText size={15} /></span>
+                  <span><strong>{choice.title}</strong><small>{choice.subtitle}</small></span>
+                  <span aria-hidden="true" className="member-checkbox" />
+                </label>
+              ))}
+            </div>}
+          {failures.addDefault && <InlineError>{failures.addDefault}</InlineError>}
+        </Modal>
+
+        <Modal
+          description="Choose the organization members who participate in this space."
+          footer={<><Button disabled={saving} onClick={() => setParticipantsOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || editParticipants.size === 0} onClick={() => {
+            // Only on success: this roster has a refusal of its own now — a
+            // personal Space cannot be narrowed to a list its own editor is
+            // not on — and the sentence for it is drawn inside this dialog.
+            void save(
+              'participants',
+              () => api!.updateSpaceAudience(space.id, { scope: space.scope, participantUserIds: [...editParticipants] }),
+              'Space participants could not be saved.',
+            ).then((saved) => { if (saved) setParticipantsOpen(false); });
+          }}>Save</Button></>}
+          onOpenChange={(open) => { if (!saving) setParticipantsOpen(open); }}
+          open={participantsOpen}
+          title="Space participants"
+        >
+          <div aria-label="Organization members" className="member-picker-list" role="group">
+            {(workspaceMembers.data ?? []).map((member) => {
+              // Taking somebody else out of a Space is an administrator's to
+              // do; adding is anybody's. The server reauthorizes either way —
+              // this only decides which control is drawn.
+              const removingSomebodyElse = participantIds.has(member.id)
+                && member.id !== workspace.currentUser.id;
+              const mayRemove = isAdministrator || !removingSomebodyElse;
+              return (
+                <label className="member-picker-row" key={member.id}>
+                  <input
+                    checked={editParticipants.has(member.id)}
+                    disabled={editParticipants.has(member.id) && !mayRemove}
+                    onChange={() => setEditParticipants((current) => {
+                      const next = new Set(current);
+                      if (next.has(member.id)) next.delete(member.id); else next.add(member.id);
+                      return next;
+                    })}
+                    type="checkbox"
+                  />
+                  <Avatar member={member} size="medium" />
+                  <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                  <span aria-hidden="true" className="member-checkbox" />
+                </label>
+              );
+            })}
+          </div>
+          {failures.participants && <InlineError>{failures.participants}</InlineError>}
+        </Modal>
+
+        <Modal
+          footer={<><Button disabled={saving} onClick={() => setPendingScope(null)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
+            if (pendingScope === null) return;
+            void save(
+              'audience',
+              () => api!.updateSpaceAudience(space.id, {
+                scope: pendingScope,
+                participantUserIds: [...participantIds],
+              }),
+              'The space audience could not be changed.',
+            ).then(() => setPendingScope(null));
+          }}>Continue</Button></>}
+          onOpenChange={(open) => { if (!open && !saving) setPendingScope(null); }}
+          open={pendingScope !== null}
+          title="Change who can see this space?"
+        >
+          <p>{pendingScope === 'workspace'
+            ? 'Everyone in the organization will be able to see this space and every channel in it. Current participants stay participants.'
+            : 'Only this space’s participants will be able to see it. Channels stay public if another source still says so.'}</p>
+          {failures.audience && <InlineError>{failures.audience}</InlineError>}
+        </Modal>
+
+        <Modal
+          footer={<><Button disabled={saving} onClick={() => setAppearanceOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
+            void save(
+              'appearance',
+              () => api!.updateSpacePresentation(space.id, { name: space.name, iconKey: editIconKey, colorKey: editColorKey }),
+              'The icon and color could not be saved.',
+            ).then(() => setAppearanceOpen(false));
+          }}>Save</Button></>}
+          onOpenChange={(open) => { if (!saving) setAppearanceOpen(open); }}
+          open={appearanceOpen}
+          title="Space icon and color"
+        >
+          <SpaceAppearancePicker colorKey={editColorKey} iconKey={editIconKey} onColorChange={setEditColorKey} onIconChange={setEditIconKey} />
+          {failures.appearance && <InlineError>{failures.appearance}</InlineError>}
+        </Modal>
+      </div>
+    </div>
+  );
+}

@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 
 /**
  * The one route a screen leaves for when what it was showing is no longer
- * there to show — an archived work stream, note, or project, a deleted
+ * there to show — an archived Channel, note, or Space, a deleted
  * automation, a work stream the reader just left or marked unread. It resolves
  * to the first sidebar work stream; only an empty workspace opens the composer,
  * which is otherwise reached by an explicit New action alone.

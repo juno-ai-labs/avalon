@@ -39,7 +39,7 @@ interface Seen extends ListMotionFrom {
  * a row's element may be replaced between renders — a work stream moving
  * between two sections is unmounted and remounted, and it is still one row.
  * `data-motion-scope` on any ancestor separates rows that would otherwise
- * share a key, such as a work stream listed both under its project and in the
+ * share a key, such as a Channel listed both under its Space and in the
  * recent list, and ranks the rows inside it only against one another, so a
  * scope moving as a block shifts as a block. A row is *held* — shifted into
  * place like a neighbour rather than made to leave and re-enter — when it

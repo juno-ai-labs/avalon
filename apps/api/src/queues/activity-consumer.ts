@@ -28,7 +28,11 @@ import {
 import { z } from "zod";
 
 import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
-import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
+import {
+  SpaceBootstrapQueueMessageSchema,
+  SpaceDefaultQueueMessageSchema,
+  SpaceIntentResumeQueueMessageSchema,
+} from "../durable-objects/workspace-space-protocol";
 import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
@@ -61,7 +65,24 @@ import {
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
+import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
+import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
+
+/**
+ * The shape of a Project default delivery, kept only to recognize one.
+ *
+ * Projects are retired and their protocol module is gone; what survives is the
+ * platform's retry window, during which a message published before the cutover
+ * can still arrive. Matching on the discriminator and the two fields a log line
+ * needs is the whole contract — there is nothing left to act on, so parsing the
+ * rest would be describing a payload in order to throw it away.
+ */
+const RetiredProjectDefaultMessageSchema = z.object({
+  type: z.literal("project_default_resource"),
+  workspaceId: z.string(),
+  workstreamId: z.string(),
+});
 
 interface ActivityRow {
   id: string;
@@ -403,9 +424,28 @@ async function consumeOne(message: Message<unknown>, env: Env,
     }
     return;
   }
-  const projectDefault = ProjectDefaultResourceQueueMessageSchema.safeParse(message.body);
+  const projectDefault = RetiredProjectDefaultMessageSchema.safeParse(message.body);
   if (projectDefault.success) {
-    const target = projectDefault.data;
+    // A tombstone, kept for the platform's retry window and no longer.
+    //
+    // Projects are retired: the migration that retires them invalidates every
+    // pending target and drops the tables underneath it, so a target this
+    // message names can never be current again. Acknowledging is therefore the
+    // whole handler — a retry would reach the same answer on every redelivery
+    // until the message dead-lettered, which is a non-empty dead-letter queue
+    // saying something that is not a failure.
+    logInfo(env, "project_default_delivery_terminal", {
+      workspace_id: projectDefault.data.workspaceId,
+      workstream_id: projectDefault.data.workstreamId,
+      outcome: "skipped",
+      reason: "projects_retired",
+    });
+    message.ack();
+    return;
+  }
+  const spaceDefault = SpaceDefaultQueueMessageSchema.safeParse(message.body);
+  if (spaceDefault.success) {
+    const target = spaceDefault.data;
     if (target.region !== env.AVALON_REGION) {
       message.ack();
       return;
@@ -418,9 +458,9 @@ async function consumeOne(message: Message<unknown>, env: Env,
     );
     let current: boolean;
     try {
-      current = await workspace.projectDefaultTargetCurrent(target);
+      current = await workspace.spaceDefaultTargetCurrent(target);
     } catch (error) {
-      // A retired workspace's default target is never current again.
+      // A retired Organization's default target is never current again.
       if (!isRetirementRefusal(error)) throw error;
       message.ack();
       return;
@@ -429,25 +469,25 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
       return;
     }
-    const actorIds = await workspace.projectDefaultTargetActors(target);
+    const actorIds = await workspace.spaceDefaultTargetActors(target);
     if (actorIds.length === 0) {
       message.ack();
       return;
     }
     const member = await env.DB.prepare(
       `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active'
+        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
           AND user_id IN (${actorIds.map(() => "?").join(",")})
         ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
     ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
-      await workspace.failProjectDefaultTarget(target);
+      await workspace.failSpaceDefaultTarget(target);
       message.ack();
       return;
     }
     const auth: AuthContext = {
-      sessionId: `project-default:${target.projectId}:${target.defaultGeneration}`,
+      sessionId: `space-default:${target.spaceId}:${target.kind}:${target.defaultGeneration}`,
       userId: asUserId(member.user_id),
       workspaceId: target.workspaceId,
       region: env.AVALON_REGION,
@@ -456,11 +496,181 @@ async function consumeOne(message: Message<unknown>, env: Env,
       principal: "connector",
     };
     try {
-      await new WorkstreamService(env, auth).attachResource(target.workstreamId, target.resourceId);
-      await workspace.completeProjectDefaultTarget(target);
+      // One handler, two consumers. The staging, the fence, the currency
+      // recheck and the receipt are identical; what a resource and a Sidekick
+      // differ in is the canonical operation that applies them.
+      const workstreams = new WorkstreamService(env, auth);
+      if (target.kind === "resource") await workstreams.attachResource(target.workstreamId, target.targetId);
+      else await workstreams.setSidekickRecommendation(target.workstreamId, target.targetId, true);
+      await workspace.completeSpaceDefaultTarget(target);
       message.ack();
-    } catch {
-      await workspace.recordProjectDefaultTargetFailure(target).catch(() => undefined);
+    } catch (error) {
+      // The reason, not the fact. `last_error_code` is the only durable record
+      // of why a default has not reached a Channel, and the fixed
+      // `space_default_apply_failed` it used to carry said only that it had
+      // not — which the row's existence already said.
+      const errorCode = diagnosticErrorCode(error, "space_default_apply_failed");
+      await workspace.recordSpaceDefaultTargetFailure({ ...target, errorCode }).catch(() => undefined);
+      logWarn(env, "space_default_delivery_failed", {
+        workspace_id: target.workspaceId,
+        space_id: target.spaceId,
+        workstream_id: target.workstreamId,
+        kind: target.kind,
+        reason: errorCode,
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+  const bootstrap = SpaceBootstrapQueueMessageSchema.safeParse(message.body);
+  if (bootstrap.success) {
+    const work = bootstrap.data;
+    if (work.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    // Nobody is signed in. The cutover's actor is resolved from current
+    // membership rather than carried on the message, because the message may
+    // be redelivered days later and the person it named may have left.
+    const driver = await spaceBootstrapDriver(env, work.workspaceId, env.AVALON_REGION);
+    if (!driver) {
+      // An Organization with no active member has nobody the disclosure could
+      // be attributed to, and nobody to render the hierarchy for either.
+      logInfo(env, "space_bootstrap_skipped", {
+        workspace_id: work.workspaceId,
+        outcome: "skipped",
+        reason: "no_active_member",
+      });
+      message.ack();
+      return;
+    }
+    try {
+      const cutover = new SpaceBootstrapService(env, driver);
+      if (work.kind === "general") await cutover.runGeneral();
+      else if (work.kind === "preflight") await cutover.runPreflight(work.cursor);
+      else if (work.kind === "memberships") await cutover.runMemberships(work.cursor);
+      else await cutover.runFinalize();
+      message.ack();
+    } catch (error) {
+      if (isRetirementRefusal(error)) {
+        message.ack();
+        return;
+      }
+      // Said out loud, for the reason a resume says its own: the alarm
+      // republishes this on its retry gate as well, so a silent catch turns a
+      // half-migrated Organization into a dead-letter message with no reason
+      // on it.
+      logWarn(env, "space_bootstrap_failed", {
+        workspace_id: work.workspaceId,
+        kind: work.kind,
+        attempts: message.attempts,
+        reason: diagnosticErrorCode(error, "space_bootstrap_failed"),
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+  const spaceResume = SpaceIntentResumeQueueMessageSchema.safeParse(message.body);
+  if (spaceResume.success) {
+    const intent = spaceResume.data;
+    if (intent.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      intent.workspaceId,
+      workspaceDOName(env.AVALON_REGION, intent.workspaceId),
+    );
+    // The person who staged it, if they are still here. A Space operation is
+    // applied through the Channel's canonical operations, and those authorize
+    // an actor — so a resume needs one, and the requester is the only actor the
+    // original authorization covered.
+    const member = await env.DB.prepare(
+      `SELECT user_id, role FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
+    ).bind(intent.workspaceId, intent.requestedByUserId)
+      .first<{ user_id: string; role: AuthContext["role"] }>();
+    if (!member) {
+      try {
+        await workspace.recordSpaceIntentFailure({
+          workspaceId: intent.workspaceId,
+          userId: intent.requestedByUserId,
+          operationId: intent.operationId,
+          errorCode: "space_intent_requester_inactive",
+        });
+      } catch (error) {
+        if (!isRetirementRefusal(error)) throw error;
+      }
+      message.ack();
+      return;
+    }
+    const auth: AuthContext = {
+      sessionId: `space-intent:${intent.operationId}`,
+      userId: asUserId(member.user_id),
+      workspaceId: intent.workspaceId,
+      region: env.AVALON_REGION,
+      role: member.role,
+      analyticsWorkspaceId: null,
+      principal: "connector",
+    };
+    try {
+      const resumed = await new SpaceService(env, auth).resumeIntent({
+        operationId: intent.operationId,
+        kind: intent.kind,
+        spaceId: intent.spaceId,
+        workstreamId: intent.workstreamId,
+        spaceRevision: intent.spaceRevision,
+        membershipGeneration: intent.membershipGeneration,
+        cursor: intent.cursor,
+      });
+      // An intent that settled without doing its work is the one outcome
+      // nothing else would say out loud: the row reads `settled`, the queue is
+      // clear, and the operation the person asked for never reached its member
+      // Channels. Named here rather than inside the service because this is
+      // where the failing resume is already logged, and a reader comparing the
+      // two lines should not have to know which layer wrote which.
+      if (resumed.outcome === "abandoned") {
+        logWarn(env, "space_intent_resume_abandoned", {
+          workspace_id: intent.workspaceId,
+          space_id: intent.spaceId,
+          operation_id: intent.operationId,
+          kind: intent.kind,
+          reason: resumed.reason,
+        });
+      }
+      message.ack();
+    } catch (error) {
+      if (isRetirementRefusal(error)) {
+        message.ack();
+        return;
+      }
+      // Said out loud, and written down. A resume that keeps failing is
+      // republished by the alarm every `SPACE_INTENT_RESUME_DELAY_MS` and
+      // retried here as well, so a silent catch makes a half-applied audience
+      // or a half-finished archive a thing that shows up only as a dead-letter
+      // message with no reason on it — which is the diagnosis this costs on the
+      // way in. The code goes on the intent as well as into the log, the way a
+      // default target's does: the row outlives the log line, and whoever finds
+      // it unsettled otherwise has the fact without the reason.
+      const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
+      await workspace.recordSpaceIntentFailure({
+        workspaceId: intent.workspaceId,
+        userId: intent.requestedByUserId,
+        operationId: intent.operationId,
+        errorCode: reason,
+      }).catch(() => undefined);
+      logWarn(env, "space_intent_resume_failed", {
+        workspace_id: intent.workspaceId,
+        space_id: intent.spaceId,
+        operation_id: intent.operationId,
+        kind: intent.kind,
+        attempts: message.attempts,
+        reason,
+      });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
