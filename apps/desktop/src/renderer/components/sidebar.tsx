@@ -20,7 +20,7 @@ import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-or
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
-import { spaceFailureOf } from '../lib/space-failure-copy';
+import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
@@ -1048,8 +1048,7 @@ export function orderPinnedWorkstreams(
   return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
 }
 
-type SidebarMenuFailure = 'archive' | 'add_to_space' | 'remove_from_space'
-  | 'remove_from_final_space' | 'pin' | 'unpin' | 'reorder_pinned';
+type SidebarMenuFailure = 'archive' | 'add_to_space' | 'pin' | 'unpin' | 'reorder_pinned';
 
 const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: string }> = {
   archive: {
@@ -1059,14 +1058,6 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
   add_to_space: {
     title: 'Channel could not be added to that space',
     copy: 'The channel is still in the spaces it was in. Try again in a moment.',
-  },
-  remove_from_space: {
-    title: 'Channel could not be removed from that space',
-    copy: 'The channel is still in that space. Try again in a moment.',
-  },
-  remove_from_final_space: {
-    title: 'Channel could not be removed from that space',
-    copy: 'A channel must be in at least one space.',
   },
   pin: {
     title: 'Channel could not be pinned',
@@ -1165,6 +1156,7 @@ export function Sidebar({
   // menu, so a rejection has nowhere to land unless it is raised here: the row
   // simply stays as it was.
   const [menuFailure, setMenuFailure] = useState<SidebarMenuFailure | null>(null);
+  const [removeFromSpaceFailure, setRemoveFromSpaceFailure] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   // The work stream a pin or unpin has just moved, and which side of the
   // sidebar it was moved to, held until the list re-renders carrying that
@@ -1618,11 +1610,14 @@ export function Sidebar({
   };
 
   const removeFromPlacement = (workstream: WorkstreamSummary, spaceId: string): void => {
-    setMenuFailure(null);
+    setRemoveFromSpaceFailure(null);
     void onRemoveChannelFromSpace(spaceId, workstream.id).catch((cause: unknown) => {
-      setMenuFailure(spaceFailureOf(cause) === 'space_membership_final'
-        ? 'remove_from_final_space'
-        : 'remove_from_space');
+      setRemoveFromSpaceFailure(spaceFailureOf(cause) === 'space_membership_final'
+        ? 'A channel must be in at least one space.'
+        : spaceFailureSentence(
+          cause,
+          'The channel is still in that space. Try again in a moment.',
+        ));
     });
   };
 
@@ -1656,7 +1651,7 @@ export function Sidebar({
       debugEnabled={debugEnabled}
       {...(drag ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
-      {...(placementSpaceId ? { placementSpaceId } : {})}
+      {...(placementSpaceId !== undefined ? { placementSpaceId } : {})}
       spaces={placementSpaces}
       workspace={workspace}
       workstream={workstream}
@@ -2464,6 +2459,16 @@ export function Sidebar({
         title={menuFailure ? sidebarMenuFailureCopy[menuFailure].title : 'That could not be updated'}
       >
         {menuFailure && <p className="modal-copy">{sidebarMenuFailureCopy[menuFailure].copy}</p>}
+      </Modal>
+      <Modal
+        footer={<Button onClick={() => setRemoveFromSpaceFailure(null)}>Close</Button>}
+        onOpenChange={(open) => {
+          if (!open) setRemoveFromSpaceFailure(null);
+        }}
+        open={removeFromSpaceFailure !== null}
+        title="Channel could not be removed from that space"
+      >
+        {removeFromSpaceFailure && <p className="modal-copy">{removeFromSpaceFailure}</p>}
       </Modal>
     </>
   );
