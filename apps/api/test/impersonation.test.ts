@@ -11,11 +11,11 @@ const participant = asUserId('00000000-0000-7000-8000-000000000003');
 const newcomer = asUserId('00000000-0000-7000-8000-000000000004');
 let database: DatabaseSync;
 afterEach(() => database?.close());
-function seed() {
+function seed(trustedIdentity = true) {
   database = migratedSqliteDatabase();
   for (const id of [operator, participant, newcomer]) database.prepare(`INSERT INTO users
     (id, email, name, platform_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'now', 'now')`)
-    .run(id, `${id}@rallywith.ai`, id, id);
+    .run(id, `${id}@rallywith.ai`, id, trustedIdentity ? id : null);
   database.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES (?, 'Demo', 'demo', 'global', ?, 'now', 'now')`).run(workspaceId, operator);
   for (const id of [operator, participant, newcomer]) database.prepare(`INSERT INTO workspace_members
@@ -64,4 +64,21 @@ it('retirement revokes the demo relationships without deleting the evidence', as
   await provisionImpersonationRelationships(db, workspaceId, [operator, participant], 'demo-operation');
   await markDemoWorkspaceRetired(db, workspaceId, '2026-09-20T12:00:00Z');
   expect(database.prepare('SELECT count(*) AS n FROM impersonation_relationships WHERE revoked_at IS NOT NULL').get()).toEqual({ n: 4 });
+});
+it.each([
+  "UPDATE workspace_members SET status = 'suspended'",
+  "UPDATE workspaces SET abandoned_at = 'now'",
+  "UPDATE demo_operations SET cast_json = '{}'",
+  "UPDATE demo_operations SET cast_json = 'not-json'",
+  "UPDATE demo_operations SET status = 'running'",
+])('fails closed when canonical eligibility changes: %s', async sql => {
+  const db = seed();
+  await requireDemoOperator(db, workspaceId, operator, 'global');
+  database.prepare(sql).run();
+  await expect(requireDemoOperator(db, workspaceId, operator, 'global')).rejects.toMatchObject({ code: 'demo_sidecar_denied' });
+});
+
+it('denies an identity that has never completed verified platform sign-in', async () => {
+  const db = seed(false);
+  await expect(requireDemoOperator(db, workspaceId, operator, 'global')).rejects.toMatchObject({ code: 'demo_sidecar_denied' });
 });

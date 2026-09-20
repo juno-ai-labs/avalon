@@ -1,4 +1,7 @@
-import { asSubstreamId } from '@rally/contracts';
+import { sha256Hex } from '../lib/crypto';
+import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
+import { workstreamDOName } from '../durable-objects/names';
+import { asSubstreamId, asWorkstreamId } from '@rally/contracts';
 import type { DemoCatalog, DemoMessageRequest } from '@rally/contracts/demo-sidecar';
 import type { AuthContext, Env } from '../env';
 import { ApiError } from '../lib/api-error';
@@ -30,11 +33,13 @@ export async function demoCatalog(env: Env, auth: AuthContext): Promise<DemoCata
           const parent = await conversations.authorizeViewer(room.id);
           if (parent.archived || parent.kind !== 'workstream') continue;
           destinations.push({ workstreamId: room.id, substreamId: asSubstreamId('0'), label: room.title });
-          for (const substreamId of await conversations.children(room.id)) {
-            if (substreamId === '0') continue;
+          const roomParent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, auth.workspaceId,
+            workstreamDOName(env.AVALON_REGION, auth.workspaceId, asWorkstreamId(room.id)));
+          const visible = await roomParent.listVisiblePrivateChildren({ workspaceId: auth.workspaceId, parentId: room.id, userId: represented.userId });
+          for (const { substreamId, title } of visible.children) {
             try {
               const child = await conversations.authorizeViewer(room.id, substreamId);
-              if (!child.archived) destinations.push({ workstreamId: room.id, substreamId: asSubstreamId(substreamId), label: `${room.title} / Breakout ${substreamId}` });
+              if (!child.archived) destinations.push({ workstreamId: room.id, substreamId: asSubstreamId(substreamId), label: `${room.title} / ${title}` });
             } catch (error) { if (!(error instanceof ApiError && (error.status === 403 || error.status === 404))) throw error; }
           }
         } catch (error) { if (!(error instanceof ApiError && (error.status === 403 || error.status === 404))) throw error; }
@@ -49,11 +54,13 @@ export async function demoCatalog(env: Env, auth: AuthContext): Promise<DemoCata
   return { workspaceId: auth.workspaceId, ...labels, participants };
 }
 
-export async function sendDemoMessage(env: Env, operator: AuthContext, input: DemoMessageRequest) {
+export async function sendDemoMessage(env: Env, operator: AuthContext, input: DemoMessageRequest, requestId?: string) {
   const auditId = crypto.randomUUID();
   let basis: string | null = null;
+  const contentDigest = await sha256Hex(input.text);
   const metadata = (code?: string) => JSON.stringify({ representedUserId: input.representedUserId, authorityBasis: basis,
-    clientMessageId: input.clientMessageId, substreamId: input.substreamId, authMechanism: 'session', ...(code ? { code } : {}) });
+    clientMessageId: input.clientMessageId, substreamId: input.substreamId, authMechanism: 'session',
+    surface: 'demo-sidecar', apiVersion: env.APP_VERSION ?? null, requestId: requestId ?? null, contentDigest, ...(code ? { code } : {}) });
   const audit = async (action: string, targetId: string, code?: string) => {
     await env.AUDIT_DB.prepare(`INSERT INTO audit_events
       (id, workspace_id, actor_type, actor_user_id, workstream_id, action, target_type, target_id, metadata_json, created_at)

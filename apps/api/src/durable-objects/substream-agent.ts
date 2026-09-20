@@ -3331,7 +3331,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         message: "Work stream not found",
       }, 404);
     }
-    // Two principals, two verifications. A login session is re-verified against
+    // A login session is re-verified against
     // its `sessions` row, which is what makes a revoked or expired login stop
     // working mid-flight. A connector principal has no `sessions` row to check
     // — its standing authority is the connector link, which the Worker verified
@@ -3340,9 +3340,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    // Any non-session principal — `connector`, `demo_seed` — is verified by
-    // membership rather than by a session row. The enum on `principal` is the
-    // gate: a value added to it inherits this branch.
+    // Connector/demo-seed principals use membership. Impersonation first checks
+    // the actual operator's session, then current demo and directed authority;
+    // it is admitted only for creating an ordinary message.
     const nonSessionPrincipal = request.auth.principal !== undefined;
     const current = request.auth.principal === "impersonation"
       ? await (async () => {
