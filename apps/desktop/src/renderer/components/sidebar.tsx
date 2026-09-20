@@ -11,7 +11,7 @@ import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { compareWorkstreamRecency, formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
@@ -109,6 +109,8 @@ interface SidebarProps {
   onPreviewWorkstreamBatch: (
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
+  onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
+  onImportChannel?: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
@@ -1078,6 +1080,8 @@ export function Sidebar({
   onReorderPinnedWorkstreams,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
+  onCreateChannel = async () => { throw new Error('Channel creation is unavailable.'); },
+  onImportChannel = async () => { throw new Error('Channel import is unavailable.'); },
   onCreateSpace = async () => {
     throw new Error('Space creation is unavailable.');
   },
@@ -1093,6 +1097,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
+  const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
@@ -1788,6 +1793,20 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
+  const createChannelFromSidebar = useCallback(async (input: { name: string; spaceId: string }): Promise<void> => {
+    markSurfaceEntrypoint('sidebar_new');
+    try {
+      await onCreateChannel(input);
+    } catch (cause) {
+      markSurfaceEntrypoint('direct');
+      throw cause;
+    }
+  }, [onCreateChannel]);
+  const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
+    const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
+    void navigate(`/spaces/${created.id}`);
+  }, [navigate, onCreateSpace]);
+
   // Active standalone Sidekicks occupy the strip. Until one exists, its empty
   // slot remains the dashed New Sidekick action; the whole section stays absent
   // only while the workspace answer is still loading.
@@ -1829,7 +1848,13 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               work stream buttons for a quarter of a second. */}
-          <NewWorkstreamMenu returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+          <NewWorkstreamMenu
+            canCreateSpace={spaces !== undefined && spacesReady}
+            spaces={placementSpaces}
+            onCreateChannel={createChannelFromSidebar}
+            onCreateSpace={createSpaceFromSidebar}
+            onImportChannel={onImportChannel}
+          >
             <button type="button"
               aria-hidden={compact}
               aria-label={NEW_STREAM_LABEL}
@@ -1860,7 +1885,14 @@ export function Sidebar({
             // reason — it finds a keyed row at any depth. The tip hangs off the
             // rail's right rather than below, where the row under it would be
             // covered.
-            <NewWorkstreamMenu tooltipSide="right" returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+            <NewWorkstreamMenu
+              tooltipSide="right"
+              canCreateSpace={spaces !== undefined && spacesReady}
+              spaces={placementSpaces}
+              onCreateChannel={createChannelFromSidebar}
+              onCreateSpace={createSpaceFromSidebar}
+              onImportChannel={onImportChannel}
+            >
               <button type="button"
                 aria-label={NEW_STREAM_LABEL}
                 className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}
@@ -1881,7 +1913,13 @@ export function Sidebar({
           ref={scrollRef}
         >
           {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
-            <NewWorkstreamMenu returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+            <NewWorkstreamMenu
+              canCreateSpace={spaces !== undefined && spacesReady}
+              spaces={placementSpaces}
+              onCreateChannel={createChannelFromSidebar}
+              onCreateSpace={createSpaceFromSidebar}
+              onImportChannel={onImportChannel}
+            >
               <button type="button"
                 className={clsx('sidebar-action', onNewStreamRoute && 'is-active')}
                 onClick={(event) => event.stopPropagation()}
@@ -1902,7 +1940,6 @@ export function Sidebar({
               inactiveSpaces={inactiveSpaces}
               loading={loading === true}
               onAddChannel={onAddChannelToSpace}
-              onCreate={onCreateSpace}
               onReorder={onReorderContainer}
               onRestore={onRestoreSpace}
               onRetry={onRetrySpaces}

@@ -62,8 +62,12 @@ those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
-The launcher starts with focus in the opening-message text input, including
-when opened from a Space. The composer is keyed by its draft identity — which
+The sidebar's plus first collects the required Space and Channel name in the
+standard creation dialog, then opens the existing launcher without creating a
+Channel. The launcher starts with focus in the opening-message text input. The
+Channel name travels with that route and is committed only when the opening
+message is sent; participants are still selected in the launcher before that
+request. The composer is keyed by its draft identity — which
 carries the Space it was opened from — so switching between Space launchers also
 restores initial focus; that key stays stable throughout the launch hand-off. The sidebar lists existing work streams without a
 placeholder row for the unsent draft. Recipient selection remains available
@@ -498,6 +502,31 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-20 — Name and place a Channel before composing it
+
+**What changed:** The unified sidebar plus collects a required Space and Channel
+name, then hands both to the existing composer. The eventual `POST /workstreams`
+carries that settled title and Space alongside the opening message and chosen
+participants; no Channel is created by the setup dialog itself. The picker is
+enabled only after Space bootstrap and contains only destinations the person may
+write, so it cannot carry a transient or `through_channel` placement into the
+composer.
+
+**Why:** Creation controls were scattered across the Spaces heading and every
+Space row, while the top-level launcher left placement implicit. A single setup
+step makes the two durable identity choices explicit without weakening the
+existing rule that pressing Enter on an opening message is the creation boundary.
+
+**Considered and rejected:** Creating the Channel as soon as the setup form is
+submitted. That would move the durable boundary ahead of participant selection
+and the opening message, leaving abandoned empty Channels when setup is cancelled.
+
+**Consequences:** The selected name and Space remain route state until the
+opening message is submitted. Telemetry marks the sidebar entrypoint at that
+handoff, and the launching header can show the settled name immediately.
+
+Shipped in #876.
 
 ### 2026-09-19 — The launching header is the destination's row, immediately
 

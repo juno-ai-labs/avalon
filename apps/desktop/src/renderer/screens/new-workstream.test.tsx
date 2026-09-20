@@ -158,6 +158,7 @@ function renderSpaceScreen(
   spaceId: string,
   spaces: SpaceDirectory = { waterline: 0, items: [] },
   nextSpaceId?: string,
+  channelName?: string,
 ): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -166,7 +167,10 @@ function renderSpaceScreen(
   render(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/spaces/${spaceId}/workstreams/new`]}>
+        <MemoryRouter initialEntries={[{
+          pathname: `/spaces/${spaceId}/workstreams/new`,
+          ...(channelName ? { state: { channelName } } : {}),
+        }]}>
           {nextSpaceId && <Link to={`/spaces/${nextSpaceId}/workstreams/new`}>New channel in another space</Link>}
           <Routes>
             <Route element={<NewWorkstreamScreen spaceId="route" workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
@@ -255,7 +259,7 @@ describe('New channel home', () => {
 
   it('given a space launcher, when the first message is submitted, then it omits home sections and takes its participants from the space', async () => {
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
-    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
+    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
 
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
@@ -281,7 +285,20 @@ describe('New channel home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       participantIds: [teammate.id],
       spaceIds: [spaceId],
+      title: 'Hiring plan',
     })));
+  });
+
+  it('keeps the chosen Channel name visible while creation is pending', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByRole('heading', { name: 'Hiring plan' })).toBeVisible();
+    expect(document.querySelector('.title-skeleton-header')).toBeNull();
   });
 
   it('uses the shared mention, attachment, and dictation controls', async () => {

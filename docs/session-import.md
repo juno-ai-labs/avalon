@@ -17,18 +17,20 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/session-import-dialog.tsx` | URL-only import dialog. |
+| `apps/desktop/src/renderer/components/new-workstream-menu.tsx` | Unified sidebar launcher and its Space/name/URL import form. |
 
 ## How it works
 
-The plus menu offers **start new work stream** and **import from ChatGPT or
-Claude**. The dialog accepts a shared conversation URL; **Create a new work stream** imports it in one action.
-It does not display an export picker, editable title, or transcript preview.
+The sidebar's single plus menu offers **Start a new channel**, **Import channel
+from Claude or ChatGPT**, and **Create a new space**. The import dialog requires
+a Space, a Channel name, and a shared conversation URL; **Create** imports it in
+one action. Only Spaces the person may edit are offered, and the launcher stays
+disabled until the Space directory is ready. Channel names stop at the server's
+180-character limit. It does not display an export picker or transcript preview.
 Available attachments and artifact files are resolved automatically; missing file
 references remain visible in the imported conversation. The source roles stay
-intact; the byline says who imported them. After creation, the standard background
-LLM naming path reads the prepared history and names the work stream. The source
-title provides its objective and provisional fallback.
+intact; the byline says who imported them. The entered name is the settled
+Channel title; provider content does not override the name the person chose.
 
 Public links are acquired through the existing Firecrawl client using uncached
 `rawHtml` output, with main-content filtering and base64-image removal disabled.
@@ -99,6 +101,9 @@ This provides an executable eval seam, not a scheduler or scoring database.
   remain recoverable under the same preparation identity.
 - Source request identity is hashed separately from materialized importer snapshots.
   The preparation receipt freezes materialized content across retries.
+- One unchanged form attempt retains its create identity after an uncertain
+  response; changing its name, Space, or URL starts a new identity. Placement
+  is creation semantics and stays out of the imported-content identity hash.
 - Uploaded user files and assistant artifact bytes use the existing resource authority.
 - Unavailable files remain readable references, never fake downloadable resources.
 - Extracted document text is a separately named text file; the original reference remains.
@@ -169,6 +174,29 @@ cannot reconstruct original files automatically.
   using a fixture API; backend lifecycle tests provide storage/execution evidence.
 
 ## Changelog
+
+### 2026-09-20 — Put imports in the unified sidebar launcher
+
+**What changed:** Import now collects its required Space, Channel name, and URL
+from the sidebar's one creation menu, and sends the chosen Space and settled name
+through the existing prepared-history creation path. The menu waits for a
+writable Space directory, retains one request identity across an unchanged
+retry, and surfaces the API's actionable import refusal.
+
+**Why:** Space- and row-local plus buttons made creation depend on where somebody
+happened to be looking, while an import created into General and renamed itself
+from provider content. One launcher makes the destination and visible name
+explicit without changing prepared-history authority or fabricating a run.
+
+**Considered and rejected:** Keeping the query-parameter import dialog as a
+second UI. It had no producer after consolidation and would preserve different
+required fields and retry behavior for the same operation.
+
+**Consequences:** Desktop imports begin only in the sidebar launcher and retain
+one request identity while its Space, name and URL remain unchanged. Programmatic
+export callers keep the same API boundary without acquiring a second desktop UI.
+
+Shipped in #876.
 
 ### 2026-09-15 — Compose prepared content, resources and execution
 
