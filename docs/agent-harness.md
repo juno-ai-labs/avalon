@@ -1382,6 +1382,24 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-09-20 — Translate unspecified optional scalars at the model boundary
+
+`buildPlugin` now advertises a synthetic null alternative for independent,
+optional, non-nullable top-level scalar arguments. `runToolCall` removes only
+those synthetic nulls before numeric/blank normalization, input hashing,
+authorization, receipts and validation against the original execution schema.
+Both core and dynamically loaded plugins use the same adapter; read/write mode
+does not affect this explicit representation. No strict-mode setting changes.
+
+The pressure was Canva calls containing punctuation in an optional Brand Kit ID.
+Omission prose had not prevented the model inventing a value. Stripping punctuation
+would guess intent, so strings remain unchanged. Existing nullable arguments retain
+null (including clear operations). Nested values and roots with composition,
+conditional, presence or unknown constraints are not adapted; broadening that
+scope must preserve both the authored null semantics and field dependencies.
+This supplies a valid representation, not a guarantee that a model will choose it
+or that every Canva generation failure has the same cause.
+
 ### 2026-09-19 — An interrupted write is asked what it did before it is called unknowable
 
 **What changed:** Crash repair of an interrupted tool batch no longer classifies
