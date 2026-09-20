@@ -15,7 +15,7 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
  * changing them: the harness stops here, so leaving it behind means these tests
  * exercise a schema production no longer has.
  */
-const SPACE_SCHEMA_VERSION = 61;
+const SPACE_SCHEMA_VERSION = 63;
 
 const SPACE_ID = "00000000-0000-7000-8000-0000000000c1";
 const OTHER_SPACE_ID = "00000000-0000-7000-8000-0000000000c2";
@@ -70,7 +70,7 @@ function insertSpace(
 }
 
 describe("WorkspaceDO space schema", () => {
-  it("given the ledger, when it is applied, then the Space tables exist at version 61", () => {
+  it("given the ledger, when it is applied, then the Space tables exist at version 63", () => {
     const database = openDatabase();
     apply(database, SPACE_SCHEMA_VERSION);
 
@@ -207,7 +207,7 @@ describe("WorkspaceDO space schema", () => {
       .toMatchObject({ phase: "pending", general_space_id: null, blocked_json: "[]" });
   });
 
-  it("given a retirement graph with rows, when 61 widens its parent kinds, then the rows survive", () => {
+  it("given a retirement graph with rows, when 63 widens its parent kinds, then the rows survive", () => {
     const database = openDatabase();
     apply(database, SPACE_SCHEMA_VERSION - 1);
     // One node already receipted and one still outstanding: the receipt is the

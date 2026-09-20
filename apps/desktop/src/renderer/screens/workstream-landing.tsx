@@ -36,7 +36,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // an empty workspace, and must not flash the new-workstream composer.
   if (!loaded) {
     if (workstreams.error) return <InlineError>{workstreams.error.message}</InlineError>;
-    if (state === 'unavailable') return <InlineError>Unable to connect to your workspace. Check your connection and restart Rally to try again.</InlineError>;
+    if (state === 'unavailable') return <InlineError>Unable to connect to your organization. Check your connection and restart Rally to try again.</InlineError>;
     return <LoadingState label="Opening channels…" />;
   }
   if (needsMore) return <LoadingState label="Opening channels…" />;

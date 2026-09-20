@@ -85,7 +85,7 @@ unit tests for the audience function, and a workerd negative control proving
 that skipping the union recomputation after a retraction leaves a reader the
 test expects to be gone.
 
-### Phase 3: WorkspaceDO migration 61, Space authority, service, routes, socket
+### Phase 3: WorkspaceDO migration 63, Space authority, service, routes, socket
 
 - Space directory and viewer projections, order, waterline, memberships,
   intents, default registry and delivery targets and publications, bootstrap
@@ -123,7 +123,7 @@ Space lands in General and one proving a failed membership publishes nothing.
   General before their first usable session.
 - Project freeze: mutations refused, uncommitted default targets invalidated,
   the Project outbox drained, and Project authority deleted behind the shutdown
-  barrier in migration 61's follow-on step.
+  barrier in migration 63's follow-on step.
 - Retirement enumerates Spaces and their hidden children.
 
 Gate: a workerd test driving an Organization with active, archived, personal and

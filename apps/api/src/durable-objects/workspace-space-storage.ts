@@ -974,7 +974,7 @@ export class WorkspaceSpaceStorage {
    * two mechanisms, and the redundancy is a few ids on a payload that already
    * carries every Space's name.
    */
-  readOrders(userId: string): PersonalOrder {
+  readOrders(workspaceId: string, userId: string): PersonalOrder {
     if (!this.ready()) return [];
     const rows = this.storage.sql.exec<{
       container_kind: string;
@@ -989,6 +989,7 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     const byContainer = new Map<string, ContainerOrder>();
     for (const row of rows) {
+      if (row.container_kind === "organization" && row.container_id !== workspaceId) continue;
       const key = `${row.container_kind}:${row.container_id}`;
       const existing = byContainer.get(key);
       if (existing) existing.itemIds.push(row.item_id);
@@ -1005,7 +1006,22 @@ export class WorkspaceSpaceStorage {
         });
       }
     }
-    return PersonalOrderSchema.parse([...byContainer.values()]);
+    const visibleSpaces = new Set(this.visibleSpaceIds(userId));
+    const visible: ContainerOrder[] = [];
+    for (const order of byContainer.values()) {
+      if (order.container.kind === "organization") {
+        visible.push({ ...order, itemIds: order.itemIds.filter((id) => visibleSpaces.has(id)) });
+        continue;
+      }
+      if (order.container.kind === "space") {
+        if (!this.readable(userId, order.container.id)) continue;
+        const orderable = this.orderableChannelIds(userId, order.container.id, order.itemIds);
+        visible.push({ ...order, itemIds: order.itemIds.filter((id) => orderable.has(id)) });
+        continue;
+      }
+      if (this.listableChannelIds(userId, [order.container.id]).length > 0) visible.push(order);
+    }
+    return PersonalOrderSchema.parse(visible);
   }
 
   /**
@@ -1081,6 +1097,13 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /** Whether this viewer may name the container whose private order they write. */
+  canArrange(userId: string, container: OrderedContainer): boolean {
+    if (container.kind === "organization") return true;
+    if (container.kind === "space") return this.readable(userId, container.id) !== false;
+    return this.listableChannelIds(userId, [container.id]).length > 0;
+  }
+
   /** What is left of a requested list once this container's rule has run. */
   private storableOrder(
     workspaceId: string,
@@ -1092,18 +1115,14 @@ export class WorkspaceSpaceStorage {
     if (container.kind === "organization") {
       return this.organizationOrder(workspaceId, userId, requestedIds, now);
     }
-    const merged = mergedOrder(
-      requestedIds,
-      this.storedContainerOrder(userId, container.kind, container.id),
-    );
-    if (container.kind !== "space") return merged;
-    // Over the merge rather than over the request, so the same rule decides
-    // what stays as decides what may arrive: a Channel that has left this Space
-    // loses the position it kept only because nobody mentioned it. An archived
-    // Channel is *not* one of those — neither read looks at `archived_at` — so
-    // it keeps its place and a restore brings the arrangement back.
-    const orderable = this.orderableChannelIds(userId, container.id, merged);
-    return merged.filter((id) => orderable.has(id));
+    const stored = this.storedContainerOrder(userId, container.kind, container.id);
+    if (container.kind !== "space") return mergedOrder(requestedIds, stored);
+    // Validate only what this request is trying to move. Stored positions can
+    // name Channels this device cannot currently see (or a concurrent move has
+    // just removed); filtering the merged result would turn that incomplete
+    // view into a deletion of somebody else's valid arrangement.
+    const orderable = this.orderableChannelIds(userId, container.id, requestedIds);
+    return mergedOrder(requestedIds.filter((id) => orderable.has(id)), stored);
   }
 
   /** What this person currently has stored for one container, in its own order. */
@@ -2912,7 +2931,7 @@ export class WorkspaceSpaceStorage {
   }
 
   bootstrapStatus(): WorkspaceSpaceBootstrapStatus {
-    // An object that has not reached migration 61 has not started its cutover
+    // An object that has not reached migration 63 has not started its cutover
     // either, which is what `pending` says — and `ready: false` is what keeps a
     // client on the Organization-opening state rather than showing a hierarchy
     // that does not exist yet.

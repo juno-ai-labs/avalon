@@ -415,7 +415,7 @@ SQL joins.
   removed from their audience cannot make it visible again.
   An archived or narrowed work stream contributes no row while remaining
   removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
-- **WorkspaceDO migration 62 drops the eight Project tables** — `projects`,
+- **WorkspaceDO migration 64 drops the eight Project tables** — `projects`,
   `project_participants`, `workspace_project_order`, `workspace_project_state`,
   `project_workstream_memberships`, `project_default_resources`,
   `project_default_resource_targets` and `project_default_resource_publications`
@@ -430,7 +430,7 @@ SQL joins.
   mechanism already delivered to a Channel — an attached resource, a
   recommended Sidekick, an audience — is the Channel's own and survives. See
   [`projects.md`](projects.md).
-- WorkspaceDO migration 61 adds the Space authority that replaced those rows:
+- WorkspaceDO migration 63 adds the Space authority that replaced those rows:
   `workspace_space_directory` and `workspace_space_viewers` are the *projection*
   a Space's own object publishes, so they carry the generation, source version
   and payload hash each effect is fenced on rather than being written by a
@@ -454,7 +454,7 @@ SQL joins.
   `'space'`, carrying its rows and their `retired_at` receipts through a scratch
   table — migration 42 is released and is not edited. A unique partial index on
   `system_role` makes General singular. See [`spaces.md`](spaces.md).
-- **WorkspaceDO migration 63 adds the Organization's view of a Channel's
+- **WorkspaceDO migration 65 adds the Organization's view of a Channel's
   breakouts.**
   `workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
   and `workspace_breakout_viewers` is its per-person half, both applied from

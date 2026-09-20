@@ -45,6 +45,10 @@ describe("the client contract gate", () => {
     // would admit whatever sent it.
     expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "latest" })?.code)
       .toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1junk" })?.code)
+      .toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1.5" })?.code)
+      .toBe("client_update_required");
   });
 
   it("given the current build, when it asks, then nothing is refused", () => {

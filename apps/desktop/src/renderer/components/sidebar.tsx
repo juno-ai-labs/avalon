@@ -724,7 +724,7 @@ function WorkstreamRow({
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
             // list handled always leaves one behind.
-            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') === 'none')
+            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') !== 'move')
             : undefined}
           onDragOver={drag
             ? (event) => {

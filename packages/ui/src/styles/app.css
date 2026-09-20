@@ -1210,7 +1210,7 @@ pre {
   width: 32px;
 }
 .space-icon-grid button:hover,
-.space-color-grid button:hover { background: var(--av-sys-color-surface-raised-hover); }
+.space-color-grid button:hover { background-image: var(--hover-layer); }
 .space-icon-grid button.is-selected,
 .space-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
 /* Seven columns is what closes the palette ring across the row break; the
@@ -5257,7 +5257,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .space-dashboard-header { align-items: center; display: grid; gap: 14px; grid-template-columns: 44px minmax(0, 1fr) auto; margin-bottom: 40px; }
 .space-dashboard-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; display: inline-flex; height: 42px; justify-content: center; padding: 0; width: 42px; }
 button.space-dashboard-icon { cursor: pointer; }
-button.space-dashboard-icon:hover { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-ref-color-line-4); }
+button.space-dashboard-icon:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); }
 button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .space-dashboard-header h1 { font-size: 26px; margin: 0; }
 .space-name-button { background: transparent; border: 0; color: inherit; cursor: default; font: inherit; letter-spacing: inherit; margin: 0; max-width: 100%; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }

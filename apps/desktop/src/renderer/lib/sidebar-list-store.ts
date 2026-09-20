@@ -176,11 +176,18 @@ export function applyVersionedSpaceSnapshot(
  * because it is not a snapshot: the republication that follows still applies
  * over it, and an older one is still refused.
  */
-export function applyContainerOrder(queryClient: QueryClient, order: ContainerOrder): void {
-  queryClient.setQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY, (current = []) => [
-    ...current.filter((entry) => !sameContainer(entry.container, order.container)),
-    order,
-  ]);
+export function applyContainerOrder(
+  queryClient: QueryClient,
+  order: ContainerOrder,
+  expectedCurrent?: PersonalOrder,
+): void {
+  queryClient.setQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY, (current = []) => {
+    if (expectedCurrent !== undefined && current !== expectedCurrent) return current;
+    return [
+      ...current.filter((entry) => !sameContainer(entry.container, order.container)),
+      order,
+    ];
+  });
 }
 
 /**
