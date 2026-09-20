@@ -8,7 +8,7 @@
 //
 // The walk respects the remaining trigger-enforced state machine production
 // used: phases advance one step at a time, and this script explicitly creates
-// the seed workspaces' and work streams' routing rows now that migration 0090
+// the seed work streams' routing rows now that migration 0090
 // has removed the completed one-time import-population triggers.
 // After the ledger opens, the development-only HTTP seed route writes
 // seed-product.json into the objects. No product row is read from D1; this is
@@ -22,7 +22,6 @@ import { dirname, join } from "node:path";
 import {
   localAuthorityRegions,
   localAuthorityTarget,
-  workspaceProductAuthorityRouteUpsertSql,
 } from "./open-local-authority-sql.mjs";
 
 const apiDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "apps", "api");
@@ -117,15 +116,12 @@ async function openRegion(region) {
     target_hash='seeded_in_do', row_counts_json='{}', imported_at=NULL,
     verified_at=NULL, activated_at=NULL, last_error_code=NULL,
     updated_at=excluded.updated_at`);
-  advance(workspaceProductAuthorityRouteUpsertSql(generation));
-
   // Route states move with the phases: verified before the verified gate, active
   // before the open gate. `importing` first because the route machine is also
   // forward-only. Route updates are idempotent, so a resumed walk repeats them
   // harmlessly.
   for (const state of ["importing", "verified"]) {
     advance(`UPDATE workstream_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation} AND state != 'active'`);
-    advance(`UPDATE workspace_product_authority_routes SET state='${state}', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation} AND state != 'active'`);
   }
   if (!reached("maintenance_verified")) {
     advance(`UPDATE workstream_authority_control SET phase='maintenance_verified',
@@ -133,7 +129,6 @@ async function openRegion(region) {
   }
   // Only the workstream route table records an activation time.
   advance(`UPDATE workstream_authority_routes SET state='active', activated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
-  advance(`UPDATE workspace_product_authority_routes SET state='active', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE generation=${generation}`);
   advance(`UPDATE workstream_authority_control SET phase='durable_object_open',
         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`);
 

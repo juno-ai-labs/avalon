@@ -48,9 +48,6 @@ function beginImport(database: DatabaseSync): void {
        source_fence_sequence, updated_at)
     VALUES ('${WORKSPACE_ID}', '${WORKSTREAM_ID}', 3,
             'global:${WORKSPACE_ID}:${WORKSTREAM_ID}', 'pending', 0, '${AT}');
-    INSERT INTO workspace_product_authority_routes
-      (workspace_id, generation, state, updated_at)
-    VALUES ('${WORKSPACE_ID}', 3, 'pending', '${AT}');
     UPDATE workstream_authority_control
        SET phase = 'maintenance_importing', updated_at = '${AT}'
      WHERE id = 1;
@@ -60,12 +57,10 @@ function beginImport(database: DatabaseSync): void {
 function openAuthority(database: DatabaseSync): void {
   database.exec(`
     UPDATE workstream_authority_routes SET state = 'verified', updated_at = '${AT}';
-    UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = '${AT}';
     UPDATE workstream_authority_control
        SET phase = 'maintenance_verified', updated_at = '${AT}'
      WHERE id = 1;
     UPDATE workstream_authority_routes SET state = 'active', updated_at = '${AT}';
-    UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${AT}';
     UPDATE workstream_authority_control
        SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${AT}'
      WHERE id = 1;
@@ -73,14 +68,10 @@ function openAuthority(database: DatabaseSync): void {
 }
 
 describe("engineering inspection authority routing", () => {
-  it("resolves a post-cutover workspace identity without a historical product route", async () => {
+  it("resolves a workspace from its regional identity", async () => {
     const { database, env } = fixture();
     beginImport(database);
     openAuthority(database);
-    database.exec(`
-      DELETE FROM workspace_product_authority_routes WHERE workspace_id = '${WORKSPACE_ID}';
-    `);
-
     await expect(resolveInspectionWorkspaceRoute(env, WORKSPACE_ID)).resolves.toMatchObject({
       id: WORKSPACE_ID,
       authority_state: "active",
@@ -104,12 +95,10 @@ describe("engineering inspection authority routing", () => {
 
     database.exec(`
       UPDATE workstream_authority_routes SET state = 'verified', updated_at = '${AT}';
-      UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = '${AT}';
       UPDATE workstream_authority_control
          SET phase = 'maintenance_verified', updated_at = '${AT}'
        WHERE id = 1;
       UPDATE workstream_authority_routes SET state = 'active', updated_at = '${AT}';
-      UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${AT}';
     `);
     expect(await resolveInspectionWorkspaceRoute(env, WORKSPACE_ID)).toBeNull();
     expect(await resolveInspectionWorkstreamRoute(env, WORKSTREAM_ID)).toBeNull();
@@ -127,9 +116,6 @@ describe("engineering inspection authority routing", () => {
       required_serving_contract_version: 1,
       serving_contract_version: 1,
     });
-    expect(database.prepare(
-      "SELECT generation, state FROM workspace_product_authority_routes WHERE workspace_id = ?",
-    ).get(WORKSPACE_ID)).toEqual({ generation: 3, state: "active" });
     await expect(resolveInspectionWorkspaceRoute(env, WORKSPACE_ID)).resolves.toMatchObject({
       authority_state: "active",
       authority_generation: 3,
@@ -139,7 +125,7 @@ describe("engineering inspection authority routing", () => {
     });
   });
 
-  it("refuses stale route and caller generations", async () => {
+  it("refuses stale workstream routes and caller generations", async () => {
     const { database, env } = fixture();
     beginImport(database);
     openAuthority(database);
@@ -149,9 +135,10 @@ describe("engineering inspection authority routing", () => {
 
     database.exec(`
       UPDATE workstream_authority_routes SET generation = 4 WHERE workstream_id = '${WORKSTREAM_ID}';
-      UPDATE workspace_product_authority_routes SET generation = 4 WHERE workspace_id = '${WORKSPACE_ID}';
     `);
-    expect(await resolveInspectionWorkspaceRoute(env, WORKSPACE_ID, 3)).toBeNull();
+    await expect(resolveInspectionWorkspaceRoute(env, WORKSPACE_ID, 3)).resolves.toMatchObject({
+      authority_generation: 3,
+    });
     expect(await resolveInspectionWorkstreamRoute(env, WORKSTREAM_ID, 3)).toBeNull();
   });
 });
