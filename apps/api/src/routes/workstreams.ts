@@ -12,6 +12,7 @@ import {
   ApplyWorkstreamBatchRequestSchema,
   ChannelAccessSchema,
   CreateWorkstreamRequestSchema,
+  asSpaceId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -185,6 +186,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
     clientMessageId: body.clientMessageId,
     participantUserIds: [],
     scope: "personal",
+    spaceIds: body.spaceIds.map(asSpaceId),
   }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(body) });
   return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
