@@ -1487,11 +1487,29 @@ replay and the second may already have been read. An `ambiguous` one *is*, and
 that is not an exception to a rule about settled receipts — it is what the state
 is for, being what a previous re-entry attempt left behind, and
 `findCompletedToolResult` reaches it deliberately through
-`allowAmbiguousReconciliation`. And the re-entry holds the attempt lease open
-while it runs, aborting the moment it cannot renew it: the tools reached carry
-their own provider budgets and a ceiling on top would be a number nobody has
-measured, but `run_command`'s 900 seconds outlives a 300-second claim, so the
-lease is the bound that has to be real.
+`allowAmbiguousReconciliation`. And the re-entry is bounded twice, by numbers that already
+existed rather than invented ones: the tool's own declared `timeoutMs`, which
+Bind applies on every ordinary dispatch and which re-entry has to apply itself
+because it does not go through Bind, and the attempt lease, which it holds open
+and aborts on when it cannot renew — `run_command`'s 900 seconds outlives a
+300-second claim, and the lease is what the settlement is fenced on.
+
+**Considered and rejected:** routing a residual ambiguity to `needs_input`, the
+human-escalation the live path already has at `halt: "needs_input"`. It would
+preserve the batch's completed calls without letting the model near the
+ambiguous call, which is the better of the two on its face. It is rejected
+because crash repair has no question to escalate *with*: `needs_input` reached
+without a durable `elicitation_requests` row is the state the 2026-08-15 entry
+below records as a production defect — a run stopped with nothing to answer, no
+failed tool row, and a null error. Restoring it here would mean minting a
+question on the member's behalf about a write they did not make, which is a
+larger change than this one and a product decision rather than a repair.
+
+Also rejected: a per-tool `reconcile()` hook as the *primary* mechanism, which
+was the first design. Re-entry is better where the executor already resolves its
+own effect, because a reconciler there is a second copy of a lookup free to
+drift. `reconcileEffect` exists for the case where that reasoning does not hold,
+not as the general answer.
 
 **Left undone:** `resume_write` applies to every `provider_key` write, and that
 is safe because every one of them in this tree — memory `add`/`update`

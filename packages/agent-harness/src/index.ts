@@ -3520,13 +3520,20 @@ export interface HarnessTool {
    * attempt already started, rather than being reported as an unresolvable
    * `ambiguous_external_write`.
    *
-   * It is a claim about the executor, not about the tool being harmless: the
-   * host re-enters with the *same* `effectIntentId`, and a re-enterable
-   * executor's first act is to look up what that identity already did —
-   * `run_command` reattaches to its durable provider task, `publish_resource`
-   * finds the document its path identity already published and returns it
-   * untouched when the bytes match. A tool that would simply perform the write
-   * a second time must leave this unset, whatever its idempotency class says.
+   * It is a claim about the executor, not about the tool being harmless, and
+   * there are three ways an executor can earn it. It may **reattach**: the
+   * host re-enters with the same `effectIntentId`, and the executor's first
+   * act is to resolve what that identity already did, as `run_command` does
+   * against its durable provider task. It may **converge**: the recorded input
+   * fully determines the end state, so running it again reaches the state the
+   * interrupted attempt was moving toward rather than a second one — this is
+   * `checkout_repository`, which re-selects the same repository at the same
+   * access, and it is why an interrupted replacement is repaired by finishing
+   * it. Or it may **reconcile**, through `reconcileEffect` below, when neither
+   * of the first two holds.
+   *
+   * A tool that would simply perform the write a second time is none of those
+   * and must leave this unset, whatever its idempotency class says.
    *
    * Host-authored deliberately, and not part of `ToolDefinition`: that schema
    * also parses tool declarations from remote MCP servers, and a server that

@@ -471,6 +471,13 @@ labels:
   value. An incomplete prior call whose plan, request hash and key all match may
   therefore *resume*, because the provider collapses the two; a call arriving
   with a different key does not, and is ambiguous.
+
+  **That resume is load-bearing, not incidental.** `admit` grants it on the
+  declared class alone, so a `provider_key` tool owes a key-scoped replay lookup
+  as its first act — `loadReceipt` in `memory-service.ts` and
+  `loadMutationReceipt` in `memory-table-service.ts` are the shape. Every
+  `provider_key` write in this tree has one, and a new one without it would be
+  re-executed rather than deduped.
 - **`record_before_execute`** — a write with no provider-side dedupe. The
   canonical input and plan hashes are durably stored *before* execution, so a
   reused or mismatched plan, an incomplete prior write, or a timed-out record
