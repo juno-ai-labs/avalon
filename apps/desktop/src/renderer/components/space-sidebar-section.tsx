@@ -215,13 +215,17 @@ export function SpaceSidebarSection({
   const expandedShortOfPages = ordered.some((space) => isOpen(space)
     && workstreams.filter((workstream) => workstream.spaceIds.includes(space.id)).length
       < space.channelCount);
+  const expandedPageKey = `${ordered.filter(isOpen).map((space) => space.id).join(',')}:${workstreams.length}`;
+  const lastAutomaticPage = useRef<string | null>(null);
   useEffect(() => {
     // Guarded on the in-flight flag as well as on the cursor: each page that
     // arrives runs this again, and without it the same page would be asked for
     // once per render until the first answer landed.
-    if (!expandedShortOfPages || !hasMoreChannels || loadingMoreChannels) return;
+    if (!expandedShortOfPages || !hasMoreChannels || loadingMoreChannels
+      || lastAutomaticPage.current === expandedPageKey) return;
+    lastAutomaticPage.current = expandedPageKey;
     onLoadMoreChannels?.();
-  }, [expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
+  }, [expandedPageKey, expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
 
   const closeCreate = (): void => {
     if (saving) return;
@@ -303,7 +307,7 @@ export function SpaceSidebarSection({
         // role: a description hung on a `generic` element is one a screen
         // reader is free to ignore, and a `<section>` with a name is a
         // `region`. The pinned section says its own hint the same way.
-        aria-describedby="spaces-reorder-help"
+        aria-describedby={ready && spaces.length > 0 ? "spaces-reorder-help" : undefined}
         aria-labelledby="spaces-heading"
         className="sidebar-section spaces-section"
         onDragOver={(event) => {
@@ -487,6 +491,21 @@ export function SpaceSidebarSection({
                       event.stopPropagation();
                       dragging.current = null;
                       setSectionFailure(null);
+                      const currentPlacement = placementDrag.current;
+                      if (currentPlacement?.spaceId === space.id
+                        && currentPlacement.workstreamId === workstreamId) {
+                        // A gap or gutter inside this placement list belongs to
+                        // the list just as a row does. The last hover position
+                        // is the order being accepted.
+                        placementDrag.current = { ...currentPlacement, dropped: true };
+                        event.dataTransfer.dropEffect = 'move';
+                        return;
+                      }
+                      // A placement is not a reorder in the list the Channel
+                      // came from (including Pinned). Its dragend sees `copy`
+                      // and discards any incidental arrangement built while
+                      // the pointer crossed that list.
+                      event.dataTransfer.dropEffect = 'copy';
                       // The two meanings of one gesture, told apart by where
                       // the Channel already is: a release inside the list it
                       // is in is a reorder, which the rows have already

@@ -315,7 +315,23 @@ export class ScopeGrantStorage {
         // Space supplies can read — so there is nothing for the caller to
         // re-read and retry.
         result = { status: "committed", grant: current };
-      } else if (current && current.active === request.active && current.membershipIncarnation === membershipIncarnation) {
+      } else if (!request.active && !request.spaceSourceId && current?.active
+        && this.sourceKind(request.userId, request.target) === "space") {
+        // There is no direct claim to withdraw. The participant row is the
+        // effective grant a Space owns, so treating an ordinary Channel
+        // removal as a state change would revoke access the Space still
+        // supplies. The application may re-assert every surviving supplier
+        // after this, but the authority never opens a revocation window while
+        // those external calls interleave.
+        result = { status: "committed", grant: current };
+      } else if (current && current.active === request.active
+        && current.membershipIncarnation === membershipIncarnation
+        // Equal admission is not equal provenance. A direct add over a row a
+        // Space seated makes the Channel responsible for that reader and must
+        // publish the shared directory projection even though `active` stays
+        // true.
+        && !(!request.spaceSourceId && request.active
+          && this.sourceKind(request.userId, request.target) === "space")) {
         result = { status: "committed", grant: current };
       } else {
         const revision = this.storage.sql.exec<{ revision: number }>(

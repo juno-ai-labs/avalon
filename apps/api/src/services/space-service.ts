@@ -13,6 +13,7 @@ import {
   type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
+  type SpaceScope,
   type SpaceSummary,
   type ContainerOrder,
   type UpdateSpaceAudienceRequest,
@@ -375,25 +376,63 @@ export class SpaceService {
     if (input.scope === "personal" && !requested.has(this.auth.userId)) {
       throw spaceRefusal("space_audience_self_excluded", current.name);
     }
+    if (current.systemRole === "general" && input.scope === "personal") {
+      throw spaceRefusal("space_protected", current.name);
+    }
     await this.preflightContainment(spaceId, input);
 
     const operationId = uuidV7();
-    const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      operationId,
-      audience: input,
-    }), current.name);
-
     const spaceClient = this.spaceConversation(spaceId);
-    await this.throughSpaceAuthority(spaceId, current.name, "audience", async () => {
-      if (input.scope !== current.scope) await spaceClient.update({ scope: input.scope });
-      for (const userId of requested) {
-        if (!currentParticipants.has(userId)) await spaceClient.addParticipant(userId);
+    const applyAudience = async (
+      scope: SpaceScope,
+      participants: ReadonlySet<string>,
+      previousScope: SpaceScope,
+      previousParticipants: ReadonlySet<string>,
+    ) => this.throughSpaceAuthority(spaceId, current.name, "audience", async () => {
+      if (scope !== previousScope) await spaceClient.update({ scope });
+      for (const userId of participants) {
+        if (!previousParticipants.has(userId)) await spaceClient.addParticipant(userId);
       }
-      for (const userId of removed) await spaceClient.removeParticipant(userId);
+      for (const userId of previousParticipants) {
+        if (!participants.has(userId)) await spaceClient.removeParticipant(userId);
+      }
     });
+    try {
+      // The Space is the audience authority. Commit it before WorkspaceDO
+      // publishes the projection or stages the fan-out intent; otherwise a
+      // refused Space mutation leaves every sidebar and socket claiming an
+      // audience the authority never accepted.
+      await applyAudience(input.scope, requested, current.scope, currentParticipants);
+    } catch (error) {
+      await applyAudience(current.scope, currentParticipants, input.scope, requested).catch((rollbackError) => {
+        logWarn(this.env, "space_audience_authority_rollback_failed", {
+          workspace_id: this.auth.workspaceId,
+          space_id: spaceId,
+          reason: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      });
+      throw error;
+    }
+
+    let updated: SpaceSummary;
+    try {
+      updated = this.settled(await (await this.workspace()).noteSpaceAudience({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId,
+        operationId,
+        audience: input,
+      }), current.name);
+    } catch (error) {
+      await applyAudience(current.scope, currentParticipants, input.scope, requested).catch((rollbackError) => {
+        logWarn(this.env, "space_audience_projection_rollback_failed", {
+          workspace_id: this.auth.workspaceId,
+          space_id: spaceId,
+          reason: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      });
+      throw error;
+    }
 
     const access = new ChannelAccessService(this.env, this.auth);
     const walk = await this.walkMembers({
@@ -456,8 +495,10 @@ export class SpaceService {
       spaceRevision: plan.space.revision,
       membershipGeneration: plan.membershipGeneration,
     };
+    const access = new ChannelAccessService(this.env, this.auth);
+    let sourceApplied = false;
     try {
-      await new ChannelAccessService(this.env, this.auth).applySpaceSource(workstreamId, {
+      await access.applySpaceSource(workstreamId, {
         spaceId,
         scope: plan.space.scope,
         participantUserIds: plan.space.participants.map((participant) => participant.userId),
@@ -465,8 +506,12 @@ export class SpaceService {
         membershipGeneration: plan.membershipGeneration,
         operationId: uuidV7(),
       });
+      sourceApplied = true;
       return this.settled(await workspace.finalizeSpaceMembership(settle), plan.space.name);
     } catch (error) {
+      if (sourceApplied) {
+        await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), plan.space.revision);
+      }
       await workspace.cancelSpaceMembership(settle).catch(() => undefined);
       throw error;
     }
@@ -610,30 +655,26 @@ export class SpaceService {
     if (kind === "resource") {
       await new ResourceService(this.env, this.auth).get(targetId);
       await this.assertResourceAudience(space, targetId);
-      await this.throughSpaceAuthority(spaceId, space.name, "attach_default_resource", () =>
-        this.spaceConversation(spaceId).attachResource(targetId));
     } else {
       await this.assertSidekickScope(targetId);
-      await this.throughSpaceAuthority(spaceId, space.name, "attach_default_sidekick", async () =>
-        (await this.spaceParent(spaceId)).setSidekickRecommendation({
-          workspaceId: this.auth.workspaceId,
-          parentId: spaceId,
-          userId: this.auth.userId,
-          sidekickId: targetId,
-          attached: true,
-        }));
     }
-    const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      kind,
-      targetId,
-    }));
-    if (!result.ok) {
-      throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
+    await this.setDefaultAttachment(spaceId, space.name, kind, targetId, true);
+    try {
+      const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId,
+        kind,
+        targetId,
+      }));
+      if (!result.ok) {
+        throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
+      }
+      return result.space;
+    } catch (error) {
+      await this.setDefaultAttachment(spaceId, space.name, kind, targetId, false);
+      throw error;
     }
-    return result.space;
   }
 
   /**
@@ -646,25 +687,52 @@ export class SpaceService {
    */
   async removeDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     const space = await this.editable(spaceId);
-    if (kind === "sidekick") {
-      await this.throughSpaceAuthority(spaceId, space.name, "detach_default_sidekick", async () =>
-        (await this.spaceParent(spaceId)).setSidekickRecommendation({
-          workspaceId: this.auth.workspaceId,
-          parentId: spaceId,
-          userId: this.auth.userId,
-          sidekickId: targetId,
-          attached: false,
-        }));
-    } else {
-      await this.spaceConversation(spaceId).detachResource(targetId).catch(() => undefined);
+    await this.setDefaultAttachment(spaceId, space.name, kind, targetId, false);
+    try {
+      return this.settled(await (await this.workspace()).removeSpaceDefault({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId,
+        kind,
+        targetId,
+      }), space.name);
+    } catch (error) {
+      await this.setDefaultAttachment(spaceId, space.name, kind, targetId, true);
+      throw error;
     }
-    return this.settled(await (await this.workspace()).removeSpaceDefault({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
+  }
+
+  private async setDefaultAttachment(
+    spaceId: SpaceId,
+    spaceName: string,
+    kind: SpaceDefaultKind,
+    targetId: string,
+    attached: boolean,
+  ): Promise<void> {
+    if (kind === "resource") {
+      await this.throughSpaceAuthority(
+        spaceId,
+        spaceName,
+        attached ? "attach_default_resource" : "detach_default_resource",
+        async () => {
+          if (attached) await this.spaceConversation(spaceId).attachResource(targetId);
+          else await this.spaceConversation(spaceId).detachResource(targetId);
+        },
+      );
+      return;
+    }
+    await this.throughSpaceAuthority(
       spaceId,
-      kind,
-      targetId,
-    }), space.name);
+      spaceName,
+      attached ? "attach_default_sidekick" : "detach_default_sidekick",
+      async () => (await this.spaceParent(spaceId)).setSidekickRecommendation({
+        workspaceId: this.auth.workspaceId,
+        parentId: spaceId,
+        userId: this.auth.userId,
+        sidekickId: targetId,
+        attached,
+      }),
+    );
   }
 
   /**

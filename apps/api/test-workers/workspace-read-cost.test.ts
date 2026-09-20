@@ -254,7 +254,7 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
 
 it('seeks activity cursor windows without rereading earlier history', async () => {
   const userId = asUserId('00000000-0000-7000-8000-000000009d11');
-  await env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', 
+  await env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member',
     workspace_id TEXT, user_id TEXT, status TEXT, PRIMARY KEY(workspace_id, user_id))`).run();
   await env.DB.prepare("INSERT INTO workspace_members(workspace_id, user_id, status) VALUES (?, ?, 'active')")
     .bind(workspaceId, userId).run();

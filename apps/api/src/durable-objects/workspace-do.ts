@@ -3540,11 +3540,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "spaces: directory, membership, general, defaults, bootstrap",
   statements: [...WORKSPACE_SPACE_SCHEMA_STATEMENTS],
 }, {
-  version: 62,
+  version: 64,
   description: "retire projects behind the space cutover",
   statements: [...PROJECT_RETIREMENT_STATEMENTS],
 }, {
-  version: 63,
+  version: 65,
   description: "breakout directory projections",
   statements: [...WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS],
 }];
@@ -4437,7 +4437,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstream: mapDirectoryWorkstreams(
             this.state.storage.sql, [row], currentAttachment.workspaceId,
             this.spaceStorage(), currentAttachment.userId,
-          )[0],
+          ).map((item) => currentAttachment.accessClass === "guest"
+            ? { ...item, spaceIds: [] }
+            : item)[0],
           stateVersion: directoryStateVersion(row),
         }));
         for (const peer of this.state.getWebSockets()) {
@@ -6031,9 +6033,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
+    const storage = this.spaceStorage();
+    if (!storage.canArrange(request.userId, request.order.container)) {
+      return { ok: false, code: "space_not_found" };
+    }
     const result = WorkspaceContainerOrderResultSchema.parse({
       ok: true,
-      order: this.spaceStorage().writeOrder(request.workspaceId, request.userId, request.order),
+      order: storage.writeOrder(request.workspaceId, request.userId, request.order),
     });
     this.publishSpaceSnapshot(request.userId);
     return result;
@@ -6175,6 +6181,59 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * The content-free Channel audience projection used when the conversation is
+   * archived and its product read intentionally answers 404.
+   *
+   * This is not a second authority: the rows are the same directory effects
+   * the Channel published for sidebar and authorization reads. Active Channels
+   * still go through their canonical product detail; the access coordinator
+   * only accepts this observation for an archived row.
+   */
+  async channelAccessObservation(input: { workspaceId: string; workstreamId: string }): Promise<
+    | { found: false }
+    | { found: true; archived: boolean; title: string; channel: {
+      readers: { scope: "workspace" } | { scope: "personal"; userIds: string[] };
+      participantUserIds: string[];
+    } }
+  > {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      workstreamId: WorkstreamIdSchema,
+    }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      title: string;
+      scope: "personal" | "workspace";
+      archived_at: number | null;
+      authority_generation: number;
+    }>(
+      `SELECT title, scope, archived_at, authority_generation
+         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+      request.workstreamId,
+    ).toArray()[0];
+    if (!row) return { found: false };
+    const participantUserIds = this.state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM workspace_workstream_viewers
+        WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1
+        ORDER BY user_id`,
+      request.workstreamId,
+      row.authority_generation,
+    ).toArray().map((participant) => participant.user_id);
+    return {
+      found: true,
+      archived: row.archived_at !== null,
+      title: row.title,
+      channel: {
+        readers: row.scope === "workspace"
+          ? { scope: "workspace" }
+          : { scope: "personal", userIds: participantUserIds },
+        participantUserIds,
+      },
+    };
+  }
+
   /** Record presentation the Space's own authority accepted. */
   async noteSpacePresentation(input: WorkspaceSpacePresentationRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
@@ -6265,6 +6324,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.spaceStorage().settleIntent(
       request.operationId, request.receipt, request.settled, Date.now(), request.cursor,
     );
+    await this.armNextAlarm();
     return { recorded: true };
   }
 
@@ -6432,6 +6492,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
     });
     await this.publishWorkstreamState(request.workstreamId);
+    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -6484,6 +6545,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // here in a way it is not for a membership: the Space's own disappearance
     // and return are visible to all of them anyway.
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -11456,7 +11518,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         workstream: visible
           ? directoryWorkstream(
             row, attachment.workspaceId, preview,
-            spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
+            attachment.accessClass === "guest"
+              ? []
+              : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
           )
           : null,
       }));
@@ -11479,13 +11543,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * does not hold. A client with it on asks for the wider directory afterwards.
    */
   private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
+    const workstreams = this.listDirectory({
+      workspaceId: attachment.workspaceId,
+      userId: attachment.userId,
+      limit: SIDEBAR_LIST_LIMIT,
+      includeSystem: false,
+    });
     return WorkspaceSidebarSchema.parse({
-      workstreams: this.listDirectory({
-        workspaceId: attachment.workspaceId,
-        userId: attachment.userId,
-        limit: SIDEBAR_LIST_LIMIT,
-        includeSystem: false,
-      }),
+      workstreams: attachment.accessClass === "guest"
+        ? { ...workstreams, items: workstreams.items.map((item) => ({ ...item, spaceIds: [] })) }
+        : workstreams,
       automations: {
         waterline: this.sidebarListWaterline("automations"),
         items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
@@ -11734,7 +11801,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const active = spaces.list(attachment.workspaceId, attachment.userId);
     return {
       spaces: { active, inactive: spaces.listInactive(attachment.userId) },
-      ordering: spaces.readOrders(attachment.userId),
+      ordering: spaces.readOrders(attachment.workspaceId, attachment.userId),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

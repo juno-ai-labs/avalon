@@ -77,8 +77,8 @@ struct IntroScreens: View {
         VStack(spacing: 0) {
             TabView(selection: $page) {
                 introPage(
-                    title: "A channel for every piece of work",
-                    body: "Rally is the home for a task, not a channel. Ask, and a stream starts.",
+                    title: "A Channel for every piece of work",
+                    body: "Rally is the home for a task. Ask, and a Channel starts.",
                     tag: 0
                 )
                 introPage(

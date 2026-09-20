@@ -11,7 +11,7 @@ import {
   type WorkstreamDetail,
 } from "@rally/contracts";
 
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import type {
   ConfirmedAccessSource,
   ObservedChannel,
@@ -83,6 +83,15 @@ export class ChannelAccessService {
     );
   }
 
+  private async workspace() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
+    );
+  }
+
   private address(workstreamId: string) {
     return { workspaceId: asWorkspaceId(this.auth.workspaceId), parentId: workstreamId };
   }
@@ -108,6 +117,26 @@ export class ChannelAccessService {
     };
   }
 
+  /** Product detail, with the directory projection as the archived-only seam. */
+  private async observation(workstreamId: string): Promise<{ channel: ObservedChannel; title: string }> {
+    try {
+      const detail = await this.client(workstreamId).get();
+      return { channel: this.observed(detail), title: detail.title };
+    } catch (error) {
+      if (asApiError(error)?.status !== 404) throw error;
+      const projected = await (await this.workspace()).channelAccessObservation({
+        workspaceId: this.auth.workspaceId,
+        workstreamId,
+      });
+      if (!projected.found || !projected.archived) throw error;
+      return { channel: projected.channel as ObservedChannel, title: projected.title };
+    }
+  }
+
+  async channelTitle(workstreamId: string): Promise<string> {
+    return (await this.observation(workstreamId)).title;
+  }
+
   /**
    * Every source that currently grants a reader access to this Channel.
    *
@@ -119,7 +148,6 @@ export class ChannelAccessService {
    * disclosure the rest of this surface does not make.
    */
   async readSources(workstreamId: string): Promise<ChannelAccessSources> {
-    const detail = await this.client(workstreamId).get();
     const room = await this.room(workstreamId);
     const management = await room.readManagementAccess({
       ...this.address(workstreamId),
@@ -128,10 +156,39 @@ export class ChannelAccessService {
     if (!management.allowed) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
+    const observed = await this.observation(workstreamId);
     return room.readAccessSources({
       ...this.address(workstreamId),
-      channel: this.observed(detail),
+      channel: observed.channel,
     });
+  }
+
+  /**
+   * Remove the Channel's own claim on one reader without revoking a Space's.
+   *
+   * The canonical participant removal acts on the effective roster. When a
+   * Space still supplies the same person, put that reader back attributed to
+   * every surviving supplier before the caller publishes a revocation. The
+   * boolean says whether access was actually lost.
+   */
+  async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
+    const sources = await this.readSources(workstreamId);
+    const reader = asUserId(userId);
+    const suppliers = sources.spaces.filter((space) => space.participantUserIds.includes(reader));
+    const client = this.client(workstreamId);
+    await client.removeParticipant(userId);
+    const room = await this.room(workstreamId);
+    for (const supplier of suppliers) {
+      await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
+      const confirmed = await room.confirmSpaceAccessSource({
+        ...this.address(workstreamId),
+        spaceId: supplier.spaceId,
+        operationId: uuidV7(),
+        seatedUserIds: [reader],
+      });
+      if (!confirmed.ok) throw spaceAccessError(confirmed.code, "Channel");
+    }
+    return sources.direct.scope !== "workspace" && suppliers.length === 0;
   }
 
   /**
@@ -332,7 +389,10 @@ export class ChannelAccessService {
       seatedUserIds: seated,
       source: confirmedSource,
     });
-    if (!confirmed.ok) throw spaceAccessError(confirmed.code, title);
+    if (!confirmed.ok) {
+      await this.rollbackUnconfirmedSeating(workstreamId, source.spaceId, seated);
+      throw spaceAccessError(confirmed.code, title);
+    }
   }
 
   /**
@@ -411,9 +471,8 @@ export class ChannelAccessService {
     operationId: string,
     expectedSpaceRevision?: number,
   ): Promise<void> {
-    const client = this.client(workstreamId);
-    const detail = await client.get();
-    const observed = this.observed(detail);
+    const observation = await this.observation(workstreamId);
+    const observed = observation.channel;
     const room = await this.room(workstreamId);
     const retracted = await room.retractSpaceAccessSource({
       ...this.address(workstreamId),
@@ -422,7 +481,7 @@ export class ChannelAccessService {
       ...(expectedSpaceRevision === undefined ? {} : { expectedSpaceRevision }),
       channel: observed,
     });
-    if (!retracted.ok) throw spaceAccessError(retracted.code, detail.title);
+    if (!retracted.ok) throw spaceAccessError(retracted.code, observation.title);
     // Read *after* the retraction, so what comes back is exactly the sources
     // that survived it — which is where the plan's survivors come from, and
     // which the plan itself cannot say because it is a list of readers. Only
@@ -472,6 +531,45 @@ export class ChannelAccessService {
       // cleanup that could not finish, and it is named so the leftover source
       // can be found rather than inferred from a later surprise.
       logWarn(this.env, "space_access_rollback_failed", {
+        workstream_id: workstreamId,
+        space_id: spaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Remove readers this attempt seated after its confirmation loses a fence.
+   *
+   * The stale source was never committed, so confirming it just to use the
+   * ordinary retraction path would lose the same fence again. Re-read the
+   * sources that did win, keep every reader their live union still names, and
+   * withdraw only the now-unowned seats. A direct grant is protected by the
+   * scope-grant authority even if it appeared between this read and removal.
+   */
+  private async rollbackUnconfirmedSeating(
+    workstreamId: string,
+    spaceId: SpaceId,
+    seated: readonly UserId[],
+  ): Promise<void> {
+    if (seated.length === 0) return;
+    try {
+      const current = await this.readSources(workstreamId);
+      const retained = new Set(effectiveChannelAudience({
+        direct: current.direct,
+        sources: current.spaces.map((space) => ({
+          sourceId: space.spaceId,
+          scope: space.scope,
+          participantUserIds: space.participantUserIds,
+        })),
+      }).participantUserIds);
+      const client = this.client(workstreamId);
+      for (const userId of seated) {
+        if (retained.has(userId)) continue;
+        await client.removeParticipant(userId, { spaceSourceId: spaceId });
+      }
+    } catch (error) {
+      logWarn(this.env, "space_access_unconfirmed_seating_rollback_failed", {
         workstream_id: workstreamId,
         space_id: spaceId,
         error: error instanceof Error ? error.message : String(error),

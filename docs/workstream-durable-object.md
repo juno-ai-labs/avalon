@@ -1948,7 +1948,7 @@ change and a direct add are recorded as the Channel's own.
 
 WorkspaceDO's directory handoff admits `parentKind: "space"`
 beside `"workstream"` and routes those envelopes to the Space directory that
-migration 61 added, replacing the `space_directory_not_ready` refusal this
+migration 63 added, replacing the `space_directory_not_ready` refusal this
 object's effects used to meet. Nothing about the role or this class changed; the
 Organization-side authority, its tables and its invariants are
 [`spaces.md`](spaces.md).

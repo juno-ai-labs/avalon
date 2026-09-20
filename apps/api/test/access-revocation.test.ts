@@ -21,6 +21,7 @@ import { AuthService } from "../src/services/auth-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { ChannelAccessService } from "../src/services/channel-access-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -206,14 +207,23 @@ describe("removing a room participant", () => {
     const database = seed();
     const { env, sent } = environment(database);
     const ROOM = "00000000-0000-7000-8000-0000000000a1";
-    const removed = vi.fn(async () => undefined);
+    database.exec(`
+      UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${NOW}' WHERE id = 1;
+      INSERT INTO workspace_product_authority_routes (workspace_id, generation, state, updated_at)
+        VALUES ('${WORKSPACE}', 1, 'pending', '${NOW}');
+      UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'verified';
+      UPDATE workstream_authority_control SET phase = 'maintenance_verified' WHERE id = 1;
+      UPDATE workspace_product_authority_routes SET state = 'active';
+      UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1 WHERE id = 1;
+    `);
+    const removed = vi.spyOn(ChannelAccessService.prototype, "removeDirectReader")
+      .mockResolvedValue(true);
     const service = new WorkstreamService(env, auth(OWNER, "owner"));
-    vi.spyOn(service as unknown as { authoritativeClient: () => Promise<unknown> }, "authoritativeClient")
-      .mockResolvedValue({ removeParticipant: removed });
 
     await service.removeParticipant(ROOM, MEMBER);
 
-    expect(removed).toHaveBeenCalledWith(MEMBER);
+    expect(removed).toHaveBeenCalledWith(ROOM, MEMBER);
     const revocations = sent
       .map((published) => AccessRevocationMessageSchema.safeParse(published.body))
       .flatMap((parsed) => parsed.success ? [parsed.data] : []);

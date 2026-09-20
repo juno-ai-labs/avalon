@@ -1844,6 +1844,17 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([BREAKOUT_B, BREAKOUT_A, BREAKOUT_C]);
   });
 
+  it("given a fabricated Channel container, when a member writes an order, then no rows are accepted", async () => {
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: {
+        container: { kind: "channel", id: "00000000-0000-7000-8000-00000000ffff" },
+        itemIds: [BREAKOUT_A, BREAKOUT_B],
+      },
+    })).resolves.toMatchObject({ ok: false, code: "space_not_found" });
+  });
+
   /**
    * What a cancelled reservation takes with it, both directions.
    *
@@ -1913,10 +1924,12 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
     });
 
-    // Untouched while it is archived, although nothing is drawing either list.
+    // Hidden while it is archived: personal ordering is part of the viewer's
+    // socket state and must not name a container or item they cannot see. The
+    // underlying rows remain, which the restore assertions below prove.
     const archived = await personalOrder(OWNER);
-    expect(storedItemIds(archived, "organization")).toEqual([second, first]);
-    expect(storedItemIds(archived, "space", second)).toEqual([CHANNEL_B, CHANNEL_A]);
+    expect(storedItemIds(archived, "organization")).toEqual([first]);
+    expect(storedItemIds(archived, "space", second)).toEqual([]);
 
     await expect(workspace().restoreSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),

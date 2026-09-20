@@ -470,16 +470,17 @@ export const SpaceErrorCodeSchema = z.enum([
    */
   "space_conversation_unreachable",
   /**
-   * The Space's *own* hidden conversation did not answer an operation the
-   * Space authority needs from it.
+   * The Space authority could not be opened or reached, including the D1
+   * anchor and authority route used to open its hidden conversation.
    *
    * The far end of {@link SpaceErrorCode} `space_conversation_unreachable`,
    * which is about a *member Channel's* conversation failing the containment
    * question. This one is the Space's own participant and resource authority
    * — the object a scope change, a rename, an appearance, a participant and a
-   * resource default are all written on — failing in a way that is not itself
-   * a refusal: a broken recovery, a mis-addressed object, a storage error
-   * crossing the Durable Object RPC hop as a bare `Error`.
+   * resource default are all written on — or the routing/bootstrap path to it
+   * failing in a way that is not itself a refusal: a broken recovery, a
+   * mis-addressed object, or a storage error crossing the boundary as a bare
+   * `Error`.
    *
    * It exists because that failure had nothing to be called. It reached the
    * client as `internal_error`, which is the same word the Worker uses for

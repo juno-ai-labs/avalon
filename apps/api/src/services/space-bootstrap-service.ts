@@ -89,7 +89,7 @@ export class SpaceBootstrapService {
       cursor,
     }));
     if (page.generalSpaceId === null) {
-      await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
+      await this.reopen();
       return;
     }
     const actors = await this.activeActors(page.items);
@@ -135,7 +135,7 @@ export class SpaceBootstrapService {
     if (page.generalSpaceId === null) {
       // The phase moved backwards under us, or General's reservation was
       // cancelled. Say so and let the alarm republish the `general` step.
-      await this.settle({ phase: "general", cursor: null, clearedWorkstreamIds: [], blocked: [] });
+      await this.reopen();
       return;
     }
     const actors = await this.activeActors(page.items);
@@ -293,11 +293,13 @@ export class SpaceBootstrapService {
       spaceRevision: plan.space.revision,
       membershipGeneration: plan.membershipGeneration,
     };
+    let sourceApplied = false;
+    const access = new ChannelAccessService(this.env, actor);
     try {
       // Through the one seam, with the observation the Organization already
       // holds: `get` answers 404 for an archived Channel, and the cutover has
       // to place those too.
-      await new ChannelAccessService(this.env, actor).applySpaceSource(channel.workstreamId, {
+      await access.applySpaceSource(channel.workstreamId, {
         spaceId: generalSpaceId,
         scope: plan.space.scope,
         participantUserIds: plan.space.participants.map((participant) => participant.userId),
@@ -305,12 +307,21 @@ export class SpaceBootstrapService {
         membershipGeneration: plan.membershipGeneration,
         operationId: uuidV7(),
       }, { channel: observedFromDirectory(channel), title: "" });
+      sourceApplied = true;
       const settled = WorkspaceSpaceMutationResultSchema.parse(
         await workspace.finalizeSpaceMembership(settle),
       );
       if (!settled.ok) throw new Error(settled.code);
       return null;
     } catch (error) {
+      if (sourceApplied) {
+        await access.retractSpaceSource(
+          channel.workstreamId,
+          generalSpaceId,
+          uuidV7(),
+          plan.space.revision,
+        );
+      }
       await workspace.cancelSpaceMembership(settle).catch(() => undefined);
       return diagnosticErrorCode(error, "space_bootstrap_placement_failed");
     }
@@ -499,10 +510,11 @@ export async function placeConnectorChannelInGeneral(
   workspaceId: string,
   channel: SpaceBootstrapChannel,
 ): Promise<void> {
+  let cutover: SpaceBootstrapService | null = null;
   try {
     const driver = await spaceBootstrapDriver(env, workspaceId, env.AVALON_REGION);
     if (!driver) return;
-    const cutover = new SpaceBootstrapService(env, driver);
+    cutover = new SpaceBootstrapService(env, driver);
     const refusal = await cutover.placeChannel(channel);
     if (refusal === null) return;
     logWarn(env, "space_connector_channel_unplaced", {
@@ -516,6 +528,13 @@ export async function placeConnectorChannelInGeneral(
       workspace_id: workspaceId,
       workstream_id: channel.workstreamId,
       reason: diagnosticErrorCode(error, "space_connector_channel_unplaced"),
+    });
+    await cutover?.reopen().catch((reopenError: unknown) => {
+      logWarn(env, "space_connector_channel_reopen_failed", {
+        workspace_id: workspaceId,
+        workstream_id: channel.workstreamId,
+        reason: diagnosticErrorCode(reopenError, "space_connector_channel_reopen_failed"),
+      });
     });
   }
 }

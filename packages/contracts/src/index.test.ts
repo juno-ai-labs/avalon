@@ -166,6 +166,11 @@ describe("boundary contracts", () => {
       openingMessage: "",
       attachmentIds: [],
     }).success).toBe(false);
+    expect(CreateWorkstreamRequestSchema.safeParse({
+      ...base,
+      openingMessage: "Start",
+      spaceIds: [id, id],
+    }).success).toBe(false);
     const attachmentOnly = CreateWorkstreamRequestSchema.parse({
       ...base,
       openingMessage: "",

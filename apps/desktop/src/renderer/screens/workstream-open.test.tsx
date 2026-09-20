@@ -255,7 +255,7 @@ describe('socket-first channel open', () => {
         { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
       ] });
     }, childId);
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to breakout: Private investigation' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Go to breakout: Private investigation/u }));
     fireEvent.click(await screen.findByRole('menuitem', { name: action === 'rename' ? 'Rename' : 'Archive breakout' }));
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
@@ -750,16 +750,16 @@ describe('socket-first channel open', () => {
     }, childId);
 
     expect(await screen.findByRole('heading', { name: 'New github pr header' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Go to breakout: New github pr header' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: `Go to breakout: ${provisional}` })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Go to breakout: New github pr header/u })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: new RegExp(`^Go to breakout: ${provisional}`, 'u') })).not.toBeInTheDocument();
     // The row beside it is the parent's to state: nothing in this window is
     // subscribed to a substream it is not showing, so the directory is still
     // the best answer there is for it.
-    expect(screen.getByRole('button', { name: 'Go to breakout: Draft the launch note' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Go to breakout: Draft the launch note/u })).toBeInTheDocument();
     // And it follows the child, so a rename arriving while it is open moves the
     // row and the header in the same frame.
     act(() => client.setQueryData(['substream-workstream', workstreamId, childId], { ...child, title: 'Renamed while open' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Go to breakout: Renamed while open' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Go to breakout: Renamed while open/u })).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Renamed while open' })).toBeInTheDocument();
   });
 

@@ -14,7 +14,7 @@ hidden main conversation holds its participants and resources exactly as a
 Channel's does. What makes it a Space is that nothing in the product opens that
 conversation — no feed, no transcript, no agent loop, no search result.
 
-Spaces replace [Projects](projects.md), which WorkspaceDO migration 62 has
+Spaces replace [Projects](projects.md), which WorkspaceDO migration 64 has
 deleted. This document describes the Space authority, its service, the one-time
 cutover that gave every existing Organization its hierarchy, and the routes over
 them; the product design is in
@@ -25,11 +25,11 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 61) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL, the three ways a Space is visible (`spaceVisibleToViewerSql`, `spaceReachedThroughChannelSql`, `spaceReachSql`, and the `reach`/`canEdit` pair derived from them), the reads a dashboard nudge is addressed with, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
-| `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 63), and the generation-fenced applies over them. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 63) and the synchronous transactions over them, including `workspace_container_order` — every list a person arranges by hand — the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL, the three ways a Space is visible (`spaceVisibleToViewerSql`, `spaceReachedThroughChannelSql`, `spaceReachSql`, and the `reach`/`canEdit` pair derived from them), the reads a dashboard nudge is addressed with, and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 65), and the generation-fenced applies over them. |
 | `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 62, which retires Projects. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 64, which retires Projects. |
 | `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's three arguments to it: default targets, unsettled intent resumes, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
@@ -127,8 +127,9 @@ every other caller is asking to *run* something and the refusal is right for
 them; this one was only asking to recover, and a Space has nothing of the kind
 to recover.
 
-**A failure of this object is named `space_authority_unreachable`.** It is
-reached over Durable Object RPC, so a rejection that is not the object's own
+**A failure on the path to this object is named `space_authority_unreachable`.**
+That seam includes regional routing and the D1 bootstrap check before the
+Durable Object RPC as well as the object call itself, so a rejection that is not the object's own
 refusal arrives with no code on it, and a 500 from the object is the object
 saying it does not know what went wrong. Both used to reach a person as
 `internal_error` — the same word the Worker uses for every unhandled failure it
@@ -369,7 +370,7 @@ one of them:
 
 **Nothing prunes a `channel` container, because nothing deletes a Channel.** A
 Channel is archived, never removed: there is no delete path on
-`workspace_workstream_directory` outside migration 62's one-time automation
+`workspace_workstream_directory` outside migration 64's one-time automation
 sweep, and there is no foreign key to cascade from if there were. So a person's
 Breakout arrangements accumulate one container per Channel they have ever
 arranged Breakouts in, and are read whole onto every socket payload. That is a
@@ -437,7 +438,7 @@ half-done by somebody re-deriving them.
 Every Organization that predates Spaces has to end up with a hierarchy, and
 **the PRD requires the fleet migration to finish without relying on user
 access**. So nothing about this hangs off a request. `space_bootstrap` is one
-row per Organization, seeded `pending` by migration 61 and driven by the
+row per Organization, seeded `pending` by migration 63 and driven by the
 WorkspaceDO alarm: the migration tracker's forced pass wakes every object, the
 alarm claims one page of work, and the activity Queue carries it to
 `SpaceBootstrapService`.
@@ -793,7 +794,7 @@ than telling somebody a Space does not exist while its name is on their
 sidebar. `editableReach` is the rule as a function of the reach alone, which
 `canEdit` and that refusal both read rather than spelling it twice.
 
-**An Organization that has not reached migration 61 answers empty rather than
+**An Organization that has not reached migration 63 answers empty rather than
 failing.** The meeting-notes retirement holds an object at schema 57 until its
 external cleanup finishes, and the connect payload reads the Space tables before
 anything product-shaped can refuse. Every Space read therefore goes through
@@ -934,7 +935,7 @@ builds — not to reshape the row.
 ### Breakouts reach the Organization
 
 `WorkstreamDO.aggregatesChildProjection` folds only the main conversation into
-the Channel's own row, and until migration 63 a breakout's `directory_common`
+the Channel's own row, and until migration 65 a breakout's `directory_common`
 and `directory_user` projections were stored in the Channel object's
 `substream_directory` and stopped there. A Channel now **forwards** them as
 well, through the hook `forwardsChildProjection` beside that one: the child's
@@ -1617,7 +1618,7 @@ when one of them refuses.
 
 ## Data model
 
-Ten tables in WorkspaceDO's migration 61, and two more in migration 63.
+Ten tables in WorkspaceDO's migration 63, and two more in migration 65.
 
 `workspace_space_directory` is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
@@ -1629,7 +1630,7 @@ per-person half of the same projection and is where a Space's participants live.
 item_id) → position` — every list a person arranges by hand, keyed by the
 container it belongs to, with a `CHECK` narrowing `container_kind` to the three
 containers the product lets somebody arrange. It replaced a Space-only
-`workspace_space_order` **in place** in migration 61 rather than beside it,
+`workspace_space_order` **in place** in migration 63 rather than beside it,
 because 61 is unreleased and a rename dance would have been migration
 bookkeeping for a table nothing had yet stored.
 `workspace_space_state` holds the one waterline both directories share.
@@ -1691,7 +1692,7 @@ other row in it. What a new WorkspaceDO table does owe is a routing decision in
 `apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
 as reached by typed RPC only.
 
-**Migration 62 deletes the eight Project tables**, after the invalidation
+**Migration 64 deletes the eight Project tables**, after the invalidation
 described under [Operations](#operations) and children-before-parents, because
 `PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
 SQLite. [`projects.md`](projects.md) records what was deleted and what survived
@@ -1761,6 +1762,16 @@ the Channel's own grant authority, membership-incarnation fencing, participant
 projection and owner admission. A grant written for a Space source carries that
 provenance and is never published to the shared scope-grant directory — a
 Space-derived reader discovers the Channel through the Space.
+
+That provenance changes even when admission does not. A direct add of a reader
+a Space already seated promotes the grant to `direct` and publishes it; an
+equal `active` value is not an idempotent write when its owner changes. The
+inverse is fenced too: removing a Channel claim from a grant that is still
+Space-owned leaves the active grant in place, so an external re-seating call
+cannot open a transient revocation window. If canonical seating succeeds but
+source confirmation loses its revision fence, the application re-reads the
+sources that won and removes only seats their live union no longer owns; it
+does not retry the stale confirmation that just lost.
 
 Adding a Channel to a Space authorizes both sides: the caller must be able to
 edit the Space and to change the Channel's audience. Removing another
@@ -2104,7 +2115,7 @@ one RPC (`reorderContainer`), one route (`PUT /workspace/order`, at the
 workspace level because two of the three containers are not Spaces), one request
 and result (`ContainerOrder`), one field on the workspace socket (`ordering`),
 and one client helper (`orderByStoredIds`) that the pinned section now uses too.
-It replaced `workspace_space_order` in migration 61 in place; 61 is unreleased,
+It replaced `workspace_space_order` in migration 63 in place; 63 is unreleased,
 so a rename dance would have been bookkeeping for a table nothing had stored.
 Validation is per kind and reuses reads that already exist; a Channel's
 Breakouts are stored unchecked, because this object has never seen one.
@@ -2260,7 +2271,7 @@ to the mapper, not by widening either directory table.
 
 ### 2026-09-19 — Every Channel gets a home: the Organization owns the hierarchy, the desktop draws it, and Projects are deleted
 
-**What changed:** Migration 61 adds the Space directory and viewer projections,
+**What changed:** Migration 63 adds the Space directory and viewer projections,
 per-person order, many-to-many Channel memberships with staged generations, the
 kind-keyed default registry with its generation-fenced targets and
 publications, the staged operation intents, the bootstrap state, and a rebuilt
@@ -2285,7 +2296,7 @@ General as one of that Channel's own participants. A new Organization opens
 General inline, and the two paths that provision their own Channel — the Slack
 agent and the local development seed route — place it the same way. `GET /spaces/:id/channels` answers Channel rows instead
 of bare ids, and the archive refusal now carries the Channels that blocked it.
-WorkspaceDO migration 62 deletes the eight Project tables after settling every
+WorkspaceDO migration 64 deletes the eight Project tables after settling every
 undelivered Project effect, and `ProjectService`, the Project storage, protocol
 and publisher, every Project RPC, the Project snapshot topic and the Project
 alarm phase go with them. A pre-cutover browser build is answered
@@ -2665,7 +2676,7 @@ re-deriving the alarm unconditionally, and must keep any new connector creation
 path reserving the Channel's parent authority before it places the Channel —
 polling for the parent's directory row is what the development seed route does,
 and it is acceptable there only because that route is development-only.
-Narrowing a SQLite CHECK after migration 61 ships needs the table rebuild the
+Narrowing a SQLite CHECK after migration 63 ships needs the table rebuild the
 retirement graph already does, so the intent vocabulary is fixed in place now
 rather than later; the dead `unsupported_${kind}` branch is the exhaustiveness
 check that makes a sixth kind fail to compile instead of being abandoned by name

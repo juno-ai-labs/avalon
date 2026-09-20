@@ -1,6 +1,6 @@
 # Projects
 
-**Projects are deleted.** WorkspaceDO migration 62 dropped the eight tables that
+**Projects are deleted.** WorkspaceDO migration 64 dropped the eight tables that
 held them, and the service, storage, protocol, publisher, RPCs, routes, snapshot
 topic, alarm phase and Queue handler went with them. Nothing in the tree reads a
 Project any more. [`spaces.md`](spaces.md) is the module that replaced this one.
@@ -20,7 +20,7 @@ runs children-before-parents: `PRAGMA foreign_keys = OFF` is a no-op once a
 Durable Object event has touched SQLite, so the order is the only thing keeping
 a drop from failing on a reference.
 
-| Dropped in migration 62 | What it held |
+| Dropped in migration 64 | What it held |
 | --- | --- |
 | `projects` | Identity, presentation, scope, status, lifecycle generations. |
 | `project_participants` | The per-person roster. |
@@ -45,7 +45,7 @@ shipped with one — a scratch table whose CHECK asserted no `pending` row was
 left — and it could not fire: it counted rows the statements directly above it
 had just settled, so the count was zero by construction. `finalizeSpaceBootstrap`
 carried a matching `project_effects_pending` gate that could not fire either,
-because migration 62 runs in the constructor and the tables are gone before any
+because migration 64 runs in the constructor and the tables are gone before any
 caller reaches it. Both are deleted. **An undelivered Project default is
 dropped**, which is what the PRD asks for: non-goal 5 deletes Projects rather
 than converting them, so a default that never reached a Channel is not owed to
@@ -75,7 +75,7 @@ break a rolling deploy for nothing.
 
 ### 2026-09-19 — The tables are dropped, and the barrier in front of them is deleted too
 
-**What changed:** WorkspaceDO migration 62 deleted the eight Project tables and
+**What changed:** WorkspaceDO migration 64 deleted the eight Project tables and
 everything that addressed them. The Queue's `project_default_resource` branch is
 now a tombstone: it parses a non-strict shape of its own, logs
 `reason: "projects_retired"` and acks, because a message published before the

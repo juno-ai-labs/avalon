@@ -224,9 +224,9 @@
   // code as WorkstreamDO under a different role, but a namespace is bound to a
   // class name, so a second namespace needs a second class: without it a Space
   // id and a work-stream id would address the same object whenever they
-  // collided. Its SQLite ledger is its own component `space_do`, starting at a
-  // single version that renders what the work-stream ledger currently ends at,
-  // because no Space object has ever existed and there is nothing to upgrade.
+  // collided. Its SQLite ledger is the same full migration sequence as
+  // WorkstreamDO under its own `space_do` component, so both roles converge on
+  // one schema without merging their migration-tracker identities.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },

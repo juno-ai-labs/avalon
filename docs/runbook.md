@@ -862,8 +862,8 @@ One-time, per region, and it is driven from the migration tracker rather than
 from a script. [`spaces.md`](spaces.md) owns the mechanism; this is the
 sequence.
 
-**What is being moved.** WorkspaceDO migration 61 seeds a `space_bootstrap` row
-`pending` in every Organization, and migration 62 settles every undelivered
+**What is being moved.** WorkspaceDO migration 63 seeds a `space_bootstrap` row
+`pending` in every Organization, and migration 64 settles every undelivered
 Project effect and then deletes the Project tables — there is no barrier in
 front of the drops, for the reason step 4 gives. Waking a WorkspaceDO applies
 both and arms its alarm, which

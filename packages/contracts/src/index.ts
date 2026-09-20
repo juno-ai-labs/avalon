@@ -630,7 +630,9 @@ export const WorkstreamSchema = z.object({
    * Defaulted because a payload written before Spaces existed describes a
    * Channel from the flat directory they replace.
    */
-  spaceIds: z.array(SpaceIdSchema).default([]),
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
 });
 
 export const ExternalActorSchema = z.object({
@@ -1738,7 +1740,9 @@ export const WorkstreamCreationFieldsSchema = z.object({
    * is established with the Channel or the creation fails without publishing
    * one, so there is no window in which a Channel exists outside the hierarchy.
    */
-  spaceIds: z.array(SpaceIdSchema).default([]),
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**

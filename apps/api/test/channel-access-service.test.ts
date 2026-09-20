@@ -54,10 +54,17 @@ type RetractResult = { ok: true; plan: { narrowScope: boolean; seatUserIds: stri
 function environment(input: {
   calls: string[];
   apply?: ApplyResult;
+  confirm?: { ok: true; suppliedUserIds: string[] } | { ok: false; code: "space_revision_conflict" };
   retract?: RetractResult;
   sources?: {
     direct: { scope: "personal" | "workspace"; participantUserIds: string[] };
     spaces: Array<{ spaceId: string; scope: "personal" | "workspace"; participantUserIds: string[] }>;
+  };
+  workspaceObservation?: {
+    found: true;
+    archived: boolean;
+    title: string;
+    channel: { readers: { scope: "personal"; userIds: string[] }; participantUserIds: string[] };
   };
 }): Env {
   const stub = {
@@ -82,7 +89,7 @@ function environment(input: {
     },
     confirmSpaceAccessSource: async (request: { spaceId: string; seatedUserIds: string[] }) => {
       input.calls.push(`object:confirm(${request.spaceId}:${request.seatedUserIds.join(",") || "none"})`);
-      return { ok: true, suppliedUserIds: request.seatedUserIds };
+      return input.confirm ?? { ok: true, suppliedUserIds: request.seatedUserIds };
     },
     retractSpaceAccessSource: async () => {
       input.calls.push("object:retract");
@@ -102,6 +109,12 @@ function environment(input: {
     WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => stub,
+    }),
+    WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({
+        channelAccessObservation: async () => input.workspaceObservation ?? { found: false },
+      }),
     }),
     ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>({
       send: async (body: unknown) => {
@@ -273,6 +286,31 @@ describe("applying a Space access source", () => {
     } satisfies Partial<ApiError>);
     expect(calls).toEqual(["object:apply"]);
   });
+
+  it("given confirmation loses its fence, when this attempt seated a reader no live source retains, then it removes that seat", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    const service = new ChannelAccessService(
+      environment({
+        calls,
+        apply: { ok: true, plan: { widenScope: false, seatUserIds: [READER] } },
+        confirm: { ok: false, code: "space_revision_conflict" },
+        sources: { direct: { scope: "personal", participantUserIds: [OWNER] }, spaces: [] },
+      }),
+      auth,
+    );
+
+    await expect(service.applySpaceSource(CHANNEL, source)).rejects.toMatchObject({
+      code: "space_revision_conflict",
+    } satisfies Partial<ApiError>);
+    expect(calls).toEqual([
+      "object:apply",
+      `canonical:add(${READER}:${SPACE})`,
+      `object:confirm(${SPACE}:${READER})`,
+      "object:sources",
+      `canonical:remove(${READER}:${SPACE})`,
+    ]);
+  });
 });
 
 describe("narrowing the Channel's own scope", () => {
@@ -346,6 +384,27 @@ describe("narrowing the Channel's own scope", () => {
 });
 
 describe("retracting a Space access source", () => {
+  it("given an archived Channel, when its Space source is retracted, then the directory observation carries the operation", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    vi.spyOn(WorkstreamObjectClient.prototype, "get").mockRejectedValue(
+      new ApiError(404, "workstream_not_found", "Channel not found"),
+    );
+    const service = new ChannelAccessService(environment({
+      calls,
+      workspaceObservation: {
+        found: true,
+        archived: true,
+        title: "Archived hiring",
+        channel: { readers: { scope: "personal", userIds: [OWNER] }, participantUserIds: [OWNER] },
+      },
+    }), auth);
+
+    await service.retractSpaceSource(CHANNEL, SPACE, "00000000-0000-7000-8000-0000000ca106");
+
+    expect(calls).toEqual(["object:retract"]);
+  });
+
   it("given a narrowing retraction, when it is applied, then survivors are seated before the scope changes and removals come last", async () => {
     const calls: string[] = [];
     stubCanonicalOperations(calls);
@@ -471,6 +530,28 @@ describe("retracting a Space access source", () => {
       `canonical:add(${OTHER}:${OTHER_SPACE})`,
       `object:confirm(${OTHER_SPACE}:${OTHER})`,
       `object:confirm(${THIRD_SPACE}:${OTHER})`,
+    ]);
+  });
+});
+
+describe("removing a direct reader", () => {
+  it("given a Space still supplies the reader, then the reader is restored under that source and access survives", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls);
+    const service = new ChannelAccessService(environment({
+      calls,
+      sources: {
+        direct: { scope: "personal", participantUserIds: [OWNER, READER] },
+        spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER] }],
+      },
+    }), auth);
+
+    await expect(service.removeDirectReader(CHANNEL, READER)).resolves.toBe(false);
+    expect(calls).toEqual([
+      "object:sources",
+      `canonical:remove(${READER})`,
+      `canonical:add(${READER}:${SPACE})`,
+      `object:confirm(${SPACE}:${READER})`,
     ]);
   });
 });
