@@ -35,6 +35,7 @@ import {
   WorkspaceSchema,
   WorkspaceSocketClientEventSchema,
   WorkstreamContextSchema,
+  SpaceChannelPageSchema,
   WorkstreamSchema,
   WorkstreamResourceSchema,
   TimestampSchema,
@@ -1498,6 +1499,15 @@ describe("resource version provenance", () => {
     expect(WorkstreamSchema.safeParse({
       ...workstream,
       participantUserIds: ids,
+    }).success).toBe(false);
+
+    // A Space's Channel page is those same rows, and stays closed: an empty
+    // cursor is not a cursor, and a missing one is not "there is no next page".
+    expect(SpaceChannelPageSchema.safeParse({ items: [workstream], nextCursor: null }).success).toBe(true);
+    expect(SpaceChannelPageSchema.safeParse({ items: [workstream], nextCursor: "" }).success).toBe(false);
+    expect(SpaceChannelPageSchema.safeParse({ items: [workstream] }).success).toBe(false);
+    expect(SpaceChannelPageSchema.safeParse({
+      items: [workstream.id], nextCursor: null,
     }).success).toBe(false);
   });
 });

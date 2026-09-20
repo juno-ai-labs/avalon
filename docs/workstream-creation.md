@@ -26,7 +26,7 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/durable-objects/substream-agent.ts` | The authoritative create, opening turn/run, feed snapshot, and synchronous child-effect drain used by the route-activation fence. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `workspace-do.ts` | Aggregate the child's metadata, commit the authoritative workspace directory row, and prove it exists before the D1 route becomes active. |
 | `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
-| `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, verified-to-active route transition, hierarchy drain, and email activation. |
+| `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, the Space memberships the new Channel is born with, verified-to-active route transition, hierarchy drain, and email activation. |
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
@@ -63,9 +63,9 @@ the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
 The launcher starts with focus in the opening-message text input, including
-when opened from a project. The composer is keyed by its draft identity so
-switching between project launchers also restores initial focus; that key stays
-stable throughout the launch hand-off. The sidebar lists existing work streams without a
+when opened from a Space. The composer is keyed by its draft identity — which
+carries the Space it was opened from — so switching between Space launchers also
+restores initial focus; that key stays stable throughout the launch hand-off. The sidebar lists existing work streams without a
 placeholder row for the unsent draft. Recipient selection remains available
 when the person chooses the recipient field.
 
@@ -96,8 +96,8 @@ them to the work stream about to be created, because `POST /workstreams` carries
 participant ids and no mention spans: a name that only reached the text would
 arrive with nobody attached to it. The dialog is still one click away on the
 participant row above the composer, and remains the place a participant is
-removed. A personal project's row is not that picker: it is a label whose
-tooltip says participants are managed by the project, and the faces in it do
+removed. A personal Space's row is not that picker: it is a label whose
+tooltip says participants are managed by the Space, and the faces in it do
 not open their own name tooltips — two tooltips on the same hover is the
 native-`title` problem `AvatarStack` exists to avoid.
 
@@ -154,7 +154,8 @@ that two rows are the same turn.
 ### What the server makes you wait for
 
 Everything. `POST /workstreams` finishes the participant and attachment checks,
-the address reservation, the authoritative SubstreamAgent work-stream/opening
+the Space placement below, the address reservation, the authoritative
+SubstreamAgent work-stream/opening
 turn/run write, the canonical `transcript_turn_upserted` publication, and the
 Workflows round trip that starts the run. It then synchronously drains the committed directory facts
 through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
@@ -162,6 +163,30 @@ changes the minimal
 D1 route from `verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
 was already deferred before this module existed.
+
+The Space placement is four more awaited steps, in this order, and each of them
+repeats once per Space the Channel is being born into:
+
+1. **Resolving General** (`SpaceService.ensureGeneral`) — *conditional: only when
+   the request named no Space at all*. When the Organization has no General yet
+   this is also where its Space object is provisioned, which is the D1 reads and
+   the object reservations [`spaces.md`](spaces.md#regional-impact) lists;
+   ordinarily General already exists and this is one WorkspaceDO call.
+2. **Staging the membership** (`WorkspaceDO.prepareSpaceMembership`), before the
+   D1 anchor, so a Space the caller may not reach refuses while nothing has been
+   built yet. It answers with the Space revision and membership generation the
+   three steps below are fenced on.
+3. **Settling the membership** (`WorkspaceDO.finalizeSpaceMembership`), before
+   the main conversation is reserved — see the section below for why that order
+   is load-bearing rather than incidental.
+4. **Recording the provenance** on the Channel's own authority
+   (`WorkstreamDO.applySpaceAccessSource`, then `confirmSpaceAccessSource`),
+   after the reservation, because the Channel's authority asserts a parent
+   identity the reservation is what writes.
+
+What a Space hands *down* is not on the path: the resources and Sidekick
+recommendations a Space's defaults give a new member Channel are staged by step 3
+and delivered over `ACTIVITY_QUEUE`.
 
 The explicit drain is not the normal delivery mechanism. Ordinary mutations
 use the child and parent SQL outboxes plus alarms. Creation overrides any alarm
@@ -175,6 +200,72 @@ Workflows round trip to `waitUntil` was built, reviewed, and taken back out. The
 changelog below records why. The wait is not what the person who pressed enter
 experiences — the launch surface above is — so buying it back with a durability
 risk was the wrong trade.
+
+### The Space a Channel is born in
+
+Every Channel belongs to at least one Space, and creation is where that becomes
+true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
+means General** — `SpaceService.ensureGeneral` makes the Organization's General
+Space if this is the first thing that ever needed it.
+
+**A Channel created without a named Space is therefore born Organization-wide**,
+whatever scope the caller asked for: General is Organization-wide, its source
+unions into the birth audience, and a source only ever widens. That is true of
+the top-level composer, of a connector ingress that resolved a personal scope,
+of session import, of `createFromOpportunity`, and of the demo seeder — which
+refuses a pack room declared `personal` by name rather than seeding it
+Organization-wide ([`demo-workspaces.md`](demo-workspaces.md)). A Channel that
+is meant to stay personal has to be born in a personal Space that names it.
+
+The audience the Channel opens with is derived from those Spaces rather than
+taken from the request. `resolveSpaceWorkstreamStart` runs the same
+`effectiveChannelAudience` algebra the rest of the Space module uses over the
+named Spaces plus the caller's own request: if any of them is Organization-wide
+the Channel opens `workspace` and the requested participants are kept as
+participants; otherwise it opens personal over the union of the Spaces' rosters
+and the caller's. A requested participant who is in none of the named Spaces'
+rosters is refused with `409 space_audience_incompatible` rather than silently
+seated — the Channel would otherwise open with a reader the Space that holds it
+cannot account for. The Spaces' `defaultResourceIds` are unioned with the
+caller's origin resources, so a Channel started in a Space begins with what that
+Space hands down.
+
+**The memberships settle before the main conversation is reserved.** That order
+is load-bearing and is not an implementation detail: reserving the child arms
+the parent's recovery alarm, and `drainParentOutboxWithCreationFence` delivers
+the deferred provisional directory row itself if it wins the race with the
+coordinator. A settlement any later would therefore publish, on any failure in
+between, a Channel that is Organization-wide and in no Space at all. Settled
+first, the row carries its placement whichever path publishes it. The Channel's
+own record of *which* Space reaches it is written after the reservation — the
+Channel's authority asserts a parent identity the reservation is what writes —
+and before `initialize`, because which Space reaches a Channel is true of it
+whether or not anybody ever opened it. `initialize` and the parent's directory
+flush then run concurrently: they address two different objects, the flush reads
+only the reservation's own outbox rows, and the settlement above is what keeps a
+`joining` placement from reaching the directory — not the order of these two.
+
+A failure before the settlement cancels every staged membership: a `joining` row
+no list shows and no alarm finishes is a placement that would never become one.
+A failure after it leaves an active membership for a Channel whose conversation
+may never open, which is the residue to prefer — a retry under the same create
+key reuses the same id, and the settlement is idempotent at the generation it
+already has. A replayed receipt reconciles through
+`reconcileReplayedSpaceMembership` rather than staging a second placement.
+
+Two creation paths do not go through here, and both call
+`placeConnectorChannelInGeneral` for the same step. The Slack agent opens a
+Channel for a Slack member with no Rally identity and provisions the
+conversation itself; it borrows this module's ordering to place it —
+`reserveChild` on the parent first, with its directory delivery deferred, then
+the conversation, then the placement, then the flush — because the placement
+addresses the parent authority, and because a Channel is not listed until it has
+a home. The local development seed route restores a captured fixture into
+objects it provisions under the ids the fixture chose, and waits for each
+Channel to reach the Organization's directory before placing it — a wait that
+is acceptable only because that route is development-only. Without the parent
+authority that row's arrival announces, a placement is refused
+`conversation_parent_missing`. [`spaces.md`](spaces.md) owns both.
 
 The one saving kept is that the participant and attachment checks run
 concurrently. Both are no-ops when there is nothing to check, so it costs
@@ -403,6 +494,65 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-19 — A Channel is born in a Space, and settles it before it can be seen
+
+**What changed:** `WorkstreamCreationFields` carries `spaceIds` in place of
+`projectId`, and an empty list means General. The audience is derived from the
+named Spaces through `resolveSpaceWorkstreamStart` rather than taken from the
+request; a requested participant outside every named Space's roster is refused
+with `space_audience_incompatible`. The staged memberships now settle **before**
+the main conversation is reserved, and the Channel's Space sources are recorded
+between the reservation and `initialize`. `initialize` and the directory flush
+run beside each other, as they always have.
+`apps/api/test-workers/space-creation.test.ts` covers both halves on real
+workerd.
+
+**Why:** Every Space invariant is written about every Channel in the
+Organization, and a Channel that could be created outside one made all of them
+conditional. Deriving the audience is the same requirement from the other side:
+a Channel started in an Organization-wide Space is readable by the Organization
+the moment it exists, and a creation that opened it personal and let a later
+membership widen it would have published a narrower Channel first and disclosed
+it second.
+
+The ordering was a bug this change found rather than a design it started with.
+The settlement used to run after `initialize` and before the directory flush, on
+the reasoning that the flush is what makes a Channel visible. It is not the only
+thing that does: reserving the main conversation arms the parent's recovery
+alarm, which delivers the deferred provisional directory row itself if it wins
+the race. The new workerd case saw exactly that — a failed creation's Channel
+listed with `scope: "workspace"` and `spaceIds: []`.
+
+The first attempt at that fix moved the directory flush *behind* `initialize`,
+because the flush was publishing the Channel while its placements were still
+`joining` — a Channel in no Space, which is a state no surface may render. Then
+the settlement moved ahead of `reserveChild`, which is what this entry is
+about, and the placements became `active` before either call starts. The
+serialization outlived its reason by one commit and cost a round trip on every
+creation for nothing, so the two run beside each other again as they did before
+this branch: they address different objects, and what the flush reads is the
+reservation's own outbox rows at source version one, which `reserveChild` wrote
+and `initialize` never touches.
+
+**Considered and rejected:** Placing the Channel with a follow-up call after the
+create returns. The PRD requires a named Space to be established with the
+Channel or the creation to fail without publishing one, and a second call is
+neither. Also rejected: keeping the settlement last and making the recovery
+alarm skip a Channel with no placement. That would have made the alarm's
+correctness depend on a Space fact it has no reason to know, and left the same
+race for anything else that drains a parent outbox.
+
+**Consequences:** A future change must keep the settlement ahead of
+`reserveChild`, and that — rather than the order of `initialize` and the flush —
+is what keeps a `joining` placement off the directory. Anything that moves the
+settlement later has to re-serialize the pair, and should say so here rather
+than leave the next reader to rediscover which constraint the serialization was
+for. The residue swapped with the order: a failure after the
+settlement now leaves an active membership for a Channel whose conversation may
+never open, which the retry under the same create key reuses, and which the
+cutover's walk skips — it reads what is already placed off the membership row
+itself, which is the state a placement produces and cannot disagree with.
 
 ### 2026-09-19 — The launching header is the destination's row, immediately
 

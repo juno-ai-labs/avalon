@@ -55,7 +55,7 @@ describe('useCitations', () => {
     expect(onOpenPreview.mock.calls[0]![0].galleryIndex).toBe(1);
   });
 
-  it('builds a selected gallery only from resources carried by the current work stream', async () => {
+  it('builds a selected gallery only from resources carried by the current channel', async () => {
     const first = { ...DECK, id: 'first', title: 'First image', mimeType: 'image/png', contentAvailable: true };
     const second = { ...first, id: 'second', title: 'Second image' };
     const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
@@ -72,7 +72,7 @@ describe('useCitations', () => {
     expect(loadResourceContent).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves a resource the loaded work stream carries', () => {
+  it('resolves a resource the loaded channel carries', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 
     expect(result.current.resolve('board-deck')).toEqual({
@@ -108,7 +108,7 @@ describe('useCitations', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
-  it('resolves nothing for a resource outside the loaded work stream', () => {
+  it('resolves nothing for a resource outside the loaded channel', () => {
     // The narrowing is deliberate, and it is what keeps the affordance honest:
     // the rail's detail resolves from the same set, so a chip dressed from a
     // wider lookup would open a panel saying the resource "may have been
@@ -119,7 +119,7 @@ describe('useCitations', () => {
     expect(result.current.resolve('elsewhere')).toBeUndefined();
   });
 
-  it('resolves nothing at all on a surface with no loaded work stream', () => {
+  it('resolves nothing at all on a surface with no loaded channel', () => {
     const { result } = renderHook(() => useCitations({ resources: [] }));
 
     expect(result.current.resolve('board-deck')).toBeUndefined();

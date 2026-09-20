@@ -54,13 +54,17 @@ import {
   type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
-  ProjectDirectorySchema as WireProjectDirectorySchema,
-  ProjectSummarySchema as WireProjectSummarySchema,
-  type CreateProjectRequest,
-  type ProjectDirectory,
-  type ProjectSummary,
-  type UpdateProjectPresentationRequest,
-  type UpdateProjectAudienceRequest,
+  ChannelAccessSchema as WireChannelAccessSchema,
+  SpaceChannelPageSchema as WireSpaceChannelPageSchema,
+  SpaceDirectorySchema as WireSpaceDirectorySchema,
+  SpaceSummarySchema as WireSpaceSummarySchema,
+  type ChannelAccess,
+  type CreateSpaceRequest,
+  type SpaceDefaultKind,
+  type SpaceDirectory,
+  type SpaceSummary,
+  type UpdateSpacePresentationRequest,
+  type SpaceScope,
   type WorkstreamAppearancePatch,
   ConnectionTestResponseSchema,
   ConnectorInstallationMutationResponseSchema,
@@ -73,7 +77,7 @@ import {
   type UpdateOnboardingJourney,
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import {
@@ -366,6 +370,9 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
+    // Every Space this Channel sits in. The sidebar renders one placement per
+    // id, all of them opening this same row.
+    spaceIds: [...workstream.spaceIds],
     preview: workstream.objective,
   };
 }
@@ -587,7 +594,7 @@ export class RallyApi {
     const session = this.session;
     if (!session || !('authentication' in session) || session.authentication !== 'cookie') return socketTicketSchema;
     return socketTicketSchema.transform((ticket, ctx): SocketTicket => {
-      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected workspace' }); return z.NEVER; }
+      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected organization' }); return z.NEVER; }
       const source = new URL(ticket.url);
       if (!source.pathname.startsWith('/socket/')) { ctx.addIssue({ code: 'custom', path: ['url'], message: 'Invalid browser socket destination' }); return z.NEVER; }
       const target = new URL(this.baseUrl, location.origin);
@@ -625,6 +632,11 @@ export class RallyApi {
   private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+    // On every request rather than on the two that check it: the header says
+    // what this build speaks, the Worker decides where that matters, and a
+    // client that only declared itself on some paths would be a client the next
+    // gate could not place.
+    headers.set(RALLY_HEADERS.CLIENT_CONTRACT, String(CLIENT_CONTRACT_VERSION));
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
     const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
     if (cookie) headers.delete('Authorization');
@@ -810,7 +822,7 @@ export class RallyApi {
       const matched = members.find((member) => member.role === raw.role) ?? members[0];
       currentUser = matched ? { ...matched, role: raw.role } : undefined;
     }
-    if (!currentUser) throw new ApiError('The signed-in user is missing from this workspace.', 401, 'session_profile_missing');
+    if (!currentUser) throw new ApiError('The signed-in user is missing from this organization.', 401, 'session_profile_missing');
     return {
       id: raw.id,
       name: raw.name,
@@ -1198,80 +1210,137 @@ export class RallyApi {
     };
   }
 
-  createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
-    return this.request('/projects', {
+  createSpace(input: CreateSpaceRequest): Promise<SpaceSummary> {
+    return this.request('/spaces', {
       method: 'POST',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  updateProject(id: string, input: UpdateProjectPresentationRequest): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}`, {
+  updateSpacePresentation(id: string, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  updateProjectAudience(id: string, input: UpdateProjectAudienceRequest): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/audience`, {
+  /**
+   * The Space's whole audience: its scope and its whole participant set.
+   *
+   * `participantUserIds` is a plain `string[]` rather than the contract's
+   * branded `UserId[]`. The ids a screen holds come from the member directory
+   * as strings, and branding them at every call site would be a cast that
+   * proves nothing — the server parses this body against the branded schema,
+   * which is the check that counts.
+   */
+  updateSpaceAudience(
+    id: string,
+    input: { scope: SpaceScope; participantUserIds: string[] },
+  ): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',
       body: input,
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  archiveProject(id: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/archive`, {
+  archiveSpace(id: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  restoreProject(id: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(id)}/restore`, {
+  restoreSpace(id: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  reorderProjects(projectIds: string[]): Promise<ProjectDirectory> {
-    return this.request('/projects/order', {
+  reorderSpaces(spaceIds: string[]): Promise<SpaceDirectory> {
+    return this.request('/spaces/order', {
       method: 'PUT',
-      body: { projectIds },
-      schema: WireProjectDirectorySchema,
+      body: { spaceIds },
+      schema: WireSpaceDirectorySchema,
     });
   }
 
-  addWorkstreamToProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(projectId)}/workstreams`, {
+  /**
+   * One page of the Channels in a Space.
+   *
+   * The one Space read that is not on the socket: General holds every Channel
+   * in the Organization, so the membership is paginated and the opening sidebar
+   * payload carries a count instead. The cursor is opaque — the ordering is the
+   * authority's.
+   */
+  async listSpaceChannels(
+    spaceId: string,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const page = await this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
+      schema: WireSpaceChannelPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+    // Through the same mapper every other Channel row goes through, so a
+    // placement on the dashboard and the same Channel in the sidebar are one
+    // shape rather than two that drift.
+    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
+  }
+
+  addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/channels`, {
       method: 'POST',
       body: { workstreamId },
-      schema: WireProjectSummarySchema,
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  removeWorkstreamFromProject(projectId: string, workstreamId: string): Promise<ProjectSummary> {
+  removeChannelFromSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
     return this.request(
-      `/projects/${encodeURIComponent(projectId)}/workstreams/${encodeURIComponent(workstreamId)}`,
-      { method: 'DELETE', schema: WireProjectSummarySchema },
+      `/spaces/${encodeURIComponent(spaceId)}/channels/${encodeURIComponent(workstreamId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
     );
   }
 
-  addProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
-    return this.request(`/projects/${encodeURIComponent(projectId)}/default-resources`, {
+  /**
+   * A resource or a Sidekick recommendation every member Channel inherits.
+   *
+   * One pair of methods rather than two, keyed by `kind` the way the server's
+   * registry, delivery target and Queue message are. A second pair would be the
+   * same request with a different literal in it.
+   */
+  addSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/defaults`, {
       method: 'POST',
-      body: { resourceId },
-      schema: WireProjectSummarySchema,
+      body: { kind, targetId },
+      schema: WireSpaceSummarySchema,
     });
   }
 
-  removeProjectDefaultResource(projectId: string, resourceId: string): Promise<ProjectSummary> {
+  removeSpaceDefault(spaceId: string, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     return this.request(
-      `/projects/${encodeURIComponent(projectId)}/default-resources/${encodeURIComponent(resourceId)}`,
-      { method: 'DELETE', schema: WireProjectSummarySchema },
+      `/spaces/${encodeURIComponent(spaceId)}/defaults/${kind}/${encodeURIComponent(targetId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
     );
+  }
+
+  /**
+   * Every source that currently grants a reader access to one Channel.
+   *
+   * What **Manage access** renders. Listed rather than merged, because removing
+   * one source is only legal when the others still cover the readers it
+   * supplied.
+   */
+  channelAccess(workstreamId: string, signal?: AbortSignal): Promise<ChannelAccess> {
+    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/access`, {
+      schema: WireChannelAccessSchema,
+      ...(signal ? { signal } : {}),
+    });
   }
 
   /**
@@ -1439,7 +1508,14 @@ export class RallyApi {
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
-    projectId?: string;
+    /**
+     * The Spaces this Channel is being started in.
+     *
+     * Empty means General, which is what the top-level composer means: every
+     * Channel has a home, and the server places one that names no Space rather
+     * than the client having to choose.
+     */
+    spaceIds?: string[];
     mentions?: MentionIdentity[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
@@ -1463,7 +1539,7 @@ export class RallyApi {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
-        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.spaceIds && input.spaceIds.length > 0 ? { spaceIds: input.spaceIds } : {}),
         openingMessage: input.openingMessage,
         participantUserIds,
         clientMessageId,

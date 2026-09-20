@@ -266,6 +266,7 @@ left finding 1d in place.
 | `SubstreamAgent` (`apps/api/src/durable-objects/substream-agent.ts`) | `SUBSTREAM_AGENTS` | Yes — findings 1–4 | Yes |
 | `WorkspaceDO` (`workspace-do.ts`) | `WORKSPACE_DOS` | Yes — findings 1f and 5 | Yes |
 | `WorkstreamDO` (`workstream-do.ts`) | `WORKSTREAM_DOS` | No | Yes |
+| `SpaceDO` (`space-do.ts`) | `SPACE_DOS` | No | Yes — the same inherited constructor, registering through `SPACE_ROLE.namespace` and `SPACE_ROLE.objectName` rather than the work-stream literals it would otherwise have inherited |
 | `BlockDashboardAgent` (`block-dashboard-agent.ts`) | `BLOCK_DASHBOARD_AGENTS` | No | Yes |
 | `MigrationRegistry` (`apps/migration-tracker/src/registry.ts`) | `MIGRATION_REGISTRY` | No — only the Worker resolves it | Not applicable |
 

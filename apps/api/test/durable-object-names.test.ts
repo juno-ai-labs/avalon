@@ -2,6 +2,7 @@ import "../../../tests/isolated-region";
 import {
   asArtifactId,
   asAutomationId,
+  asSpaceId,
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
@@ -14,6 +15,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -23,6 +25,7 @@ const WORKSTREAM = asWorkstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
 const SUBSTREAM = asSubstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3303");
 const AUTOMATION = asAutomationId("3f2504e0-4f89-41d3-9a0c-0305e82c3305");
 const ARTIFACT = asArtifactId("3f2504e0-4f89-41d3-9a0c-0305e82c3306");
+const SPACE = asSpaceId("3f2504e0-4f89-41d3-9a0c-0305e82c3307");
 
 /**
  * Every name this repository mints, so the allowlist below is checked against
@@ -38,6 +41,8 @@ const EVERY_MINTED_NAME = (["global", "enterprise"] as const).flatMap((region) =
   conversationObjectName(region, WORKSPACE, WORKSTREAM, SUBSTREAM),
   automationDOName(region, WORKSPACE, AUTOMATION),
   artifactHostDOName(region, ARTIFACT),
+  spaceDOName(region, WORKSPACE, SPACE),
+  conversationObjectName(region, WORKSPACE, SPACE),
 ]);
 
 describe("durable object names", () => {
@@ -57,6 +62,18 @@ describe("durable object names", () => {
 
   it("separates the two regions, so one name never addresses both objects", () => {
     expect(artifactHostDOName("global", ARTIFACT)).not.toBe(artifactHostDOName("enterprise", ARTIFACT));
+  });
+
+  it("names a Space object so an operator can tell it from a work stream", () => {
+    // Both are `<region>:<workspace>:<uuid>` otherwise, and both ids come out
+    // of the same generator. Without the role word a migration report naming a
+    // stuck object would not say which class it belonged to.
+    expect(spaceDOName("global", WORKSPACE, SPACE)).toBe(`global:${WORKSPACE}:space:${SPACE}`);
+    expect(spaceDOName("global", WORKSPACE, SPACE))
+      .not.toBe(workstreamDOName("global", WORKSPACE, WORKSTREAM));
+    // A Space's hidden main conversation is named by the Space id under the
+    // conversation-object scheme, exactly as a Channel's is by its own id.
+    expect(conversationObjectName("global", WORKSPACE, SPACE)).toBe(`global:${WORKSPACE}:${SPACE}`);
   });
 
   it("keeps an artifact name distinct from every other object's", () => {

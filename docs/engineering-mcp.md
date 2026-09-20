@@ -47,11 +47,13 @@ The regional bridge uses D1 only for identity and routing:
 | `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
 | `list_sidekicks` | Active workspace route at the open regional authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
+| `list_spaces` | Active workspace route at the open regional authority generation | `workspace_space_directory` in WorkspaceDO, archived Spaces included |
 | `list_artifacts` | Active workspace route at the open regional authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
 | `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | WorkstreamDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
 | `run_sidekick_sql` | Resolve the active workspace route and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
+| `run_space_sql` | Resolve the active workspace route and `workspace_space_directory` membership, select one region, then revalidate | SpaceDO SQLite |
 | `run_artifact_sql` | Resolve the active workspace route and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
@@ -148,6 +150,25 @@ schedules, and run history. Its *conversations* are `SubstreamAgent`s, reached
 with the substream tools under the Sidekick's ID as the parent, exactly as a
 work stream's are.
 
+A Space splits the same way, and `run_space_sql` opens SpaceDO — which runs the
+work-stream schema under the `space_do` migration component, because a Space is
+`WorkstreamDO` under a different role.
+
+**Its hidden main conversation is reached with the substream tools**, under the
+Space id as the parent and `0` as the substream, exactly as a work stream's Main
+is. That works because `SpaceService.create` provisions a Space through
+`bootstrapWorkstreamRuntimeEnvironment`, which writes the active
+`workstream_authority_routes` row those tools resolve a parent through — the
+same row a Channel's creation writes, keyed by parent id whatever the kind. It
+is the only way to inspect a Space's participants and resources, because those
+live on the conversation rather than on `SpaceDO`.
+
+**Its fence is the Sidekick's.** A Space is proved real by its
+`workspace_space_directory` row, read from a WorkspaceDO that is already open,
+before anything in `SPACE_DOS` is named — so a miss no longer creates an empty
+object and no longer leaves a phantom in the migration tracker's `SpaceDO`
+count.
+
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
 
@@ -242,6 +263,47 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-19 — Route SpaceDO, fenced on the object's own identity row, and reach a Space's Main through the directory row
+
+**What changed:** `list_spaces` and `run_space_sql` reach a Space's own object.
+`run_space_sql` resolves the D1 workspace-authority anchor every other target
+starts from, then requires the object's `workstream_metadata` row to name this
+workspace and this Space id.
+
+`list_spaces` reads `workspace_space_directory` and
+`run_space_sql` fences on it, replacing the identity read the entry below
+describes. Nothing else about the tools moved.
+
+**Why:** A `SpaceDO` is unreachable from every existing tool — it is not a
+WorkspaceDO, not a WorkstreamDO in `WORKSTREAM_DOS`, and not a conversation — so
+an operator holding a Space id had nothing to open it with.
+
+That entry named this as the change that would close its window, and
+WorkspaceDO migration 63 is what made the row exist. Reading it from an object
+that is already open means an unknown Space id is refused without naming
+anything in `SPACE_DOS`, so a typo stops creating an object and a tracker row.
+
+**Considered and rejected:** The Sidekick fence, which is the right one and is
+not yet available: it reads the workspace-held directory row that proves the
+object exists, and the Space directory projection does not exist. Also rejected:
+waiting for that projection before adding the tools, which would have left the
+release that creates Spaces also adding the only way to inspect one.
+
+**Consequences:** The fence costs exactly what the Sidekick fence exists to
+avoid — a miss has already named, and thereby created, an empty object. It
+creates it in `SPACE_DOS`, where an empty object reaches no product path and is
+confusable with nothing, unlike a work-stream id resolved in `AUTOMATION_DOS`;
+the visible cost is a row in the migration tracker's `SpaceDO` count. A future
+change replaces the identity read with the directory row and closes the window.
+`list_spaces` answers an empty list, which is true rather than a placeholder
+while no product path creates a Space.
+
+A Space's hidden main conversation is now reachable through
+the substream tools as well, under the Space id as the parent — not a change to
+this MCP but a consequence of `SpaceService.create` writing the
+`workstream_authority_routes` row those tools resolve through. It is the only
+way to inspect a Space's participants and resources.
 
 ### 2026-09-18 — Route ArtifactHostDO, and stop at the facet
 

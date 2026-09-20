@@ -1,5 +1,5 @@
-import type { ProjectSnapshot } from '@rally/contracts';
-import type { QueryClient } from '@tanstack/react-query';
+import type { SpaceSnapshot } from '@rally/contracts';
+import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { AutomationSummary } from './types';
 
 /**
@@ -19,15 +19,27 @@ import type { AutomationSummary } from './types';
  */
 
 export type SidebarList = 'automations';
-type SidebarWaterline = SidebarList | 'projects';
+type SidebarWaterline = SidebarList | 'spaces';
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
-export const PROJECTS_QUERY_KEY = ['projects'] as const;
-export const INACTIVE_PROJECTS_QUERY_KEY = ['projects-inactive'] as const;
+export const SPACES_QUERY_KEY = ['spaces'] as const;
+export const INACTIVE_SPACES_QUERY_KEY = ['spaces-inactive'] as const;
+/**
+ * Whether the Organization has finished creating General and placing every
+ * Channel in it.
+ *
+ * A cache entry rather than a field on either directory, because it travels
+ * beside both of them on the connect payload and on every snapshot, and a copy
+ * on each list would be two answers to one question. Absent until the first
+ * payload arrives; `undefined` is "not answered yet", which the surfaces read
+ * as ready so a build talking to a server without the cutover is not
+ * permanently opening.
+ */
+export const SPACES_READY_QUERY_KEY = ['spaces-ready'] as const;
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -83,21 +95,62 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   return true;
 }
 
-/** Apply the project directory only when its WorkspaceDO waterline is newer. */
-export function applyVersionedProjectSnapshot(
+/**
+ * Apply both Space directories only when their WorkspaceDO waterline is newer.
+ *
+ * One waterline for the pair, because WorkspaceDO reads both halves inside one
+ * transaction and the contract refuses a snapshot whose two halves disagree: a
+ * client that applied them separately could render a Space in both lists or in
+ * neither.
+ *
+ * `spacesReady` rides with the snapshot rather than having a ledger of its own.
+ * A write can be the write that finishes the cutover, so the flag is only ever
+ * as current as the snapshot it arrived with, and applying it under the same
+ * test is what stops an older payload putting the Organization-opening state
+ * back.
+ */
+export function applyVersionedSpaceSnapshot(
   queryClient: QueryClient,
-  snapshot: ProjectSnapshot,
+  snapshot: SpaceSnapshot,
+  spacesReady: boolean,
 ): boolean {
   pinWaterlineLedger(queryClient);
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
   ) ?? {};
-  if (snapshot.active.waterline <= (waterlines.projects ?? -1)) return false;
+  if (snapshot.active.waterline <= (waterlines.spaces ?? -1)) return false;
   queryClient.setQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
-    (current = {}) => ({ ...current, projects: snapshot.active.waterline }),
+    (current = {}) => ({ ...current, spaces: snapshot.active.waterline }),
   );
-  queryClient.setQueryData(PROJECTS_QUERY_KEY, snapshot.active);
-  queryClient.setQueryData(INACTIVE_PROJECTS_QUERY_KEY, snapshot.inactive);
+  queryClient.setQueryData(SPACES_QUERY_KEY, snapshot.active);
+  queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
+  queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
+}
+
+/**
+ * Read a list the workspace socket owns and nothing here fetches.
+ *
+ * `useWorkstreamsQuery`'s opening batch seeds it and WorkspaceDO re-sends it
+ * whole on every change, so there is no fetch to make and no staleness for
+ * React Query to police. The query exists only to subscribe the caller to the
+ * cache entry; the fetcher is unreachable and says so, because a silent
+ * `undefined` from an accidentally enabled query would look like an empty
+ * sidebar rather than a bug. Invalidating one of these keys does nothing by
+ * design — the socket is the only *authority* for the contents.
+ *
+ * Subscribing is the point: a `getQueryData` read of the same entry returns the
+ * same rows and never re-renders when the socket replaces them, so the caller
+ * paints whatever it happened to hold until something unrelated re-renders it.
+ */
+export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
+  return useQuery<T[]>({
+    queryKey,
+    queryFn: () => {
+      throw new Error(`${String(queryKey[0])} is pushed by the organization socket, never fetched`);
+    },
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 }

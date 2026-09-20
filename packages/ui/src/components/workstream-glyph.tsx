@@ -18,7 +18,7 @@ import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as 
 import clsx from 'clsx';
 import { useId } from 'react';
 import { glyphInk } from '../lib/project-palette';
-import { PROJECT_ICONS } from './project-icons';
+import { SPACE_ICONS } from './space-icons';
 
 const WORKSTREAM_ICONS = [
   Aperture,
@@ -39,7 +39,7 @@ export const WORKSTREAM_ICON_COMPONENTS = {
   aperture: Aperture, atom: Atom, boxes: Boxes, 'circle-dot': CircleDot,
   'circuit-board': CircuitBoard, component: Component, dices: Dices, orbit: Orbit,
   sparkles: Sparkles, spline: Spline, 'wand-sparkles': WandSparkles, workflow: Workflow,
-  ...PROJECT_ICONS,
+  ...SPACE_ICONS,
 };
 
 export interface WorkstreamAppearance {

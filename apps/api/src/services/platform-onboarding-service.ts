@@ -30,6 +30,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { AuthService } from "./auth-service";
+import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
 import {
   demoWorkspaceAdmission,
   withheldDemoWorkspaceIds,
@@ -635,6 +636,10 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       placementAffinity,
     );
     await workspaceObject.initializeWorkspace(workspaceId, placementAffinity);
+    // Before the session this call is about to issue. Every Channel belongs to
+    // a Space, so an Organization without General is one whose sidebar cannot
+    // be drawn — and the client shows the opening card until it can.
+    await openGeneralSpaceForNewWorkspace(this.env, workspaceId);
   }
 
   private async loadOperation(operationId: string): Promise<OperationRow | null> {

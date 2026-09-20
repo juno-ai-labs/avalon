@@ -213,7 +213,7 @@ than stubbed as working.
 | Start substream / center rail (Main, children, New substream, launch, rename, archive, copy link) | Substream list after picking a work stream, plus message action on the feed. Same prepare/confirm contract as desktop. Not a tab. |
 | Composer: send, stop, attach, dictation | Composer + PhotosPicker + file importer + `VoiceBar` |
 | Mentions, slash commands, debug model override, pending-input reorder | Not on iPhone |
-| `#/projects/:id` and `#/projects/:id/workstreams/new` | Not on iPhone. Project grouping stays on the Mac |
+| `#/spaces/:spaceId` and `#/spaces/:spaceId/workstreams/new` | Not on iPhone. Space grouping stays on the Mac |
 | `#/notes/:id` | Not on iPhone. Notes stay on the Mac |
 | Meeting window / Control Tower live capture | Not on iPhone. AudioWorklet capture stays on the Mac |
 | `#/sidekicks`, `#/sidekicks/:id`, `#/automations/:id` | Sidekicks tab; open is `/conversations/:id`. Creating a Sidekick stays on the Mac |

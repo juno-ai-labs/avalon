@@ -8,7 +8,7 @@
     "./lib/*": "./src/lib/*.ts",
     "./themes": "./src/themes.ts",
     "./styles/*": "./src/styles/*",
-    "./components/project-icons": "./src/components/project-icons.ts",
+    "./components/space-icons": "./src/components/space-icons.ts",
     "./assets/*": "./src/assets/*"
   },
   "scripts": {

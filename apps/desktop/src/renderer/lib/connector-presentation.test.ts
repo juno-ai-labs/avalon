@@ -28,7 +28,7 @@ describe('connectorPresentation', () => {
 
   it('keeps a mention out of the fallback blurb for every connector with a card', () => {
     for (const provider of connectorProviders) {
-      expect(connectorPresentation(provider.provider).description).not.toBe('Workspace connector.');
+      expect(connectorPresentation(provider.provider).description).not.toBe('Organization connector.');
     }
   });
 
@@ -69,7 +69,7 @@ describe('connectorScopeStates', () => {
   ];
   const personalConnection = connections[0]!;
 
-  it('always returns personal and workspace rows', () => {
+  it('always returns personal and organization rows', () => {
     expect(connectorScopeStates('google', connections)).toEqual([
       {
         scope: 'you',

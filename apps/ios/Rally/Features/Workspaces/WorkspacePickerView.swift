@@ -10,7 +10,7 @@ struct WorkspacePickerView: View {
         NavigationStack {
             List {
                 if !model.onboarding.workspaces.isEmpty {
-                    Section("Your workspaces") {
+                    Section("Your organizations") {
                         ForEach(model.onboarding.workspaces) { workspace in
                             Button {
                                 Task {
@@ -18,7 +18,7 @@ struct WorkspacePickerView: View {
                                         try await model.activate(workspace)
                                     } catch {
                                         model.errorMessage = (error as? LocalizedError)?.errorDescription
-                                            ?? "Couldn’t open that workspace."
+                                            ?? "Couldn’t open that organization."
                                     }
                                 }
                             } label: {
@@ -42,7 +42,7 @@ struct WorkspacePickerView: View {
                                 Task { await model.acceptInvitation(invitation) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(invitation.workspaceName ?? "Workspace invitation")
+                                    Text(invitation.workspaceName ?? "Organization invitation")
                                         .font(RallyType.conversationTitle())
                                         .foregroundStyle(colors.textPrimary)
                                     if let name = invitation.invitedByName {
@@ -56,8 +56,8 @@ struct WorkspacePickerView: View {
                         }
                     }
                 }
-                Section("Create a workspace") {
-                    TextField("Workspace name", text: $newName)
+                Section("Create an organization") {
+                    TextField("Organization name", text: $newName)
                     Picker("Region", selection: $region) {
                         ForEach(RallyRegion.allCases) { item in
                             Text(item.displayName).tag(item)
@@ -69,7 +69,7 @@ struct WorkspacePickerView: View {
                     .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
                 }
             }
-            .navigationTitle("Workspaces")
+            .navigationTitle("Organizations")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Sign out") { Task { await model.signOut() } }

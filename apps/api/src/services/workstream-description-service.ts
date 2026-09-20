@@ -408,6 +408,10 @@ async function evaluate(
   // the automation that owns it. The loop already skips this refresh for an
   // automation parent; this is the same rule at the service's own door.
   if (workstream.parent_kind === "automation") return { status: "skipped", reason: "sidekick_parent" };
+  // A Space's hidden conversation has no sidebar row, no dashboard line, and no
+  // reader: there is nothing for a description to describe. Named separately
+  // from the Sidekick skip so the reason a refresh did not happen is legible.
+  if (workstream.parent_kind === "space") return { status: "skipped", reason: "space_parent" };
 
   // Gate 1: the clock. A work stream that has not rested is not looked at,
   // whatever happened in it.

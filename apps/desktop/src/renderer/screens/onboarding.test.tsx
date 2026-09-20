@@ -102,12 +102,12 @@ describe('identity-first onboarding screens', () => {
     ));
   });
 
-  it('collects a workspace name after authentication and defaults to Global', async () => {
+  it('collects an organization name after authentication and defaults to Global', async () => {
     render(<RegionOnboarding />);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Workspace name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), {
       target: { value: 'Acme Research' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
     await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
       'Acme Research', 'global', telemetry.operationId,
@@ -116,7 +116,7 @@ describe('identity-first onboarding screens', () => {
 
   it('does not create the organization when Enter only commits an IME composition', async () => {
     render(<RegionOnboarding />);
-    const nameField = screen.getByRole('textbox', { name: 'Workspace name' });
+    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
     fireEvent.keyDown(nameField, { key: 'Enter', isComposing: true });
@@ -144,7 +144,7 @@ describe('identity-first onboarding screens', () => {
       finishSetup = resolve;
     }));
     render(<RegionOnboarding />);
-    const nameField = screen.getByRole('textbox', { name: 'Workspace name' });
+    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
     // Auto-repeat: holding Enter down while the first create is in flight. Each
@@ -160,10 +160,10 @@ describe('identity-first onboarding screens', () => {
     finishSetup?.();
   });
 
-  it('does not offer a deployment picker during workspace creation', () => {
+  it('does not offer a deployment picker during organization creation', () => {
     render(<RegionOnboarding />);
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Workspace name' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toBeVisible();
   });
 
   it('accepts a pending invitation through its own region without another login prompt', async () => {

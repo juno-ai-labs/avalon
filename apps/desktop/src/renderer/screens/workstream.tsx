@@ -64,11 +64,11 @@ type WorkstreamSidebarFailure =
 
 const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: string; copy: string }> = {
   copy_link: { title: 'The link couldn’t be copied', copy: 'The link couldn’t be copied. Try again.' },
-  make_public: { title: 'The work stream couldn’t be updated', copy: 'The work stream couldn’t be made public. Try again.' },
-  rename_workstream: { title: 'The work stream couldn’t be renamed', copy: 'The work stream couldn’t be renamed. Try again.' },
-  rename_substream: { title: 'The substream couldn’t be renamed', copy: 'The substream couldn’t be renamed. Try again.' },
-  archive_workstream: { title: 'The work stream couldn’t be archived', copy: 'The work stream couldn’t be archived. Try again.' },
-  archive_substream: { title: 'The substream couldn’t be archived', copy: 'The substream couldn’t be archived. Try again.' },
+  make_public: { title: 'The channel couldn’t be updated', copy: 'The channel couldn’t be made public. Try again.' },
+  rename_workstream: { title: 'The channel couldn’t be renamed', copy: 'The channel couldn’t be renamed. Try again.' },
+  rename_substream: { title: 'The breakout couldn’t be renamed', copy: 'The breakout couldn’t be renamed. Try again.' },
+  archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
+  archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
 
 export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
@@ -342,7 +342,7 @@ export function WorkstreamScreen(): React.JSX.Element {
    */
   const createSubstream = async (opening: Parameters<SubstreamLaunchProps['onCreate']>[0]): Promise<void> => {
     const attempt = creationRef.current;
-    if (!api || !attempt) throw new Error('This work stream is not ready for a new substream.');
+    if (!api || !attempt) throw new Error('This channel is not ready for a new breakout.');
     const createdAt = new Date().toISOString();
     const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
     const startedAt = performance.now();
@@ -438,7 +438,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       // words with it.
       if (creationRef.current === attempt) {
         setLaunching(null);
-        setCreationError('The substream couldn’t be created. Try again.');
+        setCreationError('The breakout couldn’t be created. Try again.');
       }
       throw error;
     }
@@ -526,7 +526,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(renameTarget)}
-      title={renameTarget?.substreamId === '0' ? 'Rename work stream' : 'Rename substream'}
+      title={renameTarget?.substreamId === '0' ? 'Rename channel' : 'Rename breakout'}
     >
       {substreamMenuFailure && <InlineError>{workstreamSidebarFailureCopy[substreamMenuFailure].copy}</InlineError>}
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
@@ -543,7 +543,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(archiveTarget)}
-      title={archiveTarget?.substreamId === '0' ? 'Archive work stream' : 'Archive substream'}
+      title={archiveTarget?.substreamId === '0' ? 'Archive channel' : 'Archive breakout'}
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops

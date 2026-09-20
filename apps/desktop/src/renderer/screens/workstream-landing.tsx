@@ -37,9 +37,9 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   if (!loaded) {
     if (workstreams.error) return <InlineError>{workstreams.error.message}</InlineError>;
     if (state === 'unavailable') return <InlineError>Unable to connect to your workspace. Check your connection and restart Rally to try again.</InlineError>;
-    return <LoadingState label="Opening work streams…" />;
+    return <LoadingState label="Opening channels…" />;
   }
-  if (needsMore) return <LoadingState label="Opening work streams…" />;
+  if (needsMore) return <LoadingState label="Opening channels…" />;
   const first = firstLandingWorkstream(candidates);
   return <Navigate replace to={first ? `/workstreams/${encodeURIComponent(first.id)}` : '/workstreams/new'} />;
 }

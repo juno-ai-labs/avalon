@@ -409,7 +409,7 @@ describe('AvatarStack', () => {
     expect(container.querySelector('.avatar-presence-ping')).toBeNull();
   });
 
-  it('explains when another participant is viewing the work stream', async () => {
+  it('explains when another participant is viewing the channel', async () => {
     stubResizeObserver();
     const { container } = render(
       <Tooltip.Provider delayDuration={0}>
@@ -470,7 +470,7 @@ describe('AvatarStack', () => {
     expect(screen.queryByTitle('Ari Collaborator')).not.toBeInTheDocument();
   });
 
-  it('names a person who is not viewing the work stream', async () => {
+  it('names a person who is not viewing the channel', async () => {
     stubResizeObserver();
     const { container } = render(
       <Tooltip.Provider delayDuration={0}>
@@ -697,7 +697,7 @@ describe('Modal', () => {
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content className="menu-content">
-                <DropdownMenu.Item className="menu-item">Remove from work stream</DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item">Remove from channel</DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -709,7 +709,7 @@ describe('Modal', () => {
       button: 0,
       ctrlKey: false,
     });
-    const remove = await screen.findByRole('menuitem', { name: 'Remove from work stream' });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from channel' });
     fireEvent.pointerDown(remove, { button: 0 });
     fireEvent.click(remove);
     expect(onOpenChange).not.toHaveBeenCalled();

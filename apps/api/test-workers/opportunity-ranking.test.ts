@@ -51,7 +51,7 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (access_class TEXT NOT NULL DEFAULT 'member', 
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),

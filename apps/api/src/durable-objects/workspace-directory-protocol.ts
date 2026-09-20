@@ -284,12 +284,28 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
         message: "Workspace directory effects must target their owning workspace",
       });
     }
-    if (envelope.parentKind !== "workstream"
-      || !["directory_common", "directory_user"].includes(envelope.effect.kind)) {
+    // Two issues, not one. They were a single `||` while there were only two
+    // parent kinds and the wrong one could not reach this handoff; a Space
+    // publishes the same two directory effects as a Channel, so a refusal that
+    // pointed at `effect.kind` would name a field that was correct and send
+    // whoever read the log looking at the effect rather than at the parent.
+    //
+    // `space` is admitted beside `workstream` because both publish the same two
+    // effects and WorkspaceDO now has somewhere to put each: the Channel
+    // directory and the Space directory. `automation` is not — a Sidekick has
+    // its own handoff and its own directory effect.
+    if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
+      context.addIssue({
+        code: "custom",
+        path: ["envelopes", index, "parentKind"],
+        message: "Only a work stream's or Space's directory effects may use the WorkspaceDO handoff",
+      });
+    }
+    if (!["directory_common", "directory_user"].includes(envelope.effect.kind)) {
       context.addIssue({
         code: "custom",
         path: ["envelopes", index, "effect", "kind"],
-        message: "Only a work stream's directory effects may use the WorkspaceDO handoff",
+        message: "Only directory effects may use the WorkspaceDO handoff",
       });
     }
     if ((envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")

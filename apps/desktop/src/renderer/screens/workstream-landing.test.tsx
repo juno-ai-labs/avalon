@@ -22,6 +22,7 @@ function stream(id: string, pinPosition: number | null, lastActivityAt: string):
     harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
     firstUnreadSequenceNumber: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
+    spaceIds: [],
   };
 }
 
@@ -36,7 +37,7 @@ function Router({ initial = '/' }: { initial?: string | { pathname: string; stat
   </Routes></MemoryRouter>;
 }
 
-describe('default work-stream landing', () => {
+describe('default channel landing', () => {
   beforeEach(() => {
     directory.data = undefined;
     directory.error = null;
@@ -47,7 +48,7 @@ describe('default work-stream landing', () => {
 
   it('waits for the directory and opens the first pin, not the newest arrival', async () => {
     const view = render(<Router />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening work streams');
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
     expect(screen.queryByTestId('destination')).toBeNull();
     directory.data = [stream('recent', null, '2026-09-05'), stream('second-pin', 1, '2026-09-04'), stream('first-pin', 0, '2026-08-01')];
     view.rerender(<Router />);
@@ -63,7 +64,7 @@ describe('default work-stream landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/newest');
   });
 
-  it('opens the last visited work stream ahead of newer shared activity', async () => {
+  it('opens the last visited channel ahead of newer shared activity', async () => {
     directory.data = [
       { ...stream('noisy', null, '2026-09-08'), createdAt: '2026-08-01', lastAccessedAt: null },
       { ...stream('visited', null, '2026-08-01'), createdAt: '2026-08-01', lastAccessedAt: '2026-09-07' },
@@ -100,7 +101,7 @@ describe('default work-stream landing', () => {
     directory.hasMore = true;
     const initial = { pathname: '/', state: { skipWorkstreamIds: ['taken'] } };
     const view = render(<Router initial={initial} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening work streams');
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
     expect(screen.queryByTestId('destination')).toBeNull();
     expect(directory.fetchMore).toHaveBeenCalledTimes(1);
     // A page that settled without changing the list — it failed — is not
@@ -125,7 +126,7 @@ describe('default work-stream landing', () => {
     expect(screen.queryByTestId('destination')).toBeNull();
   });
 
-  it('does not treat a directory failure as an empty workspace', () => {
+  it('does not treat a directory failure as an empty organization', () => {
     directory.error = new Error('Directory unavailable');
     render(<Router />);
     expect(screen.getByText('Directory unavailable')).toBeVisible();

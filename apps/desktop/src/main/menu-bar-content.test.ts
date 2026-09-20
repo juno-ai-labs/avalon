@@ -182,14 +182,14 @@ describe('menu bar content', () => {
     expect(subject.store.content().recents).toEqual([]);
   });
 
-  it('names a work stream Rally has not finished titling', async () => {
+  it('names a channel Rally has not finished titling', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([{ id: 'a', title: 'placeholder', titleStatus: 'naming' }]),
     });
 
     await subject.store.refresh();
 
-    expect(subject.store.content().recents).toEqual([entry('a', 'Untitled work stream')]);
+    expect(subject.store.content().recents).toEqual([entry('a', 'Untitled channel')]);
   });
 
   it('keeps the last good menu when a refresh fails', async () => {

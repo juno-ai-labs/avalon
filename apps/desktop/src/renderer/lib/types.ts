@@ -184,6 +184,16 @@ export interface WorkstreamSummary {
    * same work stream is pinned for one member and not for another.
    */
   pinPosition: number | null;
+  /**
+   * Every Space this Channel currently sits in.
+   *
+   * A Channel belongs to at least one Space and may belong to several. Each id
+   * is a *placement* of this same row rather than a copy of it, so the sidebar
+   * draws one entry per id under the Space it names and all of them open the
+   * same Channel. The row itself — its unread, its running state, its title —
+   * is one record whatever it is listed under.
+   */
+  spaceIds: string[];
 }
 
 export interface Participant extends WorkspaceMember {

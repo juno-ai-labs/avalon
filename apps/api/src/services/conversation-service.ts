@@ -126,8 +126,14 @@ export class ConversationService {
    */
   async client(parentId: string, traced = false, substreamId = "0"): Promise<WorkstreamObjectClient> {
     await requireOpenWorkstreamAuthority(this.env);
-    await this.authorizeViewer(parentId, substreamId);
-    return new WorkstreamObjectClient(this.env, this.auth, parentId, substreamId, traced);
+    const parent = await this.authorizeViewer(parentId, substreamId);
+    // The kind travels with the request. It is already resolved here — the
+    // authorization above needed it — and the conversation refuses one that
+    // names the wrong kind, which is what stops a Space id being an address
+    // for a Channel operation.
+    return WorkstreamObjectClient.forParent(
+      this.env, this.auth, parent.kind, parentId, substreamId, traced,
+    );
   }
 
   /** A client for a write, refused outright when the conversation is archived. */
@@ -137,7 +143,7 @@ export class ConversationService {
     if (parent.archived) {
       throw new ApiError(409, "conversation_parent_archived", "This conversation belongs to something that is archived");
     }
-    return new WorkstreamObjectClient(this.env, this.auth, parentId, substreamId);
+    return WorkstreamObjectClient.forParent(this.env, this.auth, parent.kind, parentId, substreamId);
   }
 
   /** Canonical child inventory; callers still authorize each returned child. */
