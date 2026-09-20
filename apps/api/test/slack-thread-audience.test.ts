@@ -162,8 +162,10 @@ describe("who may continue a Slack work stream", () => {
     // armed for real: any statement that leaks back to D1 fails the test.
     const { database } = await seededDatabase();
     // Walk the phase machine legitimately — transitions are trigger-enforced.
-    // No workstream rows exist, so no workstream routes are created; the one
-    // workspace product route is advanced by hand the way the campaign would.
+    // This is deliberately the frozen pre-0090 compatibility fixture. Its
+    // historical import trigger creates the workspace cutover row that existed
+    // then, so the old phase machine must advance that row before it opens.
+    // Current migrated D1 has no such table (migration 0115).
     const at = "2026-01-02T00:00:00.000Z";
     database.exec(`
       UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${at}' WHERE id = 1;

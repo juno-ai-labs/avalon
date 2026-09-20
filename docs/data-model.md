@@ -196,6 +196,13 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   one row to the already-many-to-many `workspace_members` authority; it does not
   replace another membership.
 
+- `workspaces` is the regional identity and deterministic WorkspaceDO route.
+  `workstream_authority_control` carries the region-wide generation and serving
+  fence, while `workstream_authority_routes` routes work-stream objects.
+  Migration 0115 removes the completed `workspace_product_authority_routes`
+  cutover ledger; it is not part of the current schema and must not be restored
+  as a live per-workspace authority.
+
 Every workspace-scoped table that remains in regional D1 carries `workspace_id`,
 and every D1 repository lookup includes it. Imported compatibility rows inside
 WorkspaceDO may retain that column for repository shape, but singleton triggers
@@ -1182,6 +1189,17 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-09-20 — Remove the completed WorkspaceDO cutover ledger
+
+Migration 0115 drops `workspace_product_authority_routes` and replaces the two
+regional phase guards with versions that fence only the live per-workstream
+routes. The table was one-time import evidence with no post-cutover writer, but
+its retained route-shaped rows were repeatedly mistaken for current WorkspaceDO
+authority. Keeping it with comments was rejected because that ambiguity had
+already broken operator inspection. The migration is Worker-first: compatible
+code resolves deterministic WorkspaceDO identity before the old table is
+removed. Historical migrations and the migration-0090 baseline remain immutable.
 
 ### 2026-09-19 — Admit Canva in persisted connector vocabularies
 

@@ -31,12 +31,8 @@ function fixture() {
       VALUES ('${W}', 'Webhook', 'webhook', 'global', '${U}', '${AT}', '${AT}');
     INSERT INTO workstreams (id, workspace_id, do_identity_anchor) VALUES ('${S}', '${W}', 1);
     UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${AT}' WHERE id = 1;
-    INSERT INTO workspace_product_authority_routes (workspace_id, generation, state, updated_at)
-      VALUES ('${W}', 1, 'pending', '${AT}');
     UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1;
-    UPDATE workspace_product_authority_routes SET state = 'verified';
     UPDATE workstream_authority_control SET phase = 'maintenance_verified' WHERE id = 1;
-    UPDATE workspace_product_authority_routes SET state = 'active';
     UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1 WHERE id = 1;
   `);
   seedWorkstreamObjectRoot(store, { workspaceId: W, workstreamId: S });
