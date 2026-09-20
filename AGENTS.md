@@ -13,7 +13,13 @@ still appears throughout the tree; what it is coupled to, and what is
 deliberately not being renamed, is in
 [`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
 
+### Rebranding Guide
+
 We re-branded an **Automation** into a **Sidekick**.
+A **Workspace** was re-branded to **Organization**.
+A **Project** became a **Space** and grew in scope.
+A **Work stream** became a **Channel**.
+A **Substream** became a **Breakout**.
 
 ## How we build
 
