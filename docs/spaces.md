@@ -180,6 +180,19 @@ may have left behind.
 
 Changing a Space's audience is preflight, accept, converge.
 
+**A person cannot narrow themselves out of a Space.** A `personal` audience
+admits its participants and nobody else, so a request that makes a Space
+personal without its own caller on the list hands them a Space they can no
+longer change — and, unless a Channel in it is one they can read, no longer
+see. There is no undo: the Space's own authority accepts, the walk carries it
+to every member Channel, and the one person who would ask for it back is the
+one who cannot. It is refused `space_audience_self_excluded` at two depths —
+`SpaceService.updateAudience` before the containment preflight walks anything,
+and `applyAudience` before the write, which is the fence for any other caller
+of the RPC. Removing *somebody else* is a different decision under a different
+rule: an Organization owner or admin may, and `participant_removal_denied`
+refuses anybody else.
+
 Every member Channel is asked first, through the read-only
 `previewAudienceContainment` RPC, whether its retained content would still be
 contained. That RPC is a tri-state and only `true` admits: `false` is the
@@ -1357,7 +1370,7 @@ Organization membership and access class only.
 ## Failure modes and limits
 
 A malformed input fails strict contract parsing at the object boundary. Every
-refusal is one of the twelve closed `SpaceErrorCode` values, which is the code a
+refusal is one of the fourteen closed `SpaceErrorCode` values, which is the code a
 route renders, a log line carries, and a Queue consumer branches on; the
 sentence around it is written about whichever object the caller acted on —
 `spaceRefusal` for a Space, `spaceAccessError` for a Channel. A Queue handler
@@ -1480,8 +1493,8 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a narrowing which leaves the person asking for it out of the Space is refused by name before anything moves. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
@@ -1928,6 +1941,20 @@ out. It is `canEdit` now, it answers that refusal apart from "no such Space" so
 `listSpaceMembers` can name it, and it says why there is no viewer-scoped
 variant to narrow to instead: every caller is a walk that has to reach the
 whole Space or it converges on nothing.
+
+`WorkspaceSpaceStorage.space` — the read that renders one Space row for the
+person who just changed it — was the one renderer of `spaceReachSql` without
+`spaceVisibleToViewerSql` beside it, against that helper's own stated
+precondition: its `ELSE 'through_channel'` is the label for a row that reached
+it *having passed the filter*, so a row selected without the filter is labelled
+`through_channel` whether it is reachable at all or not. The route into it was
+an actor narrowing a Space to `personal` without listing themselves, who was
+answered a summary claiming a reach they did not have, with an empty roster and
+a viewer-scoped count that could be zero — which the contract says such a
+viewer's count never is. Both halves are closed: that narrowing is refused by
+name, and the read renders the predicate, so `readable` is one gate rather than
+two and every mutation that cannot see its own answer passes on "no such Space"
+rather than a row it cannot account for.
 
 **Manage access** was the same disclosure through the client. Its Space row
 carries a count of the readers that source seated on the Channel — the

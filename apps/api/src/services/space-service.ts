@@ -111,6 +111,9 @@ export function spaceRefusal(
       // own authority did not answer, and retrying is the whole of what the
       // caller can do about it.
       return new ApiError(503, code, `${subject} could not be reached; try again`);
+    case "space_audience_self_excluded":
+      return new ApiError(409, code,
+        `Making ${subject} private without you in it would leave you unable to change it back`);
     case "space_cursor_invalid":
       return new ApiError(400, code, "That page cursor is not one this Space issued");
   }
@@ -355,6 +358,16 @@ export class SpaceService {
       && this.auth.role !== "owner" && this.auth.role !== "admin") {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
+    }
+    // A person cannot narrow themselves out of a Space. `personal` admits its
+    // participants and nobody else, so this request would leave its own caller
+    // holding a Space they can no longer edit, and — unless a Channel in it is
+    // one they can read — no longer see. There is no undo: the Space's own
+    // authority accepts, the walk carries it to every member Channel, and the
+    // one person who would ask for it back is the one who cannot. Removing
+    // somebody else is the rule above, and stays theirs to make.
+    if (input.scope === "personal" && !requested.has(this.auth.userId)) {
+      throw spaceRefusal("space_audience_self_excluded", current.name);
     }
     await this.preflightContainment(spaceId, input);
 

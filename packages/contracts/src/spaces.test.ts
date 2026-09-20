@@ -211,7 +211,7 @@ describe("space contracts", () => {
     expect(PersonalOrderSchema.safeParse({ [SPACE_ID]: [CHANNEL_ID] }).success).toBe(false);
   });
 
-  it("given the refusal vocabulary, when a code is read, then it is one of the twelve the authority can produce", () => {
+  it("given the refusal vocabulary, when a code is read, then it is one of the fourteen the authority can produce", () => {
     // Two narrowings that read alike and are not: `space_audience_incompatible`
     // is a *membership* removal that would strand a reader with no Space left
     // to discover the Channel through, and `channel_scope_locked_by_space` is
@@ -231,6 +231,7 @@ describe("space contracts", () => {
       "space_bootstrap_pending",
       "space_conversation_unreachable",
       "space_authority_unreachable",
+      "space_audience_self_excluded",
       "space_cursor_invalid",
     ]);
     expect(SpaceErrorCodeSchema.safeParse("space_error").success).toBe(false);

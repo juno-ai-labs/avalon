@@ -387,6 +387,30 @@ describe("PATCH /spaces/:id/audience", () => {
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ title: "Hiring" });
   });
 
+  it("refuses a narrowing that leaves the person asking for it out of the Space", async () => {
+    const created = await createSpace("personal", "Hiring");
+    const widened = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "workspace", participantUserIds: [OWNER, MEMBER],
+    }, "PATCH");
+    expect(widened.status).toBe(200);
+
+    // A person cannot narrow themselves out of a Space. `personal` admits its
+    // participants and nobody else, so this would leave its own caller holding
+    // a Space they can no longer change and — with no Channel in it they can
+    // read — no longer see, with nothing left to ask for it back with. Refused
+    // before the containment preflight walks a single member Channel.
+    expect(await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "personal", participantUserIds: [MEMBER],
+    }, "PATCH")).toMatchObject({
+      status: 409,
+      body: { error: { code: "space_audience_self_excluded" } },
+    });
+    expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "workspace" });
+    expect((await spaceDirectories(OWNER)).active.items).toContainEqual(
+      expect.objectContaining({ id: created.id, scope: "workspace", reach: "participant" }),
+    );
+  });
+
   it("names the Space's own authority when its conversation cannot answer", async () => {
     const created = await createSpace("personal", "Hiring");
     // The way this breaks in production: the Space's own authority cannot
