@@ -2068,6 +2068,10 @@ export function ConversationSurface({
       const response = manualElicitationResponse(activeElicitation, text);
       try {
         await answerElicitation(activeElicitation.id, response.answer, response.customResponse);
+        // An answer is a message this reader sent, and an elicitation outlives
+        // the run that asked it: one still open over a stopped run leaves the
+        // acknowledgement up, and this branch returns before the clear below.
+        setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
       } catch (error) {
         setSendError('The response couldn’t be sent. Try again.');
         throw error;
@@ -2174,11 +2178,11 @@ export function ConversationSurface({
       // Saying the next thing answers the button press more completely than the
       // row does, whether or not this turn starts a run of its own — and a turn
       // the addressing classifier reads as human-only starts none, so waiting
-      // for the run to change would leave the row up indefinitely. Here rather
-      // than beside the optimistic overlay above, because a send that fails
-      // restores the draft and did not move the conversation on: nothing could
-      // put the acknowledgement back, the latest run being durably stopped
-      // already.
+      // for the run to change would leave the row up indefinitely. On
+      // acceptance rather than beside the optimistic overlay above, because a
+      // send that fails restores the draft and did not move the conversation
+      // on: nothing could put the acknowledgement back, the latest run being
+      // durably stopped already. The elicitation branch clears it too.
       setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
       attachmentDraft.commitLease(attachmentLease.leaseId);
       requestSocketSnapshot();

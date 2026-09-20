@@ -36,12 +36,16 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/components/agent-work-timing.tsx` owns every row in
   that 20px-mark column: `AgentWorkTiming`, which counts, `AgentCompactionIndicator`,
   which names a state instead and is one call to the `ActivityStatusRow`
-  primitive, and `RunStopAcknowledgement`, which is the dock's own and takes a
-  phase because its region has to outlive the change. Another state goes there,
-  not into another copy of the row's `role`, live-region attributes and orb
-  props.
+  primitive, and `RunStopAcknowledgement`, which is the dock's own. It does not
+  go through that primitive, and the exception is the point: `ActivityStatusRow`
+  is a row for a state that is still running, and this one has to span a change
+  from running to settled inside a single mounted live region. Another state
+  that is *running* goes into the primitive, not into another copy of the row's
+  `role`, live-region attributes and orb props.
   `conversationActivityRow` in `screens/conversation-surface.tsx` is the single
-  decision about which of them the feed's activity slot shows;
+  decision about which of them the feed's activity slot shows, and
+  `nextStopAcknowledgement` beside it is the single decision about what the
+  dock says of a stop;
   `conversationShowsStoppingRow` beside it is the separate question of whether
   the composer dock acknowledges a pending stop, and the two are separate
   because only one of them lives inside the scroller.
@@ -245,10 +249,23 @@ one level down.
 The stop's acknowledgement has two phases, one place, and one component.
 `RunStopAcknowledgement` holds the dock from the request onwards and takes
 `settled`: before, the orb and "Stopping once the current work finishes…";
-after, a filled stop-square in that same 20px slot and "Run stopped". Nothing
-about the stop is drawn in the feed. It answers a button press, so it sits
-beside the button, and the reasons the stopping row is in the dock are its
-reasons too.
+after, a filled stop-square in that same 20px slot and "Run stopped". It
+answers a button press, so it sits beside the button, and the reasons the
+stopping row is in the dock are its reasons too.
+
+**This row is not the record that a stop happened, and must not become one.**
+The record already exists and is durable: a stop that interrupts an assistant
+turn settles that turn's reservation as stopped, and
+`commitAssistantReservationError` writes an `assistant_turn_stopped` status
+fact the feed draws as `.assistant-turn-status-pill` — "Response stopped before
+it completed" — anchored to the turn it cut off, where it belongs. The sidebar
+carries it too, in `statusLabel.stopped`. What the dock adds is the
+acknowledgement of the *button press*, for the people who were in the room, and
+that is all it adds. The one case neither covers is a stop with no assistant
+reservation open — between steps, or while scheduling — which leaves no
+turn-anchored marker because there is no turn to anchor one to. Anybody
+tempted to add a transcript row for stops should start there, and not by
+duplicating the pill.
 
 One component across both phases rather than two sibling slots, because two
 would unmount one `role="status"` and mount another, and a live region inserted
@@ -763,7 +780,7 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
-### 2026-09-19 — The stop's acknowledgement leaves the feed
+### 2026-09-24 — The stop's acknowledgement leaves the feed
 
 **What changed:** `RunStoppedNotice`, the card the transcript column appended
 whenever the latest run's status was `stopped`, is gone. `RunStopAcknowledgement`
@@ -800,11 +817,13 @@ row ends when the conversation moves, which needs no duration, and a duration
 here would be a limit picked by whoever typed it rather than by the team
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
 
-**Consequences:** nothing in the transcript marks a stop, on any surface, ever.
-A reader who was away sees a partial answer and no continuation, and the
-composer is the affordance. If history has to carry the stop, that is a system
-row written at settlement and a decision to make on purpose, not a notice
-drifting into the feed again. The acknowledgement does not survive a reload,
+**Consequences:** no *chrome* in the transcript marks a stop any more. History
+is not left silent, which an earlier draft of this entry wrongly claimed and
+review corrected: the durable, turn-anchored `assistant_turn_stopped` pill
+already ships and is untouched here, so the deletion removes a duplicate rather
+than the record. The narrow gap it leaves is a stop taken with no assistant
+reservation open, which has no turn to anchor to; closing that is a decision to
+make on purpose, and not by adding a second mechanism beside the pill. The acknowledgement does not survive a reload,
 which is the point and not a defect to fix. It is armed by the stopping row's
 own condition, so a stop that settles before any render shows that row — the
 click and the settlement inside one frame — is acknowledged by nothing; the run
