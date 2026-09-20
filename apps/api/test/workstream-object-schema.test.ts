@@ -46,6 +46,14 @@ function activateRealtimeExecution(storage: DurableObjectStorage, now: number): 
     expectedLatestRunId: null,
     now,
   })).toEqual({ outcome: "admitted" });
+  expect(runs.claimAttempt({
+    runId: RUN_ID,
+    attemptId: ATTEMPT_ID,
+    owner: "realtime-test-owner",
+    leaseSeconds: 60,
+    lifecycleEventId: `claim:${RUN_ID}`,
+    now,
+  }).outcome).toBe("claimed");
   storage.sql.exec(
     `UPDATE runs SET execution_context_json = '{"kind":"realtime_test"}' WHERE run_id = ?`,
     RUN_ID,
@@ -1184,8 +1192,9 @@ describe("the Workstream Durable Object relational schema", () => {
     try {
       await store.waitUntilReady();
       store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "enterprise");
-      const at = "2026-08-16T12:00:00.000Z";
-      activateRealtimeExecution(storage, Date.parse(at));
+      const now = Date.now();
+      const at = new Date(now).toISOString();
+      activateRealtimeExecution(storage, now);
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
         type: "stream_started",
         sequence: 0,
@@ -1242,6 +1251,14 @@ describe("the Workstream Durable Object relational schema", () => {
         trigger: "auto",
         startedAt: at,
       });
+      storage.sql.exec(
+        `UPDATE runs
+            SET legacy_attempt_id = ?, lease_owner = 'recovered-owner', lease_expires_at = ?
+          WHERE run_id = ?`,
+        RECOVERED_ATTEMPT_ID,
+        Date.now() + 60_000,
+        RUN_ID,
+      );
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
         type: "compaction_started",
         sequence: 0,
@@ -1281,6 +1298,43 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(store.activeCompaction()).toBeNull();
       expect(database.prepare("SELECT status FROM runs WHERE run_id = ?").get(RUN_ID))
         .toEqual({ status: "running" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not recreate compaction state from a delayed event after stale reaping", async () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    const store = new WorkstreamObjectStore(storage, "worker-one", "global");
+    try {
+      await store.waitUntilReady();
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      const now = Date.now();
+      const at = new Date(now).toISOString();
+      activateRealtimeExecution(storage, now);
+      expect(new WorkstreamHarnessRunStorage(storage).reapStaleRoot({
+        runId: RUN_ID,
+        attemptId: ATTEMPT_ID,
+        leaseExpiresAt: now + 60_000,
+        lifecycleEventId: "stale-terminal",
+        now: now + 60_001,
+      })).toEqual({ outcome: "reaped" });
+
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "compaction_started",
+        sequence: 0,
+        occurredAt: at,
+        compaction: {
+          harnessRunId: RUN_ID,
+          attemptId: ATTEMPT_ID,
+          compactionIndex: 1,
+          trigger: "auto",
+          startedAt: at,
+        },
+      }));
+
+      expect(store.activeCompaction()).toBeNull();
     } finally {
       database.close();
     }

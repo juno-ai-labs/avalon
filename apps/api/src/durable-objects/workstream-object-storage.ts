@@ -345,6 +345,16 @@ function applyActiveCompactionEvent(
   event: ServerSocketEvent,
 ): void {
   if (event.type === "compaction_started") {
+    const owned = first(storage.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM runs
+        WHERE run_id = ? AND legacy_attempt_id = ?
+          AND status = 'running' AND terminalized_at IS NULL
+          AND lease_expires_at > ?`,
+      event.compaction.harnessRunId,
+      event.compaction.attemptId,
+      Date.now(),
+    ));
+    if (!owned) return;
     const startedAt = Date.parse(event.compaction.startedAt);
     storage.sql.exec(
       `INSERT INTO active_agent_compaction

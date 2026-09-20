@@ -1796,6 +1796,16 @@ export class WorkstreamHarnessRunStorage {
         || run.terminalized_at !== null) {
         return { outcome: "not_stale" as const };
       }
+      // A stale lease bypassed the executor's ordinary finally path. Recover
+      // the same participant-visible terminal boundary before publishing the
+      // terminal receipt, and discard presentation-only checkpoints that can
+      // no longer have a live producer. All of this shares the transaction
+      // with the run row below so a terminal run can never retain a clock or
+      // streaming overlay that still claims it is active.
+      this.#closeExecutionActivities(input.runId, "failed", input.leaseExpiresAt);
+      this.sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, input.runId);
+      this.sql.exec(`DELETE FROM active_agent_compaction WHERE run_id = ?`, input.runId);
+      this.sql.exec(`DELETE FROM inference_delay_status WHERE run_id = ?`, input.runId);
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,
