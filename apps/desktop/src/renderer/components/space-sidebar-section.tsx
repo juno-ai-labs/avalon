@@ -93,7 +93,11 @@ interface SpaceSidebarSectionProps {
    * Placements use the same row the rest of the sidebar does — and, inside an
    * expanded Space, the same drag the pinned list uses.
    */
-  renderWorkstream: (workstream: WorkstreamSummary, drag?: WorkstreamRowDrag) => ReactNode;
+  renderWorkstream: (
+    workstream: WorkstreamSummary,
+    drag?: WorkstreamRowDrag,
+    placementSpaceId?: string,
+  ) => ReactNode;
 }
 
 /**
@@ -529,7 +533,11 @@ export function SpaceSidebarSection({
                     : <SpacePlacementList spaceId={space.id}>
                       {placements.map((workstream, placementIndex) => (
                         <Fragment key={workstream.id}>
-                          {renderWorkstream(workstream, placementRowDrag(workstream, placementIndex))}
+                          {renderWorkstream(
+                            workstream,
+                            placementRowDrag(workstream, placementIndex),
+                            space.id,
+                          )}
                         </Fragment>
                       ))}
                     </SpacePlacementList>)}
