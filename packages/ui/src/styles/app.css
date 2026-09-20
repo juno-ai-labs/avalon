@@ -5275,23 +5275,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-dashboard-section-heading h2 { font-size: 16px; margin: 0; }
 .space-dashboard-section-copy { min-width: 0; }
 .space-dashboard-header-actions { display: flex; gap: 8px; }
-/* One list for both kinds of default, because a resource and a Sidekick
-   recommendation are one mechanism with two consumers — see
-   `SpaceDefaultList`. */
-.space-default-list { display: grid; gap: 8px; list-style: none; margin: 16px 0 0; padding: 0; }
-.space-default-list li { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 12px; justify-content: space-between; padding: 10px 12px; }
-.space-default-list li > span { display: grid; min-width: 0; }
-.space-default-list li small { color: var(--av-sys-color-text-muted); font-size: 11px; }
-.space-channel-row { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
-.space-channel-row .waiting-workstream-row { min-width: 0; }
-/* A row with nothing to remove still reserves the control's box. A breakout
-   has no **Remove** — it follows its Channel — and without the reservation its
-   link ran to the right edge while the Channel rows above and below it stopped
-   short of one, putting the activity times in two different columns down a
-   list whose whole value is that it can be scanned. Hidden rather than absent,
-   and hidden by `visibility` rather than by a spacer of a guessed width: the
-   box is exactly the button's, whatever the font renders it at. */
-.space-channel-row-spacer { visibility: hidden; }
 /* A breakout on the Space dashboard: the same row as its Channel, marked with
    the ↳ the middle column already uses for one.
 

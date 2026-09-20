@@ -3,13 +3,14 @@ import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
 import { SpaceSummarySchema } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
+  channelSpaceMutationHandlers,
   invitationAccountMismatch,
   spacesEnabledForSession,
   upsertSpaceDirectory,
@@ -260,6 +261,23 @@ describe('applyPinnedWorkstreams', () => {
     // Rewriting the row would replace a status the socket is authoritative for
     // with whatever the pin response happened to carry.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toBe(unchanged);
+  });
+});
+
+describe('channelSpaceMutationHandlers', () => {
+  it('keeps the Space and Channel identifiers in API order for both writes', async () => {
+    const queryClient = new QueryClient();
+    const api = {
+      addChannelToSpace: vi.fn().mockResolvedValue({ ...space, channelCount: 1 }),
+      removeChannelFromSpace: vi.fn().mockResolvedValue(space),
+    };
+    const handlers = channelSpaceMutationHandlers(api, queryClient);
+
+    await handlers.onAddChannelToSpace(space.id, workstreamId);
+    await handlers.onRemoveChannelFromSpace(space.id, workstreamId);
+
+    expect(api.addChannelToSpace).toHaveBeenCalledWith(space.id, workstreamId);
+    expect(api.removeChannelFromSpace).toHaveBeenCalledWith(space.id, workstreamId);
   });
 });
 

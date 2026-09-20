@@ -411,6 +411,15 @@ Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
 transcript and execution context were built with it.
 
+The desktop Space landing page does not list or edit these defaults, add an
+existing Channel, or start a new Channel. The inheritance and Channel-placement
+mechanisms and their APIs remain, but the landing page is deliberately a view
+of the Channels in the Space rather than a management surface. Defaults that
+were configured before this change continue applying to current and future
+member Channels; there is currently no desktop surface to inspect or change
+them. Retiring that durable behavior would be a separate product decision, not
+an incidental consequence of removing its landing-page controls.
+
 ### General
 
 `ensureGeneralSpace` reserves the Organization's one General Space — named
@@ -911,12 +920,11 @@ it — the same answer a personal Channel gets, and the safe one, because nothin
 in the Organization knows who a private child's participants are.
 
 The desktop draws both kinds as one row type: a status dot from the shared
-marker function, a title, an activity time. A Channel row carries **Remove**; a
-breakout row carries the ↳ glyph the middle column uses, its parent Channel's
-name, a link to `/workstreams/<channel>?substream=<breakout>`, and no
-**Remove** — a breakout follows its Channel, and the Space authority has no
-word for taking one out on its own. Two empty states are distinguished by
-`channelCount`: a Space with no Channels says "No channels yet", and a Space
+marker function, a title, an activity time. Neither row carries a management
+control on the landing page. A breakout row also carries the ↳ glyph the middle
+column uses, its parent Channel's name, and a link to
+`/workstreams/<channel>?substream=<breakout>`. Two empty states are distinguished
+by `channelCount`: a Space with no Channels says "No channels yet", and a Space
 whose conversations are all stale says "Nothing here needs you right now",
 because telling somebody a Space with forty Channels in it is empty sends them
 looking for a bug.
@@ -1163,12 +1171,11 @@ being attempted supplies its own sentence for a refusal that carried no code —
 **A `through_channel` viewer's dashboard is the header and the conversation
 list.** Mark, colour, name — and that list, which is already filtered to the
 Channels they can read by the same predicate that let them see the Space at
-all. Everything else on that screen is the Space's own: who is in it, who it is
-for, whether it lives, and what it hands down. None of it is theirs, and the
-summary they are handed carries no participants and no defaults at all, so the
-Resources and Sidekicks sections would be two empty lists under two controls
-that can only fail. The rename is withheld as an interaction rather than as a
-control — the field never opens — because that is the shape it has.
+all. The lifecycle, audience, participant and Channel-management controls are
+the Space's own and are withheld. The rename is withheld as an interaction
+rather than as a control — the field never opens — because that is the shape it
+has. Resources and Sidekicks are absent from every Space landing page, not just
+this restricted view.
 
 Each dashboard action reports into its own slot, so a refused rename stays with
 the name instead of appearing inside every modal that is opened afterwards. The
@@ -1544,7 +1551,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, **New space**, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | Each section, the two empty states, the one activity-ordered list of both kinds, the refetch after a reconnect and the one it does not do for the connection it opened on, the blocked-archive copy, General's protections, that one refusal appears once, and that a refused participant roster leaves the dialog open with its sentence in it. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the one activity-ordered list of both kinds; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
@@ -1874,6 +1881,25 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-20 — The Space landing page is about Channels
+
+**What changed:** The desktop Space landing page no longer renders Resources or
+Sidekicks sections, their add/remove controls, or their pickers. The Channels
+section also no longer offers **Add channel** or the adjacent new-Channel plus
+control, and Channel rows no longer offer **Remove**. The unused shared list
+components and desktop default API wrappers left behind by those controls were
+removed too. The underlying default inheritance and Channel-placement authority
+remain unchanged.
+
+**Why:** The landing page should orient a person around the Channels in a Space.
+Default and Channel-placement controls made it a management surface as well,
+adding dependencies to every open without helping that primary job. Existing
+configured defaults continue to apply even though no desktop surface currently
+inspects or changes them; retiring that durable behavior was rejected as a
+separate product decision. Future management surfaces can reuse the authority,
+but they must be introduced where that job belongs rather than silently
+restoring these controls.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 
