@@ -27,6 +27,7 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000a2");
@@ -62,18 +63,7 @@ function scheduling(instance: unknown): AlarmScheduling {
 async function seedAuthority(
   phase: "durable_object_open" | "maintenance_draining",
 ): Promise<void> {
-  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      actor_type TEXT NOT NULL,
-      actor_user_id TEXT,
-      workstream_id TEXT,
-      action TEXT NOT NULL,
-      target_type TEXT NOT NULL,
-      target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`).run();
+  await ensureAuditSchema();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY,
