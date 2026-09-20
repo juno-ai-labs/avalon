@@ -8,7 +8,11 @@ actions to the same components rather than drawing a second design.
 
 - `packages/ui/src/components`: conversation header, navigation frame and rows,
   workstream sidebar, resource rows, Sidekick section/picker, account trigger,
-  glyphs, avatars and visual primitives.
+  glyphs, avatars and visual primitives — and the Space surfaces: `space-row.tsx`
+  (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
+  `space-appearance-picker.tsx` (`SpaceAppearancePicker`, `SpaceIcon`),
+  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`,
+  `SpaceDefaultList`, `SpaceChannelRow`) and `space-icons.ts` (`SPACE_ICONS`).
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
@@ -32,6 +36,53 @@ The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
+
+Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
+marks itself `data-reorder-list`: a host's row finds the slots it is being
+measured against through that mark rather than by knowing whose list it is in,
+which is what lets the desktop's pinned section and a Space's placements share
+one row and one drag. The Breakout rail takes an optional `substreamDrag` and
+draws the order it is given, reporting the gesture and nothing else — the
+arrangement is stored per person on the Organization, so it is the host's. A
+host that omits it draws rows that are not draggable at all, which is what a
+guest gets: their write is refused by the same gate every Space write is behind,
+and a gesture that can only fail is worse than no gesture.
+
+Every one of these `onDragEnd` callbacks takes a `cancelled` flag, and each
+reads it the same way: the drag operation the browser reports is `none` when
+nothing accepted the release, which is what `Escape` and a release outside the
+list both look like. It is one reading rather than four because it decides
+whether a gesture somebody backed out of is written to every session they have
+open, and the list that was missing it wrote the arrangement the pointer
+happened to build on its way past.
+
+The Space components follow the same split, one step further. A `SpaceRow` draws
+the geometry, the accordion, the hover-revealed plus and the motion keys, and
+takes the host's own navigation element as a slot — routing is a host decision
+under the Spaces PRD's design decision 9, the way `NavigationRowContent` already
+treats a Channel row. `SpaceDashboardHeader` owns the rename *interaction*
+(double-click, F2, Enter to commit, Escape to abandon, blur to commit) because
+that is presentation; the host only ever learns the committed name. Nothing here
+fetches, and no component infers a capability from an omitted prop: a Space with
+no audience control is a host that decided not to draw one.
+
+`SpaceRow` still requires the drag handlers and **the new-Channel action is
+optional**, which is the one capability this component lets a host withhold. A
+host may hand a reader a Space they can see and may write nothing on — Rally
+does, for a Space reached only through a Channel placed in it
+([`spaces.md`](spaces.md#who-may-see-a-space-and-why)) — and a plus that can
+only fail is worse than no plus. The row's grid keeps its third column either
+way, so a list mixing the two kinds does not have its names in two different
+places; that is the same reservation `SpaceChannelRow` makes for the
+**Remove** a breakout has no use for, except that this one needs no hidden
+copy because the grid holds the column by itself.
+
+A Space's resources and its Sidekick recommendations are one list. They are one
+registry keyed by `kind` on the server, and nothing about the drawing depends on
+which kind it is, so `SpaceDefaultList` is not told — the kind branches in the
+host's copy table and in its two `/spaces/:id/defaults` calls, where it means
+something. The guest browser passes no Space props at all and draws no Space
+navigation.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser installs system
@@ -79,6 +130,47 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-19 — A Space row may be drawn without its plus
+
+`SpaceRow` required `onNewChannel` on the argument that a host unable to start
+a Channel in a Space had no business drawing the row. Rally now has such a
+reader: somebody who reaches a Space only because they can read a Channel
+placed in it is shown its mark and name so that Channel has somewhere to be
+drawn, and every write on it is refused by name. The action is therefore
+optional, and the row's grid keeps its third column so the two kinds line up.
+This is the only capability the component lets a host withhold; the drag
+handlers are still required, because a row that cannot be arranged is a
+different component. The reasoning is in
+[`spaces.md`](spaces.md#changelog).
+
+### 2026-09-19 — Space presentation is shared; hosts keep routing and authority
+
+**What changed:** `@rally/ui` gains the Space row, the Space appearance picker,
+the Space dashboard sections and `SPACE_ICONS`, and the `.project-*` styles move
+to `.space-*` with nothing left behind. `project-icons.ts` becomes
+`space-icons.ts`.
+
+**Why:** The Spaces PRD's design decision 9 puts reusable Space rows and
+management sections here so the desktop and the guest browser cannot drift into
+two designs, while authority, data, routing and capability decisions stay with
+the host. The guest browser omits Spaces outright rather than inferring
+authorization from a missing control.
+
+**Considered and rejected:** Giving `SpaceRow` its own `NavLink` and a `to`
+prop. It would have put a router in this package for one component, and the
+existing `NavigationRowContent` split — contents here, link at the host — was
+already the answer to the same question for a Channel row. Also rejected: two
+components for the two kinds of Space default. They are one registry keyed by
+`kind` on the server, and the drawing does not depend on the kind, so telling
+the list which one it is drawing would have been a prop nothing reads.
+
+**Consequences:** The `--av-sys-color-project-*` tokens and the `project` colour
+helpers in `lib/project-palette.ts` stay, per the PRD's 2026-09-19 decision that
+renaming them touches every glyph and avatar for no visible change; new Space
+code imports them under those names. A host that wants a Space row supplies its
+own navigation element, and the rename interaction is not the host's to
+reimplement.
 
 ### 2026-09-18 — Sidebar failures carry state, not response copy
 

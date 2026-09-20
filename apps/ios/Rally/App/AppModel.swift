@@ -252,10 +252,10 @@ final class AppModel {
         expectedGlobalURL: URL
     ) throws {
         guard workspace.workspace != nil else {
-            throw RallyAPIError(status: 502, code: "dev_session_mismatch", message: "The development session did not include a workspace.")
+            throw RallyAPIError(status: 502, code: "dev_session_mismatch", message: "The development session did not include an organization.")
         }
         guard identity.workspace == nil else {
-            throw RallyAPIError(status: 502, code: "dev_identity_mismatch", message: "The development identity session included a workspace.")
+            throw RallyAPIError(status: 502, code: "dev_identity_mismatch", message: "The development identity session included an organization.")
         }
         guard Self.sameAPIOrigin(expectedGlobalURL, workspace.apiBaseUrl),
               Self.sameAPIOrigin(expectedGlobalURL, identity.apiBaseUrl) else {
@@ -266,7 +266,7 @@ final class AppModel {
             )
         }
         guard identity.user.email.localizedLowercase == workspace.user.email.localizedLowercase else {
-            throw RallyAPIError(status: 502, code: "dev_identity_mismatch", message: "The development identity did not match the workspace account.")
+            throw RallyAPIError(status: 502, code: "dev_identity_mismatch", message: "The development identity did not match the organization account.")
         }
     }
 
@@ -316,7 +316,7 @@ final class AppModel {
     func activate(_ workspace: RallyWorkspace) async throws {
         let session = try await client.activateWorkspace(region: workspace.region, workspaceId: workspace.id)
         guard let url = URL(string: session.apiBaseUrl) else {
-            throw RallyAPIError(status: 502, code: "missing_api", message: "The workspace did not return an API URL.")
+            throw RallyAPIError(status: 502, code: "missing_api", message: "The organization did not return an API URL.")
         }
         workspaceSession = session
         try persist(session, account: SessionAccounts.workspace)
@@ -336,7 +336,7 @@ final class AppModel {
             phase = .ready
             await loadWorkspaceContent()
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t create that workspace."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t create that organization."
         }
     }
 
@@ -390,7 +390,7 @@ final class AppModel {
             onboarding = try await client.onboardingState()
         } catch {
             await reconcilePushRegistration()
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t leave this workspace."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t leave this organization."
         }
     }
 
@@ -480,12 +480,12 @@ final class AppModel {
     }
 
     var conversationTitle: String {
-        if substreamLaunch != nil { return "New substream" }
+        if substreamLaunch != nil { return "New breakout" }
         if currentSubstreamId == SubstreamAddress.main {
             return currentWorkstream?.title ?? "Main"
         }
         if let openChildTitle, !openChildTitle.isEmpty { return openChildTitle }
-        return privateChildren.first(where: { $0.substreamId == currentSubstreamId })?.title ?? "Substream"
+        return privateChildren.first(where: { $0.substreamId == currentSubstreamId })?.title ?? "Breakout"
     }
 
     var displayedChildren: [RallyPrivateChild] {
@@ -493,7 +493,7 @@ final class AppModel {
         if let reservedChildId,
            isCreatingSubstream,
            !rows.contains(where: { $0.substreamId == reservedChildId }) {
-            rows.append(RallyPrivateChild(substreamId: reservedChildId, title: "New substream"))
+            rows.append(RallyPrivateChild(substreamId: reservedChildId, title: "New breakout"))
         }
         if currentSubstreamId != SubstreamAddress.main,
            let openChildTitle,
@@ -610,7 +610,7 @@ final class AppModel {
             if substreamLaunch == attempt {
                 composerText = text
                 isCreatingSubstream = false
-                launchError = (error as? LocalizedError)?.errorDescription ?? "The substream could not be created."
+                launchError = (error as? LocalizedError)?.errorDescription ?? "The breakout could not be created."
             }
         }
         isSending = false
@@ -630,7 +630,7 @@ final class AppModel {
                 privateChildren[index].title = trimmed
             }
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That substream could not be renamed."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That breakout could not be renamed."
         }
     }
 
@@ -646,7 +646,7 @@ final class AppModel {
                 openChildTitle = trimmed
             }
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That substream could not be renamed."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That breakout could not be renamed."
         }
     }
 
@@ -659,7 +659,7 @@ final class AppModel {
                 selectSubstream(SubstreamAddress.main)
             }
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That substream could not be archived."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That breakout could not be archived."
         }
     }
 
@@ -1100,7 +1100,7 @@ final class AppModel {
         } else {
             currentWorkstream = RallyWorkstream(
                 id: workstreamId,
-                title: currentWorkstream?.title ?? "Work stream"
+                title: currentWorkstream?.title ?? "Channel"
             )
         }
     }
@@ -1353,7 +1353,7 @@ final class AppModel {
             }
             await loadWorkspaceContent()
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t archive that work stream."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t archive that channel."
         }
     }
 
@@ -1367,7 +1367,7 @@ final class AppModel {
             }
             await loadWorkspaceContent()
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t rename that work stream."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t rename that channel."
         }
     }
 
@@ -1379,7 +1379,7 @@ final class AppModel {
             }
             await loadWorkspaceContent()
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t change who can see that work stream."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t change who can see that channel."
         }
     }
 
@@ -1492,7 +1492,7 @@ final class AppModel {
         isSearchPresented = false
         if let id = hit.workstreamId {
             open(
-                workstream: RallyWorkstream(id: id, title: hit.title ?? "Work stream"),
+                workstream: RallyWorkstream(id: id, title: hit.title ?? "Channel"),
                 substreamId: hit.substreamId ?? SubstreamAddress.main
             )
         }
@@ -1540,21 +1540,21 @@ final class AppModel {
                     do {
                         try await activate(match)
                     } catch {
-                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that workspace."
+                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that organization."
                         return
                     }
                 } else if let region = target.region {
                     do {
                         try await activate(RallyWorkspace(
                             id: workspaceId,
-                            name: "Workspace",
+                            name: "Organization",
                             slug: nil,
                             region: region,
                             role: "member",
                             timezone: TimeZone.current.identifier
                         ))
                     } catch {
-                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that workspace."
+                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that organization."
                         return
                     }
                 }
@@ -1562,7 +1562,7 @@ final class AppModel {
             if let match = workstreams.first(where: { $0.id == target.workstreamId }) {
                 open(workstream: match, substreamId: target.substreamId)
             } else {
-                open(workstream: RallyWorkstream(id: target.workstreamId, title: "Work stream"), substreamId: target.substreamId)
+                open(workstream: RallyWorkstream(id: target.workstreamId, title: "Channel"), substreamId: target.substreamId)
             }
             return
         }

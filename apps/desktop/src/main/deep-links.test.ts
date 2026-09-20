@@ -10,8 +10,8 @@ const WORKSPACE_ID = '00000000-0000-7000-8000-000000000019';
 const WORKSTREAM_ID = '00000000-0000-7000-8000-000000000021';
 const CONNECTION_ID = '00000000-0000-7000-8000-000000000022';
 
-describe('main-process workspace deep-link boundary', () => {
-  it('accepts legacy readers and the one workspace-addressed form', () => {
+describe('main-process organization deep-link boundary', () => {
+  it('accepts legacy readers and the one organization-addressed form', () => {
     for (const target of [
       `rallywithai://workstreams/${WORKSTREAM_ID}`,
       `rallywithai://workspace/global/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
@@ -23,7 +23,7 @@ describe('main-process workspace deep-link boundary', () => {
     }
   });
 
-  it('rejects partial, duplicate, and augmented workspace targets', () => {
+  it('rejects partial, duplicate, and augmented organization targets', () => {
     for (const target of [
       `rallywithai://workstreams/${WORKSTREAM_ID}?region=global`,
       `rallywithai://workspace/global/${WORKSPACE_ID}/settings/digest?workspace=${WORKSPACE_ID}`,

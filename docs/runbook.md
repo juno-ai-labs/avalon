@@ -856,6 +856,108 @@ change the update channel. Change `latest-mac.yml` or `Rally.dmg` only as a
 separate, explicitly approved release rollback using the normal publisher's
 ordering and cache-purge safeguards.
 
+### Running the Spaces cutover
+
+One-time, per region, and it is driven from the migration tracker rather than
+from a script. [`spaces.md`](spaces.md) owns the mechanism; this is the
+sequence.
+
+**What is being moved.** WorkspaceDO migration 63 seeds a `space_bootstrap` row
+`pending` in every Organization, and migration 64 settles every undelivered
+Project effect and then deletes the Project tables — there is no barrier in
+front of the drops, for the reason step 4 gives. Waking a WorkspaceDO applies
+both and arms its alarm, which
+claims the first page of cutover work; from there the activity Queue carries
+each page to a consumer that places one page of Channels in General. Nobody has
+to be signed in.
+
+1. **Deploy, then force `WorkspaceDO`.** On `/migrations`, pick `WorkspaceDO`,
+   optionally one region at a time. That is the whole start: the constructor
+   applies 61 and 62 and the alarm does the rest.
+
+2. **Watch the cutover row, not the page count.** Through the engineering MCP:
+
+   ```text
+   run_workspace_sql: SELECT phase, general_space_id, cursor, attempts,
+                             blocked_json, completed_at
+                        FROM space_bootstrap WHERE id = 1
+   ```
+
+   The phases run `pending` → `general` → `preflight` → `memberships` →
+   `finalize` → `complete`. An Organization sitting in `preflight` or
+   `memberships` with a moving `cursor` is working: `preflight` walks the whole
+   directory asking whether each Channel may be widened and writes nothing, and
+   `memberships` is only entered when it found nothing. One sitting in
+   `finalize` is refusing to close, and `blocked_json` says why. A blocker
+   recorded in `preflight` means **no** Channel in that Organization was
+   widened or placed.
+
+3. **Remediate blockers.** `space_membership_content_fence` means the Channel
+   holds retained content the Organization may not read, so placing it in
+   General would disclose it. **Adding it to an Organization-wide Space is not
+   the remedy** — that is the same widening, refused by the same fence — and
+   the fence itself is immutable, so it cannot be edited away either. Two paths
+   exist: give the Channel a home whose audience the fence already admits,
+   which is **Add to space** against a *personal* Space whose participants the
+   fence allows; or delete the Channel. Either one takes it out of the walk,
+   because the invariant the cutover is closing on is that every Channel has a
+   Space, not that every Channel is in General.
+
+   `space_bootstrap_no_active_actor` means every participant of a personal
+   Channel has left the Organization; re-activating one member, or deleting the
+   Channel, are the two that move it — leaving it as it is keeps the
+   Organization open.
+
+   A `finalize` that refuses sends the Organization back to `preflight` on the
+   alarm's ordinary retry interval, so a remediated Organization re-walks and
+   closes itself with no further command, and one nobody remediates re-walks
+   about once a minute until somebody does.
+
+   **An Organization can also leave `complete` on its own, and that is not a
+   regression.** Three things reopen the walk: a `finalize` that refused, a
+   connector or seed placement that was refused, and a directory row committing
+   for a Channel the Organization was already holding that is in no Space. The
+   last is the backstop for a creation path that forgot to place what it made —
+   the Organization notices, takes `spacesReady` away while it re-walks, and
+   closes again once the Channel has a home. It is deliberately the Channel's
+   *second* row that trips it rather than its first: a Channel's first row is a
+   creation still in flight, so reopening on one would blank every member's
+   sidebar on ordinary creations. A Channel a forgetful path made is therefore
+   caught on its next projection, not the instant it appears. An Organization
+   that reopens
+   *repeatedly* is the signal worth chasing: something is creating Channels
+   without placing them, and the `workstream_id` will be in the membership rows
+   the next walk writes.
+
+4. **Project retirement needs no operator step.** Migration 62 settles every
+   undelivered Project default in the same transaction that drops the tables —
+   targets to `terminal` with `project_retired`, publications to `accepted` —
+   and the activity consumer acknowledges a message published before the
+   cutover with `reason: "projects_retired"`. Nothing is held back for it, and
+   nothing is owed: the PRD deletes Projects rather than converting them, so a
+   default that never reached a Channel is dropped on purpose. Do not wait for
+   the Queue to drain before forcing the class.
+
+5. **Confirm the finish.** `phase = 'complete'` with an empty `blocked_json` in
+   every Organization, and an empty regional activity dead-letter queue — a
+   dead-lettered `space_bootstrap` or `space_default` message is the terminal
+   failure signal for this work, as it is for every other Space delivery.
+
+**Old clients.** Once a region is serving the new payload, a desktop build from
+before the cutover is answered `426 client_update_required` on
+`GET /workstreams` and `GET /workspace/socket`. **That is a wire-level refusal,
+not an update prompt**: no shipped build knows the code, so a pre-cutover
+desktop renders it as whatever it shows for a transport failure. The prompt
+belongs to builds that ship after this, which declare a contract and can read
+the answer.
+
+The gate keys on the **absence of `x-rally-client-contract`**, or on a declared
+version below `MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` only separates a
+browser context from a native one: a request with no contract header and no
+`Origin` is admitted, because iOS and the desktop main process decode with
+schemas that ignore unknown keys and refusing them would break working clients
+over a problem they do not have.
+
 ### Desktop icon release gate
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.

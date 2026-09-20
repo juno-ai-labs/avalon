@@ -258,6 +258,23 @@ export const ParentEffectEnvelopeSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
+  /**
+   * Which conversation under this parent the effect is about, on the one class
+   * of effect where that is not the parent itself.
+   *
+   * Absent — the ordinary case — means the parent's own aggregate: the
+   * conversation the Channel *is*, summed over its children, which is what the
+   * sidebar draws. Present, and never `"0"`, means one breakout's own
+   * projection, forwarded so the Organization can list the breakout beside its
+   * Channel on a Space dashboard. Both land in WorkspaceDO through the same
+   * handoff and the same receipt; the id is what decides which pair of tables
+   * they land in.
+   *
+   * It is on the envelope rather than inside the effect because the effect is
+   * the child's own payload, hashed and versioned by the child, and a parent
+   * adding a field to it would change bytes the child is the authority for.
+   */
+  substreamId: SubstreamIdSchema.optional(),
   generation: z.number().int().positive(),
   messageId: z.string().min(1).max(500),
   partitionKey: z.string().min(1).max(300),

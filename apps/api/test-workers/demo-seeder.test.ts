@@ -190,6 +190,28 @@ describe("seeding a pack", () => {
     expect(provider.calls).toEqual([]);
   }, 60_000);
 
+  it("refuses a personal room rather than seeding one that is Organization-wide", async () => {
+    const seed = await openDemoTestSession();
+    const open = seed.actions.find((action) => action.kind === "create_workstream");
+    expect(open).toBeDefined();
+
+    // Every Channel is born in a Space, and a create that names none lands in
+    // General — which is Organization-wide, so the audience it unions in makes
+    // the Channel Organization-wide whatever the pack asked for. A seeded
+    // `personal` room would be a lie the readiness barrier then waits on
+    // forever, comparing the scope the pack stated against one that can never
+    // arrive.
+    await expect(applyDemoSeedAction(
+      demoSeedEnv(),
+      seed,
+      { ...open!, scope: "personal" },
+    )).rejects.toThrow(/demo_seed_personal_room_unsupported/u);
+
+    // Nothing was written for it: the refusal is in front of the creation, so
+    // there is no half-seeded room and no receipt to replay.
+    expect(await demoSeedReceipts(env.DB, DEMO_OPERATION_ID)).toHaveLength(0);
+  }, 30_000);
+
   it("publishes a scheduled Sidekick, offers it to every member, and gives it one briefing", async () => {
     const seed = await openDemoTestSession(DEMO_SIDEKICK_PACK);
     const receipts: DemoSeedReceipt[] = [];

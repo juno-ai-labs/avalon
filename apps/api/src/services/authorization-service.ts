@@ -1,11 +1,12 @@
 import { projectMemorySearchAccess } from './memory-search-authorization';
-import { asAutomationId, asWorkspaceId, asWorkstreamId, asSubstreamId } from '@rally/contracts';
+import { asWorkspaceId, asSubstreamId } from '@rally/contracts';
 import type { AuthContext, Env } from '../env';
 import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
-import { automationDOName, workstreamDOName, workspaceDOName } from '../durable-objects/names';
+import { workspaceDOName } from '../durable-objects/names';
 import { authorizationSnapshotKey } from '../durable-objects/authorization-storage';
 import { createResourceObjectPort } from '../runtime/resource-port';
 import { createIdentityObjectPort } from '../runtime/identity-port';
+import { conversationParentStub } from './conversation-parent-client';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
 import type { AutomationDO } from '../durable-objects/automation-do';
@@ -166,8 +167,11 @@ class AuthorizationBatch {
     if (!subject.userId) return { status: 'denied', reason: 'outside_delegation', evidence: [] };
     const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId, substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId) };
     const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
-      const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, subject.workspaceId,
-        workstreamDOName(this.env.AVALON_REGION, subject.workspaceId, asWorkstreamId(resource.parentId)));
+      // Through the one dispatch point, so the namespace a parent kind resolves
+      // to is decided in exactly one place in the tree.
+      const parent = await conversationParentStub(this.env, {
+        workspaceId: subject.workspaceId, parentKind: 'workstream', parentId: resource.parentId,
+      }) as DurableObjectStub<WorkstreamDO>;
       const facts = await parent.readAuthorizationFacts(request);
       return facts.exists && facts.authority === "legacy" ? { ...facts, validatedAt: Math.min(facts.validatedAt, facts.main.validatedAt) } : facts;
     });
@@ -194,8 +198,9 @@ class AuthorizationBatch {
         fact(child.member, 'private_child_membership_required', childEvidence),
       ] }, Date.now());
     }
-    const automation = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, subject.workspaceId,
-      automationDOName(this.env.AVALON_REGION, subject.workspaceId, asAutomationId(resource.parentId)));
+    const automation = await conversationParentStub(this.env, {
+      workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
+    }) as DurableObjectStub<AutomationDO>;
     const facts = await ownerEvidence(this.automations, JSON.stringify([subject, resource.parentId, resource.substreamId]),
       () => automation.readAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }));
     if (!facts.exists) return { status: 'not_found', resource,

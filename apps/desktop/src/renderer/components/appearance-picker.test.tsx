@@ -13,13 +13,13 @@ function WorkstreamAppearancePicker(
 ): React.JSX.Element {
   return <AppearancePicker
     {...props}
-    label="Change work-stream icon and color"
+    label="Change channel icon and color"
     renderGlyph={(appearance) => <WorkstreamGlyph appearance={appearance} id={props.id} />}
   />;
 }
 
 function openPicker(): void {
-  fireEvent.keyDown(screen.getByRole('button', { name: 'Change work-stream icon and color' }), { key: 'Enter' });
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Change channel icon and color' }), { key: 'Enter' });
 }
 
 describe('appearance picker', () => {
@@ -40,7 +40,7 @@ describe('appearance picker', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Change work-stream icon and color' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Change channel icon and color' })).toHaveFocus();
   });
 
   it('restores server state and reports a failed save', async () => {
@@ -95,7 +95,7 @@ describe('appearance picker', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('shows no swatch for a colour reserved to accounts, but still renders a work stream holding one', () => {
+  it('shows no swatch for a colour reserved to accounts, but still renders a channel holding one', () => {
     // `black` is storable and not offered. A work stream set to it before the
     // picker stopped listing it must still open the picker without throwing —
     // it simply has nothing checked, and picking anything moves it onto a hue.

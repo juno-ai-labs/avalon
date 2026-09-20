@@ -109,7 +109,7 @@ function HoverWarmTarget({
 }): React.JSX.Element {
   onRender?.();
   const warmup = useWorkstreamSocketHoverWarmup(workstreamId);
-  return <button {...warmup}>Warm work stream</button>;
+  return <button {...warmup}>Warm channel</button>;
 }
 
 function OpenContextTarget({
@@ -178,7 +178,7 @@ describe('useRetainedWorkstreamSocket for an automation parent', () => {
 });
 
 describe('standalone conversation subscriptions', () => {
-  it.each(['0', '00000000-0000-7000-8000-00000000c001'])('opens only the addressed feed for substream %s', async (substreamId) => {
+  it.each(['0', '00000000-0000-7000-8000-00000000c001'])('opens only the addressed feed for breakout %s', async (substreamId) => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
     const parentId = '00000000-0000-7000-8000-00000000b001';
@@ -209,7 +209,7 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
       { wrapper: createWrapper([workstreamId]) },
     );
-    const target = view.getByRole('button', { name: 'Warm work stream' });
+    const target = view.getByRole('button', { name: 'Warm channel' });
 
     fireEvent.pointerEnter(target);
     act(() => vi.advanceTimersByTime(999));
@@ -336,11 +336,11 @@ describe('WorkstreamSocketPool', () => {
     fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
     expect(onReadContext).toHaveBeenLastCalledWith({ state: 'cold' });
 
-    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm channel' }));
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
     const warmedSockets = [...FakeWebSocket.instances];
-    if (warmedSockets.length !== 2) throw new Error('The hovered work stream did not open its pair.');
+    if (warmedSockets.length !== 2) throw new Error('The hovered channel did not open its pair.');
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).toHaveBeenCalledWith(
@@ -353,7 +353,7 @@ describe('WorkstreamSocketPool', () => {
       WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
     const warmedFeed = warmedSockets.find((socket) => String(socket.url).endsWith('/feed'));
-    if (!warmedFeed) throw new Error('The hovered work stream opened no feed socket.');
+    if (!warmedFeed) throw new Error('The hovered channel opened no feed socket.');
     act(() => {
       warmedFeed.readyState = FakeWebSocket.OPEN;
       warmedFeed.dispatchEvent(new Event('open'));
@@ -407,7 +407,7 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
       { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
-    const targets = view.getAllByRole('button', { name: 'Warm work stream' });
+    const targets = view.getAllByRole('button', { name: 'Warm channel' });
     const firstTarget = targets[0];
     const secondTarget = targets[1];
     if (!firstTarget || !secondTarget) throw new Error('Expected two hover targets.');
@@ -416,7 +416,7 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
     const firstPair = FakeWebSocket.instances.slice(0, 2);
-    if (firstPair.length !== 2) throw new Error('The first hovered work stream opened no socket pair.');
+    if (firstPair.length !== 2) throw new Error('The first hovered channel opened no socket pair.');
 
     fireEvent.pointerEnter(secondTarget);
     act(() => vi.advanceTimersByTime(1_000));
@@ -445,7 +445,7 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
     const rendersBeforeConnectionChange = rendered.mock.calls.length;
     const feedSocket = FakeWebSocket.instances.find((socket) => String(socket.url).endsWith('/feed'));
-    if (!feedSocket) throw new Error('The active work stream opened no feed socket.');
+    if (!feedSocket) throw new Error('The active channel opened no feed socket.');
 
     act(() => {
       feedSocket.readyState = FakeWebSocket.OPEN;
@@ -481,7 +481,7 @@ describe('WorkstreamSocketPool', () => {
     const rendersBeforeBackgroundChange = rendered.mock.calls.length;
     const backgroundFeed = FakeWebSocket.instances.find((socket) =>
       String(socket.url).includes(backgroundWorkstreamId) && String(socket.url).endsWith('/feed'));
-    if (!backgroundFeed) throw new Error('The background work stream opened no feed socket.');
+    if (!backgroundFeed) throw new Error('The background channel opened no feed socket.');
 
     act(() => {
       backgroundFeed.readyState = FakeWebSocket.OPEN;
@@ -504,7 +504,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([workstreamId]) },
     );
 
-    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm channel' }));
     act(() => vi.advanceTimersByTime(1_001));
     await flushPromises();
 
@@ -524,7 +524,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([workstreamId]) },
     );
 
-    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm channel' }));
     act(() => vi.advanceTimersByTime(500));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]} />,
@@ -548,7 +548,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([workstreamId]) },
     );
 
-    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm channel' }));
     act(() => vi.advanceTimersByTime(500));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
@@ -562,7 +562,7 @@ describe('WorkstreamSocketPool', () => {
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the route subtree mounted while the active work stream changes', () => {
+  it('keeps the route subtree mounted while the active channel changes', () => {
     const mounted = vi.fn();
     function Route({ workstreamId }: { workstreamId: string }): React.JSX.Element {
       useEffect(() => {

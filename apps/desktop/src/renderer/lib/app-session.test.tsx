@@ -289,10 +289,10 @@ describe('single-platform desktop identity routing', () => {
 
   const ticketCallback = `rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`;
   const missingIdentity = (): Error => new Error(
-    `Error invoking remote method 'onboarding:activate-workspace': Error: ${accountReconnectRequiredFailure().message}`,
+    `Error invoking remote method 'onboarding:activate-organization': Error: ${accountReconnectRequiredFailure().message}`,
   );
 
-  it('signs the account in from an active workspace and settles once the browser callback has landed', async () => {
+  it('signs the account in from an active organization and settles once the browser callback has landed', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     // Main answers a reconnect under an active workspace with that same session.
     bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
@@ -395,7 +395,7 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
-  it('reports a sign-in that never reached the browser under the row, not as a workspace outage', async () => {
+  it('reports a sign-in that never reached the browser under the row, not as an organization outage', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
@@ -549,7 +549,7 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
-  it('signs in in place for an addressed link into another workspace, and opens it once the sign-in lands', async () => {
+  it('signs in in place for an addressed link into another organization, and opens it once the sign-in lands', async () => {
     const workspaceGlobal = '00000000-0000-7000-8000-000000000030';
     const activated: DesktopSession = {
       ...enterpriseSession,
@@ -605,7 +605,7 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
   });
 
-  it('moves to the next stored workspace after active membership is revoked', async () => {
+  it('moves to the next stored organization after active membership is revoked', async () => {
     const nextSession: DesktopSession = {
       ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
@@ -1020,14 +1020,14 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
-  it('activates the connector attempt workspace before applying its completion', async () => {
+  it('activates the connector attempt organization before applying its completion', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000019';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
         id: targetWorkspaceId,
-        name: 'Origin Workspace',
+        name: 'Origin Organization',
         region: 'global',
         role: 'owner',
       },
@@ -1043,24 +1043,24 @@ describe('single-platform desktop identity routing', () => {
       region: 'global',
       workspaceId: targetWorkspaceId,
     }));
-    expect(await screen.findByText('global:Origin Workspace')).toBeVisible();
+    expect(await screen.findByText('global:Origin Organization')).toBeVisible();
   });
 
-  it('lands a chosen workspace on its new-work-stream page with its record already in the cache', async () => {
+  it('lands a chosen organization on its new-channel page with its record already in the cache', async () => {
     const workspaceA = '00000000-0000-7000-8000-000000000031';
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000032';
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
-      workspace: { id: '00000000-0000-7000-8000-000000000033', name: 'Workspace B', region: 'global', role: 'member' },
+      workspace: { id: '00000000-0000-7000-8000-000000000033', name: 'Organization B', region: 'global', role: 'member' },
     });
     const activated: DesktopSession = {
       ...globalIdentitySession,
       accessToken: 'workspace-a-access-token-longer-than-twenty',
-      workspace: { id: workspaceA, name: 'Workspace A', region: 'global', role: 'owner' },
+      workspace: { id: workspaceA, name: 'Organization A', region: 'global', role: 'owner' },
     };
     bridge.activateWorkspace.mockResolvedValueOnce(activated);
     const record = {
-      id: workspaceA, name: 'Workspace A', region: 'global' as const, timezone: 'America/New_York',
+      id: workspaceA, name: 'Organization A', region: 'global' as const, timezone: 'America/New_York',
       currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'America/New_York', role: 'owner' as const },
     };
     let resolveRecord!: (value: typeof record) => void;
@@ -1074,7 +1074,7 @@ describe('single-platform desktop identity routing', () => {
       return activated;
     });
     const client = renderProvider();
-    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
     const flags = { developerSettings: true, multipleWorkspacesEnabled: true };
     client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags);
 
@@ -1082,11 +1082,11 @@ describe('single-platform desktop identity routing', () => {
     await act(async () => { activation = observedActivateWorkspace!('global', workspaceA); await Promise.resolve(); });
     await waitFor(() => expect(getWorkspace).toHaveBeenCalledTimes(1));
     // The early announcement did not take the previous workspace down.
-    expect(screen.getByText('global:Workspace B')).toBeVisible();
+    expect(screen.getByText('global:Organization B')).toBeVisible();
     expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000032');
     await act(async () => { resolveRecord(record); await activation; });
 
-    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
     expect(window.location.hash).toBe('#/');
     expect(client.getQueryData(['workspace', workspaceA, 'user-1'])).toEqual(record);
     expect(client.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY)).toEqual(flags);
@@ -1094,7 +1094,7 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
-  it('keeps the route when the chosen workspace is the one already open', async () => {
+  it('keeps the route when the chosen organization is the one already open', async () => {
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000034';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({ ...enterpriseSession, accessToken: 'renewed-access-token-longer-than-twenty' });
@@ -1114,11 +1114,11 @@ describe('single-platform desktop identity routing', () => {
   it('keeps onboarding OAuth completion in the onboarding window', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000023';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     renderProvider();
-    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
     await act(async () => observedSetPendingConnectorOAuth!({ source: 'onboarding', provider: 'slack',
       region: 'global', workspaceId, attemptId: 'a'.repeat(43) }));
     await dispatchDeepLink(
@@ -1132,11 +1132,11 @@ describe('single-platform desktop identity routing', () => {
     const workspaceId = '00000000-0000-7000-8000-000000000023';
     const attemptId = 'a'.repeat(43);
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     renderProvider();
-    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
     await act(async () => observedSetPendingConnectorOAuth!({
       source: 'conversation',
       connectorId: 'slack',
@@ -1153,24 +1153,24 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.openSettings).not.toHaveBeenCalled();
   });
 
-  it('returns from workspace B to same-region workspace A for connector completion', async () => {
+  it('returns from organization B to same-region organization A for connector completion', async () => {
     const workspaceA = '00000000-0000-7000-8000-000000000023';
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000026';
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
         id: '00000000-0000-7000-8000-000000000024',
-        name: 'Workspace B',
+        name: 'Organization B',
         region: 'global',
         role: 'member',
       },
     });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
-      workspace: { id: workspaceA, name: 'Workspace A', region: 'global', role: 'owner' },
+      workspace: { id: workspaceA, name: 'Organization A', region: 'global', role: 'owner' },
     });
     renderProvider();
-    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${workspaceA}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=slack`,
@@ -1180,7 +1180,7 @@ describe('single-platform desktop identity routing', () => {
       region: 'global',
       workspaceId: workspaceA,
     }));
-    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
     expect(window.location.hash).toBe('#/workstreams/new');
   });
@@ -1219,7 +1219,7 @@ describe('single-platform desktop identity routing', () => {
       expiresAt: futureExpiry,
       workspace: {
         id: targetWorkspaceId,
-        name: 'Addressed Workspace',
+        name: 'Addressed Organization',
         region: 'enterprise',
         role: 'member',
       },
@@ -1248,7 +1248,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     const activated: DesktopSession = {
       ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Ordered Workspace', region: 'global', role: 'member' },
+      workspace: { id: workspaceId, name: 'Ordered Organization', region: 'global', role: 'member' },
     };
     // Main answers a claim from whatever it has activated so far.
     let mainActiveSession: DesktopSession | null = null;
@@ -1280,7 +1280,7 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves a child destination after serialized workspace activation', async () => {
+  it('preserves a child destination after serialized organization activation', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000033';
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
@@ -1292,7 +1292,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     const activated: DesktopSession = {
       ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Ordered Workspace', region: 'global', role: 'member' },
+      workspace: { id: workspaceId, name: 'Ordered Organization', region: 'global', role: 'member' },
     };
     // Main answers a claim from whatever it has activated so far.
     let mainActiveSession: DesktopSession | null = null;
@@ -1337,7 +1337,7 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
   });
 
-  it('does not apply a connector result when its workspace cannot be activated', async () => {
+  it('does not apply a connector result when its organization cannot be activated', async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
@@ -1355,7 +1355,7 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
-  it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
+  it('does not navigate when an organization-addressed channel link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
@@ -1483,7 +1483,7 @@ describe('single-platform desktop identity routing', () => {
     confirm.mockRestore();
   });
 
-  it('renews a rejected bearer while consuming a workspace-addressed Slack link', async () => {
+  it('renews a rejected bearer while consuming an organization-addressed Slack link', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000036';
     const staleSession: DesktopSession = {
       ...globalIdentitySession,
@@ -1630,14 +1630,14 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('activates a workspace-addressed settings destination before opening it', async () => {
+  it('activates an organization-addressed settings destination before opening it', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000026';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
         id: targetWorkspaceId,
-        name: 'Notification Workspace',
+        name: 'Notification Organization',
         region: 'global',
         role: 'member',
       },
@@ -1656,7 +1656,7 @@ describe('single-platform desktop identity routing', () => {
     });
   });
 
-  it('preserves a pending connector attempt while another workspace is active', async () => {
+  it('preserves a pending connector attempt while another organization is active', async () => {
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -1674,18 +1674,18 @@ describe('single-platform desktop identity routing', () => {
       ...globalIdentitySession,
       workspace: {
         id: '00000000-0000-7000-8000-000000000037',
-        name: 'Workspace B',
+        name: 'Organization B',
         region: 'global',
         role: 'member',
       },
     }));
 
-    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
     expect(observedPendingConnectorOAuth?.workspaceId).toBe(enterpriseSession.workspace!.id);
     expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('a'.repeat(43));
   });
 
-  it('distinguishes a retryable workspace activation outage from denied access', async () => {
+  it('distinguishes a retryable organization activation outage from denied access', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000038';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(
@@ -1705,7 +1705,7 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
-  it('opens a link to the active workspace without re-activating it', async () => {
+  it('opens a link to the active organization without re-activating it', async () => {
     const activeWorkspaceId = '00000000-0000-7000-8000-000000000040';
     const activeSession: DesktopSession = {
       ...globalIdentitySession,
@@ -1732,12 +1732,12 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('activates a workspace that is not the active one, even when its credential is stored', async () => {
+  it('activates an organization that is not the active one, even when its credential is stored', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000045';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
-      workspace: { id: targetWorkspaceId, name: 'Fresh Workspace', region: 'global', role: 'member' },
+      workspace: { id: targetWorkspaceId, name: 'Fresh Organization', region: 'global', role: 'member' },
     });
     const client = renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -1752,13 +1752,13 @@ describe('single-platform desktop identity routing', () => {
     // membership before the window moved.
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });
     expect(bridge.activateWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });
-    expect(await screen.findByText('global:Fresh Workspace')).toBeVisible();
+    expect(await screen.findByText('global:Fresh Organization')).toBeVisible();
     // A different workspace is a different cache scope: nothing from the
     // previous one may be drawn under the new credential.
     expect(client.getQueryData(['members'])).toBeUndefined();
   });
 
-  it('keeps the query cache when a same-workspace session is applied', async () => {
+  it('keeps the query cache when a same-organization session is applied', async () => {
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...enterpriseSession,
@@ -1831,7 +1831,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).toBe(before);
   });
 
-  it('gives a signed-in person without a workspace the window, not the inline message', async () => {
+  it('gives a signed-in person without an organization the window, not the inline message', async () => {
     // `SignInScreen` is the only surface that renders the inline message, and
     // `SessionGate` shows it only when there is no session at all. Someone who
     // has signed in but not joined a workspace is on `WorkspaceOnboardingGate`,
@@ -1847,7 +1847,7 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('opens the new work stream screen, which is how the menu bar starts one', async () => {
+  it('opens the new channel screen, which is how the menu bar starts one', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -1975,7 +1975,7 @@ describe('draft cache lifetime across a session', () => {
     await waitFor(async () => expect(await rememberedRows.read(scope, 'ws:0')).toBeNull());
   });
 
-  it('forgets a workspace the account is refused when activating it fails, and keeps the active one', async () => {
+  it('forgets an organization the account is refused when activating it fails, and keeps the active one', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -2008,7 +2008,7 @@ describe('draft cache lifetime across a session', () => {
     await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
   });
 
-  it('preserves both workspace draft scopes while switching within one account', async () => {
+  it('preserves both organization draft scopes while switching within one account', async () => {
     const globalSession: DesktopSession = {
       ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
@@ -2030,7 +2030,7 @@ describe('draft cache lifetime across a session', () => {
     expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
-  it('clears only the departed workspace draft scope after leave succeeds', async () => {
+  it('clears only the departed organization draft scope after leave succeeds', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     renderProvider();

@@ -15,7 +15,7 @@ describe('context rail state', () => {
     });
   });
 
-  it('keeps a separate remembered width per work stream', () => {
+  it('keeps a separate remembered width per channel', () => {
     useUiStore.getState().setRailScope('workstream-one');
     expect(useUiStore.getState()).toMatchObject({ railWidth: 320 });
 

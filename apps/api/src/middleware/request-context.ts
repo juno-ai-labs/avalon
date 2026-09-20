@@ -49,6 +49,7 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         "authorization",
         "content-type",
         "idempotency-key",
+        ...rallyHeaderAliases(RALLY_HEADERS.CLIENT_CONTRACT),
         ...rallyHeaderAliases(RALLY_HEADERS.DRAFT_ID),
         ...rallyHeaderAliases(RALLY_HEADERS.OPERATION_ID),
         ...rallyHeaderAliases(RALLY_HEADERS.REGION),

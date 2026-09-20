@@ -431,7 +431,7 @@ describe('MessageBlock human identity', () => {
 
     const response = screen.getByLabelText('Your elicitation response');
     expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
-    expect(screen.queryByText('Workspace member')).not.toBeInTheDocument();
+    expect(screen.queryByText('Organization member')).not.toBeInTheDocument();
   });
 
   it('keeps a coworker visible on their elicitation response', () => {
@@ -645,7 +645,7 @@ describe('MessageBlock human identity', () => {
 });
 
 describe('MessageBlock markdown', () => {
-  it('reports a successful response copy by opaque message and work-stream id', async () => {
+  it('reports a successful response copy by opaque message and channel id', async () => {
     copyText.mockReset().mockResolvedValue(undefined);
     reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
     const message: Message = {
@@ -1865,7 +1865,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.agent-message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['Copy', 'Speak', 'Image', 'PDF', '↳ New substream']);
+      .toEqual(['Copy', 'Speak', 'Image', 'PDF', '↳ New breakout']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -1887,9 +1887,9 @@ describe('MessageBlock action tooltips', () => {
       />,
     );
 
-    const control = screen.getByRole('button', { name: 'New substream from this message' });
+    const control = screen.getByRole('button', { name: 'New breakout from this message' });
 
-    expect(await hoverTooltip(control)).toHaveTextContent('New substream from this message');
+    expect(await hoverTooltip(control)).toHaveTextContent('New breakout from this message');
   });
 });
 
@@ -1930,9 +1930,9 @@ describe('MessageBlock system rows', () => {
   it('leaves a one-line note alone', () => {
     stubHeights(20);
 
-    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Rally woke this work stream up as scheduled.')} />);
+    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Rally woke this channel up as scheduled.')} />);
 
-    expect(screen.getByText('Rally woke this work stream up as scheduled.')).toBeInTheDocument();
+    expect(screen.getByText('Rally woke this channel up as scheduled.')).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
   });
 
@@ -1949,7 +1949,7 @@ describe('MessageBlock system rows', () => {
 
   it('clamps a run prompt, opens it, and closes it again', () => {
     stubHeights(1_640);
-    const brief = 'You are writing the scheduled digest for Adam Juhasz in the Juno Labs workspace.';
+    const brief = 'You are writing the scheduled digest for Adam Juhasz in the Juno Labs organization.';
 
     render(<MessageBlock {...actions} message={systemMessage('message-brief', brief)} />);
 
@@ -2600,7 +2600,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
   it('says who will be able to manage it, which acceptance freezes', () => {
     render(<MessageBlock {...actions} message={proposal} />);
-    expect(screen.getByRole('group').textContent).toContain('This work stream can manage it');
+    expect(screen.getByRole('group').textContent).toContain('This channel can manage it');
 
     const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
     const { unmount } = render(<MessageBlock {...actions} message={personal} />);
@@ -2651,7 +2651,7 @@ describe('the card proposing an automation drafted in this room', () => {
   });
 });
 
-describe('MessageBlock substream cutoff', () => {
+describe('MessageBlock breakout cutoff', () => {
   const onStartSubstream = vi.fn();
 
   beforeEach(() => {
@@ -2673,18 +2673,18 @@ describe('MessageBlock substream cutoff', () => {
       <MessageBlock {...actions} message={settledAgentTurn} onStartSubstream={onStartSubstream} />,
     );
 
-    const control = screen.getByRole('button', { name: 'New substream from this message' });
+    const control = screen.getByRole('button', { name: 'New breakout from this message' });
     // The visible words are inside the accessible name, so voice control can
     // reach the control by what it says.
-    expect(control).toHaveAccessibleName(expect.stringContaining('New substream'));
-    expect(control.textContent?.trim()).toBe('↳ New substream');
+    expect(control).toHaveAccessibleName(expect.stringContaining('New breakout'));
+    expect(control.textContent?.trim()).toBe('↳ New breakout');
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     // Last, after the exports: the row reads copy, keep, then branch. Speak
     // needs a playback provider this render does not mount.
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Copy', 'Image', 'PDF', '↳ New substream']);
+      .toEqual(['Copy', 'Image', 'PDF', '↳ New breakout']);
 
     fireEvent.click(control);
 
@@ -2700,7 +2700,7 @@ describe('MessageBlock substream cutoff', () => {
       />,
     );
 
-    const control = screen.getByRole('button', { name: 'New substream from this message' });
+    const control = screen.getByRole('button', { name: 'New breakout from this message' });
     expect(container.querySelector('.human-message-actions')).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(control))
@@ -2711,7 +2711,7 @@ describe('MessageBlock substream cutoff', () => {
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-4');
   });
 
-  it('keeps the action slot under a person’s turn that cannot start a substream', () => {
+  it('keeps the action slot under a person’s turn that cannot start a breakout', () => {
     // The slot is what the one-unit turn gap relies on to keep the next turn
     // off this bubble, so it is laid out whether or not there is a control to
     // put in it: an automation's conversation, a substream other than the
@@ -2754,9 +2754,9 @@ describe('MessageBlock substream cutoff', () => {
     const row = container.querySelector('.agent-message-actions');
     expect(row).not.toBeNull();
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['↳ New substream']);
+      .toEqual(['↳ New breakout']);
 
-    fireEvent.click(screen.getByRole('button', { name: 'New substream from this message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
 
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
   });
@@ -2774,7 +2774,7 @@ describe('MessageBlock substream cutoff', () => {
         onStartSubstream={onStartSubstream}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
 
     rerender(
       <MessageBlock
@@ -2783,7 +2783,7 @@ describe('MessageBlock substream cutoff', () => {
         onStartSubstream={onStartSubstream}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
 
     // The other two arms of the same predicate: a turn the transcript has no id
     // for cannot be named as the cutoff, and a row that is not an authored
@@ -2793,12 +2793,12 @@ describe('MessageBlock substream cutoff', () => {
     rerender(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, transcriptTurnId: undefined }} onStartSubstream={onStartSubstream} />,
     );
-    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
 
     rerender(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
     );
     expect(screen.getByText('Automation')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
   });
 });

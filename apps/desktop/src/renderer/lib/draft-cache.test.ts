@@ -168,7 +168,7 @@ describe('draft cache', () => {
     expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
   });
 
-  it('clears one regional workspace without touching a same-id workspace in another region', async () => {
+  it('clears one regional organization without touching a same-id organization in another region', async () => {
     const enterpriseKey = workstreamDraftKey('enterprise', 'shared-workspace', '1');
     const globalKey = workstreamDraftKey('global', 'shared-workspace', '2');
     await writeDraftText(enterpriseKey, 'leave this one');
@@ -189,7 +189,7 @@ describe('draft cache', () => {
     expect(workstreamDraftKey('global', 'workspace', 'parent', 'child')).toBe('workspace:global:workspace:workstream:parent:substream:child');
   });
 
-  it('moves released single-workspace draft keys into the regional namespace', async () => {
+  it('moves released single-organization draft keys into the regional namespace', async () => {
     await writeDraftText('workstream:room-one', 'existing room');
     await writeDraftText('new-workstream:shared-workspace', 'new room');
     await writeDraftText('new-automation:shared-workspace:draft-one', 'new automation');
