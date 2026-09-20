@@ -141,12 +141,11 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const isGeneral = space.systemRole === 'general';
   // This reader reaches the Space only because they can read a Channel placed
   // in it. They are told its mark and name so that Channel has somewhere to be
-  // drawn, and that is the whole of what this screen may say: the sections
-  // below are the Space's participants, its audience, its lifecycle and what it
-  // hands down, none of which is theirs to see and every one of which the
-  // server refuses them by name. What is left is the header and the list of
-  // conversations — and that list is already filtered to the Channels they can
-  // read, by the same predicate that let them see the Space at all.
+  // drawn, and that is the whole of what this screen may say. Its participants,
+  // audience and lifecycle are not theirs to see, and the server refuses every
+  // write by name. What is left is the header and the conversation list — and
+  // that list is already filtered to the Channels they can read, by the same
+  // predicate that let them see the Space at all.
   const reachedThroughChannel = space.reach === 'through_channel';
   // Owner and administrator are one gate everywhere a Space is edited, and the
   // role only decides which control is drawn: the server reauthorizes it.

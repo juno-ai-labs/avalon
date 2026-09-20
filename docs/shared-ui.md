@@ -11,8 +11,8 @@ actions to the same components rather than drawing a second design.
   glyphs, avatars and visual primitives — and the Space surfaces: `space-row.tsx`
   (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
   `space-appearance-picker.tsx` (`SpaceAppearancePicker`, `SpaceIcon`),
-  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`,
-  `SpaceDefaultList`) and `space-icons.ts` (`SPACE_ICONS`).
+  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`) and
+  `space-icons.ts` (`SPACE_ICONS`).
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
@@ -77,12 +77,7 @@ places. The Space dashboard's Channel and breakout entries are host-owned links,
 not shared removable rows; the landing page draws both at full width and keeps
 placement management in its owning surfaces.
 
-A Space's resources and its Sidekick recommendations are one list. They are one
-registry keyed by `kind` on the server, and nothing about the drawing depends on
-which kind it is, so `SpaceDefaultList` is not told — the kind branches in the
-host's copy table and in its two `/spaces/:id/defaults` calls, where it means
-something. The guest browser passes no Space props at all and draws no Space
-navigation.
+The guest browser passes no Space props at all and draws no Space navigation.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser installs system
@@ -131,16 +126,16 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
-### 2026-09-20 — The Space dashboard no longer exports a removable Channel row
+### 2026-09-20 — The Space dashboard sheds its retired management lists
 
-**What changed:** `SpaceChannelRow` and its hidden control-column layout were
-removed from the shared package. The desktop Space dashboard now supplies its
-Channel and breakout links directly, at full width.
+**What changed:** `SpaceChannelRow`, `SpaceDefaultList`, and their management
+layout were removed from the shared package. `SpaceDashboardSection` now owns
+only the titled band around the remaining Channel list, whose Channel and
+breakout links the desktop supplies directly at full width.
 
-**Why:** The landing page no longer owns Channel-placement controls, so a shared
-component whose only distinction was whether to render or reserve **Remove** had
-no remaining presentation contract. Keeping it would advertise a management
-surface that no host uses.
+**Why:** The landing page no longer owns Channel placement or default management,
+so shared components whose only job was drawing those controls had no remaining
+presentation contract. Keeping them would advertise surfaces that no host uses.
 
 ### 2026-09-19 — A Space row may be drawn without its plus
 
