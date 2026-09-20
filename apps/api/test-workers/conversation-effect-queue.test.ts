@@ -46,6 +46,7 @@ import {
   pendingChildEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
+import { holdEffectQueue, type EffectQueueHold } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ba0");
@@ -70,6 +71,13 @@ const AUTH: AuthContext = {
   role: "member",
 };
 
+/**
+ * Shared with `holdEffectQueue` so every case in this file installs the
+ * prototype spy once. Starts unparked: only the cases that inspect an outbox
+ * flip it on, and the drain-proof case flips it back off before the alarm.
+ */
+const effectQueueHold: EffectQueueHold = { parked: false };
+
 beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, {
@@ -78,6 +86,8 @@ beforeEach(async () => {
     sessionId: SESSION_ID,
   });
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
+  effectQueueHold.parked = false;
+  holdEffectQueue(effectQueueHold);
 }, 30_000);
 
 afterEach(() => {
@@ -106,38 +116,32 @@ function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableO
   ));
 }
 
-interface QueueGate {
-  /** While true the object's producer refuses, so its drain defers rows instead of deleting them. */
-  parked: boolean;
-}
-
 /**
- * Keep an object's outbox readable.
+ * Keep outbox rows readable across the next RPC and alarm.
  *
- * The drain alarm fires the moment an effect commits and deletes every row
+ * The drain fires the moment an effect commits and deletes every row
  * `ACTIVITY_QUEUE` accepts, so a read placed after the mutation races the
- * drain (docs/testing.md). A producer that refuses makes the drain defer the
- * rows instead, and the helpers then hand exactly those rows to the real
- * consumer. Flip `parked` off to hand the real binding back.
+ * drain (docs/testing.md). Holding `sendBatch` on the binding prototype is
+ * what survives the next invocation; patching `instance.env` does not.
+ * Flip `parked` off to hand the real drain back.
  */
 async function parkEffectQueue(
   stub: DurableObjectStub,
   options: { logLevel?: "warn" } = {},
-): Promise<QueueGate> {
-  const gate: QueueGate = { parked: true };
-  const refused = () => Promise.reject(new Error("effect_queue_parked_by_test"));
-  const parked = { send: refused, sendBatch: refused };
+): Promise<EffectQueueHold> {
+  effectQueueHold.parked = true;
+  if (!options.logLevel) return effectQueueHold;
   await runInDurableObject(stub, (instance) => {
     const target = instance as unknown as { env: Env };
+    const logLevel = options.logLevel;
     target.env = new Proxy(target.env, {
       get: (current, property, receiver) => {
-        if (property === "ACTIVITY_QUEUE" && gate.parked) return parked;
-        if (property === "LOG_LEVEL" && options.logLevel) return options.logLevel;
+        if (property === "LOG_LEVEL") return logLevel;
         return Reflect.get(current, property, receiver);
       },
     });
   });
-  return gate;
+  return effectQueueHold;
 }
 
 /**
