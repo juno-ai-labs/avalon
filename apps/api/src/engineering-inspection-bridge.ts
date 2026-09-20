@@ -306,15 +306,10 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
                 WHEN control.phase = 'durable_object_open'
                  AND control.serving_contract_version >= control.required_serving_contract_version
                  AND control.required_serving_contract_version <= ?
-                 AND (route.workspace_id IS NULL OR (
-                   route.state = 'active' AND route.generation = control.generation
-                 ))
                 THEN 'active'
-                ELSE route.state
+                ELSE NULL
               END AS authority_state
          FROM workspaces workspace
-         LEFT JOIN workspace_product_authority_routes route
-           ON route.workspace_id = workspace.id
          LEFT JOIN workstream_authority_control control
            ON control.id = 1
         WHERE workspace.region = ?

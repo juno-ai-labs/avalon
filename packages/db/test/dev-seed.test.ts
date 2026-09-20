@@ -86,12 +86,6 @@ describe("the development seed", () => {
              'verified', 0, 0, 0, 'seeded_in_do', 'seeded_in_do', '{}', NULL,
              '2026-08-20T00:02:00.000Z', NULL, '2026-08-20T00:02:00.000Z'
         FROM workstreams w JOIN workspaces ws ON ws.id = w.workspace_id;
-      INSERT INTO workspace_product_authority_routes (
-        workspace_id, generation, state, stage_index, source_cursor,
-        row_counts_json, last_error_code, updated_at
-      )
-      SELECT id, 1, 'verified', 0, 0, '{}', NULL, '2026-08-20T00:02:00.000Z'
-        FROM workspaces;
       UPDATE workstream_authority_control
          SET phase = 'maintenance_verified', verified_at = '2026-08-20T00:03:00.000Z',
              updated_at = '2026-08-20T00:03:00.000Z'
@@ -99,8 +93,6 @@ describe("the development seed", () => {
       UPDATE workstream_authority_routes
          SET state = 'active', activated_at = '2026-08-20T00:04:00.000Z',
              updated_at = '2026-08-20T00:04:00.000Z';
-      UPDATE workspace_product_authority_routes
-         SET state = 'active', updated_at = '2026-08-20T00:04:00.000Z';
       UPDATE workstream_authority_control
          SET phase = 'durable_object_open', opened_at = '2026-08-20T00:05:00.000Z',
              updated_at = '2026-08-20T00:05:00.000Z'

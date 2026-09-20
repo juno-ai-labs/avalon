@@ -6,7 +6,8 @@ import { classifyPendingD1Migrations } from "./classify-pending-d1-migrations.mj
 const retirement = "0090_drop_legacy_product_tables.sql";
 const inferenceRetirement = "0094_retire_agent_inference_payload_ledger.sql";
 const fullEmailRoutes = "0097_email_routes_use_full_address.sql";
-const workerFirst = [retirement, inferenceRetirement, fullEmailRoutes];
+const workspaceLedgerRetirement = "0115_drop_workspace_product_authority_ledger.sql";
+const workerFirst = [retirement, inferenceRetirement, fullEmailRoutes, workspaceLedgerRetirement];
 
 test("keeps ordinary migration ordering when retirement is not pending", () => {
   assert.equal(
@@ -36,6 +37,13 @@ test("selects Worker-first ordering for inference-ledger retirement", () => {
 test("selects Worker-first ordering for the full-address registry cutover", () => {
   assert.equal(
     classifyPendingD1Migrations(fullEmailRoutes, workerFirst),
+    "worker_first=true",
+  );
+});
+
+test("selects Worker-first ordering for the workspace migration-ledger retirement", () => {
+  assert.equal(
+    classifyPendingD1Migrations(workspaceLedgerRetirement, workerFirst),
     "worker_first=true",
   );
 });
