@@ -2,9 +2,9 @@
 
 > Created 2026-09-19.
 >
-> An authorized internal operator uses a separate Electron sidecar to submit a
+> An authenticated `@rallywith.ai` operator uses a separate Electron sidecar to submit a
 > message through Rally’s standard message flow as a selected participant in a
-> current workspace; demo setup provisions these relationships for its users.
+> demo workspace; demo setup provisions these relationships for its users.
 > This is the first surface of Rally's shared impersonation platform.
 > Companion state: [`state.md`](state.md). Standing contract:
 > [the Rally implementation brief](https://github.com/juno-ai-labs/avalon/blob/main/docs/PRDs/2026-08-05_avalon-implementation-brief/prd.md).
@@ -14,12 +14,12 @@
 
 ## Summary
 
-A presenter keeps Rally open, switches to a separate internal Electron app, and composes a stack of participant messages for the current workspace. Each card asks only for the represented participant, the destination
+A presenter signed in with a verified `@rallywith.ai` email keeps Rally open, switches to a separate internal Electron app, and composes a stack of participant messages for the current demo workspace. The sidecar is unavailable to every other user and in every regular workspace, even if an impersonation relationship exists. Each card asks only for the represented participant, the destination
 work stream or substream, and the message. Sending a card enters Rally’s standard message endpoint and admission flow. That flow persists the participant’s turn, runs the existing message-addressing decision, and starts the ordinary persistent Rally harness when the message addresses Rally. Impersonation adds only an alternative authorization path for establishing who may submit as that participant; it does not add a classifier, reorder message admission, or create a special harness path. The turn and resulting work appear in Rally as that participant. The existing audit database stores that the message was admitted through impersonation, the operator who actually submitted it, the represented participant, and the resulting canonical message ID. The message and transcript schemas remain unchanged; audit correlation, not a second provenance field, preserves the actual sender.
 
 The sidecar is the first client of a cohesive impersonation platform, not a one-off demo bypass. The platform represents an operator acting as a participant through one platform-level, directed, all-or-nothing **can impersonate** relationship, a typed impersonation authorization context, and correlated audit events. If `A can impersonate B`, A may act as B wherever an impersonation-aware product surface exists; the relationship is scoped to one workspace and has no capability, purpose, destination, action, or read/write sub-permissions within that workspace. Each surface still applies its own availability rules and B’s ordinary authorization. Existing message contracts, message storage, addressing, transcripts, and harness execution remain unchanged.
 
-The first impersonation-aware surface is new-message sending in the sidecar. It is authorized by the platform relationship and ordinary workspace rules, not by demo status. Demo preparation is only one producer of relationships: it creates them among the users seated in a demo workspace. A later support surface can use the same all-or-nothing relationship without issuing the represented participant’s real credentials.
+The first impersonation-aware surface is new-message sending in the sidecar. It requires a verified operator email whose domain is exactly `rallywith.ai`, a current eligible demo workspace, the platform relationship, and ordinary workspace authorization. Demo preparation creates relationships among the users seated in a demo workspace. The relationship remains a reusable platform primitive, but does not authorize this surface outside that boundary. A later support surface can use the same all-or-nothing relationship without issuing the represented participant’s real credentials.
 
 ## Motivation
 
@@ -49,7 +49,7 @@ visible failure over a background retry whose result could surprise a live demo.
 
 ## Goals
 
-1. A user with an active workspace-scoped **can impersonate** relationship to another current member can post one message as that member in the current workspace, including through a self-relationship.
+1. Only an authenticated user with a verified `@rallywith.ai` email and an active workspace-scoped **can impersonate** relationship to another current member can post as that member through the sidecar, and only in an eligible demo workspace, including through a self-relationship.
 2. The sidecar obtains participants, work streams, and substreams dynamically
    from the current workspace; no cast or destination list is packaged into the
    app.
@@ -60,7 +60,7 @@ visible failure over a background retry whose result could surprise a live demo.
 5. Every send enters Rally’s standard message endpoint and preserves its existing order: authorization, ordinary message admission and persistence, existing addressing, and the persistent conversation loop/full harness when addressed. There is no direct transcript write, pre-admission classifier, or scripted response.
 6. The existing audit system durably attributes every represented send to both identities: the represented participant remains the canonical author, while the audit event records the authenticated operator who actually submitted it and the canonical message ID.
 7. The sidecar is fire-and-forget after the direct message API response; it does not observe, poll, subscribe to, or report subsequent addressing or harness execution.
-8. The sidecar cannot act without an exact active **can impersonate** relationship in the current workspace, regardless of whether that workspace is a demo.
+8. The sidecar denies all other email domains and every regular workspace, even with an active **can impersonate** relationship. Every catalog read and represented send rechecks the operator email domain, canonical demo eligibility, and exact active relationship server-side.
 9. The platform expresses impersonation as one all-or-nothing directed relationship, so later support surfaces share its authority, attribution, audit, and revocation instead of inventing capability-specific grants.
 10. A retry or lost response produces at most one participant turn and one harness
    activation for the logical send.
@@ -75,7 +75,7 @@ visible failure over a background retry whose result could surprise a live demo.
 2. **Participant credential or session recovery — rejected.** The platform never
    reveals a participant's password, OAuth grant, refresh token, cookie, or
    ordinary Rally session. A future operate-as session may use a distinct impersonation session credential, but the underlying **can impersonate** relationship remains all-or-nothing.
-3. **A demo-specific impersonation permission — rejected.** Demo status, the demo register, a workspace name, ownership, administrator role, or a client-supplied marker never grants impersonation. Only the workspace-scoped platform relationship does. The sidecar is internal, but the authorization primitive is independent of demos.
+3. **Sidecar access outside company demo workspaces — rejected.** Only verified `@rallywith.ai` operators in eligible demo workspaces may use this surface. Ownership, administrator role, the `demos` role, possession of the app, a workspace name, or an impersonation relationship cannot bypass either gate. The generic relationship carries no demo-specific sub-permission; these are mandatory surface availability checks alongside relationship authorization. This release authorizes no impersonated messaging in regular workspaces.
 4. **Managing impersonation relationships in the sidecar — deferred.** The backend stores the platform-level **can impersonate** relationship, and demo preparation creates the required relationships automatically. The sidecar cannot create, widen, revoke, or administer relationships. A general administrative UI and support approval workflow are deferred.
 5. **Workspace administration — rejected.** The app does not create, retire,
    rename, or change membership, roles, work streams, substreams, permissions,
@@ -107,7 +107,7 @@ The sidecar is a separately launched internal Electron host over Rally’s exist
 current workspace, authenticated operator, and a persistent **Impersonation**
 marker with the statement that represented messages are audited.
 
-The app opens against one current workspace resolved from authenticated app context. There is no arbitrary workspace-ID field or workspace picker in the first release. If no current workspace exists, or the operator has no active **can impersonate** relationships in it, the shell shows no eligible participants and no sendable card. Demo status is neither fetched nor consulted.
+The app opens against one current workspace resolved from authenticated app context. There is no arbitrary workspace-ID field or workspace picker in the first release. If the operator email or current workspace fails the access boundary below, the shell shows access denied, no participant or destination catalog, and no sendable card. An eligible operator in an eligible demo workspace with no active **can impersonate** relationships sees no eligible participants and no sendable card.
 
 The main view is a vertical stack of cards. The first card is empty. **Add card**
 adds another; a draft card can be removed. Each card contains:
@@ -123,6 +123,14 @@ adds another; a draft card can be removed. Each card contains:
 There is no confirmation modal. The explicit card summary is the confirmation,
 and Rally does not interpose approval prompts on individual actions. The destination is a conversation for a new ordinary message, never an open elicitation. The UI has no elicitation selector, answer control, or elicitation identifier field.
 
+### Sidecar access boundary
+
+Access requires both an authenticated operator whose verified email domain is exactly `rallywith.ai` and a current workspace canonically recognized as a published, active demo workspace. The backend derives the email from trusted identity data and demo eligibility from the regional demo register plus ordinary workspace lifecycle authority. A workspace name, client-supplied email or demo marker, app metadata, or membership alone proves neither condition. Other domains, subdomains, and lookalike suffixes are denied. Regular workspaces are always denied, including those owned by staff or containing valid impersonation relationships. The demo template, unpublished candidates, abandoned demos, and retired or closed demos are unavailable.
+
+These two checks define internal-sidecar access; no separate app entitlement or `demos` role is required or sufficient. The existing exact relationship, current membership, and destination authorization checks remain additional requirements. The email restriction applies to the authenticated operator accessing the app; demo casting and ordinary participant eligibility govern represented users.
+
+The server checks this boundary before returning any participant or destination catalog and on every represented send through the standard message endpoint. It also applies to direct API calls, altered clients, and same-key retries: omitting sidecar metadata cannot bypass it. This release exposes no alternate impersonated-message route for regular workspaces. Missing or unverifiable identity or demo eligibility fails closed. A workspace or account change invalidates loaded selections, disables sending, and requires fresh authorization; loss of eligibility denies the next request even if the app remains open.
+
 ### Authentication and app targeting
 
 The sidecar uses Rally’s standard Google identity sign-in and ordinary workspace-session selection. It calls the existing `POST /auth/google/start` flow with a dedicated callback URI registered to the sidecar. The backend validates and preserves that caller-supplied `returnUri`, so the operating system opens the sidecar when Google authentication completes.
@@ -133,7 +141,7 @@ The sidecar does not register Rally’s existing `rallywithai:` scheme. That sch
 
 ### Loading and selection
 
-On launch and explicit refresh, the regional service resolves the current operator and workspace and returns only the minimum selection fields for participants connected to that operator by an active workspace-scoped **can impersonate** relationship and their eligible destinations. It performs no demo lookup. The
+On launch and explicit refresh, the regional service resolves the current operator and workspace and returns only the minimum selection fields for participants connected to that operator by an active workspace-scoped **can impersonate** relationship and their eligible destinations. It checks the operator’s verified email domain and canonical demo eligibility before returning any catalog data. The
 renderer never supplies an operator identity, region, workspace eligibility,
 role, or delegation as an authoritative fact.
 
@@ -147,7 +155,7 @@ The app renders these states:
 | Populated | Searchable participant and destination choices are available. |
 | Catalog error | Draft text remains; stale choices are labelled and unsendable; **Retry** reloads canonical data. |
 | Offline | Last loaded labels may remain for orientation, but no represented action can start and no outcome is inferred. |
-| Ineligible workspace | The app is locked and does not return the privileged catalog. |
+| Ineligible operator or workspace | The app is locked and does not return the privileged catalog; only verified `@rallywith.ai` operators in eligible demo workspaces may proceed. |
 
 A participant is selectable only when they are a current active member of the workspace and an active **can impersonate** relationship points from the operator to that participant. Acting as oneself uses the same rule and therefore requires the self-pair created during demo preparation. A destination is a current, active work stream or
 substream in that workspace that the represented participant may post to. The
@@ -172,7 +180,7 @@ A send proceeds as one logical operation through the standard message flow:
    typed preload bridge to the standard message endpoint.
 2. The endpoint performs its ordinary authentication and authorization step. The
    only extension is that authorization may validate an impersonation context:
-   authenticated operator, an active **can impersonate** relationship from operator to represented participant in the current workspace, current membership, destination authority, and idempotency. Demo state is not an input.
+   authenticated operator with a verified `@rallywith.ai` email, canonical eligibility of the current demo workspace, an active **can impersonate** relationship from operator to represented participant in the current workspace, current membership, destination authority, and idempotency. These sidecar availability checks are mandatory even when the relationship exists, and cannot be bypassed by calling the endpoint directly.
 3. Once authorization succeeds, the request enters the same message-admission implementation as a participant’s own send. It persists the represented participant as the canonical author, applies ordinary participation and realtime behavior, and returns the ordinary message identity. The admission result is correlated to the operator and impersonation decision through the audit path, not through a new message field.
 4. The persisted message proceeds through Rally’s existing message-addressing
    cascade with the same conversation context, labels, confidence, fallback,
@@ -203,7 +211,7 @@ Cards and their direct API results remain in memory for as long as the sidecar p
 | Failure | Product behavior |
 | --- | --- |
 | Operator authentication missing, expired, or revoked | The shell locks and starts or resumes standard Google authentication through the sidecar callback. |
-| Operator lacks delegated capability | Access denied without enumerating participants or destinations. |
+| Operator email is outside `rallywith.ai` or unverified, workspace is not an eligible demo, or the exact relationship is absent | Access denied without enumerating participants or destinations; no represented message is admitted. |
 | Catalog read fails or is malformed | Selections are unsendable and reload is offered. |
 | Participant is removed, suspended, or no longer delegable | Send is denied at authorization before message admission and the selection is marked stale. |
 | Destination is absent, archived for mutation, or unauthorized | Send is denied at authorization before message admission and the destination is marked stale. |
@@ -243,7 +251,7 @@ Before this PRD reaches implementation, the standing implementation brief must b
 updated in the same product decision to state that a participant action may be
 performed under an approved represented-user delegation while retaining operator
 attribution. Treating this as “none” would leave the new authority model outside
-Rally's product contract.
+Rally's product contract. The first surface is restricted to verified `@rallywith.ai` operators in eligible demo workspaces; the general delegation clause does not authorize this sidecar or impersonated messaging in regular workspaces.
 
 ## Decision log
 
@@ -265,7 +273,7 @@ None yet.
    transcript insert, renderer event, or bespoke harness call is rejected because
    it bypasses participation, receipts, addressing, live reauthorization,
    realtime delivery, and durable loop behavior.
-9. **Demo preparation is only a relationship producer.** When a demo workspace is prepared, the preparation operation idempotently calls the generic relationship writer for every ordered pair of users seated there, including each self-pair. Runtime impersonation authorization never reads the demo register, preparation operation, demo role, or demo credential. Ordinary addressing happens only after admission and is not an authorization input.
+9. **Demo preparation is only a relationship producer.** When a demo workspace is prepared, the preparation operation idempotently calls the generic relationship writer for every ordered pair of users seated there, including each self-pair. The generic relationship remains independent of demo status, while this sidecar’s catalog and represented-message authorization additionally check the verified operator email and canonical demo eligibility. The `demos` role and demo credential grant no sidecar access. Ordinary addressing happens only after admission and is not an authorization input.
 10. **No represented-user credential reaches Electron.** The renderer gets a
    narrow sidecar API, not an admin key or participant session. A server-side
    operator credential proves the operator; a request-scoped represented context
@@ -278,9 +286,9 @@ None yet.
 
 The platform stores a directed, all-or-nothing **can impersonate** relationship. Each relationship identifies the workspace, impersonating user, represented user, authority basis, and creation/revocation state. Within that workspace it carries no capability, purpose, destination, action, or read/write sub-permissions.
 
-Direction is load-bearing: `A → B` never implies `B → A`. Self-impersonation is represented by `A → A`, not by a special authorization case. An active exact relationship answers only whether A may impersonate B in that workspace. The impersonation-aware route then evaluates B’s ordinary authorization and its own product availability; it does not consult sub-permissions on the relationship.
+Direction is load-bearing: `A → B` never implies `B → A`. Self-impersonation is represented by `A → A`, not by a special authorization case. An active exact relationship answers only whether A may impersonate B in that workspace. The impersonation-aware route then evaluates B’s ordinary authorization and its own product availability; it does not consult sub-permissions on the relationship. For this release, surface availability requires a verified `@rallywith.ai` operator in an eligible demo workspace; a relationship in a regular workspace never permits sidecar reads or represented sends.
 
-Demo preparation creates the Cartesian product of its seated users as directed relationships, including self-pairs, through one idempotent call to the generic platform relationship writer. Every relationship is scoped to that workspace. Retrying preparation cannot duplicate or widen an existing relationship. From then on the relationship behaves exactly like one created by any future producer; impersonation reads no demo record or demo-specific authority.
+Demo preparation creates the Cartesian product of its seated users as directed relationships, including self-pairs, through one idempotent call to the generic platform relationship writer. Every relationship is scoped to that workspace. Retrying preparation cannot duplicate or widen an existing relationship. From then on the relationship behaves exactly like one created by any future producer. This does not bypass the sidecar’s independent email-domain and canonical demo-workspace checks.
 
 No impersonation field is added to a message or transcript row. Audit events reference the relationship or its authority basis together with both users and the canonical message ID.
 
@@ -301,7 +309,7 @@ workspace unavailable; it never falls back to another region.
 The Electron renderer, its IDs, message text, cached labels, and network responses
 are untrusted. The main process is trusted only to hold the operator session,
 enforce the narrow preload contract, and contact the configured regional API.
-The regional API is trusted to derive a canonical authorization context containing the actual operator and effective represented participant. The workspace-scoped **can impersonate** relationship is the impersonation authority; no demo table or demo principal participates in that decision.
+The regional API is trusted to derive a canonical authorization context containing the actual operator and effective represented participant. The workspace-scoped **can impersonate** relationship establishes who may represent whom. This surface additionally requires trusted verification of the operator’s exact `rallywith.ai` email domain and canonical demo eligibility; neither the relationship nor a demo principal bypasses those gates.
 
 The sidecar follows Rally's Electron boundary: `contextIsolation` and sandboxing
 are enabled, renderer Node integration is disabled, navigation and new windows
@@ -313,14 +321,14 @@ logged. The sidecar authenticates an ordinary Rally user through the standard Go
 
 Every catalog read and send checks all of these server-side:
 
-1. The operator is authenticated for the internal sidecar.
+1. The operator is authenticated and their trusted, verified email domain is exactly `rallywith.ai`; the current workspace is canonically a published, active demo and passes ordinary lifecycle checks.
 2. An active exact **can impersonate** relationship points from this operator to this represented participant in the current workspace.
 3. The operator and represented participant are current active members of that workspace.
 4. The destination is in that workspace and currently accepts a post from the represented participant.
 5. The idempotency key has not already produced a different action.
 6. The attempted action is durably attributable before represented admission.
 
-No check reads demo status, the demo register, the `demos` operator role, or demo-specific credentials.
+The demo eligibility check reads canonical regional demo status and workspace lifecycle authority. The `demos` operator role and demo-specific credentials never substitute for the verified company email, eligible demo workspace, or exact relationship. These checks apply to every represented-message request regardless of claimed client identity.
 
 The existing message-addressing decision is deliberately absent from this authorization list. It runs after the message is admitted, just as it does for a direct participant send.
 
@@ -364,20 +372,20 @@ provider seam.
 
 ## Rollout
 
-The messaging sidecar is available only through the approved internal desktop distribution and authenticated Rally-user path. The authoritative controls are the exact workspace-scoped **can impersonate** relationship, current memberships, and the represented participant’s ordinary destination authorization. Demo status is not a rollout or authorization control. This change adds no feature flag or kill switch.
+The messaging sidecar is distributed through the approved internal desktop distribution. Server-side access is restricted to authenticated users with verified `@rallywith.ai` emails in canonically eligible demo workspaces. Distribution is not authorization. The exact workspace-scoped **can impersonate** relationship, current memberships, and the represented participant’s ordinary destination authorization are additional controls. Every regular workspace and every other operator email domain is denied, even when a relationship exists. This change adds no feature flag or kill switch.
 
-Demo preparation’s sole integration is creating the complete directed relationship set for the users it seats. Rollout first verifies the platform relationship and authorization path independently, then verifies that demo setup invokes the same generic relationship writer. It also verifies dual-principal audit correlation, ordinary message behavior, and same-key direct-response retry.
+Demo preparation creates the complete directed relationship set for the users it seats; runtime sidecar access also checks canonical demo eligibility. Rollout first verifies the platform relationship and authorization path independently, then verifies that demo setup invokes the same generic relationship writer. It also verifies dual-principal audit correlation, ordinary message behavior, and same-key direct-response retry.
 
-Revoking the exact relationship, removing either membership, removing access to the internal sidecar, or closing the workspace prevents new sends at the next canonical authorization check. The impersonation path does not observe demo publication or retirement as separate concepts. It does not delete prior turns, runs, or audit evidence.
+Revoking the exact relationship, removing either membership, losing the verified company email, losing demo eligibility, or closing the workspace prevents catalog reads and new represented sends at the next canonical authorization check. Demo publication and retirement are inputs to sidecar availability. It does not delete prior turns, runs, or audit evidence.
 
 ## Acceptance
 
 1. Demo preparation idempotently creates a directed **can impersonate** relationship for every ordered pair of seated users, including every self-pair; replay creates no duplicates or wider authority.
-2. In any current workspace, the sidecar loads only current members for whom an active workspace-scoped relationship points from the operator to that member, plus eligible work streams and substreams; no object from another workspace is returned or selectable. Demo status is not read.
+2. Only for a verified `@rallywith.ai` operator in an eligible current demo workspace, the sidecar loads current members for whom an active workspace-scoped relationship points from the operator to that member, plus eligible work streams and substreams; no object from another workspace is returned or selectable. The backend verifies canonical demo status and the operator email before exposing the catalog.
 3. The operator can select themselves through their self-pair or another related participant, select an eligible destination, enter a message, and send without configuring a model, prompt, tool, or harness option.
 4. Changing the participant or work stream clears any destination that is no longer compatible.
-5. A modified renderer cannot retrieve or send for a cross-workspace or unrelated user. A non-demo workspace with a valid relationship follows the same platform authorization path; demo status is irrelevant.
-6. Every send rechecks internal-sidecar access, the exact directed relationship, current memberships, the represented participant’s ordinary destination authority, workspace lifecycle, and idempotency.
+5. A modified renderer cannot retrieve or send for a cross-workspace or unrelated user. A regular workspace with a valid relationship is always denied, including for a verified `@rallywith.ai` owner or administrator. A non-company or unverified operator is denied even in an eligible demo with a valid relationship. Direct API calls and missing or forged app metadata cannot bypass either gate.
+6. Every send, including a same-key retry, rechecks the trusted verified `rallywith.ai` operator email and canonical demo eligibility, the exact directed relationship, current memberships, the represented participant’s ordinary destination authority, workspace lifecycle, and idempotency.
 7. After impersonation authorization, the exact message is persisted through the unchanged standard admission path as a direct participant send, with the represented participant as author.
 8. The admitted message then runs through the unchanged production addressing path; `human_only` leaves the participant turn visible and starts no harness.
 9. An invoking addressing result creates exactly one subordinate execution receipt in the selected conversation and uses the full persistent Rally harness under the represented participant authority.
@@ -387,9 +395,9 @@ Revoking the exact relationship, removing either membership, removing access to 
 13. Double-clicks, replays, and a lost response with the same logical idempotency key produce at most one turn; retrying returns the standard API’s existing direct admission result without sidecar polling.
 14. If required impersonation audit recording fails, no represented admission starts.
 15. After a successful direct message API response, the sidecar performs no follow-up read and reports no addressing or harness status; any later failure is owned and displayed by Rally’s ordinary surfaces.
-16. Revoking the exact relationship, removing either membership, removing internal-sidecar access, or retiring the demo blocks the next request without a client update. Demo retirement revokes the workspace-scoped relationships it created while preserving prior turns, runs, and audit evidence.
+16. Revoking the exact relationship, removing either membership, losing the verified company email, switching to a regular workspace, losing demo eligibility, or retiring the demo blocks the next catalog read or represented send without a client update. Demo retirement revokes the workspace-scoped relationships it created while preserving prior turns, runs, and audit evidence.
 17. Standard Google sign-in returns to the sidecar through its dedicated allowlisted callback URI, while the sidecar does not register the main app’s `rallywithai:` scheme. The packaged app contains no internal operator key or represented participant credential; its renderer cannot access sessions, arbitrary IPC, Node, or arbitrary network destinations.
-18. Automated coverage exercises relationship directionality, self-pairs, complete demo pair creation, idempotent setup, revoked and missing relationships, self-send, cross-participant send, stale membership, unauthorized destination, non-demo authorization, cross-workspace IDs, impersonation audit correlation, unchanged transcript/imported-session contracts, direct API rejection, duplicate requests, lost-response retry with the same idempotency key, and the absence of sidecar polling/subscriptions against the real migrations and object runtime where those semantics depend on them.
+18. Automated coverage exercises relationship directionality, self-pairs, complete demo pair creation, idempotent setup, revoked and missing relationships, self-send, cross-participant send, stale membership, unauthorized destination, denial in regular workspaces even with a valid relationship, denial of non-company and unverified emails in demos, exact-domain matching against subdomains and lookalike suffixes, denial of template/unpublished/abandoned/retired demos, fail-closed eligibility lookup, direct-API and forged-client bypass attempts, account/workspace changes, cross-workspace IDs, impersonation audit correlation, unchanged transcript/imported-session contracts, direct API rejection, duplicate requests, lost-response retry with the same idempotency key, and the absence of sidecar polling/subscriptions against the real migrations and object runtime where those semantics depend on them.
 19. The sidecar imports shared presentation from `@rally/ui`, uses the shared theme contract and semantic states, and introduces no copied Rally stylesheet, sidecar component library, or Vue presentation implementation. Shared component tests exercise presentation once; host tests cover only adapter behavior.
 20. **Open in Rally** uses the existing workspace-addressed `rallywithai://workstreams/...` deep-link contract, including a substream ID when selected, and therefore opens the main Rally app rather than the sidecar.
 21. The sidecar exposes no elicitation list or answer control and invokes no elicitation-answer path; this deferred UI does not create an elicitation sub-permission on the **can impersonate** relationship.
@@ -398,4 +406,4 @@ Revoking the exact relationship, removing either membership, removing access to 
 
 ## Open questions
 
-N/A — the authentication target, Rally navigation target, and in-memory result lifetime are decided above. Implementation-specific callback registration values are recorded in the design and configuration that introduce the sidecar.
+N/A — the company-email/demo-workspace access boundary, authentication target, Rally navigation target, and in-memory result lifetime are decided above. Implementation-specific callback registration values are recorded in the design and configuration that introduce the sidecar.
