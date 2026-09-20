@@ -1,4 +1,5 @@
 import { IconLock, IconTriangle } from '@tabler/icons-react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { SpaceColorKey, SpaceIconKey, SpaceScope } from '@rally/contracts';
 import clsx from 'clsx';
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react';
@@ -65,10 +66,16 @@ export interface SpaceRowDrag {
  * the host's; what lives here is the geometry, the accordion control, the
  * motion keys — `space:<id>` on the row, so a Space
  * reordered past another glides with the placements under it.
+ *
+ * **The context menu is optional.** A person who reaches a Space only because
+ * they can read a Channel placed in it is shown its mark and name so that
+ * Channel has somewhere to be drawn, but may write nothing on the Space —
+ * archiving it included. A control that can only fail is omitted.
  */
 export function SpaceRow({
   active,
   children,
+  contextMenu,
   drag,
   expanded,
   link,
@@ -79,6 +86,8 @@ export function SpaceRow({
   active: boolean;
   /** The placements under this Space, drawn by the host from its own rows. */
   children?: ReactNode;
+  /** Host-owned actions for the visual row. Omitted when the host offers none. */
+  contextMenu?: ReactNode;
   /** Both a reorder source and a Channel drop target; see {@link SpaceRowDrag}. */
   drag: SpaceRowDrag;
   expanded: boolean;
@@ -88,6 +97,25 @@ export function SpaceRow({
   onToggleExpanded: () => void;
   space: SpaceRowSpace;
 }): React.JSX.Element {
+  const visualRow = (
+    <div
+      className={clsx('sidebar-row space-sidebar-row', active && 'is-active')}
+      data-motion-hold=""
+      data-motion-key={`space:${space.id}`}
+      onKeyDown={onRowKeyDown}
+    >
+      <button
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${space.name}`}
+        className="space-accordion-control"
+        onClick={onToggleExpanded}
+        type="button"
+      >
+        <IconTriangle className={clsx(expanded && 'is-expanded')} size={10} stroke={1.8} />
+      </button>
+      {link}
+    </div>
+  );
   return (
     <div
       className="space-sidebar-item"
@@ -106,23 +134,16 @@ export function SpaceRow({
           placements rather than jumping while they slide. The row rather than
           the item carries it, because the placements animate themselves and a
           moving item would carry them a second time. See `useListMotion`. */}
-      <div
-        className={clsx('sidebar-row space-sidebar-row', active && 'is-active')}
-        data-motion-hold=""
-        data-motion-key={`space:${space.id}`}
-        onKeyDown={onRowKeyDown}
-      >
-        <button
-          aria-expanded={expanded}
-          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${space.name}`}
-          className="space-accordion-control"
-          onClick={onToggleExpanded}
-          type="button"
-        >
-          <IconTriangle className={clsx(expanded && 'is-expanded')} size={10} stroke={1.8} />
-        </button>
-        {link}
-      </div>
+      {contextMenu === undefined ? visualRow : (
+        <ContextMenu.Root>
+          <ContextMenu.Trigger asChild>{visualRow}</ContextMenu.Trigger>
+          <ContextMenu.Portal>
+            <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+              {contextMenu}
+            </ContextMenu.Content>
+          </ContextMenu.Portal>
+        </ContextMenu.Root>
+      )}
       {children}
     </div>
   );
