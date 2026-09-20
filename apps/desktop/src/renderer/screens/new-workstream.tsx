@@ -281,6 +281,12 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
       && typeof location.state.returnTo === 'string'
       ? location.state.returnTo
       : null;
+  const channelName = typeof location.state === 'object'
+      && location.state !== null
+      && 'channelName' in location.state
+      && typeof location.state.channelName === 'string'
+      ? location.state.channelName.trim()
+      : '';
   const canCloseNewChat = Boolean(returnTo && returnTo !== location.pathname);
   const closeNewChat = useCallback((): void => {
     if (returnTo && returnTo !== location.pathname) {
@@ -327,6 +333,7 @@ export function NewWorkstreamScreen({ workspace, spaceId }: { workspace: Workspa
       // which is the only way every Channel can have a home without the
       // top-level composer asking somebody to choose one.
       return trace.step('create_request', () => api!.createWorkstream({
+        ...(channelName ? { title: channelName } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
         ...(owningSpaceIds.length > 0 ? { spaceIds: owningSpaceIds } : {}),

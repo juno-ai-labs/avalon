@@ -806,9 +806,9 @@ describe('Rally API wire adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
-    await api.createWorkstream({ openingMessage: 'Start', participantIds: [], spaceIds });
+    await api.createWorkstream({ openingMessage: 'Start', participantIds: [], spaceIds, title: 'Launch' });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ spaceIds });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ spaceIds, title: 'Launch' });
   });
 
   it('given the top-level composer, when a channel is created, then it names no space and the server places it', async () => {
