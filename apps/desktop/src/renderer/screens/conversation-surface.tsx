@@ -92,7 +92,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
-import { AgentCompactionIndicator, AgentWorkTiming, RunStoppedIndicator, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -378,34 +378,68 @@ export function conversationShowsStoppingRow(
  * notice sat under every later message, reading as Rally having stopped on the
  * message that person had just sent.
  *
- * `stopPending` is the arming signal: this session pressed Stop, or saw the
- * room's pending stop, while the run was still going. It has to *survive* that
- * window, which is the whole subtlety here — between the request and the
- * settlement the run still reads `running`, so an arming that cleared itself
- * as soon as it found nothing to acknowledge would throw away the only record
- * that this reader asked. It clears when the run settles, whatever it settles
- * as, because by then it has either been acknowledged or has nothing to say.
+ * `pendingRunId` is the arming signal: the run this session watched a stop
+ * asked for, while it was still going. It has to *survive* the wait, which is
+ * the whole subtlety here — between the request and the settlement the run
+ * still reads `running`, so an arming that cleared itself as soon as it found
+ * nothing to acknowledge would throw away the only record that this reader
+ * asked. It clears when that run settles, whatever it settles as, because by
+ * then it has either been acknowledged or has nothing to say.
  *
- * Holding the run's id rather than a bare flag is what ends the notice: the
- * next run carries a different one, so nothing has to remember to clear it.
+ * Both halves name a run rather than carrying a bare flag, and for the same
+ * reason: an arm is made for one run and answers only that one. It cannot be a
+ * boolean, because the two do not arrive together. `applyHarnessStatus` clears
+ * `stopRequested` from the status event and leaves `latestHarnessRun` to the
+ * canonical snapshot behind it, so the arm has to bridge that gap — and a
+ * snapshot that lands already carrying a *newer* run would otherwise inherit
+ * it, and answer a button press nobody made for that one.
  */
 export interface StopAcknowledgement {
+  /** The run whose stop this session watched settle, and still says so. */
   runId: string | null;
-  stopPending: boolean;
+  /** The run this session watched a stop asked for, until that run settles. */
+  pendingRunId: string | null;
 }
 
-export const NO_STOP_ACKNOWLEDGEMENT: StopAcknowledgement = { runId: null, stopPending: false };
+export const NO_STOP_ACKNOWLEDGEMENT: StopAcknowledgement = { runId: null, pendingRunId: null };
 
 export function nextStopAcknowledgement(
   current: StopAcknowledgement,
-  watchingStopRequest: boolean,
+  status: HarnessStatus,
+  stopRequested: boolean | undefined,
   run: Pick<HarnessRunMetadata, 'id' | 'status'> | null | undefined,
 ): StopAcknowledgement {
-  const armed = watchingStopRequest || current.stopPending;
   if (!run) return NO_STOP_ACKNOWLEDGEMENT;
-  const settled = run.status === 'completed' || run.status === 'failed' || run.status === 'stopped';
-  const runId = run.status === 'stopped' && (armed || current.runId === run.id) ? run.id : null;
-  return { runId, stopPending: settled ? false : armed };
+  const armed = conversationShowsStoppingRow(status, stopRequested) || current.pendingRunId === run.id;
+  // Two facts, because neither covers the whole sequence.
+  //
+  // The conversation's status says whether anything is live, and says it
+  // first: `applyHarnessStatus` moves it on the status event and leaves the
+  // run row to the canonical snapshot behind it. Without it, a held
+  // acknowledgement sits in the dock saying the run stopped while the feed
+  // above it draws an agent visibly working.
+  //
+  // The run row says whether what ended was a stop, and it is the only thing
+  // that says so. A member stop's status frame does *not* report `stopped`:
+  // `settleWorkstreamState` leaves a stopped run's work stream `idle`,
+  // deliberately, because a stop is the member taking the conversation back
+  // rather than an outcome to report — and this client reads `idle` as
+  // `completed`. Driven against the running client, a real stop reports
+  // `status: completed, runStatus: stopped`.
+  //
+  // So the frame that ends the wait is indistinguishable from an ordinary
+  // finish until the run row arrives, and the arming has to outlive it.
+  // Cleared there, the acknowledgement is gone a beat before its own evidence
+  // and never appears at all — which a stop in the client showed and no test
+  // did. The dock holds the row up across that window for the same reason.
+  const working = status === 'running' || status === 'scheduled' || status === 'needs_input';
+  const stopLanded = status === 'stopped' || run.status === 'stopped';
+  const runSettled = run.status === 'completed' || run.status === 'failed' || run.status === 'stopped';
+  const held = armed || current.runId === run.id;
+  return {
+    runId: !working && stopLanded && held ? run.id : null,
+    pendingRunId: armed && !runSettled ? run.id : null,
+  };
 }
 
 /**
@@ -981,8 +1015,8 @@ export function ConversationSurface({
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
   // Declared up here because sending clears it, and the composer's send is
-  // defined long before the two effects below that maintain it.
-  const [stopAcknowledgement, setStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
+  // defined long before the fold below that maintains it.
+  const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const [otherHistoryError, setOtherHistoryError] = useState<string | undefined>();
@@ -2046,11 +2080,6 @@ export function ConversationSurface({
     const attachmentLease = await attachmentDraft.leaseReady();
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
-    // Saying the next thing answers the button press more completely than the
-    // row does, whether or not this turn starts a run of its own — and a turn
-    // the addressing classifier reads as human-only starts none, so waiting
-    // for the run to change would leave the row up indefinitely.
-    setStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
       const latestTranscript = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         transcriptQueryKey,
@@ -2142,6 +2171,15 @@ export function ConversationSurface({
           },
         );
       });
+      // Saying the next thing answers the button press more completely than the
+      // row does, whether or not this turn starts a run of its own — and a turn
+      // the addressing classifier reads as human-only starts none, so waiting
+      // for the run to change would leave the row up indefinitely. Here rather
+      // than beside the optimistic overlay above, because a send that fails
+      // restores the draft and did not move the conversation on: nothing could
+      // put the acknowledgement back, the latest run being durably stopped
+      // already.
+      setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
       attachmentDraft.commitLease(attachmentLease.leaseId);
       requestSocketSnapshot();
       await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
@@ -2246,18 +2284,34 @@ export function ConversationSurface({
   // Above the route gate because these are hooks, and the gate returns.
   const showsStoppingRow = routedDetail !== undefined
     && conversationShowsStoppingRow(routedDetail.harnessStatus, routedDetail.stopRequested);
-  const latestRun = routedDetail?.latestHarnessRun;
   // The screen stays mounted across a route change, so the next conversation
-  // would otherwise open holding this one's acknowledgement.
-  useEffect(() => {
-    setStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
+  // would otherwise open holding this one's acknowledgement. Before paint,
+  // like the other route-scoped state above: a passive effect clears it one
+  // frame late, and that frame says "Run stopped" in the wrong room.
+  useLayoutEffect(() => {
+    setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
   }, [id, substreamId]);
+  // Folded in render, not in an effect, and what draws is this value rather
+  // than the carry behind it. An effect lands a frame late, and the frame it
+  // is late by is the one where the stopping row has gone and the settled row
+  // has not arrived — so the live region unmounts and remounts around the very
+  // change it exists to announce. The fold is idempotent, so recomputing it
+  // from the carry the effect writes back settles immediately.
+  const stopAcknowledgement = routedDetail === undefined
+    ? carriedStopAcknowledgement
+    : nextStopAcknowledgement(
+      carriedStopAcknowledgement,
+      routedDetail.harnessStatus,
+      routedDetail.stopRequested,
+      routedDetail.latestHarnessRun,
+    );
   useEffect(() => {
-    setStopAcknowledgement((current) => {
-      const next = nextStopAcknowledgement(current, showsStoppingRow, latestRun);
-      return next.runId === current.runId && next.stopPending === current.stopPending ? current : next;
-    });
-  }, [latestRun, showsStoppingRow]);
+    setCarriedStopAcknowledgement((current) =>
+      stopAcknowledgement.runId === current.runId
+        && stopAcknowledgement.pendingRunId === current.pendingRunId
+        ? current
+        : stopAcknowledgement);
+  }, [stopAcknowledgement]);
 
   if (!payloadBelongsToRoute || !routedDetail) {
     if (
@@ -2604,8 +2658,17 @@ export function ConversationSurface({
           {/* First in the stack, so it reads as a line above the field rather
               than as something the field is sitting on. The stack is a grid
               with its own gap, so it needs no spacing of its own. */}
-          {showsStoppingRow && <RunStoppingIndicator />}
-          {!showsStoppingRow && stopAcknowledgement.runId !== null && <RunStoppedIndicator />}
+          {/* One region, mounted from the request through to the outcome, so
+              the settled line is a content change inside a live region rather
+              than a freshly inserted one. The arming holds it up through the
+              window where the status frame has ended the wait and the run row
+              has not yet said whether it was a stop — a window this dock used
+              to go blank in, and one a member stop always passes through. Say
+              the wait is still on until the evidence lands, because it is. */}
+          {(showsStoppingRow
+            || stopAcknowledgement.pendingRunId !== null
+            || stopAcknowledgement.runId !== null)
+            && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the channel…'}

@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AgentCompactionIndicator, AgentWorkTiming, RunStoppedIndicator, RunStoppingIndicator, STOPPED_LABEL, STOPPING_LABEL } from './agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, STOPPED_LABEL, STOPPING_LABEL } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, speed, state, theme }: { paused?: boolean; size: number; speed?: number; state: string; theme?: string }) => (
@@ -42,7 +42,7 @@ describe('AgentWorkTiming', () => {
   });
 
   it('says a stop is pending in words, marked up as a status, with no number to promise', () => {
-    const { container } = render(<RunStoppingIndicator />);
+    const { container } = render(<RunStopAcknowledgement settled={false} />);
 
     expect(screen.getByText(STOPPING_LABEL)).toBeInTheDocument();
     // The markup only — whether a screen reader announces a freshly inserted
@@ -60,7 +60,13 @@ describe('AgentWorkTiming', () => {
   });
 
   it('settles that same line in place once the stop lands', () => {
-    const { container } = render(<RunStoppedIndicator />);
+    const { container, rerender } = render(<RunStopAcknowledgement settled={false} />);
+    const region = screen.getByRole('status');
+    rerender(<RunStopAcknowledgement settled />);
+    // The same node, not a replacement: a live region inserted together with
+    // its content is not reliably announced, and the reader this row exists
+    // for is the one who cannot see it.
+    expect(screen.getByRole('status')).toBe(region);
 
     expect(screen.getByText(STOPPED_LABEL)).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName(STOPPED_LABEL);
