@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
+import { ApiError } from '../lib/api';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
@@ -1648,6 +1649,77 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
     // Already a placement there: adding it again is not on offer.
     expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
+  });
+
+  it('removes a channel from the space whose placement menu was opened', async () => {
+    const hiring = space();
+    const onRemoveChannelFromSpace = vi.fn(async () => undefined);
+    const target = placedIn(workstream('remove-placement', 'Quarterly planning', 'completed'), hiring.id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onRemoveChannelFromSpace={onRemoveChannelFromSpace}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120,
+      clientY: 90,
+    });
+
+    const menuItems = await screen.findAllByRole('menuitem');
+    expect(menuItems.slice(-2).map((item) => item.textContent?.trim())).toEqual([
+      'Remove from space',
+      'Archive channel',
+    ]);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from space' }));
+
+    await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, target.id));
+  });
+
+  it('explains that a channel cannot be removed from its final space', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('final-placement', 'Quarterly planning', 'completed'), hiring.id);
+    const onRemoveChannelFromSpace = vi.fn(async () => {
+      throw new ApiError('A Channel belongs to no other Space', 409, 'space_membership_final');
+    });
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onRemoveChannelFromSpace={onRemoveChannelFromSpace}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120,
+      clientY: 90,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from space' }));
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Channel could not be removed from that space',
+    });
+    expect(within(dialog).getByText('A channel must be in at least one space.')).toBeVisible();
   });
 
   // A Space this reader reaches only through a Channel in it is a row they can
