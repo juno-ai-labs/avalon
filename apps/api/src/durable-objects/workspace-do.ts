@@ -6214,6 +6214,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const space = storage.applyAudience(request);
+    if (space === "self_excluded") {
+      return {
+        ok: false,
+        code: "space_audience_self_excluded",
+        unreachableUserIds: [],
+        blockedWorkstreamIds: [],
+      };
+    }
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     // Staged before the member Channels are touched. The service walks them
     // next, and a request that dies half way through leaves this pending for
