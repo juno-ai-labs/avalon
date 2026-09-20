@@ -322,6 +322,60 @@ Workspace-facing label move to the new product language in the same cutover.
 
 ## Decision log
 
+### 2026-09-19 — No recency list for members, and every list a person can see is theirs to arrange
+
+**Decided:** Four product decisions, taken together because each is the reason
+the next one works.
+
+The sidebar's time-sorted list of Channels goes for a member session. Every
+Channel belongs to at least one Space, so the hierarchy above it already says
+where each Channel lives; a second list of the same rows ordered by time was the
+same sidebar twice, and the reader had to decide each time which of the two they
+were meant to be reading. The group headings go with it, and their **Mark all as
+read** / **Archive all** actions go with the headings. One line of that list's
+copy stays: a member with no Channels at all is still told **No channels yet**,
+under the Spaces, because the alternative is a sidebar that has stopped talking
+rather than one that is empty.
+
+Every Channel stays reachable. A member can read a Channel whose only Spaces are
+ones they cannot see — someone else's personal Space, which **Manage access**
+already draws as a Space the viewer cannot see — and that Channel would
+otherwise be in the sidebar nowhere at all. One flat section after the Spaces,
+**Other channels**, holds exactly those: ordered by recency, no group headings,
+absent when empty, which is the ordinary state.
+
+A person may arrange three lists by hand, by drag and by keyboard: the
+Organization's Spaces, the Channels placed in one Space, and the Breakouts under
+one Channel. The arrangement is that person's alone, is stored on the server,
+and follows them to every session they have open — a drag in one window moves
+the list in the other without a reload.
+
+A guest is unchanged. A guest is handed no Space directory, so there is no
+hierarchy to say where anything lives; their sidebar keeps the flat time-grouped
+list exactly as it is, headings and bulk actions included, and no ordering
+gesture — their ordering write is refused by the same gate every Space write is
+behind.
+
+**Why:** The hierarchy is what the rest of this PRD is for. Until it existed the
+recency list was the only thing that could say where a Channel was; now it is a
+duplicate view that competes with the answer the product just built, and keeping
+it "just in case" would mean shipping the old navigation and the new one at once
+and letting each reader work out which is authoritative.
+
+Ordering follows from the same place. A hierarchy is only useful if the person
+reading it can put the things they use most where they look first, and that is a
+*view preference* rather than a fact about the Organization — which is why it is
+stored per person rather than per Space, and why a drag by one member moves
+nothing for anybody else.
+
+**Changes:** Nothing in sections 1 to 6. Space navigation gains a per-person
+order of Spaces, of the Channels placed in each, and of a Channel's Breakouts,
+and the sidebar's Channel list is replaced by the Spaces section plus **Other
+channels**. The Space dashboard's paginated Channel list is explicitly *not*
+arranged per person: ordering a list whose later pages have not arrived is a
+different feature, and the client could only ever order the page in front of it.
+The per-person pinned-Channel list is unchanged and keeps its own table.
+
 ### 2026-09-19 — The cutover has no audience pass, because placing a Channel in General is the widening
 
 **Decided:** The cutover's phases are `general` → `preflight` → `memberships` →

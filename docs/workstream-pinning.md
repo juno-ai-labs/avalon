@@ -175,9 +175,21 @@ the one laid out there, resolved with `layoutRowAt` from
 row drawn under the pointer is one gliding out of the slot the dragged row just
 took, and reordering against it would send it straight back.
 
-A pinned work stream is removed from the recency-grouped list entirely rather
-than shown in both places — which is the same thing the WorkspaceDO page does,
-so the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
+A pinned work stream is shown once. In a member session that means once in
+**Pinned** and, if any of its Spaces are ones the reader can see, again under
+each of them — the placement is what says where the Channel lives, and the pin
+is what says the reader wants it to hand. It is kept out of **Other channels**,
+the flat section for Channels with no visible placement, exactly as it was kept
+out of the recency-grouped list that section replaced. In a guest session,
+which has no Space directory and keeps that recency-grouped list, it is removed
+from it entirely rather than shown in both places — which is the same thing the
+WorkspaceDO page does, so the two agree.
+
+`orderPinnedWorkstreams` is now written in terms of `orderByStoredIds` in
+`lib/personal-order.ts`, the one arrangement rule the Spaces, a Space's
+placements and a Channel's Breakouts are also drawn by. The pin *rows* are still
+this module's — a different table with a different meaning — and only the
+arrangement is shared. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
@@ -487,6 +499,42 @@ project section's scope is what keeps a member row from being taken for the
 recent list's copy of the same work stream; a new place that renders the same
 row twice needs one of its own.
 
+
+### 2026-09-19 — The pinned list keeps its own table beside the container-order primitive
+
+**What changed:** `workspace_space_order` became `workspace_container_order`, a
+per-person order keyed by the container being arranged — the Organization's
+Spaces, a Space's Channels, a Channel's Breakouts. `workspace_workstream_pins`
+was deliberately left out of it. `orderPinnedWorkstreams` now calls the shared
+`orderByStoredIds`, so the four hand-arranged lists agree on what "stored first,
+then the rest" means, but the pin rows, their dense rewrite, their allocation in
+SQL and their travel on the directory page are unchanged. The section's
+neighbour changed: a member session no longer has a recency-grouped list below
+it, so the rule that a pin leaves that list now bites only in a guest session.
+
+**Why:** A pin is not an ordering of a container. It is two facts at once —
+*this Channel is one I want to hand* and *it goes here in that shortlist* — and
+the container-order table stores only the second. Folding it in would have meant
+either storing the first somewhere else, which is two answers to one question,
+or teaching the container primitive a pseudo-container whose membership it
+alone decides. Neither is a generalization; both are a special case wearing the
+primitive's name.
+
+**Considered and rejected:** A `pinned` container kind whose items are the
+pinned Channel ids, with membership derived from the presence of a row. It
+collapses two facts into one and makes "is this pinned" a question about
+position, so an ordering write that dropped an id would silently unpin it —
+which is exactly what the container kinds are allowed to do when they filter.
+
+**Consequences:** Two drag protocols and two tables remain. What folding them in
+would need, if it is ever worth doing: pinning has to stop being expressible as
+an ordering — that is, the table would need a column saying a row is a *member*
+independently of its position, at which point the ordering primitive is being
+asked to hold membership and the merge has stopped paying. The honest version is
+the reverse: teach the pins table nothing, and keep sharing only the client
+helper, which is what this change did.
+
+Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
 ### 2026-09-08 — Preserve visit authority across response paths
 

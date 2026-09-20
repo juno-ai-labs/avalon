@@ -37,6 +37,25 @@ participants and resources belong to the selected authorized conversation; deskt
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
 
+Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
+marks itself `data-reorder-list`: a host's row finds the slots it is being
+measured against through that mark rather than by knowing whose list it is in,
+which is what lets the desktop's pinned section and a Space's placements share
+one row and one drag. The Breakout rail takes an optional `substreamDrag` and
+draws the order it is given, reporting the gesture and nothing else — the
+arrangement is stored per person on the Organization, so it is the host's. A
+host that omits it draws rows that are not draggable at all, which is what a
+guest gets: their write is refused by the same gate every Space write is behind,
+and a gesture that can only fail is worse than no gesture.
+
+Every one of these `onDragEnd` callbacks takes a `cancelled` flag, and each
+reads it the same way: the drag operation the browser reports is `none` when
+nothing accepted the release, which is what `Escape` and a release outside the
+list both look like. It is one reading rather than four because it decides
+whether a gesture somebody backed out of is written to every session they have
+open, and the list that was missing it wrote the arrangement the pointer
+happened to build on its way past.
+
 The Space components follow the same split, one step further. A `SpaceRow` draws
 the geometry, the accordion, the hover-revealed plus and the motion keys, and
 requires both the drag handlers and the new-Channel action — a host that cannot

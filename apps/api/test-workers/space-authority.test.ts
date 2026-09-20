@@ -31,6 +31,7 @@ import {
   type ParentEffect,
   type SpaceId,
   type UserId,
+  type PersonalOrder,
   type WorkspaceSidebar,
   type WorkspaceSpaceSnapshotEvent,
   type WorkspaceWorkstreamStateEvent,
@@ -50,6 +51,16 @@ const CHANNEL_A = asWorkstreamId("00000000-0000-7000-8000-00000000cf05");
 const CHANNEL_B = asWorkstreamId("00000000-0000-7000-8000-00000000cf06");
 const CHANNEL_C = asWorkstreamId("00000000-0000-7000-8000-00000000cf07");
 const RESOURCE_ID = "00000000-0000-7000-8000-00000000cf0c";
+/**
+ * Two Breakout ids, which WorkspaceDO has never seen and never will.
+ *
+ * A Channel's Breakouts are its own object's children; the Organization stores
+ * the arrangement this person dragged and nothing about what is in it, which is
+ * exactly what these two literals stand for.
+ */
+const BREAKOUT_A = "00000000-0000-7000-8000-00000000cf0d";
+const BREAKOUT_B = "00000000-0000-7000-8000-00000000cf0e";
+const BREAKOUT_C = "00000000-0000-7000-8000-00000000cf0f";
 
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
@@ -435,6 +446,30 @@ async function spaceDirectories(userId: string): Promise<NonNullable<WorkspaceSi
   return sidebar.spaces;
 }
 
+/** Every list this person has arranged, as their own client reads it. */
+async function personalOrder(userId: string): Promise<PersonalOrder> {
+  ticketSequence += 1;
+  const { socket, sidebar } = await connectViewer(userId, `e${ticketSequence.toString(16)}`);
+  socket.close();
+  // Optional on the wire so a client can talk to a server without the ordering;
+  // a server that has it always sends it, so a missing field is a regression.
+  if (!sidebar.ordering) throw new Error("workspace sidebar answered without an ordering");
+  return sidebar.ordering;
+}
+
+/** One container's stored item ids, or `null` when this person has no row for it. */
+function storedItemIds(
+  ordering: PersonalOrder,
+  kind: "organization" | "space" | "channel",
+  containerId?: string,
+): string[] | null {
+  // The Organization's entry carries no id, because a request is addressed to
+  // one Organization already; the other two are a pair.
+  return ordering.find((entry) => (entry.container.kind === "organization"
+    ? kind === "organization"
+    : entry.container.kind === kind && entry.container.id === containerId))?.itemIds ?? null;
+}
+
 beforeEach(async () => {
   await reset();
   effectSequence = 0;
@@ -780,6 +815,54 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [second] });
   });
 
+  /**
+   * The order row is about the placement, so it leaves with the placement — and
+   * for everybody, because the placement was the Organization's fact rather
+   * than the remover's. Otherwise it outlives the thing it describes for
+   * everybody who does not happen to arrange that Space again.
+   */
+  it("given an arranged Space, when a Channel is removed from it, then nobody's order still names it", async () => {
+    const spaceId = await reserve("Company", "workspace");
+    const second = await reserve("Recruiting", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    for (const channelId of [CHANNEL_A, CHANNEL_B]) {
+      await place(spaceId, channelId);
+      await place(second, channelId);
+    }
+    for (const userId of [OWNER, MEMBER]) {
+      await workspace().reorderContainer({
+        workspaceId: WORKSPACE_ID,
+        userId,
+        order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+      });
+    }
+
+    const plan = await workspace().prepareSpaceMembershipRemoval({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      workstreamId: CHANNEL_B,
+      remainingAudience: { scope: "workspace", participantUserIds: [] },
+    });
+    if (!plan.ok) throw new Error(plan.code);
+    await expect(workspace().finalizeSpaceMembershipRemoval({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      workstreamId: CHANNEL_B,
+      spaceRevision: plan.space.revision,
+      membershipGeneration: plan.membershipGeneration,
+    })).resolves.toMatchObject({ ok: true });
+
+    // The remover's, and the member's who never touched it.
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId)).toEqual([CHANNEL_A]);
+    expect(storedItemIds(await personalOrder(MEMBER), "space", spaceId)).toEqual([CHANNEL_A]);
+    // And only that Space's. The Channel is still in the other one, where the
+    // same person's arrangement of it is untouched.
+    expect(storedItemIds(await personalOrder(OWNER), "space", second)).toBeNull();
+  });
+
   it("given a Space holding a sole-member Channel, when it is archived, then it is refused", async () => {
     const spaceId = await reserve("Company");
     const second = await reserve("Recruiting");
@@ -1032,7 +1115,7 @@ describe("WorkspaceDO space authority", () => {
       for (const table of [
         "space_default_publications", "space_default_targets", "space_defaults",
         "space_channel_memberships", "space_intents",
-        "space_bootstrap", "workspace_space_order", "workspace_space_viewers",
+        "space_bootstrap", "workspace_container_order", "workspace_space_viewers",
         "workspace_space_state", "workspace_space_directory",
       ]) sql.exec(`DROP TABLE ${table}`);
     });
@@ -1078,7 +1161,7 @@ describe("WorkspaceDO space authority", () => {
   });
 
   it("given a guest's socket, when Spaces exist, then its payload carries none of them", async () => {
-    await reserve("Company", "workspace");
+    const companyId = await reserve("Company", "workspace");
     const { socket, sidebar } = await connectViewer(GUEST, "cf12");
 
     // Every Space RPC refuses a guest, and this is the other door into the same
@@ -1093,11 +1176,15 @@ describe("WorkspaceDO space authority", () => {
     // Organization-opening state for good.
     expect(sidebar.spacesReady).toBe(true);
 
-    // And on the republication every Space write sends, which is the path a
-    // guest holds open rather than asks for.
+    // And on the republication an Organization-wide Space write sends, which is
+    // the path a guest holds open rather than asks for. A reorder is not one of
+    // those any more: it reaches the person who made it and nobody else.
     const snapshot = nextSpaceSnapshot(socket);
-    await workspace().reorderSpaces({
-      workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [] },
+    await workspace().noteSpacePresentation({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: companyId,
+      presentation: { name: "Company", iconKey: "briefcase", colorKey: "red" },
     });
     const event = await snapshot;
     expect(event.spaces.active.items).toEqual([]);
@@ -1125,6 +1212,263 @@ describe("WorkspaceDO space authority", () => {
       .resolves.toMatchObject({ phase: "general", generalSpaceId: general.space.id, ready: false });
   });
 
+  it("given each kind of container, when one person arranges it, then only their own sidebar carries it", async () => {
+    const first = await reserve("Company");
+    const second = await reserve("Recruiting");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(first, CHANNEL_A);
+    await place(first, CHANNEL_B);
+    // The read is what gives a viewer their Organization rows, and it is the
+    // read the other member's untouched order has to survive.
+    expect(storedItemIds(await personalOrder(MEMBER), "organization"))
+      .toEqual([first, second]);
+
+    for (const order of [
+      { container: { kind: "organization" as const }, itemIds: [second, first] },
+      { container: { kind: "space" as const, id: first }, itemIds: [CHANNEL_B, CHANNEL_A] },
+      { container: { kind: "channel" as const, id: CHANNEL_A }, itemIds: [BREAKOUT_B, BREAKOUT_A] },
+    ]) {
+      await expect(workspace().reorderContainer({ workspaceId: WORKSPACE_ID, userId: OWNER, order }))
+        .resolves.toMatchObject({ ok: true, order });
+    }
+
+    // All three come back on the one field, so a session paints every list it
+    // orders from the same answer rather than from three.
+    const owner = await personalOrder(OWNER);
+    expect(storedItemIds(owner, "organization")).toEqual([second, first]);
+    expect(storedItemIds(owner, "space", first)).toEqual([CHANNEL_B, CHANNEL_A]);
+    // Stored as given: a Breakout is the Channel's own object's child and this
+    // authority cannot see one, so there is nothing here to validate against.
+    expect(storedItemIds(owner, "channel", CHANNEL_A)).toEqual([BREAKOUT_B, BREAKOUT_A]);
+
+    // The order is the person's, so the member beside them is untouched — in
+    // the list they earned by reading and in the two they never arranged.
+    const member = await personalOrder(MEMBER);
+    expect(storedItemIds(member, "organization")).toEqual([first, second]);
+    expect(storedItemIds(member, "space", first)).toBeNull();
+    expect(storedItemIds(member, "channel", CHANNEL_A)).toBeNull();
+  });
+
+  it("given a Space's Channels, when the order names one it does not hold or the viewer cannot read, then it is dropped", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    // Published into the directory and deliberately left in no Space of its
+    // own: a Channel somebody can read is still not a row in *this* Space's
+    // list.
+    await publishChannel(CHANNEL_B, null);
+    // A member's personal Channel, placed in the Space. The membership is the
+    // Organization's fact and the visibility is the reader's, so this one is
+    // in the list and still not the owner's to arrange.
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_C);
+
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_B, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_A] } });
+
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId)).toEqual([CHANNEL_A]);
+    // And the member, who can read theirs, may arrange it.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_C, CHANNEL_A] } });
+  });
+
+  /**
+   * A drag says where the rows it moved go. It does not say that the rows it
+   * never mentioned should be forgotten — and the only client there is can only
+   * ever mention what it is drawing, which is what is left after an archived
+   * Channel, an unfetched page or a search has taken the rest off the screen.
+   */
+  it("given a list the client can only half see, when part of it is arranged, then the rest keeps its places", async () => {
+    const spaceId = await reserve("Company");
+    for (const channelId of [CHANNEL_A, CHANNEL_B, CHANNEL_C]) {
+      await publishChannel(channelId, null);
+      await place(spaceId, channelId);
+    }
+    // The whole list, from a session that has every row on screen.
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_C, CHANNEL_B, CHANNEL_A] },
+    });
+
+    // And then one nudge from a session drawing two of the three.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_B, CHANNEL_A, CHANNEL_C] } });
+    expect(storedItemIds(await personalOrder(OWNER), "space", spaceId))
+      .toEqual([CHANNEL_B, CHANNEL_A, CHANNEL_C]);
+
+    // The same for a Channel's Breakouts, where it matters most: this
+    // authority has never seen one, so the rule is the only thing standing
+    // between an id it was not sent and its deletion.
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "channel", id: CHANNEL_A }, itemIds: [BREAKOUT_A, BREAKOUT_B, BREAKOUT_C] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "channel", id: CHANNEL_A }, itemIds: [BREAKOUT_B, BREAKOUT_A] },
+    });
+    expect(storedItemIds(await personalOrder(OWNER), "channel", CHANNEL_A))
+      .toEqual([BREAKOUT_B, BREAKOUT_A, BREAKOUT_C]);
+  });
+
+  /**
+   * What a cancelled reservation takes with it, both directions.
+   *
+   * A Space whose object never opened is a Space that never existed, so it
+   * leaves the Organization's list and the list of *its* Channels goes with the
+   * container it was about. The delete names no user: the reservation was
+   * cancelled for everybody.
+   */
+  it("given an arranged reservation, when it is cancelled, then no order still names it", async () => {
+    const keep = await reserve("Company");
+    const doomed = await reserve("Half-made");
+    await publishChannel(CHANNEL_A, null);
+    await place(doomed, CHANNEL_A);
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [doomed, keep] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: doomed }, itemIds: [CHANNEL_A] },
+    });
+
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: doomed,
+    })).resolves.toEqual({ cancelled: true });
+
+    const ordering = await personalOrder(OWNER);
+    expect(storedItemIds(ordering, "organization")).toEqual([keep]);
+    expect(storedItemIds(ordering, "space", doomed)).toBeNull();
+  });
+
+  /**
+   * Archive takes nothing, and that is the decision rather than an omission.
+   *
+   * `directory()` filters `archived_at IS NULL`, so an archived Space is
+   * already out of every sidebar; deleting the rows would mean a restore put
+   * the Channels back in recency order under somebody who had arranged them by
+   * hand. The `space` filter is what makes the same true of an archived
+   * Channel: neither read it goes through looks at `archived_at`.
+   */
+  it("given an arranged Space, when it is archived and restored, then the arrangement comes back with it", async () => {
+    const first = await reserve("Company");
+    const second = await reserve("Recruiting");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    for (const channelId of [CHANNEL_A, CHANNEL_B]) {
+      await place(second, channelId);
+      await place(first, channelId);
+    }
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [second, first] },
+    });
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: second }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    });
+
+    await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    });
+    await workspace().finalizeSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    });
+
+    // Untouched while it is archived, although nothing is drawing either list.
+    const archived = await personalOrder(OWNER);
+    expect(storedItemIds(archived, "organization")).toEqual([second, first]);
+    expect(storedItemIds(archived, "space", second)).toEqual([CHANNEL_B, CHANNEL_A]);
+
+    await expect(workspace().restoreSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+    })).resolves.toMatchObject({ ok: true });
+
+    // And the directory comes back in the order this person put it in, rather
+    // than in whatever order the restore happened to write.
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id))
+      .toEqual([second, first]);
+    expect(storedItemIds(await personalOrder(OWNER), "space", second))
+      .toEqual([CHANNEL_B, CHANNEL_A]);
+  });
+
+  it("given two sessions of one person, when one arranges a list, then the other is told without asking", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_B);
+    const desk = await connectViewer(OWNER, "cf20");
+    const laptop = await connectViewer(OWNER, "cf21");
+    const onLaptop = nextSpaceSnapshot(laptop.socket);
+
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "space", id: spaceId }, itemIds: [CHANNEL_B, CHANNEL_A] },
+    });
+
+    // The whole ordering rather than the container that moved: this is the one
+    // message a viewer's other windows get, and a delta would make each of them
+    // keep a copy to apply it to.
+    expect(storedItemIds((await onLaptop).ordering, "space", spaceId))
+      .toEqual([CHANNEL_B, CHANNEL_A]);
+    desk.socket.close();
+    laptop.socket.close();
+  });
+
+  /**
+   * The other half of the same audience.
+   *
+   * A snapshot is per viewer and costs a `list()` transaction plus a full
+   * directory serialization for each one, so publishing one person's view
+   * preference to the Organization charges every member for a payload that did
+   * not change for them — once per step of a held Alt+Arrow.
+   *
+   * Proved without a timeout: an Organization-wide write follows the reorder,
+   * and what this member's socket is asked for is the *first* snapshot it
+   * receives. A reorder that reached them would be that first snapshot, and it
+   * would still carry the old name.
+   */
+  it("given another member's session, when somebody arranges a list, then nothing is republished to them", async () => {
+    const spaceId = await reserve("Company");
+    const other = await connectViewer(MEMBER, "cf22");
+    const onOther = nextSpaceSnapshot(other.socket);
+
+    await workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [spaceId] },
+    });
+    await workspace().noteSpacePresentation({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      presentation: { name: "Recruiting", iconKey: "briefcase", colorKey: "red" },
+    });
+
+    expect((await onOther).spaces.active.items).toMatchObject([{ name: "Recruiting" }]);
+    other.socket.close();
+  });
+
   it("given a viewer's order, when they reorder Spaces, then only their own order moves", async () => {
     const first = await reserve("Company");
     const second = await reserve("Recruiting");
@@ -1133,9 +1477,13 @@ describe("WorkspaceDO space authority", () => {
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([first, second]);
 
-    await expect(workspace().reorderSpaces({
-      workspaceId: WORKSPACE_ID, userId: OWNER, order: { spaceIds: [second, first] },
-    })).resolves.toMatchObject({ ok: true, directory: { items: [{ id: second }, { id: first }] } });
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "organization" }, itemIds: [second, first] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [second, first] } });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id))
+      .toEqual([second, first]);
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([first, second]);
   });
