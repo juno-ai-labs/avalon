@@ -2,7 +2,7 @@
 
 - [x] Directed relationship storage and canonical demo/original-cast authorization, proved against migrated SQLite.
 - [x] HTTP catalog and represented message admission with real-workerd integration tests, audit, and demo provisioning.
-- [ ] Shared card presentation and state-machine tests for immutable attempts and retries.
+- [x] Shared card presentation and state-machine tests for immutable attempts and retries.
 - [ ] Session-bound Electron window, eligible menu entry, navigation/sign-out lifecycle, and IPC tests.
 - [ ] Real-window visual verification, regression gates, and final documentation.
 

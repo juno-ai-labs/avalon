@@ -1,0 +1,17 @@
+.message-card-stack { display: grid; gap: 16px; }
+.message-draft-card { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: 12px; padding: 16px; }
+.message-draft-card-heading, .message-draft-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.message-draft-card-heading { margin-bottom: 16px; }
+.message-draft-card-fields { display: grid; gap: 12px; }
+.message-draft-card-fields .form-field { display: grid; gap: 6px; margin: 0; }
+.message-draft-card-fields .dropdown-select-trigger { width: 100%; }
+.message-draft-card-fields textarea { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); font: inherit; padding: 10px; resize: vertical; width: 100%; }
+.message-draft-card-fields textarea:focus-visible { outline: 0; box-shadow: var(--av-sys-focus-ring-default); }
+.message-draft-card-footer { margin-top: 16px; }
+.message-draft-card-footer [role=status] { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.message-draft-card-footer .button { flex-shrink: 0; }
+.compact-tool-shell { height: 100vh; overflow: auto; padding: 24px; }
+.compact-tool-shell > header { margin-bottom: 24px; }
+.compact-tool-shell h1 { font-size: 22px; margin: 0 0 8px; }
+.compact-tool-shell p { color: var(--av-sys-color-text-muted); margin: 8px 0; }
+.compact-tool-shell .tool-marker { display: inline-block; border: 1px solid var(--av-ref-color-line-3); border-radius: 6px; padding: 3px 7px; font-size: 12px; }
