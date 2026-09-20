@@ -112,10 +112,6 @@ interface QueueGate {
   parked: boolean;
 }
 
-interface TestableWorkstreamDO {
-  applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void;
-}
-
 /**
  * Keep an object's outbox readable.
  *
@@ -376,8 +372,9 @@ describe("a parent with two children", () => {
         },
       });
       await instance.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
-      const testable = instance as unknown as TestableWorkstreamDO;
-      for (const envelope of childEffects) testable.applyChildEnvelope(envelope.substreamId, envelope);
+      for (const envelope of childEffects) {
+        await instance.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+      }
       const rows = state.storage.sql.exec<{ message_id: string; payload_json: string }>(
         `SELECT message_id, payload_json FROM durable_outbox
           WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
