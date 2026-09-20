@@ -1789,6 +1789,30 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-20 — Stale-run reaping closes the execution's visible activity
+
+**What changed:** the stale root reaper now closes every still-active response,
+assistant, plugin, and tool interval at the terminal receipt's timestamp and
+marks those durations as recovered upper bounds. The same transaction removes
+that run's transient output, compaction, and inference-delay checkpoints.
+
+**Why:** the ordinary terminalization path already performed this recovery, but
+the stale-lease path wrote a failed run receipt without invoking it. A run that
+lost its executor could therefore be terminal in durable run state while a
+reconnect continued rendering “Working for …” from an open activity interval;
+one production conversation reached thousands of minutes and retained its
+streaming checkpoint after every tool receipt had settled.
+
+**Considered and rejected:** stopping the desktop clock when a run looks old,
+or adding an independent activity timeout. Neither boundary can know when the
+work ended, and both would compete with the run receipt that already owns that
+fact.
+
+**Consequences:** ordinary and reaped terminal receipts now enforce the same
+participant-visible invariant. A recovered duration remains deliberately
+qualified as “at most …”, because the stale reaper knows only the latest durable
+time by which the work had ended, not the lost executor's exact stop time.
+
 ### 2026-09-19 — A failing run may not release the loop out from under the repair
 
 **What changed:** a failing run settles its interrupted tool batch before it
