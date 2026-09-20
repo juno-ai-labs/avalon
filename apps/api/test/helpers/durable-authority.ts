@@ -73,8 +73,28 @@ export function openWorkstreamAuthorityForTest(
     UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${at}' WHERE id = 1;
     UPDATE workstream_authority_control SET phase = 'maintenance_importing', updated_at = '${at}' WHERE id = 1;
     UPDATE workstream_authority_routes SET state = 'verified', updated_at = '${at}';
+  `);
+  // Some compatibility tests deliberately start from a historical schema.
+  // Advance its one-time cutover row only when that old table is actually
+  // present; current migrated D1 has no workspace authority ledger.
+  const hasHistoricalWorkspaceLedger = database.prepare(
+    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_product_authority_routes'",
+  ).get() !== undefined;
+  if (hasHistoricalWorkspaceLedger) {
+    database.exec(`
+      UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = '${at}';
+    `);
+  }
+  database.exec(`
     UPDATE workstream_authority_control SET phase = 'maintenance_verified', updated_at = '${at}' WHERE id = 1;
     UPDATE workstream_authority_routes SET state = 'active', activated_at = '${at}', updated_at = '${at}';
+  `);
+  if (hasHistoricalWorkspaceLedger) {
+    database.exec(`
+      UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${at}';
+    `);
+  }
+  database.exec(`
     UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${at}' WHERE id = 1;
   `);
   const fences = database.prepare(
