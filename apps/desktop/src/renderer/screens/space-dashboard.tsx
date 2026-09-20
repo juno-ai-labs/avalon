@@ -209,21 +209,30 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       } : current);
     }
   };
+  /**
+   * Make one change, and say whether it landed.
+   *
+   * The answer matters because each of these sentences is rendered *inside*
+   * the dialog that asked for the change: a dialog that closes on the refusal
+   * closes over the only place the person would have read it.
+   */
   const save = async (
     slot: FailureSlot,
     change: () => Promise<SpaceSummary>,
     fallback: string,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     setSaving(true);
     report(slot, null);
     try {
       applySpace(await change());
+      return true;
     } catch (cause) {
       // Never the server's own sentence: it is a diagnostic a Worker wrote for
       // a log, in the Organization's internal words, and it changes whenever
       // the server's wording does. `fallback` is this action's own sentence,
       // used when the refusal carried no Space code to name.
       report(slot, spaceFailureSentence(cause, fallback));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -581,11 +590,14 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         <Modal
           description="Choose the organization members who participate in this space."
           footer={<><Button disabled={saving} onClick={() => setParticipantsOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || editParticipants.size === 0} onClick={() => {
+            // Only on success: this roster has a refusal of its own now — a
+            // personal Space cannot be narrowed to a list its own editor is
+            // not on — and the sentence for it is drawn inside this dialog.
             void save(
               'participants',
               () => api!.updateSpaceAudience(space.id, { scope: space.scope, participantUserIds: [...editParticipants] }),
               'Space participants could not be saved.',
-            ).then(() => setParticipantsOpen(false));
+            ).then((saved) => { if (saved) setParticipantsOpen(false); });
           }}>Save</Button></>}
           onOpenChange={(open) => { if (!saving) setParticipantsOpen(open); }}
           open={participantsOpen}
