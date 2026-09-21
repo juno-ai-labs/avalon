@@ -812,6 +812,12 @@ catalog and creation is refused, while existing rows are retained and inert.
 
 ### Granola
 
+A Granola organization connection's row offers no **Manage events** window:
+Granola registers, inspects, updates and removes its own webhooks, so the
+installation settles without anybody watching it.
+[Installation lifecycle](connector-installation-lifecycle.md#who-gets-a-window)
+owns which providers get one and what a provider loses with it.
+
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Rally owner.
 
 A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events — the three events Granola's API defines; a regenerated summary arrives as `note.edited`, and a verified delivery naming any other event is refused with 400 `unsupported_webhook_event`. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret. A workspace connection whose webhook endpoint was never registered, no longer exists, or is disabled reports healthy with a warning naming the condition, because its read tools work; delivery is restored only through Test and the installation lifecycle, never by the health check.

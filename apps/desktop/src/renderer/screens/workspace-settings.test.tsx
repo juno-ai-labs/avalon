@@ -1480,7 +1480,7 @@ describe('Organization settings', () => {
     expect(screen.getByText('No organization connections yet')).toBeVisible();
   });
 
-  it('opens the existing Granola installation when setup loses its response', async () => {
+  it('settles on the existing Granola installation when setup loses its response, with no events console', async () => {
     renderSettings();
     openSettingsSection('Connections');
     const granolaCard = (await screen.findByText('Granola')).closest('article');
@@ -1494,10 +1494,32 @@ describe('Organization settings', () => {
     api.connectorInstallation.mockResolvedValue({ installation: null });
     fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
-    await screen.findByRole('dialog', { name: 'Organization events' });
-    expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
+    // The lost response found its connection: setup closes rather than
+    // offering a second one, and the row that appears carries no console.
+    expect(await screen.findByText('Granola organization events')).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Connect Granola workspace' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Organization events' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Manage events for Granola organization events', hidden: true })).not.toBeInTheDocument();
+    expect(api.connectorInstallation).not.toHaveBeenCalled();
     expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Manage events for Granola organization events', hidden: true })).toBeInTheDocument();
+  });
+
+  // The other half of the console list: with only Granola and Fireflies asserted
+  // absent, an empty or mis-exported list would take Ashby's window away and
+  // leave every one of those assertions green.
+  it('keeps the events console on an Ashby organization connection', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue(['ashby']);
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000022', connectorType: 'ashby', scope: 'workspace',
+      displayName: 'Ashby organization events', capabilities: ['ashby.workspace.events'], status: 'healthy',
+    }]);
+    api.connectorInstallation.mockResolvedValue({ installation: null });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage events for Ashby organization events' }));
+    expect(await screen.findByRole('dialog', { name: 'Organization events' })).toBeVisible();
+    await waitFor(() => expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000022'));
   });
 
   it('offers Fireflies to a person and never to the organization', async () => {
