@@ -1,14 +1,15 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { Archive, Copy, GitBranch, Globe2, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { Archive, Copy, GitBranch, Globe2, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconShare2 } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/sidebar-geometry';
-import { AvatarStack, IconButton, Tip, TitleSkeleton } from './primitives';
+import { AvatarStack, Tip, TitleSkeleton } from './primitives';
 import {
   ResizableSidebar,
+  SidebarCollapseFooter,
   SidebarHorizontalLine,
   SidebarList,
   SidebarRow,
@@ -400,18 +401,14 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
         {addSidekick}
       </SidebarScroll>
-      <div className="sidebar-collapse-footer">
-        <IconButton
-          className="window-no-drag"
-          label={compact ? 'Expand channel sidebar' : 'Collapse channel sidebar'}
-          aria-expanded={!compact}
-          disabled={narrow}
-          title={narrow ? 'Widen the window to expand the channel sidebar' : undefined}
-          onClick={() => {
-            saveCollapsed(!collapsed);
-          }}
-        >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
-      </div>
+      <SidebarCollapseFooter
+        collapseLabel="Collapse channel sidebar"
+        compact={compact}
+        constrained={narrow}
+        constrainedTitle="Widen the window to expand the channel sidebar"
+        expandLabel="Expand channel sidebar"
+        onToggle={() => saveCollapsed(!collapsed)}
+      />
     </ResizableSidebar>
   );
 }

@@ -539,7 +539,7 @@ describe('sidebar layout motion', () => {
       '.sidebar-row-main',
       '.workstream-context-section',
       '.workstream-context-section h2',
-      '.workstream-context-sidebar .sidebar-collapse-footer',
+      '.sidebar-footer',
     ]) {
       expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
     }
@@ -547,7 +547,13 @@ describe('sidebar layout motion', () => {
     expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row-main')).not.toContain('display: none');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row')).not.toContain('justify-content');
-    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('calc((100% - 30px) / 2)');
+    const compactFooter = rule('.resizable-sidebar.is-compact .sidebar-footer.is-toggle-only');
+    expect(compactFooter).toContain('calc((100% - 30px) / 2)');
+    expect(rule('.sidebar-footer')).toContain('flex: 0 0 56px');
+    expect(rule('.sidebar-footer.has-leading-content')).toBeNull();
+    expect(rule('.sidebar-footer.is-toggle-only')).toBeNull();
+    expect(rule('.app-shell .channels-sidebar.is-compact .sidebar-footer')).toBeNull();
+    expect(rule('.workstream-context-sidebar.is-compact .sidebar-footer')).toBeNull();
   });
 
   // The strip stays a horizontally scrolling row in the rail: a column inside
