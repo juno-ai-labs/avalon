@@ -125,6 +125,34 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — All three hierarchy sidebars share one resize edge
+
+**What changed:** The Space, Channel, and Breakout sidebars now compose one
+shared `ResizableSidebar` shell. Each keeps its own content and remembered
+expanded width, while the shell owns their compact/resizing states, motion
+channel, 96px compact width, 240–400px expanded range, 210/220px collapse
+hysteresis, grip, drag guide, tooltip, keyboard controls, and double-click
+toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, and
+`SidebarHorizontalLine` now provide the geometry inside that shell. A
+`SidebarHeader` is itself a 54px `SidebarRow` followed by a
+`SidebarHorizontalLine`, so header marks and the rows beneath them share the
+same expanded and compact alignment instead of approximating it with a border.
+
+**Why:** Spaces had become the first level of the adjacent hierarchy without
+receiving the resize interaction the next two levels already offered. Copying
+the behavior into a third component was rejected because the visible contract
+would drift again; the edge interaction now lives below all three surfaces.
+Sharing only the edge was not enough: three independently sized rows and
+headers could still arrive at different positions during the same transition,
+so their structural geometry moved into the same package boundary too.
+
+**Consequences:** A Space width is a device-local preference like the other
+sidebar widths. Responsive calculations spend that remembered width. All three
+sidebar contents consume the shell's `--sidebar-layout-motion`, while a drag
+sets that channel to zero and temporarily removes only the dragged width from
+the workspace transition so its edge tracks the pointer without stopping
+motion on the neighboring sidebars.
+
 ### 2026-09-20 — Space rows can carry host-owned context actions
 
 **What changed:** `SpaceRow` can wrap the visual Space row, excluding its

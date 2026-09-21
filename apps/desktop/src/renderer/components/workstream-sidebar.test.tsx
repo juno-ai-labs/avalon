@@ -49,7 +49,11 @@ describe('WorkstreamSidebar', () => {
   it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
     setup();
     const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
-    expect(within(sidebar).getByRole('heading', { name: 'Launch preparation' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('heading', { name: 'Launch preparation' })).toHaveClass('sidebar-title');
+    const header = sidebar.querySelector('.sidebar-header');
+    expect(header).toHaveClass('sidebar-row');
+    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
+    expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
     expect(sidebar.querySelector('.workstream-context-toolbar-mark')).not.toBeNull();
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
@@ -59,6 +63,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByText('Breakouts')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toHaveClass('sidebar-row');
   });
 
   it('marks the main conversation with the channel\u2019s own icon and colour', () => {
@@ -75,6 +80,9 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getAllByText('Launch preparation')).toHaveLength(2);
     expect(screen.queryByText('Main log')).not.toBeInTheDocument();
     const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
+    expect(edge.querySelector('svg')).toHaveAttribute('width', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
     fireEvent.doubleClick(edge);
     expect(edge).toHaveAttribute('aria-valuenow', '96');
     fireEvent.doubleClick(edge);

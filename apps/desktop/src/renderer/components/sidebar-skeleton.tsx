@@ -16,15 +16,17 @@
  *
  * Decorative: the label for the wait is said once, by the section.
  */
+import { SidebarRow } from '@rally/ui/components/resizable-sidebar';
+
 export function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.JSX.Element {
   return (
-    <div aria-hidden="true" className="sidebar-row skeleton-row">
+    <SidebarRow as="div" aria-hidden="true" className="skeleton-row">
       <span className="skeleton-bar skeleton-row-marker" />
       <span className="sidebar-row-main">
         <span className="skeleton-bar skeleton-row-line" />
         {hint && <span className="skeleton-bar skeleton-row-subline" />}
       </span>
-    </div>
+    </SidebarRow>
   );
 }
 

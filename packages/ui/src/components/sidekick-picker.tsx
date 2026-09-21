@@ -3,6 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Plus } from 'lucide-react';
 import type { SidekickRecommendationOptions } from '@rally/contracts';
 import { Button, InlineError, Modal, Tip } from './primitives';
+import { SidebarRow } from './resizable-sidebar';
 export type SidekickPickerFailure = 'load' | 'attach';
 
 const sidekickPickerFailureCopy: Record<SidekickPickerFailure, string> = {
@@ -23,10 +24,10 @@ export function SidekickPicker({ options, loading, saving, failure, open, setOpe
     <DropdownMenu.Root onOpenChange={onMenuOpen}>
       <Tip label="Add Sidekick" side="right" describesTrigger={false}>
       <DropdownMenu.Trigger asChild>
-        <button className="workstream-context-row workstream-add-sidekick" type="button" aria-label="Add Sidekick">
+        <SidebarRow className="workstream-context-row workstream-add-sidekick" type="button" aria-label="Add Sidekick">
           <span className="workstream-context-mark" aria-hidden="true"><Plus size={18} /></span>
           <span className="workstream-context-copy"><span>Add Sidekick</span></span>
-        </button>
+        </SidebarRow>
       </DropdownMenu.Trigger>
       </Tip>
       <DropdownMenu.Portal>

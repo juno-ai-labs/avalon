@@ -33,18 +33,21 @@ describe('sidebarConstraintThreshold', () => {
     expect(sidebarConstraintThreshold({
       pathname: '/spaces/hiring',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: false,
       spacesEnabled: true,
-    })).toBe(944);
+    })).toBe(984);
     expect(sidebarConstraintThreshold({
       pathname: '/workstreams/launch',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: true,
       spacesEnabled: true,
     })).toBe(896);
     expect(sidebarConstraintThreshold({
       pathname: '/workstreams/launch',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: false,
       spacesEnabled: false,
     })).toBe(800);
