@@ -125,6 +125,51 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — All three hierarchy sidebars share one resize edge
+
+**What changed:** The Space, Channel, and Breakout sidebars now compose one
+shared `ResizableSidebar` shell. Each keeps its own content and remembered
+expanded width, while the shell owns their compact/resizing states, motion
+channel, 88px compact width, 240–400px expanded range, 210/220px collapse
+hysteresis, grip, drag guide, tooltip, keyboard controls, and double-click
+toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, `SidebarScroll`, and
+`SidebarHorizontalLine` now provide the geometry inside that shell. A
+`SidebarHeader` is a 43px specialization of `SidebarRow` followed by a
+`SidebarHorizontalLine`, matching the message feed's 44px titlebar as a whole.
+`SidebarTitleHeader` owns the title and its shared 28px compact icon as one
+substitution, so header marks stay smaller than the 36px navigation-row marks
+beneath them;
+`SidebarScroll` gives every rail the same 8px divider-to-first-row gap and the
+same compact gutters. The desktop and browser hosts consume these primitives.
+Space, Channel, and Breakout rows also pass their icon, title, optional detail,
+and host-owned interaction through `SidebarNavigationRowContent`, so their icon
+slot, copy sizing, clipping, and compact motion cannot diverge in local CSS.
+The leftmost Space rail intentionally leaves the shared header title empty so
+the macOS window controls and trailing create action have a clear titlebar.
+The 88px compact width centers the native traffic-light group: its first button
+starts 18px from the left and its last button ends 18px from the right. The
+Channel and Breakout rails consume that same width.
+Before the first
+rail expands or resizes, the desktop shell now caps it to the width left after
+the protected conversation and compact Channel and Breakout rails.
+
+**Why:** Spaces had become the first level of the adjacent hierarchy without
+receiving the resize interaction the next two levels already offered. Copying
+the behavior into a third component was rejected because the visible contract
+would drift again; the edge interaction now lives below all three surfaces.
+Sharing only the edge was not enough: three independently sized rows and
+headers could still arrive at different positions during the same transition,
+so their structural geometry moved into the same package boundary too.
+
+**Consequences:** A Space width is a device-local preference like the other
+sidebar widths. Responsive calculations spend that remembered width when it
+fits, cap it when the complete hierarchy has less room, and hold every
+expansion control disabled when even the 240px minimum cannot fit. All three
+sidebar contents consume the shell's `--sidebar-layout-motion`, while a drag
+sets that channel to zero and temporarily removes only the dragged width from
+the workspace transition so its edge tracks the pointer without stopping
+motion on the neighboring sidebars.
+
 ### 2026-09-20 — Space rows can carry host-owned context actions
 
 **What changed:** `SpaceRow` can wrap the visual Space row, excluding its

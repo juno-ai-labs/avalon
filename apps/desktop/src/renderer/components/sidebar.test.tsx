@@ -327,14 +327,36 @@ describe('Sidebar channel markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  it('temporarily caps Spaces to the available hierarchy width without replacing its saved preference', () => {
+    const hiring = space();
+    useUiStore.getState().setSpacesSidebarWidth(400);
+    const { container } = render(
+      <div className="workspace-shell">
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+              spacesAvailableWidth={300} workspace={workspace} workstreams={[]} />
+          </Tooltip.Provider>
+        </MemoryRouter>
+      </div>,
+    );
+
+    expect(screen.getByRole('separator', { name: 'Resize spaces sidebar' })).toHaveAttribute('aria-valuenow', '300');
+    expect(container.querySelector<HTMLElement>('.workspace-shell')?.style.getPropertyValue('--spaces-sidebar-width')).toBe('300px');
+    expect(useUiStore.getState().spacesSidebarWidth).toBe(400);
+  });
+
   it('preserves the expanded preference while navigation is forced compact', () => {
     useUiStore.getState().setSidebarCollapsed(false);
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
-    fireEvent.doubleClick(screen.getByRole('separator', { name: 'Resize navigation' }));
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
+    fireEvent.doubleClick(resizer);
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+    expect(useUiStore.getState().sidebarWidth).toBe(300);
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBe('false');
   });
 
@@ -368,6 +390,9 @@ describe('Sidebar channel markers', () => {
     }
     render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    expect(edge.querySelector('svg')).toHaveAttribute('width', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
 
     fireEvent.focus(edge);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
@@ -2092,10 +2117,13 @@ describe('Sidebar channel markers', () => {
 
     expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'General' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'General' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'General' }).closest('.sidebar-titlebar')).not.toBeNull();
+    expect(screen.getByRole('heading', { name: 'General' })).toHaveClass('sidebar-title');
+    const header = screen.getByRole('heading', { name: 'General' }).closest('.sidebar-header');
+    expect(header).toHaveClass('sidebar-row');
+    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
+    expect(screen.getByRole('navigation', { name: 'Channels' })).toHaveClass('sidebar-scroll');
     expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveClass('sidebar-row');
   });
 
   // The section is showing its opening card and no rows, so there is nothing to
