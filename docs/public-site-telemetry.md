@@ -132,6 +132,16 @@ that reports. Events are sent immediately in batches bounded by the shared
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
+### 2026-09-21 — Match link previews to the landing page
+
+**What changed:** The social card uses the static pale landing design and collaboration headline. Open Graph and Twitter metadata reference `rally-social-v01.jpg`.
+
+**Why:** Sharing the homepage in Messages still displayed the old colorful artwork.
+
+**Considered and rejected:** Replacing only the bytes at the old URL leaves image caches using the old design.
+
+**Consequences:** Keep the versioned URL aligned with the generated card; existing Messages previews may retain cached page metadata until their client refreshes it.
+
 ### 2026-09-21 — Unify support and policy page presentation
 
 **What changed:** All 24 support and Trust Center pages use pale surfaces, the homepage typography scale, rounded controls, and responsive navigation and cards.
