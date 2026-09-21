@@ -2063,8 +2063,8 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 
-  it('adds a channel to the space its row was dropped on', () => {
-    const onAddChannelToSpace = vi.fn(async () => undefined);
+  it('moves a channel from the center sidebar to the space its row was dropped on', () => {
+    const onMoveChannelToSpace = vi.fn(async () => undefined);
     const hiring = space();
     const home = general();
     const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), home.id);
@@ -2074,7 +2074,7 @@ describe('Sidebar channel markers', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
-            onAddChannelToSpace={onAddChannelToSpace}
+            onMoveChannelToSpace={onMoveChannelToSpace}
             onSignOut={vi.fn()}
             spaces={[home, hiring]}
             workspace={workspace}
@@ -2089,10 +2089,15 @@ describe('Sidebar channel markers', () => {
     const item = screen.getByRole('link', { name: 'Hiring' });
     if (!(item instanceof HTMLElement)) throw new Error('space row missing');
     fireEvent.drop(item, {
-      dataTransfer: { getData: (type: string) => type === 'application/x-rally-workstream-id' ? target.id : '' },
+      dataTransfer: {
+        dropEffect: 'none',
+        getData: (type: string) => type === 'application/x-rally-workstream-id'
+          ? target.id
+          : type === 'application/x-rally-channel-source-space-id' ? home.id : '',
+      },
     });
 
-    expect(onAddChannelToSpace).toHaveBeenCalledWith(hiring.id, target.id);
+    expect(onMoveChannelToSpace).toHaveBeenCalledWith(home.id, hiring.id, target.id);
   });
 
   // Every Channel belongs to at least one Space and the section is drawn in
@@ -3954,12 +3959,12 @@ describe('reordering the channels inside a space', () => {
   });
 
   // The two meanings of one gesture. A release inside the list the Channel is
-  // already in is a reorder; a release on another Space is a placement, and it
+  // already in is a reorder; a release on another Space is a move, and it
   // must not also commit the arrangement the pointer built on its way out.
-  it('given a placement dropped on another space, then it is placed and nothing is reordered', async () => {
-    const onAddChannelToSpace = vi.fn(async () => undefined);
+  it('given a placement dropped on another space, then it is moved and nothing is reordered', async () => {
+    const onMoveChannelToSpace = vi.fn(async () => undefined);
     const onReorderContainer = vi.fn(async () => undefined);
-    renderSidebar({ onAddChannelToSpace, onReorderContainer });
+    renderSidebar({ onMoveChannelToSpace, onReorderContainer });
 
     const transfer = channelTransfer();
     const target = screen.getByRole('link', { name: 'Launch' });
@@ -3968,7 +3973,7 @@ describe('reordering the channels inside a space', () => {
     fireEvent.drop(target, { dataTransfer: transfer });
     fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
 
-    await waitFor(() => expect(onAddChannelToSpace).toHaveBeenCalledWith(launch.id, bravo.id));
+    await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
     expect(onReorderContainer).not.toHaveBeenCalled();
     expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
   });
