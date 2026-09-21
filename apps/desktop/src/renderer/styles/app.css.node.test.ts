@@ -549,7 +549,7 @@ describe('sidebar layout motion', () => {
     expect(rule('.resizable-sidebar.is-compact .sidebar-row')).not.toContain('justify-content');
     const compactFooter = rule('.resizable-sidebar.is-compact .sidebar-footer.is-toggle-only');
     expect(compactFooter).toContain('calc((100% - 30px) / 2)');
-    expect(rule('.sidebar-footer')).toContain('flex: 0 0 54px');
+    expect(rule('.sidebar-footer')).toContain('flex: 0 0 56px');
     expect(rule('.sidebar-footer.has-leading-content')).toBeNull();
     expect(rule('.sidebar-footer.is-toggle-only')).toBeNull();
     expect(rule('.app-shell .channels-sidebar.is-compact .sidebar-footer')).toBeNull();
