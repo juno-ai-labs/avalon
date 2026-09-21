@@ -2,7 +2,13 @@ import { authenticateSession } from "../services/session-authentication";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import type { MiddlewareHandler } from "hono";
-import type { AuthContext, Env, HonoAppEnv, IdentityAuthContext } from "../env";
+import type {
+  AuthContext,
+  Env,
+  HonoAppEnv,
+  IdentityAuthContext,
+  RequestMembershipObservation,
+} from "../env";
 import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { logWarn } from "../observability/logger";
@@ -147,9 +153,22 @@ export function getWorkspaceAuth(c: Context): AuthContext {
 export const requireWorkspaceAuth: MiddlewareHandler<HonoAppEnv> = async (c,next) => {
   c.set("auth",c.get("auth") ?? await timedAuthenticate(c));
   const auth = getWorkspaceAuth(c);
+  c.set("requestMembership", {
+    workspaceId: auth.workspaceId,
+    userId: auth.userId,
+    accessClass: auth.accessClass ?? "member",
+    validatedAt: Date.now(),
+  });
   requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
   await next();
 };
+
+/** Membership proof created by this request's authentication middleware. */
+export function getRequestMembership(c: Context): RequestMembershipObservation {
+  const observation = c.get("requestMembership");
+  if (!observation) throw new Error("request_membership_observation_missing");
+  return observation;
+}
 
 export function getAuth(c: Context): AuthContext {
   const auth = getIdentityAuth(c);

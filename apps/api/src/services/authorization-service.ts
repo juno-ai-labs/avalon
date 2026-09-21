@@ -1,6 +1,6 @@
 import { projectMemorySearchAccess } from './memory-search-authorization';
 import { asWorkspaceId, asSubstreamId } from '@rally/contracts';
-import type { AuthContext, Env } from '../env';
+import type { AuthContext, Env, RequestMembershipObservation } from '../env';
 import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
 import { workspaceDOName } from '../durable-objects/names';
 import { authorizationSnapshotKey } from '../durable-objects/authorization-storage';
@@ -27,13 +27,6 @@ function atReceipt<T extends { validatedAt: number }>(value: T, validatedAt = Da
 function atBatchReceipt<T extends { validatedAt: number }>(values: readonly T[]): T[] {
   const validatedAt = Date.now();
   return values.map((value) => atReceipt(value, validatedAt));
-}
-
-interface RequestMembershipObservation {
-  workspaceId: string;
-  userId: string;
-  accessClass: 'member' | 'guest';
-  validatedAt: number;
 }
 
 async function ownerEvidence<T extends { validatedAt: number }>(cache: Map<string, Promise<T>>, key: string,
@@ -70,22 +63,19 @@ export function requireAuthorizedRead(decision: AuthorizationDecision): void {
   }
 }
 
-/** Created once per trusted request; no model-provided or browser-provided grants. */
+/** Canonical context for callers without a separately proven request membership. */
 export function createAccessContext(env: Env, auth: AuthContext): AccessContext {
   return new AccessContext(
     { workspaceId: auth.workspaceId, userId: auth.userId, delegation: null },
-    new AuthorizationService(env, auth),
+    new AuthorizationService(env),
   );
 }
 
 export class AuthorizationService {
   private readonly requestMembership: RequestMembershipObservation | null;
 
-  constructor(private readonly env: Env, auth?: AuthContext) {
-    const accessClass = auth?.accessClass ?? (auth?.role ? 'member' : null);
-    this.requestMembership = auth && accessClass
-      ? { workspaceId: auth.workspaceId, userId: auth.userId, accessClass, validatedAt: Date.now() }
-      : null;
+  constructor(private readonly env: Env, requestMembership?: RequestMembershipObservation) {
+    this.requestMembership = requestMembership ?? null;
   }
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {

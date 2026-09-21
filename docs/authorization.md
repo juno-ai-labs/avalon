@@ -97,10 +97,11 @@ policy interpreter, customer-supplied graph language or hosted policy service.
 An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
-Member proofs include the active regional workspace-membership observation the
-trusted request middleware already established; non-request callers load the
-same fact canonically from D1. Each observation is shared within one authorization
-batch. Each batch gathers conversation IDs from
+An authorization batch may receive the active regional workspace-membership
+observation separately produced by trusted request middleware. The artifact-open
+route carries that proof explicitly; a generic `AuthContext`, a retargeted
+subject, and every non-request caller load the fact canonically from D1. Each
+observation is shared within one authorization batch. Each batch gathers conversation IDs from
 its requests and resource locations before loading a parent, preserving one parent
 RPC across multiple substreams. A mixed response carries migrated scope decisions
 alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
@@ -110,9 +111,8 @@ An automation supplies its own scope, author, executor and child registry; an
 owning work stream's canonical roster supplies inherited access. Archived work
 streams remain readable. Deleted automations are absent.
 
-Guest membership comes from the trusted request's current `accessClass`, or is
-observed explicitly from `workspace_members.access_class` when no request
-observation exists. Guests cannot use a legacy conversation scope/roster or
+Guest membership comes from an explicitly carried request observation, or is
+read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
 Sidekick authoring fallback. For a non-owned resource, a guest always needs a
 canonical attachment in an authorized migrated conversation, including resources
 whose provider ordinarily makes them workspace-wide for members. Their own upload
@@ -498,11 +498,12 @@ keeps the future-evidence guard without comparing wall clocks across isolates;
 clock-skew tolerances were rejected because they would turn an invalid ordering
 assumption into an arbitrary authorization limit.
 
-The resolver also accepts the active membership observation already established
-by trusted request authentication. Re-reading the same `workspace_members` row
-inside the artifact-open authorization batch added a serial D1 hop without a new
-authority boundary. Non-request callers still perform the canonical membership
-read, so ArtifactHostDO and background paths do not acquire request-only trust.
+The resolver also accepts a separately typed active-membership observation from
+trusted request middleware. The artifact-open route carries it explicitly;
+re-reading the same `workspace_members` row there added a serial D1 hop without a
+new authority boundary. A generic `AuthContext` is deliberately not evidence:
+background callers can retain one and services can retarget one to another user.
+Those paths continue to perform the canonical membership read.
 
 ### 2026-09-19 — A readable Channel discloses its Space's mark, and nothing else
 
