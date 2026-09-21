@@ -40,7 +40,7 @@ them; the product design is in
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/space-sidebar-section.tsx` | The **Spaces** section: rows, placements, drag, reorder, restore, and the Organization-opening card. Creation lives in the sidebar's global plus menu. |
+| `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space compacts the first rail and opens its Channels; selecting a Channel compacts both before the existing room/Breakout rail. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
@@ -1187,65 +1187,31 @@ slots are cleared when the screen changes Space: one component draws every
 Space, so a refusal about the Space somebody just left would otherwise be read
 as being about the one they just opened.
 
-While `spacesReady` is false the sidebar section and the dashboard show the
-Organization-opening card *instead of* the hierarchy, and the global creation
-menu cannot select a destination Space: a Space directory missing General, or a Channel with no
-Space, is not a state any surface may render, and creation is refused with
-`space_bootstrap_pending` anyway. The Channel rows are handed no Space list
-while it is false for the same reason, which is what takes **Add to space** and
-the drag with it. The flag is optional on the wire and read as ready when
-absent, so a client talking to a server without the cutover is not permanently
-opening.
+While `spacesReady` is false the Space rail and the dashboard show the
+Organization-opening card *instead of* Space rows: a directory missing General,
+or a Channel with no Space, is not a state any surface may render. The adjacent
+Channel rail remains the temporary route to every Channel already in hand, but
+its rows are not draggable and receive no Space placement controls, and the
+global creation launcher is unavailable because it cannot name a valid
+destination yet. The flag is optional on the wire and read as ready when absent,
+so a client talking to a server without the cutover is not permanently opening.
 
 A Channel row is draggable exactly while a pinned reorder, a placement or a
 placement reorder is possible; a system Channel offers neither Space control,
 because the subsystem that writes it decides both its audience and its home.
 
-**There is no time-grouped list of Channels under the hierarchy.** Every Channel
-belongs to a Space, so the section above already says where each one lives and a
-second list of the same rows ordered by time was the same sidebar twice. What is
-left in its place is **Other channels**: the Channels whose `spaceIds` intersect
-this viewer's visible directory in nothing. It is flat, ordered by recency,
-carries no group headings, and is absent when empty, which is the ordinary
-state. Pinned Channels are left out of it, as they were left out of the list it
-replaces: the section above already has them.
+**There is no time-grouped list of Channels for a member.** Every Channel
+belongs to a Space, so the Space selection is the filter for the adjacent
+Channel rail. A Channel in several Spaces is the same row in each selection,
+never two simultaneous copies. A Channel whose `spaceIds` name no visible Space
+is omitted once opening is complete: the reach rule makes that an invalid
+directory state rather than a fourth navigation section. While opening is in
+progress, the Channel rail deliberately shows every Channel already in hand so
+the cutover never makes navigation disappear.
 
-**Two transient states produce one now, and neither is the state it was built
-for.** It was built for a Channel whose only placements are Spaces this reader
-cannot see; [the third way a Space becomes visible](#who-may-see-a-space-and-why)
-retired that case, because such a Channel is now drawn under the Space it is
-actually in. What is left is an Organization still opening — where the Spaces
-section draws its card instead of its rows, so *every* Channel is here — and a
-Channel whose every Space is archived, which has no active row to sit under.
-
-**"Visible directory" means the one that is on screen, not the one that
-arrived.** While the Organization is still opening, the Spaces section draws its
-opening card *instead of* the rows, and the directory already carries General —
-so the set the fallback tests against is `spaces` **and** `spacesReady`, the
-same pair that decides where a row's **Add to space** may place a Channel. Read
-without the readiness, every Channel the cutover placed would leave **Other
-channels** for a hierarchy nobody can see yet: a member with the desktop open
-would watch their sidebar empty itself one page of 50 at a time, and get it back
-at `complete`. The one value both sections read is `placementSpaces` in
-`sidebar.tsx`.
-
-The name is the plainest one the product's own language offers. "Unplaced" and
-"Unfiled" describe the Organization's hierarchy rather than the reader's view,
-and both are wrong about what is actually going on — the Channel *is* placed,
-in a Space this person cannot see.
-
-**An expanded Space is what pages the Channel list for a member.** The
-sidebar's own trigger is the nav's scroll approaching the bottom, which used to
-reach the end of the time-grouped list of every Channel; with that list gone a
-member's nav is short and rarely scrolls at all, so a Space holding 60 Channels
-would list whichever of them page one happened to carry and offer no way to ask
-for the rest. An expanded Space listing fewer placements than its `channelCount`
-asks the existing loader for the next page, and keeps asking until the pages run
-out. `channelCount` is the Organization's count rather than this viewer's, so
-being short is not proof anything is missing — a Space can hold Channels this
-person may not read, and would then be short forever. Running out of pages is
-what stops it; the count being reached is not. There is no second endpoint:
-this is the same `['workstreams']` page the scroll was asking for.
+**The selected Channel rail pages the member's list.** It uses the existing
+workstream loader when its own scroll approaches the end. There is no second
+endpoint: this is the same `['workstreams']` page the former flat list used.
 
 **A member with no Channels at all is told so.** "No channels yet" — the one
 line of the removed list's copy that is kept — sits under the Spaces, in a
@@ -1261,12 +1227,11 @@ actions. The member session loses those bulk actions with the headings that
 carried them.
 
 **Three lists are arranged by drag, and each has the keyboard's version of the
-same gesture** — Alt with the up or down arrow, the mechanism the pinned list
-already had, said once per section rather than on every row. A drop inside the
-list a Channel is already in is a reorder; a drop on another Space is the
-placement it has always been. The row itself claims a release its own list took,
-so the event never reaches the Space underneath; a release anywhere else falls
-through to the Space row, which is what a placement is.
+same gesture** — Alt with the up or down arrow: Spaces in the first rail,
+Channels in the selected Space's rail, and Breakouts in the selected Channel's
+rail. A drop inside the Channel rail is a reorder; a drop on a Space row is the
+placement it has always been. The Channel row claims a release its own list
+took, while a release in the Space rail belongs to the target Space.
 
 ## Invariants
 
@@ -1555,10 +1520,11 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, removal of both local plus controls, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
+| `apps/desktop/src/renderer/components/spaces-sidebar.test.tsx` | The dedicated Space rail: selection, compact marks, opening and stale states, Organization-level Search and New Channel controls, and the inverse expanded/compact Create handoff. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The row's Space controls: **Add to space**, the drag, the system-Channel and Organization-opening cases, and a shell with no directory. Also the sidebar's shape — no time-grouped list for a member and the flat list untouched for a guest, **Other channels** present only for a Channel with no visible placement, absent otherwise, and holding every Channel while the Organization is still opening, the empty line present for a member with no Channels and absent once there is one — and the placement drag: a drop inside a Space reorders, a drop on another Space places and reorders nothing, Alt+Arrow does the same without a pointer, and a refusal snaps the list back. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the guest shell's unchanged recency list, stored personal order, drag-to-Space placement, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
 
@@ -1983,6 +1949,58 @@ inspects or changes them; retiring that durable behavior was rejected as a
 separate product decision. Future management surfaces can reuse the authority,
 but they must be introduced where that job belongs rather than silently
 restoring these controls.
+### 2026-09-20 — Spaces, Channels, and Breakouts become adjacent navigation levels
+
+**What changed:** The desktop no longer expands Channels inside Space accordion
+rows. It draws a dedicated Space sidebar, an adjacent Channel sidebar filtered
+by the selected Space, and the existing Channel context sidebar for Main and
+Breakouts. Selecting a row compacts the level it came from; every compact level
+keeps the same 96px square-mark geometry and can be reopened manually. Space
+rows use the Channel hover-card language with scope and Channel count, Breakout
+rows use the branch icon instead of the enter arrow, and **New breakout** uses
+the blue enter mark instead of a generic plus. The original left sidebar keeps
+the original Organization-level Search and New Channel controls and their
+compact motion, standalone Sidekick shortcuts, and the user footer. The newly
+inserted Channel sidebar contains only the selected Space's Channels and uses
+that Space's name as its sole heading; the Breakout sidebar names the active
+Channel in its header. Those two headers share the left rail's top-action
+centerline while expanded, and both leave the same 8px interval before their
+first row. In compact mode each becomes its Space or Channel mark above a
+divider, so the level remains identifiable before its rows begin. The left
+rail retains the original Create handoff: its expanded titlebar control exits
+through the right edge as the compact command-row control enters from the
+left, and expansion reverses both paths.
+The Space width is a registered shell property, so both dependent rails move
+with its collapse instead of jumping to their final offsets. A Space selection
+has one navigation owner (its link), and leaving then re-entering the same
+Channel rearms automatic compaction. The selected-Space list keeps requesting
+directory pages until it has the Space's Channels or reaches the end, including
+when the first page is too short to scroll. Space ordering exposes its
+Alt+Arrow instruction to assistive technology, while a Space reached only
+through one of its Channels refuses Channel drops before any mutation is sent.
+The shell owns the Space rail's collapsed state so its narrow-window threshold
+reserves the rail actually on screen, and a stale archived-Space URL falls back
+to a valid sidebar selection without competing route and directory effects.
+Channel reorder state, failures, placement menus, and keyboard instructions stay
+scoped to the selected Space; the Space rail keeps loading placeholders until
+the first directory arrives, and placement drops remain copies rather than
+accidental pinned-list reorders.
+
+**Why:** The accordion made containment and destination the same gesture: a
+Space row both opened a Space and disclosed an indented copy of every Channel
+under it. That stopped scaling visually as the product gained the third
+Channel-to-Breakout level. Adjacent rails make each relationship one reusable
+navigation primitive, preserve the authoritative Space placements, and recover
+conversation width automatically as a person moves deeper.
+
+**Consequences:** A Channel in several Spaces is still one authoritative row,
+but it appears in the Channel rail for whichever Space is selected instead of
+being duplicated under simultaneously open accordions. Future hierarchy levels
+must preserve this selection-and-compaction rule rather than nesting another
+disclosure list inside an existing row. The lite guest browser remains a
+separate, deliberately smaller host: its cookie-scoped directory has shared
+Channels and conversations but no Space directory, so it does not draw this
+three-level member navigation.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 
