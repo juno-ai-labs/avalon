@@ -111,7 +111,21 @@ describe('public Rally site', () => {
     expect(styles).toContain('@media(max-width:1050px)');
     expect(styles).toContain('@media(max-width:720px)');
     expect(styles).toContain('.rally-hero h1{font-size:clamp(2.5rem,10.5vw,3.4rem)}');
-    expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
+    const informationStyles = readProjectFile('src/information.css');
+    const informationPages = publicPages.filter((path) =>
+      path.startsWith('trust/') || path.startsWith('support/'),
+    );
+    for (const path of informationPages) {
+      expect(readProjectFile(path), path).toContain('/src/information.css');
+    }
+    // These are source contracts; browser checks verify actual layout and visibility.
+    expect(informationStyles).toMatch(/\.support-paths \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/u);
+    expect(informationStyles).toMatch(/@media \(max-width: 700px\)[\s\S]*\.support-paths \{ grid-template-columns: 1fr;/u);
+    expect(informationStyles).toMatch(/\.trust-tabs, \.support-page-nav \{[^}]*flex-wrap: wrap/u);
+    expect(informationStyles).toMatch(/\.legal-table-wrap \{[^}]*overflow-x: auto/u);
+    expect(informationStyles).toMatch(/@media \(max-width: 400px\)[\s\S]*grid-row: 3/u);
+    expect(informationStyles).not.toMatch(/\.trust-status \{[^}]*display: none/u);
+    expect(readProjectFile('trust/security/index.html').match(/class="trust-status">Implemented<\/span>/gu)).toHaveLength(7);
   });
 
   it('uses the canonical brand mark and current brand palette on every public surface', () => {
@@ -557,11 +571,10 @@ describe('public Rally site', () => {
     expect(readProjectFile('trust/security/index.html')).not.toContain('Request access');
     expect(readProjectFile('trust/security/index.html')).not.toContain('SOC 2');
     expect(readProjectFile('trust/security/index.html')).not.toContain('<i aria-label="Implemented">');
-    expect(readProjectFile('trust/security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
-    const styles = readProjectFile('src/styles.css');
-    expect(styles).toContain('.trust-hero h1 em{color:#111210');
-    expect(styles).toContain('.trust-reporting h2 em{color:#111210');
-    expect(styles).toContain('.support-article>section>.support-section-body{display:grid;gap:1.5rem;');
+    expect(readProjectFile('trust/security/index.html').match(/class="trust-status">Implemented<\/span>/gu)).toHaveLength(7);
+    const styles = readProjectFile('src/information.css');
+    expect(styles).toContain('h1 em, h2 em { font-style: normal; }');
+    expect(styles).toContain('.support-section-body { max-width: 820px; }');
     const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
     expect(landingContent).not.toContain('/security/');
     expect(landingFooter).toContain('<a href="/trust/">Trust Center</a>');
