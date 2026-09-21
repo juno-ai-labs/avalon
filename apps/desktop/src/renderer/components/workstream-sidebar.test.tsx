@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { MemoryRouter, NavLink } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
 import { SITE_MANIFEST_MIME_TYPE, asSubstreamId, asUserId } from '@rally/contracts';
+import { SidebarList } from '@rally/ui/components/resizable-sidebar';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -44,6 +46,20 @@ beforeEach(() => {
   });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+describe('SidebarList', () => {
+  it('preserves string and polymorphic callback class names', () => {
+    const { rerender } = render(<SidebarList className="local-list" />);
+    expect(document.querySelector('.sidebar-list')).toHaveClass('local-list');
+
+    rerender(<MemoryRouter><SidebarList
+      as={NavLink}
+      className={({ isActive }) => isActive ? 'current-list' : undefined}
+      to="/"
+    /></MemoryRouter>);
+    expect(screen.getByRole('link')).toHaveClass('sidebar-list', 'current-list');
+  });
+});
 
 describe('WorkstreamSidebar', () => {
   it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
@@ -228,10 +244,11 @@ describe('WorkstreamSidebar', () => {
       onFocusTranscript={vi.fn()}
     /></Tooltip.Provider>);
     const sidebar = screen.getByRole('complementary');
-    const rows = [...sidebar.querySelectorAll('.workstream-substream-list > *')];
+    const rows = [...sidebar.querySelectorAll('.workstream-conversation-list > .sidebar-row')];
     // Last, where a child created now will be listed: the directory orders
     // children oldest first, so the row does not move when it becomes real.
     expect(rows.map((row) => row.className)).toEqual([
+      expect.stringContaining('workstream-conversation-row'),
       expect.stringContaining('workstream-conversation-row'),
       expect.stringContaining('workstream-pending-substream'),
       expect.stringContaining('workstream-new-substream'),
@@ -246,9 +263,9 @@ describe('WorkstreamSidebar', () => {
     // saying where they are. Asserted as the list's whole button inventory, so
     // it fails the moment the placeholder becomes navigable rather than
     // depending on the label a regression would happen to give it.
-    const list = sidebar.querySelector('.workstream-substream-list');
+    const list = sidebar.querySelector('.workstream-conversation-list');
     expect([...list?.querySelectorAll('button') ?? []].map((button) => button.getAttribute('aria-label')))
-      .toEqual(['Go to breakout: Launch risks', 'New breakout']);
+      .toEqual(['Go to conversation: Launch preparation', 'Go to breakout: Launch risks', 'New breakout']);
     const create = screen.getByRole('button', { name: 'New breakout' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
@@ -551,7 +568,7 @@ describe('WorkstreamSidebar', () => {
     const second = { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b2'), title: 'Launch comms' };
 
     function setupRail(drag?: React.ComponentProps<typeof WorkstreamSidebar>['substreamDrag']) {
-      render(<Tooltip.Provider><WorkstreamSidebar
+      return render(<Tooltip.Provider><WorkstreamSidebar
         workstream={{ ...workstream, privateChildren: [first, second] }}
         presentUserIds={[]}
         onOpenArtifact={vi.fn()}
@@ -583,6 +600,27 @@ describe('WorkstreamSidebar', () => {
       // release, so the list settles under the pointer instead of jumping once
       // at the end.
       expect(drag.onDragOver).toHaveBeenCalledWith(first.substreamId);
+      expect(drag.onDragEnd).toHaveBeenCalledWith(false);
+    });
+
+    it('given a breakout released in the gap between rows, then the drag is completed', () => {
+      const drag = {
+        draggingSubstreamId: null,
+        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
+      };
+      const view = setupRail(drag);
+      const row = screen.getByRole('button', { name: /Launch comms/u });
+      const list = view.container.querySelector<HTMLElement>('.workstream-conversation-list');
+      const dataTransfer = transfer('none');
+      expect(list).not.toBeNull();
+      if (!list) return;
+
+      fireEvent.dragStart(row, { dataTransfer });
+      fireEvent.dragOver(list, { dataTransfer });
+      fireEvent.drop(list, { dataTransfer });
+      fireEvent.dragEnd(row, { dataTransfer });
+
+      expect(dataTransfer.dropEffect).toBe('move');
       expect(drag.onDragEnd).toHaveBeenCalledWith(false);
     });
 
