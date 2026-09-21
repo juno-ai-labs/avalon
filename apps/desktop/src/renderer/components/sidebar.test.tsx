@@ -1709,12 +1709,15 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
-    expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
-    const existing = screen.getByRole('menuitem', { name: 'Hiring' });
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
     expect(existing).toHaveAttribute('data-disabled');
-    expect(existing).toHaveAttribute('aria-current', 'true');
+    expect(existing).toHaveAttribute('aria-disabled', 'true');
+    expect(existing).toHaveAttribute('aria-checked', 'true');
 
-    fireEvent.pointerMove(existing, { pointerType: 'mouse' });
+    act(() => generalOption.focus());
+    fireEvent.keyDown(generalOption, { key: 'ArrowDown' });
+    await waitFor(() => expect(existing).toHaveFocus());
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'This channel is already in Hiring.',
     );
@@ -1866,14 +1869,18 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
 
-    const readOnly = await screen.findByRole('menuitem', { name: 'Theirs' });
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const readOnly = screen.getByRole('menuitemcheckbox', { name: 'Theirs' });
     expect(readOnly).toHaveAttribute('data-disabled');
-    expect(readOnly).not.toHaveAttribute('aria-current');
+    expect(readOnly).toHaveAttribute('aria-disabled', 'true');
+    expect(readOnly).toHaveAttribute('aria-checked', 'false');
 
-    fireEvent.pointerMove(readOnly, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    act(() => generalOption.focus());
+    fireEvent.keyDown(generalOption, { key: 'ArrowDown' });
+    await waitFor(() => expect(readOnly).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent(
       'You can view Theirs through a channel, but only Theirs participants can add channels.',
-    );
+    ));
   });
 
   // A system Channel is not a product Channel: the subsystem that writes it
