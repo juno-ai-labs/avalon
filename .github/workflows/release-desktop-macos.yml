@@ -428,7 +428,7 @@ jobs:
         with:
           name: Rally-${{ env.RELEASE_TAG }}-macos-arm64
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
           path: |
             apps/desktop/release/release/*.dmg
             apps/desktop/release/release/*.zip
