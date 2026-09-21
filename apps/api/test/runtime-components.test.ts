@@ -531,6 +531,20 @@ describe("runtime component invariants", () => {
       `SELECT exact_state FROM workstream WHERE id = 1`,
     ).toArray()[0]).toEqual({ exact_state: "running" });
 
+    sql.exec(`UPDATE substream_loops SET lease_expires_at = 1 WHERE id = 1`);
+    await expect(product.recordWorkflowFailed(
+      runId,
+      { code: "provider_failed", message: "Provider failed" },
+      { loopId, executionId: runId, executionEpoch: 1, leaseOwner },
+    )).rejects.toThrow("workstream_run_failure_fenced");
+    expect(sql.exec<{ status: string }>(
+      `SELECT status FROM runs WHERE run_id = ?`, runId,
+    ).toArray()[0]).toEqual({ status: "running" });
+
+    sql.exec(
+      `UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`,
+      Date.now() + 60_000,
+    );
     await expect(product.recordWorkflowFailed(
       runId,
       { code: "provider_failed", message: "Provider failed" },

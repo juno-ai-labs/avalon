@@ -1588,9 +1588,10 @@ export class WorkstreamHarnessRunStorage {
       active_execution_id: string | null;
       active_execution_epoch: number | null;
       lease_owner: string | null;
+      lease_expires_at: number | null;
     } & Record<string, SqlStorageValue>>(
       `SELECT loop_id, status, cycle_ordinal, active_execution_id,
-              active_execution_epoch, lease_owner
+              active_execution_epoch, lease_owner, lease_expires_at
          FROM substream_loops WHERE id = 1`,
     ));
     if (!loop || loop.loop_id !== fence.loopId) return false;
@@ -1601,7 +1602,9 @@ export class WorkstreamHarnessRunStorage {
       || loop.cycle_ordinal !== receipt.loop_cycle_ordinal
       || loop.active_execution_id !== fence.executionId
       || loop.active_execution_epoch !== fence.executionEpoch
-      || loop.lease_owner !== fence.leaseOwner) return false;
+      || loop.lease_owner !== fence.leaseOwner
+      || loop.lease_expires_at === null
+      || loop.lease_expires_at <= now) return false;
     const activeReservation = first(this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT turn_id FROM assistant_turn_reservations
         WHERE loop_id = ? AND cycle_ordinal = ? AND state IN ('reserved', 'streaming')
@@ -1622,6 +1625,7 @@ export class WorkstreamHarnessRunStorage {
         WHERE id = 1 AND loop_id = ? AND status = 'executing'
           AND cycle_ordinal = ? AND active_execution_id = ?
           AND active_execution_epoch = ? AND lease_owner = ?
+          AND lease_expires_at > ?
         RETURNING loop_id`,
       now,
       fence.loopId,
@@ -1629,6 +1633,7 @@ export class WorkstreamHarnessRunStorage {
       fence.executionId,
       fence.executionEpoch,
       fence.leaseOwner,
+      now,
     ));
     return closed?.loop_id === fence.loopId;
   }
@@ -1890,6 +1895,7 @@ export class WorkstreamHarnessRunStorage {
         || run.substream_loop_id !== null
         || run.legacy_attempt_id !== input.attemptId
         || run.lease_expires_at !== input.leaseExpiresAt
+        || run.lease_expires_at > input.now
         || run.status !== "running"
         || run.terminalized_at !== null) {
         return { outcome: "not_stale" as const };
