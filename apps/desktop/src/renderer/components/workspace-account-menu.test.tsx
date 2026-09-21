@@ -75,13 +75,18 @@ describe('organization account menu', () => {
     const items = within(menu).getAllByRole('menuitem');
     expect(items).toHaveLength(enabled ? 6 : 3);
     expect(items[0]).toHaveAccessibleName('Sidekicks');
+    expect(within(menu).getByRole('menuitem', { name: 'Sidekicks' }).querySelector('.tabler-icon-hexagons'))
+      .toBeInTheDocument();
     expect(items[1]).toHaveAccessibleName('Settings');
+    expect(within(menu).getByRole('menuitem', { name: 'Settings' }).querySelector('.tabler-icon-settings'))
+      .toBeInTheDocument();
     if (enabled) {
       expect(items[2]).toHaveAccessibleName(/Global Studio.*Current/u);
       expect(items[3]).toHaveAccessibleName(/Europe Studio/u);
       expect(items[4]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
     }
     const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
+    expect(logout.querySelector('.tabler-icon-logout')).toBeInTheDocument();
     expect(items.at(-1)).toBe(logout);
     expect(menu.lastElementChild).toBe(logout);
     expect(within(menu).getAllByRole('separator')).toEqual([logout.previousElementSibling]);
