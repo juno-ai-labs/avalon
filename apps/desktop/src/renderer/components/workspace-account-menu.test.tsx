@@ -202,8 +202,12 @@ describe('organization account menu', () => {
 
     expect(screen.queryByText('Organizations')).not.toBeInTheDocument();
     expect(screen.getByText('ada@example.com')).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Settings…' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+    const settings = screen.getByRole('menuitem', { name: 'Settings…' });
+    const signOut = screen.getByRole('menuitem', { name: 'Sign out' });
+    expect(settings).toBeVisible();
+    expect(settings.querySelector('.tabler-icon-settings')).toBeInTheDocument();
+    expect(signOut).toBeVisible();
+    expect(signOut.querySelector('.tabler-icon-logout')).toBeInTheDocument();
   });
 
   it('names the active organization\'s data region by deployment identifier under the account, and offers no reconnect item', () => {
