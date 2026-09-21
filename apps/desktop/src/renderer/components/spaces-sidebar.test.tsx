@@ -152,7 +152,10 @@ describe('SpacesSidebar', () => {
   });
 
   it('moves a Channel from its source Space to the Space it is dropped on', async () => {
-    const onMoveChannel = vi.fn(async () => undefined);
+    let settleMove: (() => void) | undefined;
+    const onMoveChannel = vi.fn(() => new Promise<void>((resolve) => {
+      settleMove = resolve;
+    }));
     renderSidebar({ onMoveChannel });
     const transfer = {
       dropEffect: 'none',
@@ -169,7 +172,64 @@ describe('SpacesSidebar', () => {
     await waitFor(() => expect(onMoveChannel).toHaveBeenCalledWith('general', 'launch', 'channel-1'));
     expect(transfer.dropEffect).toBe('move');
     expect(target).not.toHaveClass('is-channel-drop-target');
-    expect(target).toHaveClass('is-channel-drop-accepted');
+    expect(target).not.toHaveClass('is-channel-drop-accepted');
+
+    settleMove?.();
+    await waitFor(() => expect(target).toHaveClass('is-channel-drop-accepted'));
+  });
+
+  it('does not show accepted feedback when a Channel move is refused', async () => {
+    const onMoveChannel = vi.fn(async () => { throw new Error('space_access_denied'); });
+    renderSidebar({ onMoveChannel });
+    const transfer = {
+      dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-rally-workstream-id'
+        ? 'channel-1'
+        : type === 'application/x-rally-channel-source-space-id' ? 'general' : '',
+      types: ['application/x-rally-workstream-id', 'application/x-rally-channel-source-space-id'],
+    };
+    const target = screen.getByRole('link', { name: 'Launch' });
+
+    fireEvent.drop(target, { dataTransfer: transfer });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That channel couldn\u2019t be moved.');
+    expect(target).not.toHaveClass('is-channel-drop-accepted');
+  });
+
+  it('rejects a move whose source Space is read-only', () => {
+    const onMoveChannel = vi.fn(async () => undefined);
+    const readOnly = { ...space('shared', 'Shared', 1), reach: 'through_channel' as const };
+    renderSidebar({ onMoveChannel, selectedSpaceId: readOnly.id, spaces: [readOnly, space('launch', 'Launch', 1)] });
+    const target = screen.getByRole('link', { name: 'Launch' });
+    const transfer = {
+      dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-rally-workstream-id'
+        ? 'channel-1'
+        : type === 'application/x-rally-channel-source-space-id' ? readOnly.id : '',
+      types: ['application/x-rally-workstream-id', 'application/x-rally-channel-source-space-id'],
+    };
+
+    fireEvent.drop(target, { dataTransfer: transfer });
+
+    expect(onMoveChannel).not.toHaveBeenCalled();
+    expect(transfer.dropEffect).toBe('none');
+  });
+
+  it('rechecks the selected Space when the Channel is dropped', () => {
+    const onMoveChannel = vi.fn(async () => undefined);
+    renderSidebar({ onMoveChannel, selectedSpaceId: 'launch' });
+    const transfer = {
+      dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-rally-workstream-id'
+        ? 'channel-1'
+        : type === 'application/x-rally-channel-source-space-id' ? 'general' : '',
+      types: ['application/x-rally-workstream-id', 'application/x-rally-channel-source-space-id'],
+    };
+
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+
+    expect(onMoveChannel).not.toHaveBeenCalled();
+    expect(transfer.dropEffect).toBe('none');
   });
 
   it('shows placeholder rows instead of an empty directory while loading', () => {

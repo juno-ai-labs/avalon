@@ -1884,9 +1884,11 @@ a different Space in the left rail now adds the destination membership and then
 removes the source membership. The context-menu **Add to space** action remains
 additive. An eligible Space holds a visible target highlight while the Channel
 is over it, then pulses the accent colour three times in quick succession when
-the drop is accepted. Each pulse eases through its rise and fall rather than
-switching the accent on and off; reduced-motion settings replace the pulses with
-the same accepted state held briefly.
+the membership move settles successfully. Each pulse eases through its rise and
+fall rather than switching the accent on and off; reduced-motion settings replace
+the pulses with the same accepted state held briefly. Read-only source placements
+do not advertise the cross-rail move, and a cross-rail drop always abandons any
+pinned or unpinned order preview built while the pointer crossed Channel rows.
 
 **Why:** The adjacent rails present the Channel as a member of the selected
 Space and the destination as a peer container. In that layout, carrying the row

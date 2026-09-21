@@ -2733,6 +2733,7 @@ describe('pinned channels', () => {
       expect.stringContaining('Bravo'),
     ]);
 
+    fireEvent.drop(dragTarget(/Alpha/u), { dataTransfer: dataTransfer('move') });
     fireEvent.dragEnd(dragTarget(/Charlie/u), { dataTransfer: dataTransfer('move') });
     await waitFor(() => expect(onReorderPinnedWorkstreams)
       .toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-c', 'ws-a', 'ws-b']));
@@ -3976,6 +3977,44 @@ describe('reordering the channels inside a space', () => {
     await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
     expect(onReorderContainer).not.toHaveBeenCalled();
     expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  });
+
+  it('does not advertise a cross-space move from a read-only source Space', () => {
+    const readOnly = { ...hiring, reach: 'through_channel' as const };
+    renderSidebar({
+      spaces: [readOnly, launch],
+      workstreams: [placedIn(alpha, readOnly.id)],
+    });
+    const transfer = channelTransfer('none');
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+
+    expect(transfer.types).toContain('application/x-rally-workstream-id');
+    expect(transfer.types).not.toContain('application/x-rally-channel-source-space-id');
+  });
+
+  it('abandons a pinned reorder preview when the Channel is dropped on another Space', async () => {
+    const onMoveChannelToSpace = vi.fn(async () => undefined);
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderSidebar({
+      onMoveChannelToSpace,
+      onReorderPinnedWorkstreams,
+      workstreams: [pinned(alpha, 0), pinned(bravo, 1)],
+    });
+    const transfer = channelTransfer();
+    const pinnedTitles = (): string[] => within(screen.getByRole('region', { name: 'Pinned' }))
+      .getAllByRole('link').map((row) => row.textContent ?? '');
+
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    expect(pinnedTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
+
+    await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+    await waitFor(() => expect(pinnedTitles())
+      .toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]));
   });
 
   // Every drag in the sidebar has one, so the feature is reachable without a
