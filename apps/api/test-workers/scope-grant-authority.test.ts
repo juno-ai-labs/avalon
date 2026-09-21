@@ -19,6 +19,7 @@ const recipientId = asUserId("00000000-0000-4000-8000-000000000074");
 const childId = asSubstreamId("00000000-0000-4000-8000-000000000075");
 const firstSpaceId = "00000000-0000-4000-8000-000000000076";
 const secondSpaceId = "00000000-0000-4000-8000-000000000077";
+const privateSpaceId = "00000000-0000-4000-8000-000000000080";
 const secondParentId = asWorkstreamId("00000000-0000-4000-8000-000000000078");
 const secondChildId = asSubstreamId("00000000-0000-4000-8000-000000000079");
 const child: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId, substreamId: childId };
@@ -275,7 +276,7 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
-    parentId, title: "Private parent", archived: false, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
+    parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
   }] });
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
     spaces: [
@@ -327,6 +328,15 @@ it("shows both Spaces when a guest has one shared Breakout in two different Chan
         (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
         VALUES (?, ?, 'active', 1, 1, 1, NULL)`, spaceId, workstreamId);
     }
+    state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+      space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+      system_role, authority_generation, source_version, payload_hash, revision,
+      created_at, updated_at, source_created_at, source_updated_at
+    ) VALUES (?, 'Private planning', 'personal', '{"icon":"star","color":"red"}', NULL, ?, NULL, 1, 1, 'private-hash', 1, 3, 3, 3, 3)`,
+    privateSpaceId, actorId);
+    state.storage.sql.exec(`INSERT INTO space_channel_memberships
+      (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+      VALUES (?, ?, 'active', 1, 1, 1, NULL)`, privateSpaceId, parentId);
   });
 
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({

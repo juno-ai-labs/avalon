@@ -37,14 +37,16 @@ then removes their old alarm. The empty legacy table remains for schema compatib
 
 The WorkspaceDO index supplies candidates only. Directory reads admit each candidate
 at its canonical parent concurrently and preserve ordering. A final relationship
-incarnation/revision check fences the combined response. A child-only share names
-its Channel so browser navigation can place the authorized Breakout under the right
-container, while Main, sibling Breakouts, Main participants and Main transcript
-remain withheld. Channel appearance is still withheld unless Main is shared.
-The hierarchical response then asks WorkspaceDO only for the Space marks and
-containment edges of those canonically admitted Channels. The response preserves
-parent archive state separately from each conversation, so clients do not offer a
-child restore while its parent is archived.
+incarnation/revision check fences the combined response. For hierarchical navigation,
+a child-only share names its Channel so the browser can place the authorized Breakout
+under the right container, while Main, sibling Breakouts, Main participants and Main
+transcript remain withheld. The compatibility directory scrubs that title back to
+`null` unless Main is admitted, preserving its original response semantics. Channel
+appearance is still withheld unless Main is shared. The hierarchical response then
+asks WorkspaceDO only for the visible Space marks and containment edges of those
+canonically admitted Channels. The response preserves parent archive state separately
+from each conversation, so clients do not offer a child restore while its parent is
+archived.
 
 ## Invariants
 
@@ -91,10 +93,11 @@ A populated migration test preserves both pending and inflight deliveries.
 Negative controls remove the source handoff and stale-delivery guard separately;
 the corresponding tests must fail. Additional canonical tests prove that a stale
 candidate cannot expose revoked content, a child-only share releases its Channel
-label without releasing Main, two shared Breakouts in different Channels produce
-both containing Spaces, and unready/restricted children are absent. Negative
-controls bypass canonical admission, truncate the admitted Channel set, or flatten
-the browser's Space filter; the corresponding tests fail.
+label only through hierarchical navigation without releasing Main, two shared
+Breakouts in different Channels produce both visible containing Spaces, a private
+Space invisible to the guest is withheld, and unready/restricted children are absent.
+Negative controls bypass canonical admission, truncate the admitted Channel set, or
+flatten the browser's Space filter; the corresponding tests fail.
 
 ## Changelog
 
@@ -102,8 +105,9 @@ the browser's Space filter; the corresponding tests fail.
 
 **What changed:** `/sharing/navigation` combines canonically admitted shared
 Channels with a bounded WorkspaceDO projection of their Space marks and
-containment edges. Child-only shares now include the Channel title required to
-render that hierarchy, while Main and unshared siblings remain absent.
+containment edges. Child-only shares include the Channel title only in that
+hierarchical response, while Main and unshared siblings remain absent and the
+compatibility response retains its prior nullable-title boundary.
 
 **Why:** Two direct Breakout grants under Channels in different Spaces were
 discoverable but collapsed into one flat browser list. The candidate index
@@ -118,8 +122,11 @@ Space-name oracle.
 
 **What a future change has to respect:** WorkstreamDO still decides which
 Channel and Breakout labels may cross; WorkspaceDO returns Space presentation
-only for those admitted Channel IDs, and the service relationship-fences the
-combined response before returning it.
+only for visible Spaces containing those admitted Channel IDs, and the service
+relationship-fences the combined response before returning it. An admitted
+Channel with no visible placement remains valid; the browser keeps it reachable
+under a local **Shared channels** fallback rather than treating containment as
+access authority.
 
 ### 2026-09-19 — An absent candidate row is not absent access
 

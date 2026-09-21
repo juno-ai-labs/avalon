@@ -1734,7 +1734,7 @@ export class WorkspaceSpaceStorage {
    * This read therefore exposes the Space's mark and the containment edge, not
    * the Space's wider participant, defaults, scope or lifecycle projection.
    */
-  sharedNavigationSpaces(workstreamIds: readonly string[]): SharedNavigationSpace[] {
+  sharedNavigationSpaces(userId: string, workstreamIds: readonly string[]): SharedNavigationSpace[] {
     if (!this.ready() || workstreamIds.length === 0) return [];
     const spaces = new Map<string, {
       createdAt: number;
@@ -1753,9 +1753,15 @@ export class WorkspaceSpaceStorage {
                 membership.workstream_id
            FROM space_channel_memberships membership
            JOIN workspace_space_directory space ON space.space_id = membership.space_id
-          WHERE membership.state = 'active' AND space.archived_at IS NULL
+           LEFT JOIN workspace_space_viewers viewer
+             ON viewer.space_id = space.space_id
+            AND viewer.user_id = ? AND viewer.is_participant = 1
+           WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND ${spaceVisibleToViewerSql("space", "viewer")}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.created_at, space.space_id, membership.workstream_id`,
+        userId,
+        userId,
         ...chunk,
       ).toArray()) {
         const appearance = row.appearance_json
