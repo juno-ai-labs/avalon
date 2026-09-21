@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   formatToolArgumentValidationError,
   normalizeToolArguments,
+  modelToolArgumentSchema,
+  omitUnspecifiedToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
 
@@ -386,5 +388,87 @@ describe("tool argument validation errors", () => {
     expect(message).not.toContain("invalid_union");
     expect(message).not.toContain("cursor");
     expect(message).not.toContain("unrecognized_keys");
+  });
+});
+
+
+describe("model-facing unspecified arguments", () => {
+  const schema: Record<string, unknown> = {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      brand_kit_id: { type: "string", minLength: 1 },
+      count: { type: "integer", minimum: 1 },
+      enabled: { type: "boolean" },
+      clear: { type: ["string", "null"] },
+      union: { anyOf: [{ type: "string" }, { type: "null" }] },
+      nested: { type: "object", properties: { id: { type: "string" } } },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  };
+
+  it("adds real null alternatives while leaving the execution schema intact", () => {
+    const before = structuredClone(schema);
+    const model = z.fromJSONSchema(modelToolArgumentSchema(schema));
+    expect(model.safeParse({ query: "draw", brand_kit_id: null, count: null, enabled: null }).success).toBe(true);
+    expect(model.safeParse({ query: null }).success).toBe(false);
+    expect(model.safeParse({ query: "draw", brand_kit_id: "" }).success).toBe(false);
+    expect(schema).toEqual(before);
+    expect(z.fromJSONSchema(schema).safeParse({ query: "draw", brand_kit_id: null }).success).toBe(false);
+  });
+
+  it("preserves referenced nulls even when a draft-07 reference has a scalar sibling", () => {
+    const referenced = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      definitions: { Clearable: { type: ["string", "null"] } },
+      properties: { clear: { $ref: "#/definitions/Clearable", type: "string" } },
+    };
+    expect(modelToolArgumentSchema(referenced)).toBe(referenced);
+    const input = { clear: null };
+    expect(omitUnspecifiedToolArguments(input, referenced)).toBe(input);
+  });
+
+  it("keeps annotations outside the nullable branch without duplicating descriptions", () => {
+    const original = { type: "object", properties: {
+      sort: { type: "string", enum: ["asc", "desc"], description: "Sort direction.", title: "Sort", default: "asc" },
+    } };
+    const before = structuredClone(original);
+    const adapted = modelToolArgumentSchema(original);
+    expect(adapted.properties).toEqual({ sort: {
+      title: "Sort", default: "asc",
+      description: "Sort direction.\nUse null or omit this field when unspecified; null is removed before execution.",
+      anyOf: [{ type: "string", enum: ["asc", "desc"] }, { type: "null" }],
+    } });
+    expect(original).toEqual(before);
+  });
+
+  it("removes only synthetic nulls, preserving explicit clears and all other values", () => {
+    expect(omitUnspecifiedToolArguments({
+      query: null, brand_kit_id: null, count: null, enabled: null,
+      clear: null, union: null, unknown: null, nested: { id: null },
+    }, schema)).toEqual({ query: null, clear: null, union: null, unknown: null, nested: { id: null } });
+    for (const value of ["", " ", ",", "null", "none", "real-id"]) {
+      expect(omitUnspecifiedToolArguments({ brand_kit_id: value }, schema)).toEqual({ brand_kit_id: value });
+    }
+    expect(omitUnspecifiedToolArguments({ count: 1, enabled: false }, schema)).toEqual({ count: 1, enabled: false });
+  });
+
+  it.each([
+    { allOf: [{ required: ["brand_kit_id"] }] },
+    { anyOf: [{ required: ["brand_kit_id"] }, { required: ["count"] }] },
+    { $ref: "#/$defs/arguments" },
+    { dependentRequired: { query: ["brand_kit_id"] } },
+    { minProperties: 2 },
+    { patternProperties: { ".*": { type: "string" } } },
+    { if: { required: ["query"] }, then: { required: ["brand_kit_id"] } },
+    { required: "query" },
+    { unknownConstraint: true },
+  ])("does not reinterpret schemas with coupled or unknown constraints: %j", (constraint) => {
+    const constrained = { ...schema, ...constraint };
+    expect(modelToolArgumentSchema(constrained)).toBe(constrained);
+    const args = { brand_kit_id: null };
+    expect(omitUnspecifiedToolArguments(args, constrained)).toBe(args);
   });
 });

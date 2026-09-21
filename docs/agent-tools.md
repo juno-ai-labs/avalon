@@ -274,6 +274,22 @@ the key, and wrote down why: *"Schema says min but omit should maybe omit."*
 Prose loses to the machine-readable half, so the schema has to admit the
 answer.
 
+The harness also supplies an unspecified value for independent, optional,
+non-nullable **top-level scalar** arguments. It advertises `anyOf: [original,
+{ type: "null" }]` and removes that synthetic null before validation, hashing,
+receipts, or execution, for reads and writes alike. The original executor schema
+remains authoritative. An existing nullable field keeps its null semantics;
+required fields, nested fields, referenced properties,
+and roots with composition, conditional, presence, or unknown constraints are
+not adapted. The adapter does not enable strict mode or make optional keys
+required. Unlike guessing what a blank means, this rule adds an explicit meaning
+for a value the original scalar schema rejects. It is therefore usable on writes
+without collapsing a declared clear operation into omission. Executor refinements
+still enforce constraints not expressed by JSON Schema, such as requiring one of
+two optional fields. Do not rely on it to repair arbitrary placeholders: commas, spaces,
+and strings such as `"none"` remain literal values. Author explicit null semantics
+when a tool needs both omission and clearing.
+
 **Either spelling reaches the model as a union, and the guard covers every
 parameter.** Since `@juno-ai/bind` 14 the sanitizer rewrites
 `type: ["string", "null"]` to `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]`
@@ -1173,6 +1189,12 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
+
+Documented the explicit unspecified-value contract for optional scalar arguments.
+The implementation rationale and compatibility boundaries live in the
+[harness changelog](agent-harness.md#2026-09-20--translate-unspecified-optional-scalars-at-the-model-boundary).
 
 ### 2026-09-19 — Re-enterability becomes a tool's own claim
 
