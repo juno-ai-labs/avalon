@@ -28,6 +28,7 @@ own storage and its own glyph treatment.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket and applies each one to the relevant Channel or Breakout cache row when its receipt arrives. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Reconciles a receipt-backed Breakout row with parent directory snapshots: a pre-command snapshot cannot undo the commit, while a genuinely different authoritative appearance wins. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative Channel-or-Breakout write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Projects each Breakout's stored appearance into the parent-owned Breakout directory. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Every conversation object's nullable `workstream.appearance_json`. |
@@ -170,8 +171,10 @@ including scrolling, and check another connected window and reopening.
 and picker as a Channel. Its own conversation object commits the choice and
 publishes it in the existing common projection; the parent includes that value
 in each authorized Breakout row, while the client patches only that row when
-the command receipt returns. Older Breakouts with no stored choice continue to
-derive a stable mark from their ID.
+the command receipt returns. That receipt patch is bound to the exact row the
+choice started from and remains overlaid only while parent snapshots still carry
+that baseline; a different authoritative value wins. Older Breakouts with no
+stored choice continue to derive a stable mark from their ID.
 
 **Why:** Generated marks made Breakouts distinct but not personalizable, while
 copying the Channel appearance made a Breakout look like another view of Main.
@@ -183,7 +186,9 @@ row; the child remains the authority for what its own conversation looks like.
 **What a future change has to respect:** a Breakout appearance is not Channel
 appearance and is not parent-authored metadata. Commit it in the addressed
 child, project it through `substream_directory`, and expose it only inside the
-same roster-filtered child row that already carries the title.
+same roster-filtered child row that already carries the title. Receipt-time
+cache movement must preserve omitted fields from the child's effective
+appearance and must not regress a newer parent projection.
 
 ### 2026-09-10 — A Sidekick picks from the same palette, and the picker stopped belonging to work streams
 

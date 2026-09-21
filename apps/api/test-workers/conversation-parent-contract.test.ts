@@ -1122,8 +1122,18 @@ describe("conversation parent contract", () => {
       patch: { icon: "rocket", color: "purple" },
     });
     expect(response.status).toBe(200);
+    const waterlineBeforeAppearance = await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, substreamId));
 
+    expect(await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline)).toBeGreaterThan(waterlineBeforeAppearance);
     expect((await parent.listVisiblePrivateChildren({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({
