@@ -2098,7 +2098,7 @@ export function Sidebar({
       >
         {selectedSpace ? <SidebarTitleHeader
           className="sidebar-titlebar window-drag channels-sidebar-titlebar"
-          icon={<SpaceIcon size={22} space={selectedSpace} />}
+          icon={<SpaceIcon size={20} space={selectedSpace} />}
           title={selectedSpace.name}
           titleClassName="channels-sidebar-title"
         >
