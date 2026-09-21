@@ -1,5 +1,5 @@
 import { createQueryClient } from "../../desktop/src/renderer/lib/query-client";
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,8 +8,24 @@ import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, usePar
 import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
-import { NavigationFrame, NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
-import { SidebarFooter, SidebarHeader, SidebarList, SidebarRow, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
+import { NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
+import {
+  ResizableSidebar,
+  SidebarCollapseFooter,
+  SidebarHeader,
+  SidebarList,
+  SidebarRow,
+  SidebarScroll,
+  SidebarTitleHeader,
+} from '@rally/ui/components/resizable-sidebar';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
+  SIDEBAR_EXPAND_DRAG_THRESHOLD,
+} from '@rally/ui/lib/sidebar-geometry';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -23,6 +39,41 @@ import { ConversationSurface } from '../../desktop/src/renderer/screens/conversa
 import '@rally/ui/styles/app.css';
 
 const SHARED_CHANNELS_SPACE_ID = 'shared-channels';
+
+function useBrowserSidebar(initiallyCompact: boolean): {
+  compact: boolean;
+  effectiveWidth: number;
+  ref: React.RefObject<HTMLElement | null>;
+  resize: (requested: number) => void;
+  setCompact: React.Dispatch<React.SetStateAction<boolean>>;
+  toggle: () => void;
+} {
+  const [compact, setCompact] = useState(initiallyCompact);
+  const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const ref = useRef<HTMLElement>(null);
+  const resize = useCallback((requested: number): void => {
+    if (compact) {
+      if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD) return;
+      setWidth(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, requested)));
+      setCompact(false);
+      return;
+    }
+    if (requested < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
+      setCompact(true);
+      return;
+    }
+    setWidth(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, requested)));
+  }, [compact]);
+  const toggle = useCallback(() => setCompact((current) => !current), []);
+  return {
+    compact,
+    effectiveWidth: compact ? COLLAPSED_SIDEBAR_WIDTH : width,
+    ref,
+    resize,
+    setCompact,
+    toggle,
+  };
+}
 
 function SharedConversationRoute({ onShowNavigation }: { onShowNavigation: () => void }): React.JSX.Element {
   const { parentId, substreamId = '0' } = useParams();
@@ -96,7 +147,10 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   const navigate = useNavigate();
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
+  const spacesSidebar = useBrowserSidebar(Boolean(routeParentId));
+  const channelsSidebar = useBrowserSidebar(Boolean(routeParentId));
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const keepChannelsOpenForRoute = useRef<string | null>(null);
   const navigationSpaces = useMemo(() => {
     const spaces = directory.data?.spaces ?? [];
     const placedWorkstreamIds = new Set(spaces.flatMap((space) => space.workstreamIds));
@@ -123,14 +177,40 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       return navigationSpaces.some((space) => space.id === current) ? current : navigationSpaces[0]?.id ?? null;
     });
   }, [navigationSpaces, routeParentId]);
+  useEffect(() => {
+    if (!routeParentId) return;
+    spacesSidebar.setCompact(true);
+    if (keepChannelsOpenForRoute.current === routeParentId) {
+      keepChannelsOpenForRoute.current = null;
+      return;
+    }
+    channelsSidebar.setCompact(true);
+  }, [channelsSidebar.setCompact, routeParentId, spacesSidebar.setCompact]);
+  useLayoutEffect(() => {
+    if (open) return undefined;
+    const shell = spacesSidebar.ref.current?.closest<HTMLElement>('.workspace-shell');
+    if (!shell) return undefined;
+    shell.style.setProperty('--spaces-sidebar-width', `${spacesSidebar.effectiveWidth}px`);
+    return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
+  }, [open, spacesSidebar.effectiveWidth, spacesSidebar.ref]);
+  useLayoutEffect(() => {
+    if (open) return undefined;
+    const shell = channelsSidebar.ref.current?.closest<HTMLElement>('.workspace-shell');
+    if (!shell) return undefined;
+    shell.style.setProperty('--av-cmp-sidebar-width', `${channelsSidebar.effectiveWidth}px`);
+    return () => { shell.style.removeProperty('--av-cmp-sidebar-width'); };
+  }, [channelsSidebar.effectiveWidth, channelsSidebar.ref, open]);
   if (!session) return <></>;
   const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
   const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
-  const openWorkstream = (parentId: string) => {
+  const openWorkstream = (parentId: string, keepChannelsOpen = false) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
     const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
     if (!first) return;
+    spacesSidebar.setCompact(true);
+    channelsSidebar.setCompact(!keepChannelsOpen);
+    keepChannelsOpenForRoute.current = keepChannelsOpen ? parentId : null;
     navigate(`/workstreams/${parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`);
     onClose();
   };
@@ -143,10 +223,22 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
     const firstActive = containedWorkstreams.find((workstream) =>
       !workstream.archived && workstream.conversations.some((conversation) => !conversation.archived));
     const target = firstActive ?? containedWorkstreams[0];
-    if (target) openWorkstream(target.parentId);
+    spacesSidebar.setCompact(true);
+    channelsSidebar.setCompact(false);
+    if (target) openWorkstream(target.parentId, true);
   };
   return <>
-    <aside aria-label="Spaces sidebar" className={`spaces-sidebar browser-spaces-sidebar${open ? ' is-mobile-open' : ''}`}>
+    <ResizableSidebar
+      aria-label="Spaces sidebar"
+      className={`spaces-sidebar browser-spaces-sidebar${open ? ' is-mobile-open' : ''}`}
+      compact={open ? false : spacesSidebar.compact}
+      constrained={open}
+      onResize={open ? () => undefined : spacesSidebar.resize}
+      onToggle={spacesSidebar.toggle}
+      resizeLabel="Resize spaces sidebar"
+      sidebarRef={spacesSidebar.ref}
+      width={open ? MIN_SIDEBAR_WIDTH : spacesSidebar.effectiveWidth}
+    >
       <SidebarHeader className="spaces-sidebar-titlebar">
       </SidebarHeader>
       <SidebarScroll as="nav" aria-label="Shared spaces" className="spaces-sidebar-scroll">
@@ -166,14 +258,32 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
           </SidebarRow>)}
         </SidebarList>
       </SidebarScroll>
-      <SidebarFooter as="footer" leading={<div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
-        <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
-      </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
-        <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
-        <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
-      </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>} />
-    </aside>
-    <NavigationFrame className={`channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}>
+      <SidebarCollapseFooter
+        collapseLabel="Collapse spaces"
+        compact={spacesSidebar.compact}
+        constrained={open}
+        expandLabel="Expand spaces"
+        leading={<div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
+          <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
+        </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
+          <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
+          <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
+        </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>}
+        onToggle={spacesSidebar.toggle}
+      />
+    </ResizableSidebar>
+    <ResizableSidebar
+      aria-label="Rally navigation"
+      className={`sidebar channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}
+      compact={open ? false : channelsSidebar.compact}
+      constrained={open}
+      data-sidebar-collapsed={!open && channelsSidebar.compact ? '' : undefined}
+      onResize={open ? () => undefined : channelsSidebar.resize}
+      onToggle={channelsSidebar.toggle}
+      resizeLabel="Resize navigation"
+      sidebarRef={channelsSidebar.ref}
+      width={open ? MIN_SIDEBAR_WIDTH : channelsSidebar.effectiveWidth}
+    >
       {selectedSpace ? <SidebarTitleHeader
         className="sidebar-titlebar channels-sidebar-titlebar window-drag"
         icon={<SpaceIcon size={20} space={selectedSpace} />}
@@ -191,13 +301,23 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       {workstreams.map((workstream) => {
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
         if (!first) return null;
-        return <NavLink className={`sidebar-row workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={onClose} key={workstream.parentId}
-          to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
+        return <SidebarRow as={NavLink} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
+          spacesSidebar.setCompact(true);
+          channelsSidebar.setCompact(true);
+          onClose();
+        }} key={workstream.parentId} to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
           <NavigationRowContent id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
-        </NavLink>;
+        </SidebarRow>;
       })}
       </SidebarList></SidebarScroll>
-    </NavigationFrame>
+      <SidebarCollapseFooter
+        collapseLabel="Collapse navigation"
+        compact={channelsSidebar.compact}
+        constrained={open}
+        expandLabel="Expand navigation"
+        onToggle={channelsSidebar.toggle}
+      />
+    </ResizableSidebar>
   </>;
 }
 
