@@ -959,6 +959,11 @@ pre {
   inherits: true;
   initial-value: 280px;
 }
+@property --spaces-sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
 /* The sidebar's own channel for the same interval: 0 expanded, 1 compact,
    travelling between them over the collapse motion. Nothing draws from it. It
    exists so the component can hear, from the platform's own transition
@@ -1015,7 +1020,9 @@ pre {
   left: 0;
   position: fixed;
   top: 0;
-  transition: width var(--spaces-sidebar-motion);
+  /* The shell transitions the registered width once. Transitioning `width`
+     here as well would chase each interpolated custom-property frame and make
+     this visible edge lag behind the Channel rail that reads the same value. */
   width: var(--spaces-sidebar-width);
   z-index: 31;
 }
@@ -4806,7 +4813,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .workspace-shell {
   --rail-max-slot: max(280px, calc(100vw - var(--spaces-sidebar-width, 0px) - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width)));
   --rail-slot: min(var(--rail-width), var(--rail-max-slot));
-  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
+  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
 }
 /* A drag has to track the pointer exactly, so for the length of the gesture the
    dragged sidebar's own width channel leaves the transitioned set and the
@@ -4817,8 +4824,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    entries above carry the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --workstream-sidebar-width; }
-.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width; }
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
+.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file

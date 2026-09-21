@@ -1970,6 +1970,14 @@ divider, so the level remains identifiable before its rows begin. The left
 rail retains the original Create handoff: its expanded titlebar control exits
 through the right edge as the compact command-row control enters from the
 left, and expansion reverses both paths.
+The Space width is a registered shell property, so both dependent rails move
+with its collapse instead of jumping to their final offsets. A Space selection
+has one navigation owner (its link), and leaving then re-entering the same
+Channel rearms automatic compaction. The selected-Space list keeps requesting
+directory pages until it has the Space's Channels or reaches the end, including
+when the first page is too short to scroll. Space ordering exposes its
+Alt+Arrow instruction to assistive technology, while a Space reached only
+through one of its Channels refuses Channel drops before any mutation is sent.
 
 **Why:** The accordion made containment and destination the same gesture: a
 Space row both opened a Space and disclosed an indented copy of every Channel
@@ -1982,7 +1990,10 @@ conversation width automatically as a person moves deeper.
 but it appears in the Channel rail for whichever Space is selected instead of
 being duplicated under simultaneously open accordions. Future hierarchy levels
 must preserve this selection-and-compaction rule rather than nesting another
-disclosure list inside an existing row.
+disclosure list inside an existing row. The lite guest browser remains a
+separate, deliberately smaller host: its cookie-scoped directory has shared
+Channels and conversations but no Space directory, so it does not draw this
+three-level member navigation.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 

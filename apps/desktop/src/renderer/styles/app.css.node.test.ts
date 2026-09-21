@@ -356,10 +356,12 @@ describe('sidebar collapse motion', () => {
     // Interpolating a custom property at all requires the syntax be declared;
     // an unregistered one switches over at the halfway point.
     expect(stylesheet).toMatch(/@property --av-cmp-sidebar-width \{\n {2}syntax: '<length>';/u);
+    expect(stylesheet).toMatch(/@property --spaces-sidebar-width \{\n {2}syntax: '<length>';/u);
     // `.workspace-shell` is declared twice; this reads the one that carries the
     // width channels rather than whichever the rule helper reaches first.
     expect(stylesheet).toContain(
       'transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1),'
+      + ' --spaces-sidebar-width var(--sidebar-collapse-motion),'
       + ' --av-cmp-sidebar-width var(--sidebar-collapse-motion),'
       + ' --workstream-sidebar-width var(--sidebar-collapse-motion);',
     );
@@ -367,9 +369,10 @@ describe('sidebar collapse motion', () => {
     // than left out, so dragging one sidebar cannot silently stop the other, or
     // a rail closing on its own, from moving.
     expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
-      .toBe(' transition-property: --rail-width, --workstream-sidebar-width; ');
+      .toBe(' transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; ');
     expect(rule('.workspace-shell:has(.workstream-context-sidebar.is-resizing)'))
-      .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width; ');
+      .toBe(' transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; ');
+    expect(rule('.spaces-sidebar')).not.toContain('transition: width');
   });
 
   it('transitions the channel sidebar on the one property that sizes it', () => {

@@ -1145,8 +1145,9 @@ export function Sidebar({
     routeSpaceId ?? routeWorkstream?.spaceIds[0] ?? spaces?.[0]?.id ?? null);
   const previousRouteWorkstreamId = useRef<string | null>(null);
   useEffect(() => {
-    if (routeWorkstreamId === null || previousRouteWorkstreamId.current === routeWorkstreamId) return;
+    if (previousRouteWorkstreamId.current === routeWorkstreamId) return;
     previousRouteWorkstreamId.current = routeWorkstreamId;
+    if (routeWorkstreamId === null) return;
     setSpacesCollapsed(true);
     setSidebarCollapsed(true);
   }, [routeWorkstreamId, setSidebarCollapsed]);
@@ -1297,6 +1298,27 @@ export function Sidebar({
     ? workstreams
     : workstreams.filter((workstream) => workstream.spaceIds.includes(selectedSpaceId));
   const selectedSpace = spaces?.find((space) => space.id === selectedSpaceId);
+  const lastAutomaticSpacePage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!spacesReady
+      || !selectedSpace
+      || visibleWorkstreams.length >= selectedSpace.channelCount
+      || !hasMoreWorkstreams
+      || loadingMoreWorkstreams
+      || !onLoadMoreWorkstreams) return;
+    const pageKey = `${selectedSpace.id}:${workstreams.length}`;
+    if (lastAutomaticSpacePage.current === pageKey) return;
+    lastAutomaticSpacePage.current = pageKey;
+    onLoadMoreWorkstreams();
+  }, [
+    hasMoreWorkstreams,
+    loadingMoreWorkstreams,
+    onLoadMoreWorkstreams,
+    selectedSpace,
+    spacesReady,
+    visibleWorkstreams.length,
+    workstreams.length,
+  ]);
   // Resolved here rather than through `NavLink`'s function form, because both
   // of these links are tooltip triggers: Radix clones the child and merges its
   // `className`, and a function arrives at the DOM as its own source text with
@@ -1979,7 +2001,6 @@ export function Sidebar({
           setSelectedSpaceId(spaceId);
           setSpacesCollapsed(true);
           setSidebarCollapsed(false);
-          void navigate(`/spaces/${spaceId}`);
         }}
         ordering={ordering}
         ready={spacesReady}
