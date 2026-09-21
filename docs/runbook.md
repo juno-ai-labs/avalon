@@ -482,6 +482,13 @@ Every new Rally release advances exactly one minor version and resets the patch 
 
 ### Desktop release retention
 
+GitHub Actions keeps each workflow copy of the verified macOS release bundle
+for seven days from its creation. That per-artifact expiry is the rolling
+window; no scheduled cleanup workflow owns it. Changing the workflow retention
+does not shorten artifacts that were uploaded under the previous 30-day policy,
+so remove those older copies manually after the workflow change lands. R2
+remains the durable release-retention authority described below.
+
 Keep the five highest semantic versions in the public `avalon-desktop-releases`
 R2 bucket. Move every older complete release to the private
 `avalon-desktop-releases-archive` bucket in the same WNAM location. The archive
