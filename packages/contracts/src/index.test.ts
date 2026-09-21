@@ -40,6 +40,7 @@ import {
   WorkstreamSchema,
   WorkstreamBatchFilterSchema,
   ReorderWorkstreamPinsRequestSchema,
+  MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
   WorkstreamResourceSchema,
   TimestampSchema,
   WorkstreamSocketCommandResultSchema,
@@ -1559,6 +1560,18 @@ describe("Space-scoped Channel pins", () => {
     expect(ReorderWorkstreamPinsRequestSchema.safeParse({ workstreamIds: [] }).success).toBe(false);
     expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false }).success).toBe(false);
     expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false, spaceId }).success).toBe(true);
+  });
+
+  it("admits every placement the server can create and rejects a larger complete order", () => {
+    const workstreamId = "00000000-0000-7000-8000-0000000000f2";
+    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
+      spaceId,
+      workstreamIds: Array.from({ length: MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER }, () => workstreamId),
+    }).success).toBe(true);
+    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
+      spaceId,
+      workstreamIds: Array.from({ length: MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER + 1 }, () => workstreamId),
+    }).success).toBe(false);
   });
 
   it("rejects two positions for the same Space on one Channel", () => {

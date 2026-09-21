@@ -1930,15 +1930,14 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
  * did — a second window that pinned something a moment ago loses its position,
  * never its pin.
  *
- * Deliberately unbounded. Nothing limits how many work streams a person may
- * pin, so any count this array could be capped at would be a number the server
- * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
- * would not truncate a drag, it would refuse one and leave the list
- * unreorderable for as long as the person stayed above it.
+ * The same bound as pin creation. A reorder is an all-or-nothing complete
+ * arrangement, so this must admit every state the server can create while
+ * refusing a payload the object can never legitimately hold.
  */
+export const MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER = 1_000;
 export const ReorderWorkstreamPinsRequestSchema = z.object({
   spaceId: SpaceIdSchema,
-  workstreamIds: z.array(IdSchema),
+  workstreamIds: z.array(IdSchema).max(MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER),
 });
 
 /** The authoritative visible pending-input queue after a reorder command. */

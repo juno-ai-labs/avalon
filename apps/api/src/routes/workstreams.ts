@@ -268,9 +268,9 @@ workstreamRoutes.put("/:id/pin", zValidator("param", idParam), zValidator("json"
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id, c.req.valid("json").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), zValidator("json", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
+workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), zValidator("query", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
-  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id, c.req.valid("json").spaceId);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id, c.req.valid("query").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 // Through the service, not the object client: an audience change has to be
