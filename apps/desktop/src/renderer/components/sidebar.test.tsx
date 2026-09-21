@@ -1354,7 +1354,7 @@ describe('Sidebar channel markers', () => {
   // above it with the compact toggle and leaves with the expand, and is marked
   // so the list motion shows it doing so; the titlebar's own is hidden in the
   // rail rather than unmounted, so it can fade with the layout.
-  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted above it', () => {
+  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted above it', async () => {
     const onOpenSearch = vi.fn();
     const view = (compact: boolean): React.JSX.Element => (
       <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
@@ -1369,6 +1369,10 @@ describe('Sidebar channel markers', () => {
     expect(create.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(create).toHaveAttribute('data-motion-key', 'action:new');
     expect(create).toHaveAttribute('data-motion-insert');
+    fireEvent.focus(search);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
+    expect(search).not.toHaveAttribute('aria-describedby');
+    fireEvent.blur(search);
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(create).toHaveAttribute('aria-haspopup', 'menu');
@@ -1379,6 +1383,10 @@ describe('Sidebar channel markers', () => {
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
+    const expandedSearch = screen.getByRole('button', { name: 'Search organization' });
+    fireEvent.focus(expandedSearch);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
+    expect(expandedSearch).not.toHaveAttribute('aria-describedby');
   });
 
   it.each([false, true])('shows only enabled standalone Sidekicks and opens their library detail (compact=%s)', (compact) => {

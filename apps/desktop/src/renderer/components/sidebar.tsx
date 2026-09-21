@@ -2170,7 +2170,9 @@ export function Sidebar({
               </button>
             </NewWorkstreamMenu>
           )}
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          <Tip describesTrigger={false} label="Search" side={compact ? 'right' : 'bottom'}>
+            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          </Tip>
         </div>
         }
 

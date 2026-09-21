@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter, NavLink } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -225,6 +225,7 @@ describe('WorkstreamSidebar', () => {
     let tip = await screen.findByRole('tooltip');
     expect(tip).toHaveClass('sidebar-workstream-preview-surface');
     expect(tip).toHaveTextContent('Launch preparation');
+    expect(main).not.toHaveAttribute('aria-describedby');
     fireEvent.blur(main);
 
     const breakout = screen.getByRole('button', { name: 'Go to breakout: Launch risks' });
@@ -233,6 +234,22 @@ describe('WorkstreamSidebar', () => {
     tip = await screen.findByRole('tooltip');
     expect(tip).toHaveClass('sidebar-workstream-preview-surface');
     expect(tip).toHaveTextContent('Launch risks');
+    expect(breakout).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('leaves right-click native when a conversation has no application menu', () => {
+    setup({ ...workstream, privateChildren: [{
+      substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks',
+    }] });
+
+    for (const row of [
+      screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }),
+      screen.getByRole('button', { name: 'Go to breakout: Launch risks' }),
+    ]) {
+      const event = createEvent.contextMenu(row);
+      fireEvent(row, event);
+      expect(event.defaultPrevented).toBe(false);
+    }
   });
 
   it('labels the new Breakout and participant tooltips', async () => {
@@ -251,8 +268,11 @@ describe('WorkstreamSidebar', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('New breakout');
     fireEvent.blur(create);
 
-    fireEvent.focus(screen.getByRole('button', { name: 'Manage channel participants' }));
+    const participants = screen.getByRole('button', { name: 'Manage channel participants' });
+    fireEvent.focus(participants);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants');
+    expect(participants).toHaveAttribute('aria-description', 'Ada Lovelace');
+    expect(participants).not.toHaveAttribute('aria-describedby');
   });
 
   it('gives each breakout its own stable generated mark', () => {
@@ -469,6 +489,10 @@ describe('WorkstreamSidebar', () => {
 
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
+    fireEvent.blur(edge);
+    const toggle = screen.getByRole('button', { name: 'Expand channel' });
+    fireEvent.focus(toggle.parentElement as HTMLElement);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Widen the window to expand channel');
   });
 
   // A hint that rides along beside the divider for the whole drag is worse than
