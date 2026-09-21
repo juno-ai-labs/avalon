@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { SpaceSummarySchema, type SpaceSummary } from '@rally/contracts';
 
 import { SpaceSidebarSection } from './space-sidebar-section';
+import { ApiError } from '../lib/api';
 import type { WorkstreamSummary } from '../lib/types';
 
 function space(
@@ -71,7 +72,7 @@ function Location(): React.JSX.Element {
 }
 
 function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSection>> = {}) {
-  return render(
+  const tree = (sectionProps: Partial<React.ComponentProps<typeof SpaceSidebarSection>>) => (
     <Tooltip.Provider>
       <MemoryRouter initialEntries={['/workstreams/new']}>
         <SpaceSidebarSection
@@ -80,6 +81,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
           loading={false}
           loadingMoreChannels={false}
           onAddChannel={async () => undefined}
+          onArchive={async () => undefined}
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           onRetry={() => undefined}
@@ -91,12 +93,19 @@ function renderSection(props: Partial<React.ComponentProps<typeof SpaceSidebarSe
           )}
           spaces={[hiring]}
           workstreams={[]}
-          {...props}
+          {...sectionProps}
         />
         <Routes><Route element={<Location />} path="*" /></Routes>
       </MemoryRouter>
-    </Tooltip.Provider>,
+    </Tooltip.Provider>
   );
+  const view = render(tree(props));
+  return {
+    ...view,
+    rerenderSection: (next: Partial<React.ComponentProps<typeof SpaceSidebarSection>>) => {
+      view.rerender(tree({ ...props, ...next }));
+    },
+  };
 }
 
 describe('the Spaces sidebar section', () => {
@@ -175,6 +184,121 @@ describe('the Spaces sidebar section', () => {
     renderSection({ spaces: [hiring] });
     expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: `New channel in ${hiring.name}` })).not.toBeInTheDocument();
+  });
+
+  it('offers one danger action on the Space row, not its expanded contents, and archives only after confirmation', async () => {
+    const onArchive = vi.fn(async () => undefined);
+    renderSection({ onArchive });
+
+    fireEvent.click(screen.getByRole('link', { name: /Hiring/u }));
+    fireEvent.contextMenu(screen.getByText('No channels'));
+    expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }), { clientX: 120, clientY: 90 });
+    const archive = await screen.findByRole('menuitem', { name: 'Archive space' });
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1);
+    expect(archive).toHaveClass('menu-item-danger');
+    fireEvent.click(archive);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    expect(onArchive).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    await waitFor(() => expect(onArchive).toHaveBeenCalledWith(hiring.id));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive space?' })).not.toBeInTheDocument());
+  });
+
+  it('keeps a refused archive open with actionable copy and the named channels', async () => {
+    const blocked = channel(
+      '00000000-0000-7000-8000-0000000000e1',
+      'Launch plan',
+      '2026-08-27T02:00:00.000Z',
+      hiring.id,
+    );
+    const onArchive = vi.fn(async () => {
+      throw new ApiError(
+        'A Channel in Hiring belongs to no other Space',
+        409,
+        'space_membership_final',
+        { channelIds: [blocked.id] },
+      );
+    });
+    renderSection({ onArchive, workstreams: [blocked] });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    expect(await within(dialog).findByText('Every channel needs a space, and this would leave one with none. Add it to another space first.')).toBeVisible();
+    expect(within(dialog).queryByText(/belongs to no other Space/u)).not.toBeInTheDocument();
+    expect(within(await within(dialog).findByRole('list', { name: 'Channels to move first' })).getByText('Launch plan')).toBeVisible();
+    expect(dialog).toBeVisible();
+  });
+
+  it('uses action-specific copy for an archive failure without a Space refusal code', async () => {
+    renderSection({ onArchive: async () => { throw new Error('socket closed'); } });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    expect(await within(dialog).findByText('The space could not be archived.')).toBeVisible();
+    expect(within(dialog).queryByText('socket closed')).not.toBeInTheDocument();
+  });
+
+  it('disables an open archive confirmation with a visible error when authority is lost', async () => {
+    const onArchive = vi.fn(async () => undefined);
+    const { rerenderSection } = renderSection({ onArchive });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+
+    rerenderSection({ onArchive: undefined });
+
+    expect(await within(dialog).findByText('The space directory is unavailable. Reconnect and try again.')).toBeVisible();
+    const confirm = within(dialog).getByRole('button', { name: 'Archive space' });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onArchive).not.toHaveBeenCalled();
+  });
+
+  it('disables an open archive confirmation when the Space leaves the active directory', async () => {
+    const onArchive = vi.fn(async () => undefined);
+    const { rerenderSection } = renderSection({ onArchive });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+
+    rerenderSection({ spaces: [] });
+
+    expect(await within(dialog).findByText('This space is no longer available to archive.')).toBeVisible();
+    const confirm = within(dialog).getByRole('button', { name: 'Archive space' });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onArchive).not.toHaveBeenCalled();
+  });
+
+  it('does not offer archive where the Space authority must refuse it or before the directory is live', () => {
+    const reachedThroughChannel = space(
+      '00000000-0000-7000-8000-0000000000f5',
+      'Shared through a channel',
+      { reach: 'through_channel' },
+    );
+    const { unmount } = renderSection({ spaces: [general, reachedThroughChannel] });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /General/u }));
+    expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Shared through a channel/u }));
+    expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
+
+    unmount();
+    renderSection({ onArchive: undefined });
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Hiring/u }));
+    expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
   });
 
   it('offers archived Space recovery without restoring either removed plus button', async () => {
