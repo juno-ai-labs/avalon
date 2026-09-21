@@ -1024,6 +1024,29 @@ describe("Terminal resource bridge", () => {
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
   });
 
+  it("replays the realtime event when a settled publication attempt is retried", async () => {
+    const attachResource = vi.fn(async () => undefined);
+    const { bridge } = fixture(attachResource);
+    const first = new TextEncoder().encode("# First\n");
+    await bridge.publishResource(context, { filePath: "replay.md" }, first);
+    attachResource.mockClear();
+
+    await bridge.publishResource(context, { filePath: "replay.md" }, first);
+    expect(attachResource).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: "resource_attached",
+    }));
+
+    const revisionContext = { ...context, effectIntentId: I2, toolCallId: "resource-recall" };
+    const second = new TextEncoder().encode("# Second\n");
+    await bridge.publishResource(revisionContext, { filePath: "replay.md" }, second);
+    attachResource.mockClear();
+
+    await bridge.publishResource(revisionContext, { filePath: "replay.md" }, second);
+    expect(attachResource).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: "resource_updated",
+    }));
+  });
+
   it("keeps distinct sandbox paths as distinct documents", async () => {
     const { database, bridge } = fixture();
     const prd = await bridge.publishResource(context, { filePath: "prd.md" }, new TextEncoder().encode("# PRD\n"));

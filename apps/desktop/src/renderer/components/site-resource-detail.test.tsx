@@ -22,7 +22,7 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
     present: vi.fn(async () => true),
     setBounds: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    popOut: vi.fn(async () => undefined),
+    popOut: vi.fn(async () => true),
     copyText: vi.fn(async () => undefined),
     openExternal: vi.fn(async () => undefined),
     ...overrides,

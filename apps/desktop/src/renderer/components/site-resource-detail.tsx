@@ -62,7 +62,7 @@ export interface SiteResourceDetailProps {
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     close: () => Promise<void>;
-    popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<void>;
+    popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };

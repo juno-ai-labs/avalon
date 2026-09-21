@@ -83,7 +83,7 @@ describe('InspectorRail details', () => {
     copyText.mockReset();
     copyText.mockResolvedValue(undefined);
     popOutArtifact.mockReset();
-    popOutArtifact.mockResolvedValue(undefined);
+    popOutArtifact.mockResolvedValue(true);
     applicationSettings.listeners.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -856,12 +856,18 @@ describe('resource detail content preview', () => {
       mimeType: 'text/markdown',
       title: note.title,
     }));
-    expect(loadResourceContent).toHaveBeenCalledWith(note.id);
+    expect(loadResourceContent).toHaveBeenCalledWith(note.id, expect.any(AbortSignal));
   });
 
   it('does not offer Open in a new window for a source resource', () => {
     openDetail({ ...note, direction: 'source' }, vi.fn(async () => new Blob(['source'])));
     expect(screen.queryByRole('button', { name: 'Open in a new window' })).not.toBeInTheDocument();
+  });
+
+  it('disables artifact readers when the preview route cannot represent the format', () => {
+    const opaque = { ...note, title: 'bundle.bin', mimeType: 'application/octet-stream' };
+    openDetail(opaque, vi.fn(async () => new Blob(['opaque'])));
+    expect(screen.getByRole('button', { name: 'Open in a new window' })).toBeDisabled();
   });
 
   function siteArtifacts() {
@@ -879,7 +885,7 @@ describe('resource detail content preview', () => {
         present: vi.fn(async () => true),
         setBounds: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
-        popOut: vi.fn(async () => undefined),
+        popOut: vi.fn(async () => true),
         copyText: vi.fn(async () => undefined),
         openExternal: vi.fn(async () => undefined),
       },

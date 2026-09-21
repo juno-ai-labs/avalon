@@ -471,10 +471,13 @@ export interface RallyDesktopBridge {
   /** Tear the preview down: the detail closed, or the work stream changed. */
   closeArtifactPreview: () => Promise<void>;
   /** Open a generated artifact in its own isolated window. */
-  popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<void>;
+  /** Resolves false when the host refuses or blocks the new window. */
+  popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /** Versions currently shown by detached artifact windows, keyed by resource. */
   getPoppedOutArtifactVersions: () => Promise<Record<string, number>>;
-  /** Replace every detached window for this resource with a newly published version. */
+  /** Close detached windows whose owning conversation is leaving the renderer. */
+  closePoppedOutArtifacts: (resourceIds: string[]) => Promise<void>;
+  /** Replace one detached window; resolves true while another stale window remains. */
   updatePoppedOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /**
    * Raise the singleton Sidekicks window, on its library or on one target.
