@@ -50,6 +50,23 @@ export interface TerminalLoopExecutionFence {
   leaseOwner: string;
 }
 
+interface TerminalCommitInput {
+  runId: string;
+  attemptId: string | null;
+  claimAttempt: boolean;
+  status: TerminalRunStatus;
+  finalTurnId: string | null;
+  model: string | null;
+  usageJson: string | null;
+  errorJson: string | null;
+  memberSafePayloadJson: string;
+  lifecycleEventId: string;
+  terminalizedAt: number;
+  activityStoppedAt: number;
+  descendantReason: string;
+  stateReasonCode?: string;
+}
+
 export interface PublishHostOutcomeInput extends AttemptFence {
   finalTurn: { turnId: string; text: string } | null;
   participantNotice: { turnId: string; text: string } | null;
@@ -262,6 +279,7 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   final_turn_id: string | null;
   error_json: string | null;
   workflow_instance_id: string | null;
+  substream_loop_id: string | null;
   chain_root_run_id: string | null;
   chain_depth: number;
   delegated_task_hash: string | null;
@@ -322,7 +340,8 @@ export function previousInstanceRecoveryOwner(attemptId: string): string {
 const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
-  completed_at, final_turn_id, error_json, workflow_instance_id, chain_root_run_id,
+  completed_at, final_turn_id, error_json, workflow_instance_id, substream_loop_id,
+  chain_root_run_id,
   chain_depth, delegated_task_hash, inherited_scope_hash, child_result_json,
   child_result_hash, execution_principal_json, trigger_part_id, model, usage_json, created_at`;
 
@@ -985,40 +1004,6 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
-   * Mark a run failed because its Workflow never started.
-   *
-   * No lease fence, because there is no attempt yet — this is the launch itself
-   * failing, and the row it is closing is the one the same caller created a
-   * moment ago. `terminalizeQueuedRun` is the fenced path for a run that was
-   * admitted and then abandoned; this is narrower and deliberately unguarded.
-   *
-   * The sidebar goes through `settleWorkstreamState` like every other ending,
-   * which adds a guard the routed version did not have: it will not report
-   * `failed` over a work stream some *other* live run still holds. That case is
-   * unreachable from here today — this path runs immediately after an admission
-   * that superseded everything else — so the guard changes nothing now and is
-   * correct if that ever stops being true.
-   */
-  failUnlaunchedRun(input: {
-    runId: string;
-    errorJson: string;
-    now: number;
-  }): { outcome: "failed" | "not_found" } {
-    return this.storage.transactionSync(() => {
-      if (!this.run({ runId: input.runId })) return { outcome: "not_found" as const };
-      this.sql.exec(
-        `UPDATE runs SET status = 'failed', completed_at = ?2, error_json = ?3, updated_at = ?2
-          WHERE run_id = ?1`,
-        input.runId,
-        input.now,
-        input.errorJson,
-      );
-      this.settleWorkstreamState(input.runId, "failed", input.now);
-      return { outcome: "failed" as const };
-    });
-  }
-
-  /**
    * The run's frozen memory recall, if this caller holds it and one exists.
    *
    * The routed version joined `harness_runs` to prove the lease was live, which
@@ -1398,10 +1383,15 @@ export class WorkstreamHarnessRunStorage {
       if (run.legacy_attempt_id === input.attemptId
         && run.terminalized_at !== null
         && run.status === input.status) {
-        if (!this.#closeLinkedLoopForTerminalReceipt(input.runId, input.loopExecutionFence, input.now)) {
+        if (!this.#closeLinkedLoopForTerminalReceipt(
+          input.runId,
+          input.loopExecutionFence,
+          input.now,
+          true,
+        )) {
           return { outcome: "ownership_lost" as const };
         }
-        this.#closeExecutionActivities(input.runId, input.status, run.terminalized_at);
+        this.#repairTerminalExecutionState(input.runId, input.status, run.terminalized_at);
         const terminal = this.lifecycleEvent({ runId: input.runId, eventKey: "terminal" });
         return {
           outcome: "already_terminal" as const,
@@ -1426,40 +1416,140 @@ export class WorkstreamHarnessRunStorage {
       if (!this.#closeLinkedLoopForTerminalReceipt(input.runId, input.loopExecutionFence, input.now)) {
         return { outcome: "ownership_lost" as const };
       }
-      this.#closeExecutionActivities(input.runId, input.status, input.now);
-
-      this.recordLifecycleEvent({
-        eventId: input.lifecycleEventId,
+      this.#commitTerminalState({
         runId: input.runId,
         attemptId: input.attemptId,
-        eventKey: "terminal",
-        eventType: "terminal",
+        claimAttempt: false,
         status: input.status,
+        finalTurnId: input.finalTurnId,
+        model: input.model,
+        usageJson: input.usageJson,
+        errorJson: input.errorJson,
         memberSafePayloadJson: input.memberSafePayloadJson,
-        now: input.now,
-      });
-      this.sql.exec(
-        `UPDATE runs
-            SET status = ?2, completed_at = ?3, terminalized_at = ?3, final_turn_id = ?4,
-                model = COALESCE(?5, model), usage_json = COALESCE(?6, usage_json),
-                error_json = ?7, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?3
-          WHERE run_id = ?1`,
-        input.runId,
-        input.status,
-        input.now,
-        input.finalTurnId,
-        input.model,
-        input.usageJson,
-        input.errorJson,
-      );
-      this.settleWorkstreamState(input.runId, input.status, input.now);
-      this.cancelDescendants({
-        rootRunId: input.runId,
-        reason: "parent_terminalized",
-        now: input.now,
+        lifecycleEventId: input.lifecycleEventId,
+        terminalizedAt: input.now,
+        activityStoppedAt: input.now,
+        descendantReason: "parent_terminalized",
       });
       return { outcome: "terminalized" as const };
     });
+  }
+
+  /**
+   * Terminalize the exact persistent-loop execution from the product failure
+   * transaction. The caller owns the surrounding transaction because it also
+   * enqueues the regional projection derived from the resulting workstream
+   * row. Keeping this operation synchronous lets that projection and every
+   * local terminal invariant commit or roll back together.
+   */
+  terminalizeWorkflowFailureInCurrentTransaction(input: {
+    runId: string;
+    errorJson: string;
+    memberSafePayloadJson: string;
+    lifecycleEventId: string;
+    stateReasonCode: string;
+    loopExecutionFence: TerminalLoopExecutionFence;
+    now: number;
+  }): { outcome: "terminalized" | "ownership_lost" } {
+    const run = this.run({ runId: input.runId });
+    if (!run
+      || run.parent_tool_call_id !== null
+      || !["admitted", "running"].includes(run.status)
+      || run.terminalized_at !== null) {
+      return { outcome: "ownership_lost" };
+    }
+    if (!this.#closeLinkedLoopForTerminalReceipt(
+      input.runId,
+      input.loopExecutionFence,
+      input.now,
+    )) {
+      return { outcome: "ownership_lost" };
+    }
+    const terminalAttemptId = run.legacy_attempt_id ?? `workflow-failure:${input.runId}`;
+    this.#commitTerminalState({
+      runId: input.runId,
+      attemptId: terminalAttemptId,
+      claimAttempt: run.legacy_attempt_id === null,
+      status: "failed",
+      finalTurnId: null,
+      model: null,
+      usageJson: null,
+      errorJson: input.errorJson,
+      memberSafePayloadJson: input.memberSafePayloadJson,
+      lifecycleEventId: input.lifecycleEventId,
+      terminalizedAt: input.now,
+      activityStoppedAt: input.now,
+      descendantReason: "parent_terminalized",
+      stateReasonCode: input.stateReasonCode,
+    });
+    return { outcome: "terminalized" };
+  }
+
+  /**
+   * The one local terminal commit. Entry points establish their own authority
+   * first; after that there is no smaller valid ending than this complete set
+   * of writes. External tool-receipt settlement remains outside because it is
+   * owned by another Durable Object and is recovered by its durable marker.
+   */
+  #commitTerminalState(input: TerminalCommitInput): void {
+    this.#repairTerminalExecutionState(
+      input.runId,
+      input.status,
+      input.activityStoppedAt,
+    );
+    this.recordLifecycleEvent({
+      eventId: input.lifecycleEventId,
+      runId: input.runId,
+      attemptId: input.attemptId,
+      eventKey: "terminal",
+      eventType: "terminal",
+      status: input.status,
+      memberSafePayloadJson: input.memberSafePayloadJson,
+      now: input.terminalizedAt,
+    });
+    this.sql.exec(
+      `UPDATE runs
+          SET legacy_attempt_id = CASE WHEN ?8 = 1 THEN ?9 ELSE legacy_attempt_id END,
+              attempt_epoch = attempt_epoch + CASE WHEN ?8 = 1 THEN 1 ELSE 0 END,
+              status = ?2, terminal_reason = ?2,
+              completed_at = ?3, terminalized_at = ?3, final_turn_id = ?4,
+              model = COALESCE(?5, model), usage_json = COALESCE(?6, usage_json),
+              error_json = ?7, lease_owner = NULL, lease_expires_at = NULL,
+              updated_at = ?3
+        WHERE run_id = ?1`,
+      input.runId,
+      input.status,
+      input.terminalizedAt,
+      input.finalTurnId,
+      input.model,
+      input.usageJson,
+      input.errorJson,
+      input.claimAttempt ? 1 : 0,
+      input.attemptId,
+    );
+    this.settleWorkstreamState(
+      input.runId,
+      input.status,
+      input.terminalizedAt,
+      input.stateReasonCode,
+    );
+    this.cancelDescendants({
+      rootRunId: input.runId,
+      reason: input.descendantReason,
+      now: input.terminalizedAt,
+    });
+  }
+
+  /** Repair the participant-visible state subordinate to a terminal receipt. */
+  #repairTerminalExecutionState(
+    runId: string,
+    status: TerminalRunStatus,
+    activityStoppedAt: number,
+  ): void {
+    this.#closeExecutionActivities(runId, status, activityStoppedAt);
+    this.sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, runId);
+    this.sql.exec(`DELETE FROM active_agent_compaction WHERE run_id = ?`, runId);
+    this.sql.exec(`DELETE FROM inference_delay_status WHERE run_id = ?`, runId);
   }
 
   /**
@@ -1472,6 +1562,7 @@ export class WorkstreamHarnessRunStorage {
     runId: string,
     fence: TerminalLoopExecutionFence | null,
     now: number,
+    allowAlreadyClosed = false,
   ): boolean {
     const receipt = first(this.sql.exec<{
       substream_loop_id: string | null;
@@ -1503,7 +1594,9 @@ export class WorkstreamHarnessRunStorage {
          FROM substream_loops WHERE id = 1`,
     ));
     if (!loop || loop.loop_id !== fence.loopId) return false;
-    if (loop.status === "idle" || loop.cycle_ordinal > receipt.loop_cycle_ordinal) return true;
+    if (loop.status === "idle" || loop.cycle_ordinal > receipt.loop_cycle_ordinal) {
+      return allowAlreadyClosed;
+    }
     if (loop.status !== "executing"
       || loop.cycle_ordinal !== receipt.loop_cycle_ordinal
       || loop.active_execution_id !== fence.executionId
@@ -1761,6 +1854,10 @@ export class WorkstreamHarnessRunStorage {
          FROM runs
         WHERE status IN ${BUSY_RUN_STATUSES} AND terminalized_at IS NULL
           AND parent_tool_call_id IS NULL
+          -- A linked receipt is subordinate to the persistent loop. Its loop
+          -- execution, provider protocol, and run must be recovered together;
+          -- an expired receipt lease alone is not terminal authority.
+          AND substream_loop_id IS NULL
           AND legacy_attempt_id IS NOT NULL AND lease_expires_at IS NOT NULL
           AND lease_expires_at <= ?1
         ORDER BY lease_expires_at ASC
@@ -1790,46 +1887,27 @@ export class WorkstreamHarnessRunStorage {
       const run = this.run({ runId: input.runId });
       if (!run
         || run.parent_tool_call_id !== null
+        || run.substream_loop_id !== null
         || run.legacy_attempt_id !== input.attemptId
         || run.lease_expires_at !== input.leaseExpiresAt
         || run.status !== "running"
         || run.terminalized_at !== null) {
         return { outcome: "not_stale" as const };
       }
-      // A stale lease bypassed the executor's ordinary finally path. Recover
-      // the same participant-visible terminal boundary before publishing the
-      // terminal receipt, and discard presentation-only checkpoints that can
-      // no longer have a live producer. All of this shares the transaction
-      // with the run row below so a terminal run can never retain a clock or
-      // streaming overlay that still claims it is active.
-      this.#closeExecutionActivities(input.runId, "failed", input.leaseExpiresAt);
-      this.sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, input.runId);
-      this.sql.exec(`DELETE FROM active_agent_compaction WHERE run_id = ?`, input.runId);
-      this.sql.exec(`DELETE FROM inference_delay_status WHERE run_id = ?`, input.runId);
-      this.recordLifecycleEvent({
-        eventId: input.lifecycleEventId,
+      this.#commitTerminalState({
         runId: input.runId,
         attemptId: input.attemptId,
-        eventKey: "terminal",
-        eventType: "terminal",
+        claimAttempt: false,
         status: "failed",
+        finalTurnId: null,
+        model: null,
+        usageJson: null,
+        errorJson: '{"code":"stale_run_reaped","message":"The prior executor lost its durable lease"}',
         memberSafePayloadJson: '{"code":"stale_run_reaped"}',
-        now: input.now,
-      });
-      this.sql.exec(
-        `UPDATE runs
-            SET status = 'failed', completed_at = ?2, terminalized_at = ?2,
-                error_json = '{"code":"stale_run_reaped","message":"The prior executor lost its durable lease"}',
-                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?2
-          WHERE run_id = ?1`,
-        input.runId,
-        input.now,
-      );
-      this.settleWorkstreamState(input.runId, "failed", input.now);
-      this.cancelDescendants({
-        rootRunId: input.runId,
-        reason: "parent_stale_run_reaped",
-        now: input.now,
+        lifecycleEventId: input.lifecycleEventId,
+        terminalizedAt: input.now,
+        activityStoppedAt: input.leaseExpiresAt,
+        descendantReason: "parent_stale_run_reaped",
       });
       return { outcome: "reaped" as const };
     });
@@ -1982,10 +2060,13 @@ export class WorkstreamHarnessRunStorage {
    * Settle a run that was never claimed.
    *
    * `terminalizeAttempt`'s fence inverted: the run must have *no* attempt at
-   * all, because this is how a queued run dies when its executor never arrived
-   * — a rejected admission, a Workflow that failed to start. It still stamps an
-   * attempt id, so the terminal event and the run agree on who ended it and a
-   * retry of the same identity is a replay rather than a second ending.
+   * all, because this is how a queued run dies before its executor acquires the
+   * harness lease — a rejected admission, a Workflow that failed to start, or
+   * a cancellation observed after the persistent loop activated but before the
+   * attempt claim. A loop-linked receipt additionally has to prove and release
+   * that exact execution. The ending still stamps an attempt id, so the
+   * terminal event and the run agree on who ended it and a retry of the same
+   * identity is a replay rather than a second ending.
    */
   terminalizeQueuedRun(input: {
     runId: string;
@@ -1994,6 +2075,7 @@ export class WorkstreamHarnessRunStorage {
     errorJson: string | null;
     memberSafePayloadJson: string;
     lifecycleEventId: string;
+    loopExecutionFence: TerminalLoopExecutionFence | null;
     now: number;
   }): { outcome: "terminalized" | "already_terminal" | "ownership_lost" | "not_found" } {
     assertTerminalRunStatus(input.status);
@@ -2003,6 +2085,15 @@ export class WorkstreamHarnessRunStorage {
       if (run.legacy_attempt_id === input.attemptId
         && run.status === input.status
         && run.terminalized_at !== null) {
+        if (!this.#closeLinkedLoopForTerminalReceipt(
+          input.runId,
+          input.loopExecutionFence,
+          input.now,
+          true,
+        )) {
+          return { outcome: "ownership_lost" as const };
+        }
+        this.#repairTerminalExecutionState(input.runId, input.status, run.terminalized_at);
         return { outcome: "already_terminal" as const };
       }
       if (run.legacy_attempt_id !== null
@@ -2010,29 +2101,28 @@ export class WorkstreamHarnessRunStorage {
         || run.terminalized_at !== null) {
         return { outcome: "ownership_lost" as const };
       }
-      this.recordLifecycleEvent({
-        eventId: input.lifecycleEventId,
+      if (!this.#closeLinkedLoopForTerminalReceipt(
+        input.runId,
+        input.loopExecutionFence,
+        input.now,
+      )) {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.#commitTerminalState({
         runId: input.runId,
         attemptId: input.attemptId,
-        eventKey: "terminal",
-        eventType: "terminal",
+        claimAttempt: true,
         status: input.status,
+        finalTurnId: null,
+        model: null,
+        usageJson: null,
+        errorJson: input.errorJson,
         memberSafePayloadJson: input.memberSafePayloadJson,
-        now: input.now,
+        lifecycleEventId: input.lifecycleEventId,
+        terminalizedAt: input.now,
+        activityStoppedAt: input.now,
+        descendantReason: "parent_terminalized",
       });
-      this.sql.exec(
-        `UPDATE runs
-            SET legacy_attempt_id = ?2, attempt_epoch = attempt_epoch + 1,
-                status = ?3, completed_at = ?4, terminalized_at = ?4, error_json = ?5,
-                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?4
-          WHERE run_id = ?1`,
-        input.runId,
-        input.attemptId,
-        input.status,
-        input.now,
-        input.errorJson,
-      );
-      this.settleWorkstreamState(input.runId, input.status, input.now);
       return { outcome: "terminalized" as const };
     });
   }
@@ -2047,7 +2137,12 @@ export class WorkstreamHarnessRunStorage {
    * it `idle` rather than recording a terminal state, because a stop is the
    * member taking the conversation back rather than an outcome to report.
    */
-  private settleWorkstreamState(runId: string, status: string, now: number): void {
+  private settleWorkstreamState(
+    runId: string,
+    status: string,
+    now: number,
+    reasonCode = `runtime_${status === "cancelled" ? "idle" : status}`,
+  ): void {
     const stillBusy = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count FROM runs
         WHERE run_id != ?
@@ -2069,7 +2164,7 @@ export class WorkstreamHarnessRunStorage {
               updated_at = ?3
         WHERE id = 1`,
       state,
-      `runtime_${state}`,
+      reasonCode,
       now,
     );
   }
