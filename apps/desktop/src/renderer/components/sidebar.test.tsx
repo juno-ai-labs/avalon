@@ -628,7 +628,7 @@ describe('Sidebar channel markers', () => {
   // same component the rest of the sidebar draws a Channel with, so a Channel
   // in two Spaces is one record shown twice rather than two rows that can
   // drift.
-  it('given a channel in two spaces, when both accordions open, then each placement is the same channel row', () => {
+  it('given a channel in two spaces, selecting either Space reveals the same Channel', () => {
     const memberId = '00000000-0000-7000-8000-0000000000e1';
     const hiring = space();
     const company = space('00000000-0000-7000-8000-0000000000f3', 'Company');
@@ -651,15 +651,13 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Company' }));
-    const rows = screen.getAllByRole('link', { name: /Ship the launch/u });
-    expect(rows).toHaveLength(2);
-    for (const row of rows) {
-      expect(row).toHaveClass('sidebar-row', 'workstream-row');
-      expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
-      expect(row.querySelector('.sidebar-row-hint')).toBeNull();
-    }
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(screen.getAllByRole('link', { name: /Ship the launch/u })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('link', { name: 'Company' }));
+    const row = screen.getByRole('link', { name: /Ship the launch/u });
+    expect(row).toHaveClass('sidebar-row', 'workstream-row');
+    expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
+    expect(row.querySelector('.sidebar-row-hint')).toBeNull();
   });
 
   it('does not start navigation telemetry when the active channel row is clicked again', () => {
@@ -771,9 +769,9 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the spaces, then two groups of
-    // four and three.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
+    // The Space rail owns its own opening copy; the Channel rail keeps the two
+    // row groups that settle into four and three Channels.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(7);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
@@ -1299,7 +1297,7 @@ describe('Sidebar channel markers', () => {
     // the strip where the full sidebar has it rather than folding it into the
     // scrolling list.
     expect(strip.closest('.sidebar-scroll')).toBeNull();
-    expect(strip.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Open account menu' }));
+    expect(screen.getByRole('button', { name: 'Open account menu' })).toBeVisible();
     expect(within(strip).getAllByRole('button')).toHaveLength(2);
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
     // Running says so with a play in the success colour, drawn into the hexagon
@@ -1640,7 +1638,7 @@ describe('Sidebar channel markers', () => {
 
     // The row lives under the Space that holds it; there is no second, flat
     // list of the same Channel to reach it through.
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -1678,7 +1676,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -1716,7 +1714,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -1751,7 +1749,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -1791,7 +1789,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Theirs' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Theirs' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     // The submenu is drawn at all, which is what makes the absence below a
@@ -1824,7 +1822,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -1836,7 +1834,8 @@ describe('Sidebar channel markers', () => {
   it('adds a channel to the space its row was dropped on', () => {
     const onAddChannelToSpace = vi.fn(async () => undefined);
     const hiring = space();
-    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), general().id);
+    const home = general();
+    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), home.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1845,7 +1844,7 @@ describe('Sidebar channel markers', () => {
             automations={[]}
             onAddChannelToSpace={onAddChannelToSpace}
             onSignOut={vi.fn()}
-            spaces={[hiring]}
+            spaces={[home, hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1855,7 +1854,7 @@ describe('Sidebar channel markers', () => {
 
     const row = document.querySelector(`[data-workstream-id="${target.id}"]`);
     expect(row).toHaveAttribute('draggable', 'true');
-    const item = screen.getByText('Hiring').closest('.space-sidebar-item');
+    const item = screen.getByRole('link', { name: 'Hiring' });
     if (!(item instanceof HTMLElement)) throw new Error('space row missing');
     fireEvent.drop(item, {
       dataTransfer: { getData: (type: string) => type === 'application/x-rally-workstream-id' ? target.id : '' },
@@ -1866,8 +1865,8 @@ describe('Sidebar channel markers', () => {
 
   // Every Channel belongs to at least one Space and the section is drawn in
   // every shell, so a row is always draggable onto something.
-  it('given the conversation-only sidebar, then the spaces section is still drawn and rows are draggable', () => {
-    const target = workstream('drag-conversation-only', 'Quarterly planning', 'completed');
+  it('given the conversation-only sidebar, then the Spaces and selected-Space Channels are still drawn', () => {
+    const target = placedIn(workstream('drag-conversation-only', 'Quarterly planning', 'completed'), general().id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1884,9 +1883,12 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Spaces' })).toBeVisible();
-    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
-    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
+    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'General' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'General' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'General' }).closest('.sidebar-titlebar')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
   });
 
   // The section is showing its opening card and no rows, so there is nothing to
@@ -1979,7 +1981,7 @@ describe('Sidebar channel markers', () => {
     expect(onRetrySpaces).toHaveBeenCalled();
   });
 
-  it('opens the same channel from a placement under each of its spaces', () => {
+  it('opens the same Channel after switching between either containing Space', () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');
     const target = placedIn(workstream('two-places', 'Quarterly planning', 'completed'), hiring.id, launch.id);
@@ -1998,13 +2000,10 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
-    const rows = screen.getAllByRole('link', { name: /Quarterly planning/u });
-    // One under each Space, and nowhere else: every Channel belongs to a
-    // Space, so there is no second flat list of the same rows to find it in.
-    expect(rows).toHaveLength(2);
-    for (const row of rows) expect(row).toHaveAttribute('href', `/workstreams/${target.id}`);
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveAttribute('href', `/workstreams/${target.id}`);
+    fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveAttribute('href', `/workstreams/${target.id}`);
   });
 
   it('marks channels unread on the server and renames from the menu', async () => {
@@ -2803,7 +2802,7 @@ describe('pinned channels', () => {
       ]);
     });
 
-    it('scopes each space\'s placements apart from the others', () => {
+    it('moves one Channel row between the selected Space motion scopes', () => {
       const launch = space('00000000-0000-7000-8000-0000000000f2', 'Launch');
       const hiring = space('00000000-0000-7000-8000-0000000000f3', 'Hiring');
       const member = placedIn(
@@ -2816,16 +2815,12 @@ describe('pinned channels', () => {
           <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
-      const rows = screen.getAllByRole('link', { name: /Roadmap review/u }).map((link) => link.closest('[data-motion-key]'));
-      expect(rows).toHaveLength(2);
-      // One record shown twice, and the motion has to be told that: without a
-      // scope per Space it would take the two placements for one row that had
-      // moved from under one Space to under the other.
-      const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
-      expect(scopes).toEqual(expect.arrayContaining([`space:${launch.id}`, `space:${hiring.id}`]));
-      expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
+      expect(screen.getByRole('link', { name: /Roadmap review/u })
+        .closest('[data-motion-scope]')).toHaveAttribute('data-motion-scope', `space:${launch.id}`);
+      fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+      expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
+      expect(screen.getByRole('link', { name: /Roadmap review/u })
+        .closest('[data-motion-scope]')).toHaveAttribute('data-motion-scope', `space:${hiring.id}`);
     });
 
     // The rows' shapes travel under CSS for as long as the box's width does,
@@ -3411,8 +3406,7 @@ describe('the sidebar without a recency list', () => {
 
     expect(screen.queryByRole('heading', { name: 'Today' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /actions$/u })).not.toBeInTheDocument();
-    // Under the Space that holds it, and nowhere else.
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    // In the Channel rail for the selected Space, and nowhere else.
     expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
   });
 
@@ -3431,7 +3425,7 @@ describe('the sidebar without a recency list', () => {
     for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
-  it('given a channel in no visible space, when the sidebar is drawn, then it is under Other channels', () => {
+  it('given a channel in no visible space, then the selected Space rail does not mix it in', () => {
     const hiring = space();
     const placed = placedIn(today, hiring.id);
     // Readable, and every one of its Spaces is somebody else's personal one:
@@ -3444,9 +3438,8 @@ describe('the sidebar without a recency list', () => {
     );
     renderSidebar({ spaces: [hiring], workstreams: [placed, elsewhere] });
 
-    const section = screen.getByRole('region', { name: 'Other channels' });
-    expect(within(section).getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
-    expect(within(section).queryByRole('link', { name: /Roadmap review/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    expect(screen.queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
   });
 
   it('given every channel placed where the reader can see it, then there is no Other channels section', () => {
@@ -3493,25 +3486,22 @@ describe('the sidebar without a recency list', () => {
     const placed = placedIn(today, general.id);
     renderSidebar({ spaces: [general], spacesReady: false, workstreams: [placed] });
 
-    // The hierarchy is not on screen: there is no row to find the Channel
-    // under, which is what makes the fallback the only place it can be.
-    expect(screen.queryByRole('button', { name: 'Expand General' })).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Other channels' }))
-      .getByRole('link', { name: /Roadmap review/u })).toBeVisible();
-    for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
+    // The Space rail shows only its opening card, while the adjacent Channel
+    // rail remains the temporary route to every Channel.
+    expect(screen.queryByRole('link', { name: 'General' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
   });
 
   // The section above already holds it, and a row in both would take its order
   // from whichever the reader saw last — the same rule the list this replaces
   // was under.
-  it('given an unplaced channel that is pinned, then it is in Pinned and not in Other channels', () => {
+  it('given an impossible unplaced pinned channel after opening, then it is not mixed into the selected Space', () => {
     const hiring = space();
     const unplaced = pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0);
     renderSidebar({ spaces: [hiring], workstreams: [unplaced] });
 
-    expect(within(screen.getByRole('region', { name: 'Pinned' }))
-      .getByRole('link', { name: /Launch tracking/u })).toBeVisible();
-    expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
+    expect(screen.queryByRole('link', { name: /Launch tracking/u })).not.toBeInTheDocument();
   });
 
   it('given a stored space order, when the section is drawn, then it is in that order', () => {
@@ -3522,7 +3512,7 @@ describe('the sidebar without a recency list', () => {
       ordering: [{ container: { kind: 'organization' }, itemIds: [second.id, first.id] }],
     });
 
-    const section = screen.getByRole('region', { name: 'Spaces' });
+    const section = screen.getByRole('navigation', { name: 'Spaces' });
     expect(within(section).getAllByRole('link').map((link) => link.textContent))
       .toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
   });
@@ -3595,7 +3585,6 @@ describe('reordering the channels inside a space', () => {
         </Tooltip.Provider>
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
   }
 
   function placementTitles(): string[] {
@@ -3638,7 +3627,7 @@ describe('reordering the channels inside a space', () => {
     renderSidebar({ onAddChannelToSpace, onReorderContainer });
 
     const transfer = channelTransfer();
-    const target = screen.getByText('Launch').closest('.space-sidebar-item')!;
+    const target = screen.getByRole('link', { name: 'Launch' });
     fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
     fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
     fireEvent.drop(target, { dataTransfer: transfer });

@@ -1,7 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { Archive, Copy, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
-import { IconCornerDownRight, IconPlus, IconShare2 } from '@tabler/icons-react';
+import { Archive, Copy, GitBranch, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { IconCornerDownRight, IconShare2 } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
@@ -203,7 +203,12 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   const currentSubstreamId = publishedReserved ?? selectedSubstreamId;
   return (
     <aside aria-label="Channel sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
-      <div className="workstream-context-toolbar window-drag" />
+      <div className="workstream-context-toolbar window-drag">
+        <h2 title={workstream.title}>{workstream.title}</h2>
+        <span aria-hidden="true" className="workstream-context-toolbar-mark">
+          <WorkstreamMark appearance={workstream.appearance} id={workstream.id} />
+        </span>
+      </div>
       <div className="workstream-context-scroll">
         {mainVisible && <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>
@@ -213,7 +218,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             aria-label={`Go to conversation: ${workstream.title}`}
             title={workstream.title}
             type="button"
-            onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
+            onClick={() => { saveCollapsed(true); onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
             <span className="workstream-context-copy"><span>{workstream.title}</span></span>
@@ -240,10 +245,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             Hold Alt and press the up or down arrow to move a breakout.
           </p>}
           {workstream.privateChildren?.map((child, index) => {
-            // Compact hides the title, and a rail of identical arrows says
-            // only that these are substreams, not which is which. The first
-            // letter is the only part of the title a 36px mark can hold.
-            const initial = [...child.title.trim()][0]?.toUpperCase();
             // In the row's `aria-label` rather than in an `sr-only` span
             // beside its title, which is how the sidebar's own rows carry it.
             // The difference is forced: compact hides the title with
@@ -264,7 +265,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   substreamDrag?.draggingSubstreamId === child.substreamId && 'is-dragging',
                 )}
                 draggable={substreamDrag !== undefined}
-                onClick={() => onSelectSubstream?.(child.substreamId)}
+                onClick={() => { saveCollapsed(true); onSelectSubstream?.(child.substreamId); }}
                 onDragStart={substreamDrag ? (event) => {
                   // Chromium refuses to start a drag with an empty payload,
                   // and the id is what any other surface would want anyway.
@@ -302,13 +303,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 title={child.title}
                 type="button"
               >
-                {/* Both marks, stacked in the one slot: the stylesheet
-                    cross-fades the arrow into the initial as the rail
-                    narrows, rather than this swapping one element for the
-                    other, which would cut a frame ahead of the edge. */}
                 <span aria-hidden="true" className="workstream-context-mark">
-                  <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
-                  {initial && <span className="workstream-substream-initial">{initial}</span>}
+                  <GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />
                 </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
               </button>
@@ -336,7 +332,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               title="Rally is creating this breakout"
             >
               <span aria-hidden="true" className="workstream-context-mark">
-                <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
+                <GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />
               </span>
               {/* The row's name, and outside the copy below on purpose: compact
                   hides that element with `visibility: hidden`, which takes
@@ -366,11 +362,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 'workstream-context-row workstream-new-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
-              onClick={onNewSubstream}
+              onClick={() => { saveCollapsed(true); onNewSubstream(); }}
               title="New breakout"
               type="button"
             >
-              <span aria-hidden="true" className="workstream-context-mark"><IconPlus size={22} stroke={1.5} /></span>
+              <span aria-hidden="true" className="workstream-context-mark"><IconCornerDownRight className="workstream-new-breakout-icon" size={21} stroke={1.7} /></span>
               <span className="workstream-context-copy"><span>New breakout</span></span>
             </button>
           )}
