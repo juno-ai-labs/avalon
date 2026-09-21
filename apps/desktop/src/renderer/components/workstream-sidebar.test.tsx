@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { MemoryRouter, NavLink } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
 import { SITE_MANIFEST_MIME_TYPE, asSubstreamId, asUserId } from '@rally/contracts';
+import { SidebarList } from '@rally/ui/components/resizable-sidebar';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -44,6 +46,20 @@ beforeEach(() => {
   });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+describe('SidebarList', () => {
+  it('preserves string and polymorphic callback class names', () => {
+    const { rerender } = render(<SidebarList className="local-list" />);
+    expect(document.querySelector('.sidebar-list')).toHaveClass('local-list');
+
+    rerender(<MemoryRouter><SidebarList
+      as={NavLink}
+      className={({ isActive }) => isActive ? 'current-list' : undefined}
+      to="/"
+    /></MemoryRouter>);
+    expect(screen.getByRole('link')).toHaveClass('sidebar-list', 'current-list');
+  });
+});
 
 describe('WorkstreamSidebar', () => {
   it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
