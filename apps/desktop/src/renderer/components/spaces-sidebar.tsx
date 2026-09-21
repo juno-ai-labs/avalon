@@ -15,7 +15,6 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
-  SIDEBAR_CONTENT_MIN_WIDTH,
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
@@ -34,8 +33,10 @@ import { SidebarSkeletonRows } from './sidebar-skeleton';
 
 interface SpacesSidebarProps {
   accountSlotRef: (element: HTMLDivElement | null) => void;
+  availableWidth: number;
   sidekickSlotRef: (element: HTMLDivElement | null) => void;
   collapsed: boolean;
+  constrained: boolean;
   width: number;
   currentPath: string;
   inactiveSpaces: SpaceSummary[];
@@ -74,8 +75,10 @@ const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
  */
 export function SpacesSidebar({
   accountSlotRef,
+  availableWidth,
   sidekickSlotRef,
   collapsed,
+  constrained,
   width,
   currentPath,
   inactiveSpaces,
@@ -142,10 +145,9 @@ export function SpacesSidebar({
         : null;
   const effectiveWidth = collapsed ? COLLAPSED_SIDEBAR_WIDTH : width;
   const resize = useCallback((requested: number): void => {
-    const available = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
     if (collapsed) {
-      if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || available < MIN_SIDEBAR_WIDTH) return;
-      onWidthChange(Math.min(MAX_SIDEBAR_WIDTH, requested, available));
+      if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || constrained) return;
+      onWidthChange(Math.min(MAX_SIDEBAR_WIDTH, requested, availableWidth));
       onCollapsedChange(false);
       return;
     }
@@ -153,9 +155,18 @@ export function SpacesSidebar({
       onCollapsedChange(true);
       return;
     }
-    if (available < MIN_SIDEBAR_WIDTH) return;
-    onWidthChange(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested, available)));
-  }, [collapsed, onCollapsedChange, onWidthChange]);
+    if (constrained) return;
+    onWidthChange(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested, availableWidth)));
+  }, [availableWidth, collapsed, constrained, onCollapsedChange, onWidthChange]);
+  const toggle = useCallback((): void => {
+    if (!collapsed) {
+      onCollapsedChange(true);
+      return;
+    }
+    if (constrained) return;
+    onWidthChange(Math.min(width, availableWidth));
+    onCollapsedChange(false);
+  }, [availableWidth, collapsed, constrained, onCollapsedChange, onWidthChange, width]);
 
   const previewOrder = (order: string[] | null): void => {
     dragOrderRef.current = order;
@@ -203,8 +214,9 @@ export function SpacesSidebar({
         aria-label="Spaces sidebar"
         className="spaces-sidebar"
         compact={collapsed}
+        constrained={constrained}
         onResize={resize}
-        onToggle={() => onCollapsedChange(!collapsed)}
+        onToggle={toggle}
         resizeLabel="Resize spaces sidebar"
         sidebarRef={sidebarRef}
         width={effectiveWidth}
@@ -388,7 +400,9 @@ export function SpacesSidebar({
           <IconButton
             label={collapsed ? 'Expand spaces' : 'Collapse spaces'}
             aria-expanded={!collapsed}
-            onClick={() => onCollapsedChange(!collapsed)}
+            disabled={constrained}
+            title={constrained ? 'Widen the window to expand spaces' : undefined}
+            onClick={toggle}
           >
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </IconButton>

@@ -35,8 +35,10 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
       <Tooltip.Provider>
         <SpacesSidebar
           accountSlotRef={vi.fn()}
+          availableWidth={400}
           sidekickSlotRef={vi.fn()}
           collapsed={false}
+          constrained={false}
           width={280}
           onCollapsedChange={onCollapsedChange}
           onWidthChange={onWidthChange}
@@ -189,6 +191,28 @@ describe('SpacesSidebar', () => {
     expect(compact.onCollapsedChange).toHaveBeenCalledWith(false);
   });
 
+  it('caps every expansion path at the width left by the full hierarchy', () => {
+    const compact = renderSidebar({ availableWidth: 244, collapsed: true, width: 400 });
+    const handle = screen.getByRole('separator', { name: 'Resize spaces sidebar' });
+
+    fireEvent.doubleClick(handle);
+    expect(compact.onWidthChange).toHaveBeenCalledWith(244);
+    expect(compact.onCollapsedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps every expansion path disabled when the hierarchy cannot fit', () => {
+    const compact = renderSidebar({ availableWidth: 180, collapsed: true, constrained: true });
+    const handle = screen.getByRole('separator', { name: 'Resize spaces sidebar' });
+    const footer = screen.getByRole('button', { name: 'Expand spaces' });
+
+    expect(footer).toBeDisabled();
+    fireEvent.doubleClick(handle);
+    fireEvent.keyDown(handle, { key: 'Enter' });
+    fireEvent.click(footer);
+    expect(compact.onCollapsedChange).not.toHaveBeenCalled();
+    expect(compact.onWidthChange).not.toHaveBeenCalled();
+  });
+
   it('keeps stale rows visible and offers the directory retry', () => {
     const onRetry = vi.fn();
     renderSidebar({ onRetry, outOfDate: true });
@@ -231,6 +255,7 @@ describe('SpacesSidebar', () => {
   it('hands Create between the titlebar and compact command row with the old motion contract', () => {
     const props = {
       accountSlotRef: vi.fn(),
+      availableWidth: 400,
       sidekickSlotRef: vi.fn(),
       currentPath: '/workstreams/current',
       inactiveSpaces: [],
@@ -238,6 +263,7 @@ describe('SpacesSidebar', () => {
       onArchive: vi.fn(async () => undefined),
       onCollapsedChange: vi.fn(),
       onWidthChange: vi.fn(),
+      constrained: false,
       onCreateChannel: vi.fn(async () => undefined),
       onCreateSpace: vi.fn(async () => undefined),
       onImportChannel: vi.fn(async () => undefined),
