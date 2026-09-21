@@ -18,18 +18,18 @@ import { RegionSchema } from "@rally/contracts/regions";
  * work stream, which version, which bucket prefix) comes from this object once
  * it is addressed.
  *
- * Two authorities own facts this object does not, and it asks each rather than
- * guessing — `docs/access-revocation.md` is explicit that they must never be
- * merged:
+ * Access is admitted before a viewer session is created. After that, this
+ * object trusts the durable session until an explicit revocation removes it or
+ * its fixed lifetime expires:
  *
  * - *Session and membership revocation is a D1 fact*, so it arrives on the
  *   access-revocation queue like every other one. This object joins that
  *   fan-out at the **workspace** hop, because `artifact_registry` lives beside
  *   the resource authority in `WorkspaceDO` and only the object holding a list
  *   can name its children.
- * - Resource visibility is resolved by the canonical authorization service,
- *   including current membership, conversation grants and resource exposure.
- *   The serving Worker requests fresh admission for authenticated traffic.
+ * - Resource visibility is resolved by the canonical authorization service
+ *   before `openForViewer`; ordinary artifact requests do not poll that
+ *   authority again.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -37,8 +37,6 @@ import {
   ArtifactManifestSchema,
   artifactAssetKey,
   artifactIsolateId,
-  asUserId,
-  asWorkspaceId,
   type ArtifactManifest,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -48,7 +46,6 @@ import {
   assertDurableObjectJurisdiction,
 } from "../lib/durable-object-namespace";
 import { sha256Hex } from "../lib/crypto";
-import { AuthorizationService, requireAuthorizedRead } from "../services/authorization-service";
 import {
   FACET_HOST_CLASS,
   FACET_HOST_MODULE,
@@ -104,10 +101,9 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       code_sha256 TEXT UNIQUE,
       code_expires_at INTEGER,
       redeemed_at INTEGER,
-      -- When this principal's work-stream visibility was last confirmed
-      -- against WorkstreamDO, and what the answer was. Cached for a bounded
-      -- interval rather than asked per request: a live artifact must not put
-      -- a Durable Object hop in front of every asset byte.
+      -- Retained from the former per-request visibility polling design. New
+      -- sessions record their admission here, but serving trusts the session
+      -- row until explicit revocation or expiry rather than polling authority.
       visibility_checked_at INTEGER,
       visible INTEGER NOT NULL DEFAULT 0 CHECK (visible IN (0, 1))
     ) STRICT`,
@@ -287,7 +283,7 @@ export type ArtifactPageResult =
 export interface ArtifactSessionCheck {
   ok: boolean;
   /** Why a request was refused, for the serving Worker's response choice. */
-  reason?: "no_session" | "expired" | "not_visible";
+  reason?: "no_session" | "expired";
   viewerId?: string;
   viewerName?: string;
   version?: number;
@@ -453,12 +449,11 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   /**
    * Admit or refuse one artifact request, and say who is making it.
    *
-   * Called by the serving Worker before anything reaches model-authored code,
-   * so this is where the two revocation questions are actually answered — the
-   * queue having dropped rows for the first, and canonical resource access answering
-   * the second when the cached answer has aged out.
+   * Called by the serving Worker before anything reaches model-authored code.
+   * Admission already established resource access; this lookup answers whether
+   * the durable session still exists and has not reached its fixed expiry.
    */
-  async checkSession(sessionValue: string, visibilityCacheMs: number): Promise<ArtifactSessionCheck> {
+  async checkSession(sessionValue: string): Promise<ArtifactSessionCheck> {
     await this.initialized;
     const state = this.stateRow();
     if (!state) return { ok: false, reason: "no_session" };
@@ -468,10 +463,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       user_id: string;
       display_name: string;
       expires_at: number;
-      visibility_checked_at: number | null;
-      visible: number;
     }>(
-      `SELECT user_id, display_name, expires_at, visibility_checked_at, visible
+      `SELECT user_id, display_name, expires_at
          FROM viewer_sessions WHERE session_sha256 = ? AND redeemed_at IS NOT NULL`,
       digest,
     ).toArray();
@@ -481,10 +474,6 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE session_sha256 = ?`, digest);
       return { ok: false, reason: "expired" };
     }
-    const fresh = row.visibility_checked_at !== null
-      && now - row.visibility_checked_at < visibilityCacheMs;
-    const visible = fresh ? row.visible === 1 : await this.confirmVisibility(digest, row.user_id, now);
-    if (!visible) return { ok: false, reason: "not_visible" };
     return {
       ok: true,
       viewerId: row.user_id,
@@ -775,39 +764,4 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE expires_at <= ?`, now);
   }
 
-  /**
-   * Recheck the artifact resource, not its legacy owning-parent visibility.
-   * An unavailable authority propagates to the serving Worker's error path;
-   * it never extends a previously allowed session.
-   */
-  private async confirmVisibility(
-    sessionDigest: string,
-    userId: string,
-    now: number,
-  ): Promise<boolean> {
-    const state = this.stateRow();
-    if (!state) return false;
-    const visible = await this.resolveResourceVisibility(state, userId);
-    this.state.storage.sql.exec(
-      `UPDATE viewer_sessions SET visibility_checked_at = ?, visible = ? WHERE session_sha256 = ?`,
-      now,
-      visible ? 1 : 0,
-      sessionDigest,
-    );
-    return visible;
-  }
-
-  private async resolveResourceVisibility(
-    state: z.infer<typeof ARTIFACT_STATE_ROW>,
-    userId: string,
-  ): Promise<boolean> {
-    const workspaceId = asWorkspaceId(state.workspace_id);
-    const [decision] = await new AuthorizationService(this.env).checkMany({
-      workspaceId, userId: asUserId(userId), delegation: null,
-    }, [{ kind: "resource", workspaceId, resourceId: state.resource_id }]);
-    if (!decision) throw new Error("artifact_authorization_missing");
-    // An unavailable authority must not reuse a previously allowed answer.
-    if (decision.status === "unavailable") requireAuthorizedRead(decision);
-    return decision.status === "allowed";
-  }
 }

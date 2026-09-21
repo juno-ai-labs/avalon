@@ -135,8 +135,9 @@ and the same child-naming contract, and returns no children. The list is
 deliberately unfiltered by person, matching the generosity the rest of this walk
 is built on: resource exposure can grant access through multiple conversations,
 so the walk must not infer a viewer list from one parent roster. A hop that finds
-no session to drop costs one call. Canonical resource authorization independently
-revalidates each authenticated artifact request.
+no session to drop costs one call. Canonical resource authorization admits the
+viewer before the session is minted; serving then trusts that durable session
+until this walk removes it or its fixed lifetime expires.
 
 Every child list the consumer reads is defaulted to empty. That is about deploys
 rather than tidiness: the consumer and WorkspaceDO are separate deployments of
@@ -451,6 +452,28 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-21 — Artifact serving trusts admitted sessions until retraction
+
+**What changed:** ArtifactHostDO no longer re-runs canonical resource
+authorization for every authenticated document and asset request. The open path
+proves access once, and the durable viewer-session row remains the serving
+capability until this queue deletes it or its fixed lifetime expires.
+
+**Why:** Per-request polling duplicated the admission decision across every
+asset and made a page's latency proportional to the number of requests it made.
+It also made the queue advisory for the revocations it already owns. An admitted
+session should assume access until the authority publishes contrary evidence.
+
+**Considered and rejected:** A periodic visibility TTL still places D1 and
+WorkspaceDO on the serving hot path and introduces a staleness number unrelated
+to the durable revocation mechanism. New cache infrastructure was unnecessary;
+the viewer-session row is already durable and bounded by expiry.
+
+**Consequences:** Resource-scope changes that do not currently publish an
+artifact-session retraction leave an existing session usable until its 24-hour
+expiry. If those changes need immediate interruption, their writers must extend
+this existing walk; they must not restore per-request authorization polling.
 
 ### 2026-09-19 — A Space is a hop that names children and closes nothing, and a narrowing asks the room who is still reading
 
