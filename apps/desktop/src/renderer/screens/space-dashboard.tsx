@@ -273,7 +273,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           })}
         />
 
-        <SpaceDashboardSection heading="Channels" headingId="space-channels-heading">
+        <SpaceDashboardSection heading="Needs attention" headingId="space-channels-heading">
           {channelPages.isPending
             ? <LoadingState label="Loading channels…" />
             : conversations.length === 0
