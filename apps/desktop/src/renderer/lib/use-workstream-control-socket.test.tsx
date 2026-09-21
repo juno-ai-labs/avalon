@@ -5,7 +5,11 @@ import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
-import { useWorkstreamControlSocket, type WorkstreamChildDirectory } from './use-workstream-control-socket';
+import {
+  applyBreakoutAppearanceReceipt,
+  useWorkstreamControlSocket,
+  type WorkstreamChildDirectory,
+} from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
@@ -246,6 +250,55 @@ describe('useWorkstreamControlSocket', () => {
       .toEqual(privateChildren);
     act(() => socket.close(1008));
     expect(queryClient.getQueryData(['workstream-children', workstreamId])).toBeUndefined();
+  });
+
+  it('holds a receipt-backed breakout appearance until the parent projection catches up', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    renderHook(() => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    })) }, workstreamId, true), { wrapper: wrapper(queryClient) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    const child = {
+      substreamId: asSubstreamId('00000000-0000-7000-8000-000000000021'),
+      title: 'Private child',
+      appearance: { icon: 'orbit' as const, color: 'green' as const },
+      createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    act(() => { socket.open(); socket.message(metadata(4, { privateChildren: [child], privateChildrenWaterline: 2 })); });
+    applyBreakoutAppearanceReceipt(queryClient, workstreamId, child.substreamId, {
+      baseline: child.appearance,
+      expected: { icon: 'orbit', color: 'purple' },
+    });
+
+    // An equal-waterline snapshot may have been serialized before the receipt.
+    act(() => socket.message(metadata(5, { privateChildren: [child], privateChildrenWaterline: 2 })));
+    let directory = queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
+    expect(directory?.privateChildren?.[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    expect(directory?.appearanceOverlays).toHaveProperty(child.substreamId);
+
+    // The matching authoritative projection retires the overlay.
+    const projected = { ...child, appearance: { icon: 'orbit' as const, color: 'purple' as const } };
+    act(() => socket.message(metadata(6, { privateChildren: [projected], privateChildrenWaterline: 3 })));
+    directory = queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
+    expect(directory?.privateChildren?.[0]?.appearance).toEqual(projected.appearance);
+    expect(directory?.appearanceOverlays).toBeUndefined();
+
+    // A genuinely different projection is newer authority and wins.
+    applyBreakoutAppearanceReceipt(queryClient, workstreamId, child.substreamId, {
+      baseline: projected.appearance,
+      expected: { icon: 'rocket', color: 'purple' },
+    });
+    const newer = { ...child, appearance: { icon: 'heart' as const, color: 'blue' as const } };
+    act(() => socket.message(metadata(7, { privateChildren: [newer], privateChildrenWaterline: 4 })));
+    directory = queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
+    expect(directory?.privateChildren?.[0]?.appearance).toEqual(newer.appearance);
+    expect(directory?.appearanceOverlays).toBeUndefined();
   });
 
   it('applies complete versioned metadata, clears nullable values, and drops revoked rows', async () => {

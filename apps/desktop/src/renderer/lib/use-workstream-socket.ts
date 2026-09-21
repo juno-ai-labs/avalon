@@ -79,8 +79,11 @@ import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, Workstr
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
-import { useWorkstreamControlSocket } from './use-workstream-control-socket';
-import type { WorkstreamChildDirectory } from './use-workstream-control-socket';
+import {
+  applyBreakoutAppearanceReceipt,
+  captureBreakoutAppearanceUpdate,
+  useWorkstreamControlSocket,
+} from './use-workstream-control-socket';
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
@@ -1203,6 +1206,9 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The channel is no longer available.', 409, 'workstream_socket_unavailable');
+        const breakoutUpdate = substreamId === '0'
+          ? null
+          : captureBreakoutAppearanceUpdate(queryClient, parentId, substreamId, appearance);
         const submitted = submitSubstreamCommand(command);
         // Read after the submit, which starts a connection attempt when none is
         // open and bumps the generation as it does.
@@ -1228,22 +1234,7 @@ export function useWorkstreamSocket(
             // Channel directory. The receipt is its durable commit, so move
             // that one row immediately while the child-to-parent projection
             // follows and eventually replaces the whole versioned roster.
-            queryClient.setQueryData<WorkstreamChildDirectory>(['workstream-children', parentId], (current) => current ? {
-              ...current,
-              privateChildren: current.privateChildren?.map((child) => child.substreamId === substreamId
-                ? {
-                    ...child,
-                    appearance: {
-                      icon: 'icon' in appearance
-                        ? appearance.icon ?? null
-                        : child.appearance?.icon ?? null,
-                      color: 'color' in appearance
-                        ? appearance.color ?? null
-                        : child.appearance?.color ?? null,
-                    },
-                  }
-                : child),
-            } : current);
+            applyBreakoutAppearanceReceipt(queryClient, parentId, substreamId, breakoutUpdate!);
           }
         }
       });
