@@ -23,7 +23,7 @@ describe('refreshing detached artifact windows', () => {
     await refreshPoppedOutArtifacts({
       bridge: {
         getPoppedOutArtifactVersions: vi.fn(async () => ({})),
-        updatePoppedOutArtifact: vi.fn(async () => true),
+        updatePoppedOutArtifact: vi.fn(async () => false),
       },
       inFlight: new Set(),
       loadResourceContent,
@@ -33,7 +33,7 @@ describe('refreshing detached artifact windows', () => {
   });
 
   it('replaces a generated window from authorized bytes when its version advances', async () => {
-    const updatePoppedOutArtifact = vi.fn(async () => true);
+    const updatePoppedOutArtifact = vi.fn(async () => false);
     await refreshPoppedOutArtifacts({
       bridge: {
         getPoppedOutArtifactVersions: vi.fn(async () => ({ [artifact.id]: 2 })),
@@ -53,7 +53,7 @@ describe('refreshing detached artifact windows', () => {
 
   it('mints a fresh one-shot URL when a detached live site advances', async () => {
     const site = { ...artifact, id: 'resource-site', mimeType: SITE_MANIFEST_MIME_TYPE };
-    const updatePoppedOutArtifact = vi.fn(async () => true);
+    const updatePoppedOutArtifact = vi.fn(async () => false);
     await refreshPoppedOutArtifacts({
       bridge: {
         getPoppedOutArtifactVersions: vi.fn(async () => ({ [site.id]: 2 })),
@@ -75,5 +75,30 @@ describe('refreshing detached artifact windows', () => {
       url: 'https://artifact-site-g.rallyusercontent.test/__rally/open#fresh',
       title: site.title,
     });
+  });
+
+  it('mints one URL per stale live-site window', async () => {
+    const site = { ...artifact, id: 'resource-site', mimeType: SITE_MANIFEST_MIME_TYPE };
+    const updatePoppedOutArtifact = vi.fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const openSiteArtifact = vi.fn()
+      .mockResolvedValueOnce({ artifactId: 'artifact-site', openUrl: 'https://example.test/one' })
+      .mockResolvedValueOnce({ artifactId: 'artifact-site', openUrl: 'https://example.test/two' });
+    await refreshPoppedOutArtifacts({
+      bridge: {
+        getPoppedOutArtifactVersions: vi.fn(async () => ({ [site.id]: 2 })),
+        updatePoppedOutArtifact,
+      },
+      inFlight: new Set(),
+      loadResourceContent: vi.fn(),
+      openSiteArtifact,
+      resources: [site],
+    });
+    expect(openSiteArtifact).toHaveBeenCalledTimes(2);
+    expect(updatePoppedOutArtifact.mock.calls.map(([request]) => request.url)).toEqual([
+      'https://example.test/one',
+      'https://example.test/two',
+    ]);
   });
 });

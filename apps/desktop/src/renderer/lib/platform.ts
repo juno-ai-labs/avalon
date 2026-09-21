@@ -502,7 +502,7 @@ const browserBridge: RallyDesktopBridge = {
     const opened = window.open('about:blank', '_blank');
     if (!opened) {
       if (request.kind === 'generated') URL.revokeObjectURL(url);
-      return;
+      return false;
     }
     opened.opener = null;
     browserArtifactWindows.set(opened, { resourceId: request.resourceId, version: request.version });
@@ -510,6 +510,7 @@ const browserBridge: RallyDesktopBridge = {
       opened.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
     }
     opened.location.href = url;
+    return true;
   },
   async getPoppedOutArtifactVersions() {
     const versions: Record<string, number> = {};
@@ -525,24 +526,38 @@ const browserBridge: RallyDesktopBridge = {
     }
     return versions;
   },
+  async closePoppedOutArtifacts(resourceIds) {
+    const closing = new Set(resourceIds);
+    for (const [opened, artifact] of browserArtifactWindows) {
+      if (!closing.has(artifact.resourceId)) continue;
+      browserArtifactWindows.delete(opened);
+      if (!opened.closed) opened.close();
+    }
+  },
   async updatePoppedOutArtifact(request) {
     const opened = [...browserArtifactWindows.entries()]
       .filter(([candidate, artifact]) => !candidate.closed
         && artifact.resourceId === request.resourceId
         && artifact.version < request.version);
     if (opened.length === 0) {
-      return [...browserArtifactWindows.entries()].some(([candidate, artifact]) =>
-        !candidate.closed && artifact.resourceId === request.resourceId);
+      return false;
     }
-    for (const [candidate] of opened) {
-      const url = browserArtifactWindowUrl(request);
-      if (request.kind === 'generated') {
-        candidate.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
-      }
+    const [candidate, previous] = opened[0]!;
+    const url = browserArtifactWindowUrl(request);
+    if (request.kind === 'generated') {
+      candidate.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    }
+    // Reserve before navigation so an older asynchronous refresh cannot
+    // overwrite the version after a newer refresh has already arrived.
+    browserArtifactWindows.set(candidate, { resourceId: request.resourceId, version: request.version });
+    try {
       candidate.location.href = url;
-      browserArtifactWindows.set(candidate, { resourceId: request.resourceId, version: request.version });
+    } catch (error) {
+      browserArtifactWindows.set(candidate, previous);
+      if (request.kind === 'generated') URL.revokeObjectURL(url);
+      throw error;
     }
-    return true;
+    return opened.length > 1;
   },
   async openSidekicks(requested) {
     const target = new URL(window.location.href);
