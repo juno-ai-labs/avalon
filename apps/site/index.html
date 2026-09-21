@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ccff00" />
+    <meta name="theme-color" content="#f5f8f2" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -25,18 +25,33 @@
     <meta name="twitter:image" content="https://rallywith.ai/rally-social.jpg" />
     <meta name="twitter:image:alt" content="{{access.title}}." />
     <link rel="canonical" href="https://rallywith.ai/" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <link rel="stylesheet" href="/src/access.css" />
+    <link rel="stylesheet" href="/src/landing.css" />
     <script type="module" src="/src/landing.ts"></script>
     <title>{{access.title}}</title>
   </head>
-  <body class="rally-home access-home">
-    <a class="skip-link" href="#content">Skip to content</a>
-    <header class="rally-header"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a></header>
-    <main id="content"><section class="access-intro" aria-labelledby="hero-title">
-      <h1 id="hero-title">{{access.headline}}</h1>
-      <p class="access-description">{{access.description}}</p>
-      <p class="access-capabilities">{{access.capabilities}}</p>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header><a class="wordmark" href="#" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" alt="">rally</a></header>
+<main id="content">
+<section class="hero" aria-labelledby="hero-title">
+<div class="hero-copy"><h1 id="hero-title">Stop copy-pasting<br>between Claude and Slack.</h1>
+<p class="intro">Rally gives you, your (human) coworkers, and AI a single place to get work done together.</p>
+<button class="button" id="beta-open" type="button" aria-haspopup="dialog">macOS Beta</button></div>
+</section>
+<section class="demo" id="together" aria-labelledby="demo-title">
+<div class="demo-intro"><h2 id="demo-title">Work on it together.</h2><p>Three teammates and Rally turn a launch plan into an announcement, all in one shared thread.</p></div>
+<div class="conversation" aria-label="Example shared conversation between Leonardo, Alan, Grace, and Rally">
+<article class="message human leonardo"><div class="sender"><i></i>Leonardo</div><div class="bubble">Let’s draft our launch announcement. Use yesterday’s meeting notes and the positioning doc.</div></article>
+<article class="message ai" aria-label="Rally response"><div class="ai-sender">Rally</div><img class="ai-mark" src="/brand/rally-mark-ink.svg" alt="Rally"><div class="ai-content"><p>I’ve pulled both. Here’s a first draft for everyone to build on.</p><div class="tool-calls" aria-label="Tools used"><span><img src="/landing/granola.svg" alt="">Read meeting notes</span><span><img src="/landing/google-drive.svg" alt="">Read positioning doc</span></div></div></article>
+<article class="message human alan"><div class="sender"><i></i>Alan</div><div class="bubble">The launch is Tuesday now. <span class="mention">Grace</span>, is the pricing final?</div></article>
+<article class="message human grace"><div class="sender"><i></i>Grace</div><div class="bubble">Yes—$20 per seat. Lead with how teams can work together.</div></article>
+<article class="message ai" aria-label="Rally response"><div class="ai-sender">Rally</div><img class="ai-mark" src="/brand/rally-mark-ink.svg" alt="Rally"><div class="ai-content"><p>Updated the date, added the pricing, and put teamwork first.</p></div></article>
+<article class="message human leonardo"><div class="sender"><i></i>Leonardo</div><div class="bubble">Looks good. Save it to our shared Drive folder.</div></article>
+<article class="message ai" aria-label="Rally response"><div class="ai-sender">Rally</div><img class="ai-mark" src="/brand/rally-mark-ink.svg" alt="Rally"><div class="ai-content"><p>Saved. Everyone has the latest version.</p><div class="tool-calls"><span><img src="/landing/google-drive.svg" alt="">Saved to shared Drive</span></div><details class="artifact"><summary><img src="/landing/artifact-link.svg" alt=""><span><strong>Launch announcement</strong><small>Document · Preview</small></span></summary><div class="artifact-body"><h3>A shared thread for getting work done.</h3><p>Launching Tuesday: bring your teammates and AI together, with plans starting at $20 per seat.</p></div></details></div></article>
+</div>
+</section>
+</main>
+<dialog id="beta-dialog" aria-labelledby="beta-title"><form method="dialog" class="dialog-close"><button type="submit" aria-label="Close beta access">Close</button></form><h2 id="beta-title">Get macOS beta access</h2><p>Leave your work email and we’ll be in touch when your invitation is ready.</p>
       <div id="access-challenge" class="access-challenge"></div>
       <p id="access-challenge-note" class="sr-only" role="status" aria-live="polite"></p>
       <form id="access-request" class="access-form">
@@ -48,7 +63,9 @@
       <p class="access-availability"><em>{{access.availability}}</em></p>
       <p class="access-note">We’ll only email you about your access to Rally. <a href="/trust/privacy/">Privacy</a></p>
       <noscript>Enable JavaScript to request access.</noscript>
-    </section></main>
-    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a><nav aria-label="Trust Center and company links"><a href="/trust/">Trust Center</a><a href="/trust/security/">Security</a><a href="/trust/privacy/">Privacy</a><a href="/trust/terms/">Terms</a><a href="/trust/dpa/">DPA</a><a href="/trust/subprocessors/">Sub-processors</a><a href="/trust/cookies/">Cookies</a><a href="/trust/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
-  </body>
-</html>
+
+</dialog>
+<noscript><p class="no-script">Enable JavaScript to request beta access.</p></noscript>
+    <footer class="rally-footer"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="30" height="30" alt="" /><span>rally</span></a><nav aria-label="Trust Center and company links"><a href="/trust/">Trust Center</a><a href="/trust/security/">Security</a><a href="/trust/privacy/">Privacy</a><a href="/trust/terms/">Terms</a><a href="/trust/dpa/">DPA</a><a href="/trust/subprocessors/">Sub-processors</a><a href="/trust/cookies/">Cookies</a><a href="/trust/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
+
+</body></html>

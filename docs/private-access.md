@@ -5,7 +5,7 @@
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/access-copy.ts` | Replaceable landing copy and escaped build rendering. |
-| `apps/site/src/landing.ts`, `access.css`, `index.html` | Email form and its pending/success/error states. |
+| `apps/site/src/landing.ts`, `landing.css`, `index.html` | Email form and its pending/success/error states. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
@@ -531,3 +531,9 @@ policy without an owner. Additional account approval was explicitly rejected.
 Verify the supplied sender separately. Invitation dispatch, suppression, workspace
 integration and closing legacy public artifact paths remain future work. The two
 open guards do not constrain abuse or memory until the team sets values.
+
+## Landing page changelog
+
+### 2026-09-21 — Shared-thread landing page
+
+Replaced the email-only home page with the approved static collaboration concept: a large headline, one macOS Beta action, and a compact sample conversation. The CTA opens the existing Turnstile-protected request form in a native dialog, retaining its submission, retry, and acknowledgement behavior. This keeps outreach focused on the product story without changing private distribution into a public installer. Trust and support links remain in the footer. The hero reserves room for the complete demo introduction at laptop viewport heights, uses four type sizes, and has no animated chat or connector tiles.
