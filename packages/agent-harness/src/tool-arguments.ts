@@ -39,6 +39,59 @@ const UNPROVEN_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: false 
 /** A tool's declared `mode`; the blank-argument rule below applies only to reads. */
 export type ToolArgumentMode = "read" | "write";
 
+/** Root keywords that cannot couple the presence/value of sibling properties. */
+const OMISSION_ROOT_KEYWORDS = new Set([
+  "type", "properties", "required", "additionalProperties", "$schema", "$defs",
+  "definitions", "title", "description", "$comment", "examples", "default",
+]);
+const OMISSION_SCALAR_TYPES = new Set(["string", "number", "integer", "boolean"]);
+
+/**
+ * Offer an explicit "unspecified" value without changing the executor contract.
+ * Only independent top-level scalar properties participate. References, object
+ * compositions, presence constraints and unknown root keywords stay untouched:
+ * deciding their omission semantics requires evaluating the complete schema.
+ */
+export function modelToolArgumentSchema(schema: JsonObject): JsonObject {
+  const keys = omissionKeys(schema);
+  if (keys.length === 0 || !isObject(schema.properties)) return schema;
+  const properties = { ...schema.properties };
+  for (const key of keys) {
+    const { description, title, default: defaultValue, ...constraints } = properties[key] as JsonObject;
+    properties[key] = {
+      ...(title !== undefined ? { title } : {}),
+      ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+      anyOf: [constraints, { type: "null" }],
+      description: [description, "Use null or omit this field when unspecified; null is removed before execution."]
+        .filter((part) => typeof part === "string").join("\n"),
+    };
+  }
+  return { ...schema, properties };
+}
+
+/** Decode only the null alternatives added by modelToolArgumentSchema.
+ * Both sides must receive the same original execution schema.
+ */
+export function omitUnspecifiedToolArguments(input: unknown, schema: JsonObject): unknown {
+  if (!isObject(input)) return input;
+  const omitted = new Set(omissionKeys(schema).filter((key) => input[key] === null));
+  return omitted.size === 0 ? input : Object.fromEntries(
+    Object.entries(input).filter(([key]) => !omitted.has(key)),
+  );
+}
+
+function omissionKeys(schema: JsonObject): string[] {
+  if (schema.type !== "object" || !isObject(schema.properties)
+    || Object.keys(schema).some((key) => !OMISSION_ROOT_KEYWORDS.has(key))
+    || (schema.required !== undefined && (!Array.isArray(schema.required)
+      || schema.required.some((key) => typeof key !== "string")))) return [];
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  return Object.entries(schema.properties).filter(([key, property]) =>
+    !required.has(key) && isObject(property) && !("$ref" in property)
+    && typeof property.type === "string" && OMISSION_SCALAR_TYPES.has(property.type)
+  ).map(([key]) => key);
+}
+
 /**
  * Apply the model-tolerance rules shared by every harness tool.
  *
@@ -75,9 +128,9 @@ export function normalizeToolArguments(
 }
 
 /**
- * Validate the normalized model input against the same JSON Schema advertised
- * to the provider. Tool executors may perform stricter domain checks, but a
- * failure here is unambiguously an argument-shape error rather than a Zod error
+ * Validate normalized input against the original execution JSON Schema. The
+ * model-facing schema additionally permits synthetic nulls already removed here.
+ * Tool executors may perform stricter domain checks, but a failure here is unambiguously an argument-shape error rather than a Zod error
  * raised later while validating provider or stored data.
  */
 export function validateToolArguments(
