@@ -1,5 +1,7 @@
-import { Database, ExternalLink, Maximize2 } from 'lucide-react';
+import { IconWindowMaximize } from '@tabler/icons-react';
+import { Database, ExternalLink } from 'lucide-react';
 import React from 'react';
+import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
 import { DetailHeaderActions } from './detail-header-actions';
 import { CopyButton } from './copy-button';
@@ -37,6 +39,7 @@ export interface SiteArtifactTable {
 
 export interface SiteResourceDetailProps {
   resourceId: string;
+  version: number;
   title: string;
   /**
    * Mints access. Called once per *navigation*, not once per artifact:
@@ -59,7 +62,7 @@ export interface SiteResourceDetailProps {
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     close: () => Promise<void>;
-    popOut: (request: { artifactId: string; url: string; title: string }) => Promise<void>;
+    popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<void>;
     copyText: (text: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
@@ -67,6 +70,7 @@ export interface SiteResourceDetailProps {
 
 export function SiteResourceDetail({
   resourceId,
+  version,
   title,
   openArtifact,
   describeData,
@@ -151,7 +155,7 @@ export function SiteResourceDetail({
         if (!cancelled) setAccessError(error instanceof Error ? error.message : 'Could not open this site.');
       });
     return () => { cancelled = true; };
-  }, [openArtifact, resourceId]);
+  }, [openArtifact, resourceId, version]);
 
   const measure = React.useCallback((): { x: number; y: number; width: number; height: number } | null => {
     const pane = paneRef.current;
@@ -284,12 +288,15 @@ export function SiteResourceDetail({
         )}
         <IconButton
           disabled={!access}
-          label="Pop out"
+          label="Open in a new window"
           tooltipSide="top"
           onClick={() => {
             if (!access) return;
             void mintAccess().then(
               async (navigation) => await surface.popOut({
+                kind: 'site',
+                resourceId,
+                version,
                 artifactId: navigation.artifactId,
                 url: navigation.openUrl,
                 title,
@@ -297,7 +304,7 @@ export function SiteResourceDetail({
             );
           }}
         >
-          <Maximize2 size={15} />
+          <IconWindowMaximize size={15} />
         </IconButton>
         {/* The canonical public link carries no access code or viewer
             identity. Copying it shares the current site with anyone. */}

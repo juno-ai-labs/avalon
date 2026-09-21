@@ -368,6 +368,7 @@ const RuntimeResourceRequestSchema = z.strictObject({
   resourceId: IdSchema,
   attachedByUserId: IdSchema.nullable(),
   relationshipType: ResourceRelationshipTypeSchema.optional(),
+  eventType: z.enum(["resource_attached", "resource_updated"]).optional(),
 });
 const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
@@ -3155,7 +3156,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const publication = await this.publishLocalProductEvent(
         identity,
-        { type: "resource_attached", resource },
+        { type: input.eventType ?? "resource_attached", resource },
       );
       if (publication === "deferred") {
         await this.requestCanonicalRoomResyncBestEffort("resource_event_deferred_after_commit");

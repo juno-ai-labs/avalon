@@ -8,12 +8,14 @@ import {
 } from '../../common/application-icons';
 import type {
   RallyDesktopBridge,
+  DesktopArtifactWindowRequest,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../../common/desktop';
+import { generatedArtifactWindowDocument } from '../../common/generated-artifact-window';
 import { defaultDesktopReleaseChannel } from '../../common/release-channels';
 
 export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
@@ -50,6 +52,7 @@ const browserApplicationSettings: DesktopApplicationSettings = {
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
+const browserArtifactWindows = new Map<Window, { resourceId: string; version: number }>();
 const browserAuthAttempts = new Map<string, {
   apiBaseUrl: string;
   region: Region;
@@ -113,6 +116,15 @@ async function browserSessionRequest(
   }
   validate?.(raw);
   return installBrowserSession(raw, apiBaseUrl);
+}
+
+function browserArtifactWindowUrl(request: DesktopArtifactWindowRequest): string {
+  return request.kind === 'site'
+    ? request.url
+    : URL.createObjectURL(new Blob(
+      [generatedArtifactWindowDocument(request)],
+      { type: 'text/html;charset=utf-8' },
+    ));
 }
 
 function installBrowserSession(
@@ -486,7 +498,51 @@ const browserBridge: RallyDesktopBridge = {
     // Nothing is composited, so there is nothing to tear down.
   },
   async popOutArtifact(request) {
-    window.open(request.url, '_blank', 'noopener,noreferrer');
+    const url = browserArtifactWindowUrl(request);
+    const opened = window.open('about:blank', '_blank');
+    if (!opened) {
+      if (request.kind === 'generated') URL.revokeObjectURL(url);
+      return;
+    }
+    opened.opener = null;
+    browserArtifactWindows.set(opened, { resourceId: request.resourceId, version: request.version });
+    if (request.kind === 'generated') {
+      opened.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    }
+    opened.location.href = url;
+  },
+  async getPoppedOutArtifactVersions() {
+    const versions: Record<string, number> = {};
+    for (const [opened, artifact] of browserArtifactWindows) {
+      if (opened.closed) {
+        browserArtifactWindows.delete(opened);
+        continue;
+      }
+      const current = versions[artifact.resourceId];
+      versions[artifact.resourceId] = current === undefined
+        ? artifact.version
+        : Math.min(current, artifact.version);
+    }
+    return versions;
+  },
+  async updatePoppedOutArtifact(request) {
+    const opened = [...browserArtifactWindows.entries()]
+      .filter(([candidate, artifact]) => !candidate.closed
+        && artifact.resourceId === request.resourceId
+        && artifact.version < request.version);
+    if (opened.length === 0) {
+      return [...browserArtifactWindows.entries()].some(([candidate, artifact]) =>
+        !candidate.closed && artifact.resourceId === request.resourceId);
+    }
+    for (const [candidate] of opened) {
+      const url = browserArtifactWindowUrl(request);
+      if (request.kind === 'generated') {
+        candidate.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+      }
+      candidate.location.href = url;
+      browserArtifactWindows.set(candidate, { resourceId: request.resourceId, version: request.version });
+    }
+    return true;
   },
   async openSidekicks(requested) {
     const target = new URL(window.location.href);

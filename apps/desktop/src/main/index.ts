@@ -77,6 +77,7 @@ import type {
   RuntimeConfig,
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
+import { generatedArtifactWindowDocument } from '../common/generated-artifact-window';
 import { logError, logWarn } from '../common/logger';
 import {
   defaultDesktopReleaseChannel,
@@ -2843,6 +2844,10 @@ function observeAcceptedDeepLinkOpen(): void {
  * rectangle would leave the one underneath running and invisible.
  */
 const artifactPreviews = new Map<BrowserWindow, ArtifactPreviewController>();
+const poppedOutArtifacts = new Map<BrowserWindow, {
+  resourceId: string;
+  version: number;
+}>();
 const artifactViews = new WeakMap<ArtifactViewHandle, WebContentsView>();
 
 /**
@@ -2952,13 +2957,15 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
 }
 
 /**
- * The pop-out: the same artifact, the same session, its own window.
+ * One isolated native window for both forms of generated artifact.
  *
- * It shares the preview's session partition deliberately — a person who
+ * A live site keeps its own session partition deliberately — a person who
  * authorized the artifact in the rail should not authorize it again to see it
- * bigger.
+ * bigger. A generated file instead carries the already-authorized preview
+ * bytes; main turns those into a script-free document, never a second read.
  */
-function openArtifactWindow(request: { artifactId: string; url: string; title: string }): void {
+function openArtifactWindow(request: DesktopArtifactWindowRequest): void {
+  const artifactId = request.kind === 'site' ? request.artifactId : request.resourceId;
   const window = new BrowserWindow({
     width: 1_100,
     height: 800,
@@ -2972,19 +2979,66 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     // macOS traffic lights never sit on top of model-authored navigation.
     titleBarStyle: 'default',
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
+    webPreferences: artifactWebPreferences(artifactId, app.isPackaged),
   });
   artifactWebContents.add(window.webContents);
-  confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents));
+  poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version });
+  window.once('closed', () => poppedOutArtifacts.delete(window));
+  const url = request.kind === 'site'
+    ? request.url
+    : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
+  confineToArtifactOrigin(window.webContents, new URL(url).origin, artifactLinkHandoff(window.webContents));
   // The artifact controls document.title, but this strip belongs to Rally's
   // window. Keep the bounded resource title instead of letting remote markup
   // rename the native chrome after it loads.
   window.on('page-title-updated', (event) => event.preventDefault());
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
-  void loadArtifactInitialUrl(() => window.loadURL(request.url)).then((loaded) => {
+  void loadArtifactInitialUrl(() => window.loadURL(url)).then((loaded) => {
     if (!loaded && !window.isDestroyed()) window.close();
   });
+}
+
+function poppedOutArtifactVersions(): Record<string, number> {
+  const versions: Record<string, number> = {};
+  for (const [window, artifact] of poppedOutArtifacts) {
+    if (window.isDestroyed()) continue;
+    const current = versions[artifact.resourceId];
+    // Several windows may show one resource. Reporting the oldest makes the
+    // renderer refresh the group until every surviving window has caught up.
+    versions[artifact.resourceId] = current === undefined
+      ? artifact.version
+      : Math.min(current, artifact.version);
+  }
+  return versions;
+}
+
+async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): Promise<boolean> {
+  const windows = [...poppedOutArtifacts.entries()]
+    .filter(([window, artifact]) => !window.isDestroyed()
+      && artifact.resourceId === request.resourceId
+      && artifact.version < request.version);
+  if (windows.length === 0) {
+    return [...poppedOutArtifacts.entries()].some(([window, artifact]) =>
+      !window.isDestroyed() && artifact.resourceId === request.resourceId);
+  }
+  const url = request.kind === 'site'
+    ? request.url
+    : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
+  const loaded = await Promise.all(windows.map(async ([window, previous]) => {
+    // Reserve the version before navigation. Two preview reads can finish out
+    // of order; a slower old read must not be allowed to arrive after a newer
+    // publish and navigate the window backwards.
+    poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version });
+    window.setTitle(request.title);
+    const ok = await loadArtifactInitialUrl(() => window.loadURL(url));
+    if (!ok && !window.isDestroyed()
+      && poppedOutArtifacts.get(window)?.version === request.version) {
+      poppedOutArtifacts.set(window, previous);
+    }
+    return ok;
+  }));
+  return loaded.some(Boolean);
 }
 
 function parseArtifactPreviewBounds(raw: unknown): DesktopArtifactPreviewBounds | null {
@@ -3012,13 +3066,30 @@ function parseArtifactPreviewRequest(raw: unknown): DesktopArtifactPreviewReques
 function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest | null {
   if (!raw || typeof raw !== 'object') return null;
   const value = raw as Record<string, unknown>;
-  if (typeof value.artifactId !== 'string' || typeof value.url !== 'string') return null;
-  return {
+  const title = typeof value.title === 'string' ? value.title.slice(0, 120) : 'Artifact';
+  const version = typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 0
+    ? value.version
+    : null;
+  if (value.kind === 'site' && typeof value.resourceId === 'string' && version !== null
+    && typeof value.artifactId === 'string' && typeof value.url === 'string') return {
+    kind: 'site',
+    resourceId: value.resourceId,
+    version,
     artifactId: value.artifactId,
     url: value.url,
     // A window title comes from a resource title, which is model-authored:
     // bounded here so it cannot become a title bar the length of the screen.
-    title: typeof value.title === 'string' ? value.title.slice(0, 120) : 'Artifact',
+    title,
+  };
+  if (value.kind !== 'generated' || typeof value.resourceId !== 'string' || version === null
+    || typeof value.mimeType !== 'string' || !(value.content instanceof Uint8Array)) return null;
+  return {
+    kind: 'generated',
+    resourceId: value.resourceId,
+    version,
+    content: value.content,
+    mimeType: value.mimeType,
+    title,
   };
 }
 
@@ -3471,8 +3542,18 @@ function registerIpc(): void {
   ipcMain.handle('artifact:pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
     const request = parseArtifactWindowRequest(raw);
-    if (!request || !isArtifactUrl(request.url, artifactServingDomain())) return;
+    if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return;
     openArtifactWindow(request);
+  });
+  ipcMain.handle('artifact:popped-out-versions', async (event) => {
+    assertTrustedIpcSender(event);
+    return poppedOutArtifactVersions();
+  });
+  ipcMain.handle('artifact:update-pop-out', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const request = parseArtifactWindowRequest(raw);
+    if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
+    return await updatePoppedOutArtifact(request);
   });
   ipcMain.handle('system:open-sidekicks', async (event, rawTarget: unknown) => {
     assertTrustedIpcSender(event);

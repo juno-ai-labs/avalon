@@ -183,6 +183,10 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
   popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<void>,
+  getPoppedOutArtifactVersions: () =>
+    ipcRenderer.invoke('artifact:popped-out-versions') as Promise<Record<string, number>>,
+  updatePoppedOutArtifact: (request) =>
+    ipcRenderer.invoke('artifact:update-pop-out', request) as Promise<boolean>,
   openSidekicks: (target) => ipcRenderer.invoke('system:open-sidekicks', target) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   startSystemAudioCapture: () =>

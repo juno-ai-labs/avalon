@@ -376,7 +376,8 @@ describe("Terminal resource bridge", () => {
   });
 
   it("upgrades an unchanged legacy site on its next publish", async () => {
-    const state = fixture();
+    const attachResource = vi.fn(async () => undefined);
+    const state = fixture(attachResource);
     const fileSha256 = "b".repeat(64);
     const contentDigest = await sha256Hex(new TextEncoder().encode(JSON.stringify([
       ["index.html", fileSha256],
@@ -429,6 +430,15 @@ describe("Terminal resource bridge", () => {
     expect(state.recordPublish).toHaveBeenCalledWith(expect.objectContaining({
       manifest: expect.objectContaining({ socialPreview: expect.any(Object) }),
     }));
+    expect(attachResource).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: W,
+      workstreamId: S,
+      resourceId: RESOURCE,
+      eventType: "resource_updated",
+    }));
+    expect(state.recordPublish.mock.invocationCallOrder[0]).toBeLessThan(
+      attachResource.mock.invocationCallOrder[0]!,
+    );
     expect(state.database.prepare(
       "SELECT current_version FROM artifact_registry WHERE artifact_id = ?",
     ).get(ARTIFACT)).toEqual({ current_version: 2 });
@@ -914,12 +924,14 @@ describe("Terminal resource bridge", () => {
   });
 
   it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {
-    const { database, objects, put, bridge } = fixture();
+    const attachResource = vi.fn(async () => undefined);
+    const { database, objects, put, bridge } = fixture(attachResource);
     const first = await bridge.publishResource(
       context,
       { filePath: "mute-windows-prd.md", displayName: "Mute windows PRD" },
       new TextEncoder().encode("# Mute windows\n\nFirst draft.\n"),
     );
+    attachResource.mockClear();
     const revised = new TextEncoder().encode("# Mute windows\n\nTighter goals.\n");
     const second = await bridge.publishResource(
       { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
@@ -928,6 +940,14 @@ describe("Terminal resource bridge", () => {
     );
 
     expect(second.resourceId).toBe(first.resourceId);
+    expect(attachResource).toHaveBeenCalledOnce();
+    expect(attachResource).toHaveBeenCalledWith({
+      workspaceId: W,
+      workstreamId: S,
+      resourceId: first.resourceId,
+      attachedByUserId: U,
+      eventType: "resource_updated",
+    });
     // One entry in the rail, not one per draft: the rewrite is the same
     // document, so the row it lands on is the one the first publish created.
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });

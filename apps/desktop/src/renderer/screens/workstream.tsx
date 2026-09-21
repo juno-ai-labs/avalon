@@ -13,7 +13,7 @@ import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
-import { RIGHT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
+import { CONTEXT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
 
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
@@ -93,7 +93,7 @@ export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.Compo
   };
   // HTTPS links unfurl and work without the desktop app installed; custom schemes do not.
   return <ConversationHeader {...props} railOpen={railOpen} railVariant={railVariant} onCloseRail={closeRail}
-    contextEnabled={RIGHT_SIDEBAR_ENABLED} onShowNavigation={() => setSidebarOpen(true)}
+    contextEnabled={CONTEXT_SIDEBAR_ENABLED} onShowNavigation={() => setSidebarOpen(true)}
     onCopyLink={() => { if (workspaceTarget) void copyWorkstreamLink(workspaceTarget, props.workstream.id, props.substreamId ?? '0').catch(() => undefined); }}
     onCopyEmail={props.workstream.emailAddress ? () => copy(props.workstream.emailAddress!, 'workstream_email') : undefined}
     onCopyId={() => copy(props.workstream.id, 'workstream_id')} />;
