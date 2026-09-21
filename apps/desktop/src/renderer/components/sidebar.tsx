@@ -1302,8 +1302,10 @@ export function Sidebar({
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
-  // ends. `null` means the pinned list is showing what the server last said.
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  // ends. Its Space identity keeps an in-flight request from becoming another
+  // Space's preview after navigation. `null` means the pinned list is showing
+  // what the server last said.
+  const [dragOrder, setDragOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   // SpacesSidebar owns the gesture, but every destination picker owns the
   // promise's optimistic result with it so no sibling surface lags the rail.
   const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
@@ -1385,9 +1387,10 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, null),
     [visibleWorkstreams],
   );
+  const activeDragOrder = dragOrder?.spaceId === selectedSpaceId ? dragOrder.itemIds : null;
   const pinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(visibleWorkstreams, dragOrder),
-    [dragOrder, visibleWorkstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder),
+    [activeDragOrder, visibleWorkstreams],
   );
   const storedUnpinnedWorkstreams = useMemo(() => orderByStoredIds(
     visibleWorkstreams
@@ -1659,7 +1662,9 @@ export function Sidebar({
   // actually holds, which is the order the reader's other devices are showing.
   const commitPinnedOrder = async (order: string[]): Promise<void> => {
     if (selectedSpaceId === null) return;
-    setDragOrder(order);
+    const spaceId = selectedSpaceId;
+    const preview = { spaceId, itemIds: order };
+    setDragOrder(preview);
     try {
       // Search only reorders the visible slots; hidden pins keep their place.
       const visibleIds = new Set(order);
@@ -1667,7 +1672,7 @@ export function Sidebar({
       const completeOrder = orderPinnedWorkstreams(visibleWorkstreams, null).map((pinned) => (
         visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
       ));
-      await onReorderPinnedWorkstreams(selectedSpaceId, completeOrder);
+      await onReorderPinnedWorkstreams(spaceId, completeOrder);
     } catch {
       setMenuFailure('reorder_pinned');
     } finally {
@@ -1675,29 +1680,36 @@ export function Sidebar({
       // in quick succession overlap, and clearing unconditionally would let the
       // first response snap the list back to an order the second has already
       // moved past — visibly, and for as long as the second request takes.
-      setDragOrder((current) => current === order ? null : current);
+      setDragOrder((current) => current === preview ? null : current);
     }
   };
 
   const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): WorkstreamRowDrag => ({
-    dragging: draggingWorkstreamId.current === workstream.id && dragOrder !== null,
+    dragging: draggingWorkstreamId.current === workstream.id && activeDragOrder !== null,
     position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}.`,
     onDragStart: (target) => {
+      if (selectedSpaceId === null) return;
       draggingWorkstreamId.current = target.id;
-      setDragOrder(pinnedWorkstreams.map((pinned) => pinned.id));
+      setDragOrder({
+        spaceId: selectedSpaceId,
+        itemIds: pinnedWorkstreams.map((pinned) => pinned.id),
+      });
     },
     onDragOver: (targetId) => {
       const draggingId = draggingWorkstreamId.current;
       if (draggingId === null || draggingId === targetId) return;
       setDragOrder((current) => {
-        const order = current ?? pinnedWorkstreams.map((pinned) => pinned.id);
+        if (selectedSpaceId === null) return current;
+        const order = current?.spaceId === selectedSpaceId
+          ? current.itemIds
+          : pinnedWorkstreams.map((pinned) => pinned.id);
         const targetIndex = order.indexOf(targetId);
-        if (targetIndex < 0 || order.indexOf(draggingId) === targetIndex) return order;
-        return moveWithin(order, draggingId, targetIndex);
+        if (targetIndex < 0 || order.indexOf(draggingId) === targetIndex) return current;
+        return { spaceId: selectedSpaceId, itemIds: moveWithin(order, draggingId, targetIndex) };
       });
     },
     onDragEnd: (cancelled) => {
-      const order = dragOrder;
+      const order = activeDragOrder;
       draggingWorkstreamId.current = null;
       if (order === null) return;
       // `dragend` fires whatever ended the drag, and `committedOrder` holds the
