@@ -4345,7 +4345,7 @@ pre {
 .app-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: var(--space-3); grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: var(--space-2) var(--space-3); position: relative; }
 .app-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .app-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.app-shell .elicitation-option:hover { background-image: var(--hover-layer); }
+.app-shell .elicitation-option:hover { background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%); }
 .app-shell .elicitation-option.is-selected,
 .app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
 .app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
