@@ -181,6 +181,49 @@ function seed(texts: string[]) {
   });
 }
 
+it("renders transcript Markdown as plain text in both email parts", async () => {
+  seed(["Review **[the launch plan](https://docs.example.test/launch)** with `Alex`."]);
+  const conversation = await readConversationPreview(environment(), {
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
+  });
+  const { html, text } = scopeInvitationEmailParts({
+    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    inviterName: "Adam Juhasz", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
+    preview: conversation,
+  });
+  const rendered = "Review the launch plan with Alex.";
+  expect(text).toContain(`> Priya Shah: ${rendered}`);
+  expect(html).toContain(rendered);
+  for (const part of [text, html]) {
+    expect(part).not.toContain("https://docs.example.test/launch");
+    expect(part).not.toContain("**");
+    expect(part).not.toContain("`Alex`");
+  }
+});
+
+it("reduces Markdown before applying the visible-word limit", async () => {
+  seed(["Review [the launch plan](https://docs.example.test/launch) today."]);
+  expect(await readConversationPreview(environment(), {
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 3, bytes: PREVIEW_BYTES,
+  })).toEqual({
+    earlier: 0,
+    turns: [{ author: "Priya Shah", text: "Review the launch", truncated: true }],
+  });
+});
+
+it("keeps formatting-only turns visible without breaking the contiguous preview", async () => {
+  seed(["Readable context.", "***"]);
+  expect(await readConversationPreview(environment(), {
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
+  })).toEqual({
+    earlier: 0,
+    turns: [
+      { author: "Priya Shah", text: "Readable context.", truncated: false },
+      { author: "Rally", text: "Formatting-only message.", truncated: false },
+    ],
+  });
+});
+
 it("reads the end of the conversation, in reading order, with the rest counted", async () => {
   seed(["one", "two", "three", "four", "five", "six", "seven"]);
   expect(await readConversationPreview(environment(), {
