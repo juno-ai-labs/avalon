@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react';
 
 import { SpaceIcon } from './space-appearance-picker';
-import { SidebarRow } from './resizable-sidebar';
+import { SidebarList, SidebarRow } from './resizable-sidebar';
 
 /**
  * The part of a Space a row draws. Deliberately not `SpaceSummary`: a row does
@@ -163,7 +163,7 @@ export function SpacePlacementList({ children, spaceId }: {
   spaceId: string;
 }): React.JSX.Element {
   return (
-    <div
+    <SidebarList
       className="space-sidebar-workstreams"
       // The rows inside are the slots a drag within this list is measured
       // against. Marked rather than named by class, because the pinned list is
@@ -173,6 +173,6 @@ export function SpacePlacementList({ children, spaceId }: {
       data-motion-scope={`space:${spaceId}`}
     >
       {children}
-    </div>
+    </SidebarList>
   );
 }

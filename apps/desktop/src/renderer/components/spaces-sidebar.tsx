@@ -8,6 +8,7 @@ import {
   ResizableSidebar,
   SidebarHeader,
   SidebarHorizontalLine,
+  SidebarList,
   SidebarRow,
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
@@ -276,6 +277,7 @@ export function SpacesSidebar({
           aria-label="Spaces"
           className="spaces-sidebar-scroll"
         >
+          <SidebarList>
           {!ready ? (
             <p className="spaces-sidebar-empty">Rally is opening this organization. Spaces appear once every channel has one.</p>
           ) : loading && spaces.length === 0 ? (
@@ -393,6 +395,7 @@ export function SpacesSidebar({
             </Tooltip.Root>
             ))}
           </>}
+          </SidebarList>
         </SidebarScroll>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
         <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
