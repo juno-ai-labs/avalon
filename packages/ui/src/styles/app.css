@@ -1066,12 +1066,6 @@ pre {
   visibility: hidden;
 }
 .spaces-sidebar-commandbar { flex: 0 0 auto; }
-.spaces-sidebar-scroll {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-}
 .spaces-sidebar-mark {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -1336,7 +1330,7 @@ pre {
    The 18px is the accordion column in `.space-sidebar-row`; keep them
    equal. Font, hover, and the title/description pair come from the shared
    Channel row, not a second style. */
-.space-sidebar-workstreams { display: grid; gap: var(--av-sys-space-row-gap); padding-left: 18px; }
+.space-sidebar-workstreams { padding-left: 18px; }
 .space-create-form { display: grid; gap: 18px; }
 .space-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
 .space-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
@@ -3244,8 +3238,6 @@ pre {
    36px leading slot, same title, same fills. Only the mark inside the slot
    differs — Main and each Breakout have their own stable tinted symbol, while
    the blue enter mark belongs to the row that starts a new Breakout. */
-.workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.workstream-substream-list:empty { display: none; }
 /* A not-yet-reserved Breakout has no id from which to derive its stable mark,
    so its pending row temporarily uses a readable branch rather than the
    sidebar's hairline colour. */
@@ -6138,8 +6130,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   padding-bottom: 12px;
 }
 .app-shell .sidebar.is-compact .pinned-section-line { height: var(--av-sys-size-border-hairline); margin-top: var(--av-sys-space-group-gap); opacity: 1; }
-.app-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
-.app-shell .sidebar.is-compact .sidebar-list { gap: 0; }
 /* A row narrows to its 54px mark: the wrapper's width travels, the row's
    padding and gap with it, and the title column — `minmax(0, 1fr)` — closes
    to nothing while its copy fades under the clip. The mark itself is 36px in
