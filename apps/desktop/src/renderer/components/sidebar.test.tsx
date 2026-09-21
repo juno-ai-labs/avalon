@@ -660,6 +660,20 @@ describe('Sidebar channel markers', () => {
     expect(row.querySelector('.sidebar-row-hint')).toBeNull();
   });
 
+  it('falls back once when a Space route is absent from the active directory', () => {
+    const hiring = space();
+    render(
+      <MemoryRouter initialEntries={['/spaces/archived-space']}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+            workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Hiring' })).toBeVisible();
+  });
+
   it('adds one history entry when a Space is selected', () => {
     const hiring = space();
     function HistoryProbe() {

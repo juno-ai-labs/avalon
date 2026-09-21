@@ -24,7 +24,7 @@ import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
+import { COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SPACES_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
@@ -74,6 +74,9 @@ interface SidebarProps {
    * than this component inferring it from a refusal.
    */
   spaces?: SpaceSummary[];
+  /** Controlled by the shell so responsive geometry reads the rail on screen. */
+  spacesCollapsed?: boolean;
+  onSpacesCollapsedChange?: (collapsed: boolean) => void;
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
   spacesReady?: boolean;
@@ -1087,6 +1090,8 @@ export function Sidebar({
   workspace,
   automations,
   spaces,
+  spacesCollapsed: controlledSpacesCollapsed,
+  onSpacesCollapsedChange,
   inactiveSpaces = [],
   spacesReady = true,
   spacesOutOfDate = false,
@@ -1135,7 +1140,12 @@ export function Sidebar({
   // never come.
   const forcedCompact = constrained;
   const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
-  const [spacesCollapsed, setSpacesCollapsed] = useState(false);
+  const [uncontrolledSpacesCollapsed, setUncontrolledSpacesCollapsed] = useState(false);
+  const spacesCollapsed = controlledSpacesCollapsed ?? uncontrolledSpacesCollapsed;
+  const setSpacesCollapsed = useCallback((collapsed: boolean): void => {
+    if (controlledSpacesCollapsed === undefined) setUncontrolledSpacesCollapsed(collapsed);
+    onSpacesCollapsedChange?.(collapsed);
+  }, [controlledSpacesCollapsed, onSpacesCollapsedChange]);
   const routeSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   const routeWorkstreamId = /^\/workstreams\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   const routeWorkstream = routeWorkstreamId
@@ -1153,12 +1163,12 @@ export function Sidebar({
   }, [routeWorkstreamId, setSidebarCollapsed]);
   useEffect(() => {
     if (routeSpaceId) {
-      setSelectedSpaceId(routeSpaceId);
+      if (spaces?.some((space) => space.id === routeSpaceId)) setSelectedSpaceId(routeSpaceId);
       return;
     }
     if (routeWorkstream?.spaceIds.includes(selectedSpaceId ?? '')) return;
     if (routeWorkstream?.spaceIds[0]) setSelectedSpaceId(routeWorkstream.spaceIds[0]);
-  }, [routeSpaceId, routeWorkstream, selectedSpaceId]);
+  }, [routeSpaceId, routeWorkstream, selectedSpaceId, spaces]);
   useEffect(() => {
     if (selectedSpaceId && spaces?.some((space) => space.id === selectedSpaceId)) return;
     setSelectedSpaceId(spaces?.[0]?.id ?? null);
@@ -1166,7 +1176,7 @@ export function Sidebar({
   useLayoutEffect(() => {
     const shell = panel.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return;
-    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCollapsed ? `${COLLAPSED_SIDEBAR_WIDTH}px` : '240px');
+    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCollapsed ? `${COLLAPSED_SIDEBAR_WIDTH}px` : `${EXPANDED_SPACES_SIDEBAR_WIDTH}px`);
     return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
   }, [spaces, spacesCollapsed]);
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
