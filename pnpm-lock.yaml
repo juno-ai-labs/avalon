@@ -206,9 +206,6 @@ importers:
 
   apps/browser:
     dependencies:
-      '@radix-ui/react-dialog':
-        specifier: latest
-        version: 1.1.23(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@rally/desktop':
         specifier: workspace:*
         version: link:../desktop
