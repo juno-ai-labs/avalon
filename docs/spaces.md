@@ -1020,7 +1020,10 @@ Space only if its viewer can see that Space. A Channel id never leaves the
 publisher; only the Spaces it is placed in do. That keeps two people's fast
 exchange in a private Channel off every other member's dashboard, and keeps a
 personal Space's id from reaching somebody who only shares a Channel with its
-owner. A guest is sent none: a guest is handed no Space state at all.
+owner. A guest is sent no Space socket snapshot. The cookie-scoped browser
+instead asks `/sharing/navigation` for the smaller, canonically admitted
+projection described below; that request does not subscribe the guest to Space
+events or turn the member directory into guest discovery.
 
 **"Can see that Space" is the wrong address for a membership, because of the
 third clause.** Somebody who reaches a Space only through one Channel in it
@@ -1068,13 +1071,13 @@ Channel belongs to at least one Space, so a sidebar without it cannot say where
 anything lives. General is in the directory like any other Space and the section
 has no case for it.
 
-A guest is handed none. Guest access to Spaces is deferred, every Space RPC
-refuses a guest, and design decision 9 makes that the host's call rather than
-something the components infer from a refusal — so `spacesEnabledForSession`
-decides it once in the shell and the sidebar draws no heading, no Space choices
-in the global creation menu, no **Add to space** and no draggable row. Absent is
-not empty: an empty directory is an Organization whose first Space has not been
-made yet.
+The desktop member shell is handed the full Space directory; a guest is not.
+Guest Space management remains unavailable, and `spacesEnabledForSession`
+keeps the desktop guest shell's recency list, with no Space choices in the
+global creation menu, no **Add to space** and no draggable row. The browser host
+has a separate read-only hierarchy: `/sharing/navigation` returns only visible
+Space marks and containment for Channels its canonical grant owners admitted.
+It never exposes the full member directory or any Space write capability.
 
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
@@ -1224,11 +1227,14 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
-**A guest keeps the flat list.** A guest is handed no Space directory at all, so
-there is no hierarchy to say where anything lives; their sidebar is the
-time-grouped list exactly as it was, with its group headings and their bulk
-actions. The member session loses those bulk actions with the headings that
-carried them.
+**A desktop guest keeps the flat list; a browser guest gets a bounded
+hierarchy.** The desktop guest is handed no member Space directory, so its
+sidebar remains the time-grouped list with its group headings and bulk actions.
+The cookie-scoped browser uses `/sharing/navigation` to draw Space, Channel and
+Breakout rails from canonically admitted Channels only. If an admitted Channel
+has no visible Space placement, the browser puts it in a local **Shared
+channels** fallback so an authority-safe conversation never becomes
+unreachable merely because its container is withheld or not ready.
 
 **Three lists are arranged by drag, and each has the keyboard's version of the
 same gesture** — Alt with the up or down arrow: Spaces in the first rail,
@@ -1250,14 +1256,15 @@ took, while a release in the Space rail belongs to the target Space.
   into a child object or D1 would give two objects an answer to "does this
   Channel have another Space", which is the question both the final-membership
   and the archive refusals turn on.
-- **Every Space RPC a person can reach rechecks active Organization membership
-  and refuses a guest.** Guest access to Spaces is deferred; a guest holds
-  explicit Channel grants and no Organization-wide discovery, so admitting one
-  would put every Organization-wide Space in their sidebar — through an RPC or
-  through the socket, which is why the snapshot is shaped for the relationship
-  too. The exceptions are named and have no person on the request:
-  `recordSpaceIntentReceipt`, `spaceBootstrapStatus` and the default-target
-  settlements are server-to-server, and each says so where it is defined.
+- **Every full-directory or mutating Space RPC a person can reach rechecks
+  active Organization membership and refuses a guest.** A guest holds explicit
+  Channel grants and no Organization-wide discovery. The one viewer-scoped
+  read exception, `listSharedNavigationSpaces`, first re-intersects caller IDs
+  with that relationship's grant candidates, then applies the ordinary Space
+  visibility predicate; it returns only marks and admitted containment. The
+  other exceptions have no person on the request: `recordSpaceIntentReceipt`,
+  `spaceBootstrapStatus` and the default-target settlements are server-to-server,
+  and each says so where it is defined.
 - **A Space's hidden main conversation is not addressable as a Channel.** Every
   product request carries the parent kind the caller expects and is refused
   `conversation_parent_kind_mismatch` when the object disagrees. A conversation
@@ -1528,7 +1535,8 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the guest shell's unchanged recency list, stored personal order, drag-to-Space placement, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, drag-to-Space placement, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
+| `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's Space, Channel and Breakout rails; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
 
@@ -1856,6 +1864,31 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-21 — Place guest browser Channels in visible Spaces
+
+**What changed:** WorkspaceDO can project the name, icon, colour and authorized
+Channel IDs of every active, viewer-visible Space containing a guest's
+canonically admitted Channels. The browser uses that bounded projection for its
+Space and Channel rails; it receives no participant, default, audience or
+lifecycle fields.
+
+**Why:** Direct Breakout grants are indexed by Channel owner, so the browser had
+enough authority to open conversations but not enough containment information to
+group two shared Channels under two different Spaces.
+
+**Considered and rejected:** Reusing the member Space directory would disclose
+more Space state than browser navigation needs. Omitting the existing viewer
+predicate would let an admitted Channel name somebody else's unrelated personal
+Space. Trusting caller-supplied Channel IDs would turn a containment lookup into
+a Space-name oracle, so WorkspaceDO intersects them with the guest's current
+membership-incarnation candidate index.
+
+**Consequences:** Space identity follows the existing `through_channel`
+disclosure rule, but this browser projection is intentionally smaller than a
+`SpaceSummary`. Canonical WorkstreamDO reads remain the label and conversation
+authority, and the final relationship revision fence empties the whole response
+if guest membership changes while the read is in flight.
+
 ### 2026-09-21 — Add to space shows the whole visible directory
 
 **What changed:** **Add to space** lists every Space visible to the reader.
@@ -2024,10 +2057,9 @@ conversation width automatically as a person moves deeper.
 but it appears in the Channel rail for whichever Space is selected instead of
 being duplicated under simultaneously open accordions. Future hierarchy levels
 must preserve this selection-and-compaction rule rather than nesting another
-disclosure list inside an existing row. The lite guest browser remains a
-separate, deliberately smaller host: its cookie-scoped directory has shared
-Channels and conversations but no Space directory, so it does not draw this
-three-level member navigation.
+disclosure list inside an existing row. The lite guest browser reuses the
+adjacent hierarchy with a smaller, cookie-scoped projection containing only
+the Space marks and Channels its direct conversation grants make visible.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 

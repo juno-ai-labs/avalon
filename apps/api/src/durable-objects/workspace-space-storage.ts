@@ -1,4 +1,8 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
+import {
+  SharedNavigationSpaceSchema,
+  type SharedNavigationSpace,
+} from "@rally/contracts/scope-grants";
 
 import {
   ContainerOrderSchema,
@@ -1721,6 +1725,73 @@ export class WorkspaceSpaceStorage {
   /** The active Spaces a Channel is in, as this viewer may see them. */
   channelSpaceIds(userId: string, workstreamId: string): string[] {
     return this.spaceIdsByChannel(userId, [workstreamId]).get(workstreamId) ?? [];
+  }
+
+  /**
+   * Space marks for Channels whose canonical grant owner has admitted a guest.
+   *
+   * The caller supplies only Channels already re-read from their WorkstreamDOs.
+   * This read therefore exposes the Space's mark and the containment edge, not
+   * the Space's wider participant, defaults, scope or lifecycle projection.
+   */
+  sharedNavigationSpaces(userId: string, workstreamIds: readonly string[]): SharedNavigationSpace[] {
+    if (!this.ready() || workstreamIds.length === 0) return [];
+    const spaces = new Map<string, {
+      createdAt: number;
+      space: Omit<SharedNavigationSpace, "workstreamIds">;
+      workstreamIds: string[];
+    }>();
+    for (const chunk of boundParameterChunks([...new Set(workstreamIds)])) {
+      for (const row of this.storage.sql.exec<{
+        space_id: string;
+        title: string;
+        appearance_json: string | null;
+        created_at: number;
+        workstream_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT space.space_id, space.title, space.appearance_json, space.created_at,
+                membership.workstream_id
+           FROM space_channel_memberships membership
+           JOIN workspace_space_directory space ON space.space_id = membership.space_id
+           LEFT JOIN workspace_space_viewers viewer
+             ON viewer.space_id = space.space_id
+            AND viewer.user_id = ? AND viewer.is_participant = 1
+           WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND ${spaceVisibleToViewerSql("space", "viewer")}
+            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
+          ORDER BY space.created_at, space.space_id, membership.workstream_id`,
+        userId,
+        userId,
+        ...chunk,
+      ).toArray()) {
+        const appearance = row.appearance_json
+          ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
+          : null;
+        const icon = typeof appearance?.icon === "string" ? appearance.icon : null;
+        const color = typeof appearance?.color === "string" ? appearance.color : null;
+        const existing = spaces.get(row.space_id);
+        if (existing) {
+          if (!existing.workstreamIds.includes(row.workstream_id)) existing.workstreamIds.push(row.workstream_id);
+          continue;
+        }
+        spaces.set(row.space_id, {
+          createdAt: row.created_at,
+          space: SharedNavigationSpaceSchema.omit({ workstreamIds: true }).parse({
+            id: row.space_id,
+            name: row.title,
+            iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
+            colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
+          }),
+          workstreamIds: [row.workstream_id],
+        });
+      }
+    }
+    return [...spaces.values()]
+      .sort((left, right) => left.createdAt - right.createdAt || left.space.id.localeCompare(right.space.id))
+      .map(({ space, workstreamIds: ids }) => SharedNavigationSpaceSchema.parse({
+        ...space,
+        workstreamIds: ids.sort(),
+      }));
   }
 
   prepareMembership(
