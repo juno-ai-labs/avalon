@@ -1596,6 +1596,83 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * Every Channel and Breakout in one Space that the dashboard would list for
+   * this viewer. This is the dashboard query's admission predicate without its
+   * page bound or ordering, so a sidebar badge never counts a different state.
+   */
+  attentionCount(userId: string, spaceId: string): number {
+    return this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT directory.workstream_id AS conversation_id
+           FROM space_channel_memberships membership
+           JOIN workspace_workstream_directory directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE membership.space_id = ?2 AND membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND ${liveForViewerSql("directory", "viewer")}
+         UNION ALL
+         SELECT breakout.substream_id AS conversation_id
+           FROM space_channel_memberships membership
+           JOIN workspace_workstream_directory directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+           JOIN workspace_breakout_directory breakout
+             ON breakout.workstream_id = membership.workstream_id
+           LEFT JOIN workspace_breakout_viewers breakout_viewer
+             ON breakout_viewer.workstream_id = breakout.workstream_id
+            AND breakout_viewer.substream_id = breakout.substream_id
+            AND breakout_viewer.user_id = ?1
+            AND breakout_viewer.authority_generation = breakout.authority_generation
+          WHERE membership.space_id = ?2 AND membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND breakout.archived_at IS NULL
+            AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
+            AND ${liveForViewerSql("breakout", "breakout_viewer")}
+       )`,
+      userId,
+      spaceId,
+    ).one().count;
+  }
+
+  /** Viewer-specific live Breakout totals, grouped under their parent Channel. */
+  breakoutAttentionCounts(userId: string, workstreamIds: readonly string[]): Map<string, number> {
+    const result = new Map<string, number>();
+    for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
+      if (ids.length === 0) continue;
+      const rows = this.storage.sql.exec<{
+        workstream_id: string;
+        count: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT breakout.workstream_id, COUNT(*) AS count
+           FROM workspace_breakout_directory breakout
+           LEFT JOIN workspace_breakout_viewers breakout_viewer
+             ON breakout_viewer.workstream_id = breakout.workstream_id
+            AND breakout_viewer.substream_id = breakout.substream_id
+            AND breakout_viewer.user_id = ?
+            AND breakout_viewer.authority_generation = breakout.authority_generation
+          WHERE breakout.workstream_id IN (${ids.map(() => "?").join(", ")})
+            AND breakout.archived_at IS NULL
+            AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
+            AND ${liveForViewerSql("breakout", "breakout_viewer")}
+          GROUP BY breakout.workstream_id`,
+        userId,
+        ...ids,
+      ).toArray();
+      for (const row of rows) result.set(row.workstream_id, row.count);
+    }
+    return result;
+  }
+
+  /**
    * One page of the Channels this Space holds, archived ones included.
    *
    * `walkReach` is the difference between what a surface means by a member and
@@ -3514,6 +3591,7 @@ export class WorkspaceSpaceStorage {
         ? []
         : this.participantUserIds(row.space_id).map((participantId) => ({ userId: participantId })),
       channelCount: this.channelCount(row.space_id, userId, row.reach),
+      attentionCount: row.archived_at === null ? this.attentionCount(userId, row.space_id) : 0,
       defaultResourceIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "resource"),
       defaultSidekickIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "sidekick"),
       createdAt: new Date(row.created_at).toISOString(),

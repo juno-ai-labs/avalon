@@ -3844,6 +3844,7 @@ function directoryWorkstream(
   },
   spaceIds: readonly string[] = [],
   spacePins: readonly { spaceId: string; position: number }[] = [],
+  breakoutAttentionCount = 0,
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
@@ -3891,6 +3892,7 @@ function directoryWorkstream(
     spacePins,
     lastAccessedAt: iso(row.last_accessed_at),
     spaceIds,
+    breakoutAttentionCount,
     ...participantPreview,
   });
 }
@@ -4002,9 +4004,13 @@ function mapDirectoryWorkstreams(
   const previews = loadParticipantPreviews(sql, personalIds);
   const spaceIds = spaces.spaceIdsByChannel(userId, rows.map((row) => row.workstream_id));
   const pins = loadSpacePins(sql, userId, rows.map((row) => row.workstream_id));
+  const breakoutAttentionCounts = spaces.breakoutAttentionCounts(
+    userId,
+    rows.map((row) => row.workstream_id),
+  );
   return rows.map((row) => directoryWorkstream(
     row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
-    pins.get(row.workstream_id) ?? [],
+    pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
   ));
 }
 
@@ -8143,11 +8149,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // moving *is* that page moving — on every message in every member Channel
     // and every breakout of one. That is far too frequent for the Space
     // snapshot, which rebuilds both directories per socket; it goes out as a
-    // nudge of its own, carrying nothing but the Spaces to read again.
+    // nudge of its own, carrying the Spaces to read again and their small
+    // aggregate counts for the sidebar.
     this.publishSpaceConversationsChanged({
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
+    // A Channel row carries its live Breakout total. A child projection does
+    // not advance the parent's directory waterline, so explicitly republish
+    // the parent row; the receiver treats this aggregate like Space placements
+    // and may accept it from an otherwise duplicate parent version.
+    for (const workstreamId of breakoutChanges) {
+      await this.publishWorkstreamState(workstreamId);
+    }
+    for (const [workstreamId, users] of breakoutViewerChanges) {
+      if (breakoutChanges.has(workstreamId)) continue;
+      for (const userId of users) await this.publishWorkstreamState(workstreamId, userId);
+    }
     // The backstop for the hierarchy invariant, on the one event that can break
     // it without anything noticing. Every non-deleted, non-system Channel
     // belongs to at least one Space, and the creation paths and the cutover are
@@ -11644,6 +11662,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             attachment.accessClass === "guest"
               ? []
               : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
+            [],
+            spaces.breakoutAttentionCounts(attachment.userId, [workstreamId]).get(workstreamId) ?? 0,
           )
           : null,
       }));
@@ -11859,6 +11879,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           type: "space_conversations_changed",
           occurredAt,
           spaceIds: [...spaceIds].sort(),
+          attentionCounts: [...spaceIds].sort().map((spaceId) => ({
+            spaceId,
+            count: spaces.attentionCount(attachment.userId, spaceId),
+          })),
         })));
       } catch {
         // Hibernation owns close cleanup, and a reconnect re-reads the page.

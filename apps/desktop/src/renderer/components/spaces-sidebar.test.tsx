@@ -111,6 +111,19 @@ describe('SpacesSidebar', () => {
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('1 channel');
   });
 
+  it('draws an attention count on a Space row and omits zero', () => {
+    renderSidebar({
+      spaces: [
+        { ...space('general', 'General', 3), attentionCount: 4 },
+        { ...space('launch', 'Launch', 1), attentionCount: 0 },
+      ],
+    });
+
+    expect(within(screen.getByRole('link', { name: 'General' }))
+      .getByLabelText('4 conversations need attention in General')).toHaveTextContent('4');
+    expect(within(screen.getByRole('link', { name: 'Launch' })).queryByText('0')).not.toBeInTheDocument();
+  });
+
   it('describes the keyboard gesture that reorders Spaces', () => {
     renderSidebar();
 

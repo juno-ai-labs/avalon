@@ -872,6 +872,16 @@ filtered — so it is the definition the page query is held to rather than a
 second implementation in use. That test is the contract; if it
 is deleted the two implementations start drifting the same day.
 
+The hierarchy sidebar counts that same set. `SpaceSummary.attentionCount` is
+the number of admitted Channel and Breakout rows in the Space;
+`Workstream.breakoutAttentionCount` is the admitted Breakouts under one
+Channel. Both are viewer-specific WorkspaceDO reads rendered from the same
+`liveForViewerSql` text as the dashboard page. The opening socket carries both
+totals. Later child projections republish the parent Channel row, while the
+existing `space_conversations_changed` nudge carries the current Space totals,
+so ordinary attention changes do not rebuild and resend both Space directories.
+Zero remains a real count on the wire and is an absent badge in presentation.
+
 **One page query, one order, one cursor.** `conversationPage` is a `UNION ALL`
 of the Space's active member Channels that are not archived and those Channels'
 breakouts that are not archived, each joined to the viewer's row, filtered to
@@ -1908,6 +1918,31 @@ states keep confirmed rows and expose the shared Refresh row; the Space
 directory's action remains a socket reconnect rather than a second fetch path.
 
 PR [#919](https://github.com/juno-ai-labs/avalon/pull/919).
+
+### 2026-09-21 — Hierarchy rows carry live attention totals
+
+**What changed:** Space summaries now carry the number of Channels and
+Breakouts the Space dashboard would admit for the viewer, and Channel summaries
+carry the matching count of admitted Breakouts. The opening workspace payload
+contains both; later projection changes update Channel rows and add Space totals
+to the existing dashboard nudge.
+
+**Why:** Deriving badges from the device's loaded rows undercounts paginated
+Spaces and cannot see unopened Breakouts. Republishing the complete Space
+snapshot on every message would put a directory rebuild on the hottest
+projection path. WorkspaceDO already owns the complete viewer-scoped tables and
+the exact dashboard predicate, so its aggregate is both cheaper to trust and
+impossible for the two surfaces to define differently.
+
+**Considered and rejected:** A client-side filter over Channel markers, which
+has no complete child directory; a durable counter updated on every message,
+which duplicates state already queryable in one authority; and full Space
+snapshot republication for every attention change.
+
+**Consequences:** Space summary reads pay one local aggregate query per visible
+Space, while directory Channel pages load Breakout totals in bounded fan-in
+queries. A future change to what “Needs attention” means must change the shared
+SQL predicate and keep the aggregate/page equivalence test able to fail.
 
 ### 2026-09-21 — A cross-rail drag moves its Channel
 

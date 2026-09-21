@@ -26,6 +26,8 @@ type ClassNameResolver = (...args: unknown[]) => string | undefined;
 
 type SidebarRowProps<Component extends ElementType> = {
   as?: Component;
+  /** A trailing count in expanded rows and an icon-corner badge in compact rows. */
+  badge?: { count: number; label: string };
 } & ComponentPropsWithoutRef<Component>;
 
 type SidebarScrollProps<Component extends ElementType> = {
@@ -46,14 +48,19 @@ type SidebarFooterProps<Component extends ElementType> = {
 export function SidebarRow<Component extends ElementType = 'button'>(
   props: SidebarRowProps<Component>,
 ): React.JSX.Element {
-  const { as, ...rest } = props;
+  const { as, badge, children, ...rest } = props;
   const rowProps = rest as typeof rest & { className?: string | ClassNameResolver };
   const className = rowProps.className;
   const mergedClassName = typeof className === 'function'
     ? (...args: unknown[]): string => clsx('sidebar-row', className(...args))
     : clsx('sidebar-row', className);
   const Row: ElementType = as ?? 'button';
-  return <Row {...rest} className={mergedClassName} />;
+  return <Row {...rest} className={mergedClassName}>
+    {children}
+    {badge && badge.count > 0 && (
+      <span aria-label={badge.label} className="sidebar-row-badge">{badge.count}</span>
+    )}
+  </Row>;
 }
 
 /** The shared scrolling body below a hierarchy sidebar's header divider. */
