@@ -273,6 +273,7 @@ describe('WorkstreamSidebar', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants');
     expect(participants).toHaveAttribute('aria-description', 'Ada Lovelace');
     expect(participants).not.toHaveAttribute('aria-describedby');
+    expect(participants.querySelector('.avatar-stack-item')).not.toHaveAttribute('data-state');
   });
 
   it('gives each breakout its own stable generated mark', () => {
