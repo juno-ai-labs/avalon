@@ -454,7 +454,8 @@ describe('sidebar layout motion', () => {
     expect(rule('.sidebar-row.sidebar-header')).toContain('height: 43px;');
     expect(rule('.sidebar-row.sidebar-header:hover')).toContain('background-image: none;');
     expect(rule('.resizable-sidebar.is-compact .sidebar-header')).toContain('margin-inline: auto;');
-    expect(rule('.resizable-sidebar.is-compact .sidebar-title-header-icon')).toContain('display: grid;');
+    expect(rule('.sidebar-title-header-icon')).toContain('display: grid;');
+    expect(rule('.sidebar-title-header-icon')).toContain('flex: 0 0 28px;');
     expect(rule('.sidebar-title-header-icon')).toContain('height: 28px;');
     expect(rule('.sidebar-title')).toContain('var(--sidebar-layout-motion)');
     expect(rule('.sidebar-row')).toContain('height: 54px;');

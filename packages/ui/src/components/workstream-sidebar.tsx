@@ -217,7 +217,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
     >
       <SidebarTitleHeader
         className="workstream-context-toolbar window-drag"
-        icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
+        icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} size={20} />}
         title={workstream.title}
       />
       <SidebarScroll className="workstream-context-scroll">
