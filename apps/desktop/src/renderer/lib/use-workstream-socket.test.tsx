@@ -1534,6 +1534,14 @@ describe('useWorkstreamSocket', () => {
       };
     });
     const api = socketApiWith({ getSocketTicket });
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [workstreamSummary({
+      id: workstreamId,
+      appearance: { icon: 'atom', color: 'gray' },
+    })]);
+    queryClient.setQueryData(['workstream-children', workstreamId], {
+      privateChildren: [{ substreamId, title: 'Private child', appearance: { icon: 'orbit', color: 'green' } }],
+    });
     const { result } = renderHook(() => useWorkstreamSocket(
       api,
       workstreamId,
@@ -1543,7 +1551,7 @@ describe('useWorkstreamSocket', () => {
       undefined,
       true,
       substreamId,
-    ), { wrapper: createWrapper() });
+    ), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
     expect(getSocketTicket).toHaveBeenCalledWith(
@@ -1614,6 +1622,23 @@ describe('useWorkstreamSocket', () => {
       harnessRunId: retryRunId,
     }));
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
+
+    const appearance = result.current.setAppearance({ color: 'purple' });
+    await flushPromises();
+    const appearanceCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'set_workstream_appearance';
+    }> => frame.type === 'set_workstream_appearance')!;
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'set_workstream_appearance',
+      operationId: appearanceCommand.operationId,
+    }));
+    await expect(appearance).resolves.toBeUndefined();
+    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
+      ['workstream-children', workstreamId],
+    )?.privateChildren[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
+      .toEqual({ icon: 'atom', color: 'gray' });
   });
 
   it('rejects failed and mismatched private command receipts', async () => {

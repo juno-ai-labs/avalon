@@ -1,8 +1,8 @@
 # Work-stream appearance
 
-A work stream has one icon and color shared by everyone who can read it. Clicking
+A Channel or Breakout has one icon and color shared by everyone who can read it. Clicking
 its header icon opens a compact palette: fixed colors above a scrolling icon grid.
-Each choice saves immediately and keeps the palette open. A work stream nobody
+Each choice saves immediately and keeps the palette open. A conversation nobody
 has chosen for usually gets its icon from the naming pass, out of this same
 catalog; where that pass produced none it keeps the deterministic icon derived
 from its id, which is also what every work stream created before this existed
@@ -27,9 +27,10 @@ own storage and its own glyph treatment.
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
-| `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket and applies each one to the relevant Channel or Breakout cache row when its receipt arrives. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative Channel-or-Breakout write, command receipt, and common-state publication. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Projects each Breakout's stored appearance into the parent-owned Breakout directory. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Every conversation object's nullable `workstream.appearance_json`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Directory projection for all workspace surfaces. |
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename`, the second writer: it offers the naming pass's icon and refuses it where one is stored. See [`workstream-naming.md`](workstream-naming.md). |
 | `apps/api/src/durable-objects/sidekick-do.ts` | `setAppearance` and `automation.appearance_json` — the Sidekick's copy of this, owned by [`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like). |
@@ -112,8 +113,8 @@ until someone picks a hue.
 
 ## Invariants
 
-- One authoritative appearance belongs to Main; a private child must not create
-  an alternative identity for the parent.
+- Each conversation owns one authoritative appearance. Main's is the Channel
+  identity; a private child's is its Breakout identity and never overwrites Main.
 - **A person's choice outranks a generated one, and the rule is a condition on
   the write.** The picker's command writes unconditionally; the naming pass's
   write is refused wherever an icon is already stored. Neither writer can tell a
@@ -162,6 +163,27 @@ cover the common cache path. The Sidekick's half is proved in the real-workerd
 legs and asserts the merge, the refusal, and the value on both directory
 listings. Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
+
+### 2026-09-21 — Breakouts own persisted appearances
+
+**What changed:** A Breakout now uses the same persisted icon-and-colour shape
+and picker as a Channel. Its own conversation object commits the choice and
+publishes it in the existing common projection; the parent includes that value
+in each authorized Breakout row, while the client patches only that row when
+the command receipt returns. Older Breakouts with no stored choice continue to
+derive a stable mark from their ID.
+
+**Why:** Generated marks made Breakouts distinct but not personalizable, while
+copying the Channel appearance made a Breakout look like another view of Main.
+The child already had the same appearance column and command machinery, so a
+second table or Breakout-specific palette would have duplicated authority and
+interaction logic. The parent remains the authority for who can discover the
+row; the child remains the authority for what its own conversation looks like.
+
+**What a future change has to respect:** a Breakout appearance is not Channel
+appearance and is not parent-authored metadata. Commit it in the addressed
+child, project it through `substream_directory`, and expose it only inside the
+same roster-filtered child row that already carries the title.
 
 ### 2026-09-10 — A Sidekick picks from the same palette, and the picker stopped belonging to work streams
 

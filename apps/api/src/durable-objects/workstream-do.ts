@@ -2671,13 +2671,16 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       this.parentSql.exec("UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1", now);
       return;
     }
-    const changed = this.parentSql.exec<{ substream_id: string }>(
+    this.parentSql.exec<{ substream_id: string }>(
       `UPDATE conversation_children SET title = ?, updated_at = ?
         WHERE substream_id = ? AND kind = 'child' AND title IS NOT ?
        RETURNING substream_id`,
       effect.title, now, substreamId, effect.title,
-    ).toArray().length === 1;
-    if (changed) this.advancePrivateChildrenVersionsFor(substreamId, now);
+    ).toArray();
+    // The same child projection owns its appearance. Recomputing the visible
+    // rows is hash-deduplicated, so a title, icon or colour advances discovery
+    // while unrelated common-state changes write no new local state.
+    this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
   protected override async afterChildEffects(): Promise<void> {
@@ -3048,6 +3051,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       privateChildren: this.visiblePrivateChildrenForUser(userId).map((child) => ({
         substreamId: child.substreamId,
         title: child.title,
+        ...(child.appearance ? { appearance: child.appearance } : {}),
         createdByUserId: child.createdByUserId,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),
@@ -3070,11 +3074,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
 
   private visiblePrivateChildrenForUser(userId: string): ListVisiblePrivateChildrenResult["children"] {
     return this.parentSql.exec<{
-      substream_id: string; title: string; created_by_user_id: string; created_at: number; updated_at: number;
+      substream_id: string; title: string; effect_json: string | null;
+      created_by_user_id: string; created_at: number; updated_at: number;
     }>(
-      `SELECT child.substream_id, child.title, child.created_by_user_id, child.created_at, child.updated_at
+      `SELECT child.substream_id, child.title, directory.effect_json,
+              child.created_by_user_id, child.created_at, child.updated_at
          FROM conversation_children child
          JOIN private_child_memberships member ON member.substream_id = child.substream_id
+         LEFT JOIN substream_directory directory ON directory.substream_id = child.substream_id
         WHERE child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
           AND member.user_id = ? AND member.active = 1
         ORDER BY child.created_at, child.substream_id`,
@@ -3082,6 +3089,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     ).toArray().map((child) => ({
       substreamId: asSubstreamId(child.substream_id),
       title: child.title,
+      ...(child.effect_json
+        ? (() => {
+            const appearance = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json)).appearance;
+            return appearance ? { appearance } : {};
+          })()
+        : {}),
       createdByUserId: UserIdSchema.parse(child.created_by_user_id),
       createdAt: child.created_at,
       updatedAt: child.updated_at,

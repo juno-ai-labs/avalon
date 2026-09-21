@@ -146,8 +146,14 @@ export function WorkstreamScreen(): React.JSX.Element {
    * what writing it back cost when it was tried.
    */
   const namedChildren = children.data?.privateChildren?.map((child) =>
-    child.substreamId === selectedSubstreamId && openChild.data?.title
-      ? { ...child, title: openChild.data.title }
+    child.substreamId === selectedSubstreamId
+      ? {
+          ...child,
+          ...(openChild.data?.title ? { title: openChild.data.title } : {}),
+          ...(child.appearance === undefined && openChild.data?.appearance
+            ? { appearance: openChild.data.appearance }
+            : {}),
+        }
       : child);
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
@@ -184,6 +190,10 @@ export function WorkstreamScreen(): React.JSX.Element {
     ? storedBreakouts
     : orderByStoredIds(namedChildren, breakoutOrder, (child) => child.substreamId);
   const railChildIds: string[] = railChildren?.map((child) => child.substreamId) ?? [];
+  const selectedAppearance = selectedSubstreamId === '0'
+    ? parent.data?.appearance
+    : railChildren?.find((child) => child.substreamId === selectedSubstreamId)?.appearance
+      ?? openChild.data?.appearance;
   /**
    * Send the arrangement whole, and drop it if the server refuses.
    *
@@ -610,14 +620,16 @@ export function WorkstreamScreen(): React.JSX.Element {
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
-          onAppearanceChange={guest ? undefined : mainConnection.setAppearance}
+          onAppearanceChange={guest ? undefined : selectedSubstreamId === '0'
+            ? mainConnection.setAppearance
+            : context.setAppearance}
           presentUserIds={context.presentUserIds}
           socketState={context.socketState}
           workspaceTarget={session?.workspace ? {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
-          workstream={{ ...context.detail, appearance: parent.data?.appearance }}
+          workstream={{ ...context.detail, appearance: selectedAppearance }}
         />
       )}
       substreamId={selectedSubstreamId}
