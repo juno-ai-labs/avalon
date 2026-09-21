@@ -5143,7 +5143,6 @@ export class WorkstreamObjectProductService {
   }
 
   private async applyAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
-    if (this.externalSubstreamId() !== "0") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
     const patch = WorkstreamAppearancePatchSchema.parse(raw);
     const requestHash = workstreamImportHash({ command: "set_workstream_appearance", patch });
     let changed = false;
