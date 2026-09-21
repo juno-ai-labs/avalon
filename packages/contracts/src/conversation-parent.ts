@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import {
   ContextPluginRefSchema,
   ContextConfigSchema,
@@ -216,6 +217,7 @@ export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
   children: z.array(z.strictObject({
     substreamId: SubstreamIdSchema,
     title: z.string().min(1).max(500),
+    appearance: WorkstreamAppearanceSchema.optional(),
     createdByUserId: UserIdSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
