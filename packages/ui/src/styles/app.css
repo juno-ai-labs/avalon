@@ -1438,6 +1438,7 @@ pre {
   width: 260px;
   z-index: 1000;
 }
+.sidebar-workstream-preview-surface .tooltip-arrow { display: none; }
 
 .sidebar-workstream-preview {
   display: flex;
@@ -1506,11 +1507,11 @@ pre {
 .sidebar-context-target.is-draggable { cursor: grab; }
 .sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
 .sidebar-context-target.is-dragging .sidebar-row { background: var(--av-sys-color-surface-subtle); }
-/* The Breakout rail's rows are arranged by hand too, and say so the same way
-   the sidebar's do: the same cursor, the same lift. The row is the button
-   itself here rather than a wrapper around a link, so the surface the drag
-   lifts is the row. */
-.workstream-conversation-row.is-draggable { cursor: grab; }
+/* Every conversation row is navigation first, including a draggable Breakout.
+   Keep the pointer used by Space and Channel rows until a drag actually starts;
+   a standing grab cursor made the same navigation gesture read differently at
+   this level of the hierarchy. */
+.workstream-conversation-row { cursor: pointer; }
 .workstream-conversation-row.is-dragging {
   cursor: grabbing;
   opacity: 0.45;

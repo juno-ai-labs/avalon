@@ -2,7 +2,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import { Archive, Copy, GitBranch, Globe2, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconShare2 } from '@tabler/icons-react';
-import { Fragment, useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/sidebar-geometry';
@@ -63,14 +63,32 @@ export interface ConversationRowActions {
   onArchive?: (target: ConversationRowTarget) => void;
 }
 
-function ConversationRowMenu({ actions, children, target }: {
-  actions: ConversationRowActions | undefined; children: React.ReactNode; target: ConversationRowTarget;
+function ConversationRowMenu({ actions, children, icon, target }: {
+  actions: ConversationRowActions | undefined;
+  children: React.ReactNode;
+  icon: React.ReactNode;
+  target: ConversationRowTarget;
 }): React.JSX.Element {
-  if (!actions) return <>{children}</>;
   const main = target.substreamId === '0';
   return <ContextMenu.Root>
-    <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
-    <ContextMenu.Portal>
+    <Tip
+      className="sidebar-workstream-preview-surface"
+      collisionPadding={8}
+      delayDuration={300}
+      label={<div className="sidebar-workstream-preview">
+        <div className="sidebar-workstream-preview-header">
+          <span className="sidebar-workstream-preview-identity">
+            {icon}
+            <span className="sidebar-workstream-preview-name">{target.title}</span>
+          </span>
+        </div>
+      </div>}
+      side="right"
+      sideOffset={8}
+    >
+      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+    </Tip>
+      {actions && <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
         {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
           <Globe2 aria-hidden="true" size={16} /> Make public to organization
@@ -89,7 +107,7 @@ function ConversationRowMenu({ actions, children, target }: {
           <Archive aria-hidden="true" size={16} /> {main ? 'Archive channel' : 'Archive breakout'}
         </ContextMenu.Item></>}
       </ContextMenu.Content>
-    </ContextMenu.Portal>
+      </ContextMenu.Portal>}
   </ContextMenu.Root>;
 }
 
@@ -236,12 +254,12 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
           onDrop={substreamDrag ? (event) => event.preventDefault() : undefined}
         >
         {mainVisible && <ConversationRowMenu actions={mainActions}
+          icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} size={16} />}
           target={{ substreamId: '0', title: workstream.title }}>
           <SidebarRow
             className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
-            title={workstream.title}
             type="button"
             onClick={() => { saveCollapsed(true); onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
@@ -314,7 +332,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   event.preventDefault();
                   substreamDrag.onMove(child.substreamId, event.key === 'ArrowUp' ? -1 : 1);
                 } : undefined}
-                title={child.title}
                 type="button"
               >
                 <SidebarNavigationRowContent
@@ -323,9 +340,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 />
               </SidebarRow>
             );
-            return substreamActions
-              ? <ConversationRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>
-              : <Fragment key={child.substreamId}>{row}</Fragment>;
+            return <ConversationRowMenu actions={substreamActions} icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={16} />} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>;
           })}
           {pendingSubstream && (
             /* The substream being created, in the place the directory will
@@ -365,6 +380,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             // thing on screen that still says so. Once it has been submitted
             // the row above says it instead — this one is back to being what
             // starts the next substream.
+            <Tip describesTrigger={false} label="New breakout" side="right">
             <SidebarRow
               aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream ? 'page' : undefined}
               aria-label="New breakout"
@@ -373,7 +389,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
               onClick={() => { saveCollapsed(true); onNewSubstream(); }}
-              title="New breakout"
               type="button"
             >
               <SidebarNavigationRowContent
@@ -381,6 +396,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 title="New breakout"
               />
             </SidebarRow>
+            </Tip>
           )}
         </SidebarList>
         {/* Absent rather than empty, as the Sidekick strip below is: a heading
@@ -392,9 +408,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         <section aria-label="Channel participants" className="workstream-context-section">
           <SidebarHorizontalLine />
           <h2>Participants</h2>
+          <Tip label="Participants" side="right">
           <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
             {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
           </SidebarRow>
+          </Tip>
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
@@ -402,11 +420,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         {addSidekick}
       </SidebarScroll>
       <SidebarCollapseFooter
-        collapseLabel="Collapse channel sidebar"
+        collapseLabel="Collapse channel"
         compact={compact}
         constrained={narrow}
-        constrainedTitle="Widen the window to expand the channel sidebar"
-        expandLabel="Expand channel sidebar"
+        constrainedTitle="Widen the window to expand channel"
+        expandLabel="Expand channel"
         onToggle={() => saveCollapsed(!collapsed)}
       />
     </ResizableSidebar>

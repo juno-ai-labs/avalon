@@ -351,7 +351,7 @@ describe('SpacesSidebar', () => {
     renderSidebar();
 
     expect(screen.getByRole('button', { name: 'Search organization' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'New channel' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New channel or space' })).toBeVisible();
   });
 
   it('hands Create between the titlebar and compact command row with the old motion contract', () => {
@@ -389,18 +389,30 @@ describe('SpacesSidebar', () => {
 
     const titlebar = document.querySelector('.spaces-sidebar-titlebar');
     const commandbar = document.querySelector('.spaces-sidebar-commandbar');
-    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New channel' }));
+    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New channel or space' }));
     expect(commandbar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
 
     rerender(<MemoryRouter><Tooltip.Provider>
       <SpacesSidebar {...props} collapsed />
     </Tooltip.Provider></MemoryRouter>);
 
-    const compactCreate = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel' });
+    const compactCreate = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel or space' });
     const compactSearch = within(commandbar as HTMLElement).getByRole('button', { name: 'Search organization' });
     expect(compactCreate).toHaveAttribute('data-motion-insert');
     expect(compactCreate.compareDocumentPosition(compactSearch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(titlebar?.querySelector('.sidebar-new-button')).toHaveAttribute('aria-hidden', 'true');
-    expect(within(titlebar as HTMLElement).queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
+    expect(within(titlebar as HTMLElement).queryByRole('button', { name: 'New channel or space' })).not.toBeInTheDocument();
+  });
+
+  it('names the compact creation and Search tooltips', async () => {
+    renderSidebar({ collapsed: true });
+
+    const create = screen.getByRole('button', { name: 'New channel or space' });
+    fireEvent.focus(create);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('New channel or space');
+    fireEvent.blur(create);
+
+    fireEvent.focus(screen.getByRole('button', { name: 'Search organization' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
   });
 });
