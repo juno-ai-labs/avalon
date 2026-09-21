@@ -1978,6 +1978,9 @@ directory pages until it has the Space's Channels or reaches the end, including
 when the first page is too short to scroll. Space ordering exposes its
 Alt+Arrow instruction to assistive technology, while a Space reached only
 through one of its Channels refuses Channel drops before any mutation is sent.
+The shell owns the Space rail's collapsed state so its narrow-window threshold
+reserves the rail actually on screen, and a stale archived-Space URL falls back
+to a valid sidebar selection without competing route and directory effects.
 
 **Why:** The accordion made containment and destination the same gesture: a
 Space row both opened a Space and disclosed an indented copy of every Channel
