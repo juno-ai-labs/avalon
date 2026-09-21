@@ -42,7 +42,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
+import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -89,18 +89,18 @@ function hasInstallationFacet(connectorType: string): boolean {
 }
 
 /**
- * Whether this screen still manages that provider's workspace events.
+ * Whether this screen offers a window onto that provider's workspace events.
  *
  * `hasInstallationFacet` says the provider has an installation at all, which
- * stays true of a connection a workspace already made. This says the product
- * still offers the surface: a connector the catalog no longer connects for a
- * workspace — Fireflies, whose one key reads every member's meetings — keeps
- * receiving its events without offering anybody a webhook console for them.
+ * stays true of every connection a workspace already made. This asks the
+ * narrower product question, and the contract answers it: an installation that
+ * runs on its own — Granola's, and Fireflies', whose workspace scope is closed
+ * besides — keeps receiving its events without anybody being handed a webhook
+ * console over them.
  */
+const eventConsoleProviders = new Set<string>(ConnectorEventConsoleProviders);
 function hasWorkspaceInstallationSurface(connectorType: string): boolean {
-  if (!hasInstallationFacet(connectorType)) return false;
-  const provider = connectorProviders.find((candidate) => candidate.provider === connectorType);
-  return provider?.scopes.includes('workspace' as never) ?? false;
+  return eventConsoleProviders.has(connectorType);
 }
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
@@ -699,11 +699,15 @@ export function WorkspaceSettingsScreen({
       });
     },
   });
-  const granolaRecovery = useWorkspaceInstallationRecovery(api, 'granola', (connectionId) => {
+  // Recovery closes the setup dialog on the installation it found, and that is
+  // all it can offer now: Granola has no events console to open onto it, so
+  // reopening setup over a connection that already exists is the failure to
+  // avoid, not a window to show.
+  const granolaRecovery = useWorkspaceInstallationRecovery(api, 'granola', () => {
     setGranolaWorkspaceApiKey('');
     setGranolaSetupKey(crypto.randomUUID());
     setGranolaWorkspaceModalOpen(false);
-    setInstallationTarget(connectionId);
+    void queryClient.invalidateQueries({ queryKey: ['connections'] });
   });
   const createGranolaWorkspaceConnection = useMutation({
     mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim(), granolaSetupKey),

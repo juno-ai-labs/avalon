@@ -4018,7 +4018,7 @@ export { isUnknownSocketEvent,safeParseSocketEvent } from "./socket-events";
 export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
 export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
 
-export { ConnectorInstallationProviderSchema,ConnectorInstallationProviders,ConnectorInstallationSchema,ConnectorRegistrationSchema,type ConnectorInstallation,type ConnectorInstallationProvider,type InstallationRegistration } from "./connector-installation";
+export { ConnectorEventConsoleProviders,ConnectorInstallationProviderSchema,ConnectorInstallationProviders,ConnectorInstallationSchema,ConnectorRegistrationSchema,type ConnectorEventConsoleProvider,type ConnectorInstallation,type ConnectorInstallationProvider,type InstallationRegistration } from "./connector-installation";
 export { ConnectorApiKeyGuidanceCatalog,ConnectorApiKeyProviders,connectorApiKeyAcceptable,connectorApiKeyMismatch,isConnectorApiKeyProvider,type ConnectorApiKeyFormat,type ConnectorApiKeyGuidance,type ConnectorApiKeyProvider } from "./connector-api-keys";
 
 export { AshbyEventLabels,AshbyEventTypes } from "./ashby-events";

@@ -10,6 +10,27 @@ export const ConnectorInstallationProviderSchema = z.enum(["ashby", "fireflies",
  */
 export const ConnectorInstallationProviders = ConnectorInstallationProviderSchema.options;
 export type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProviderSchema>;
+
+/**
+ * The providers Rally offers an events console over.
+ *
+ * Separate from `ConnectorInstallationProviders`, which says the provider has
+ * an installation at all: every connection made for one of those keeps its
+ * subscriptions, its ingress and its activity whether or not anybody is shown
+ * a window onto them. This list is the product decision — who gets a webhook
+ * console in settings — and it is short on purpose. Ashby's administrator is
+ * the person who issued the key and goes to the provider dashboard to fix a
+ * subscription; Granola's and Fireflies' installations run on their own, so
+ * their console offered a status line and a Test over machinery nobody had
+ * asked to see.
+ *
+ * A provider removed from here keeps receiving events. What it loses with the
+ * window is the manual recovery beside it — replacing the organization API
+ * key, reconciling an unconfirmed create, retrying cleanup — so removing one
+ * is saying those are not paths this product asks an administrator to walk.
+ */
+export const ConnectorEventConsoleProviders = ["ashby"] as const satisfies readonly ConnectorInstallationProvider[];
+export type ConnectorEventConsoleProvider = (typeof ConnectorEventConsoleProviders)[number];
 export const ConnectorRegistrationSchema = z.strictObject({
   key: z.string().min(1), providerId: z.string().min(1).nullable(), events: z.array(z.string().min(1)).min(1),
   adoptingExistingDestination: z.boolean().default(false),
