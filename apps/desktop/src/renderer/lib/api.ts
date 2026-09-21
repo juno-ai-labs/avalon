@@ -1,6 +1,6 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
-import { SharedDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
+import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { SessionImportPreviewSchema, type SessionImportPreview, type SessionImportPreviewRequestSchema } from "@rally/contracts";
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -1039,6 +1039,10 @@ export class RallyApi {
 
   async getSharedDirectory(signal?: AbortSignal) {
     return this.request('/sharing/directory', { schema: SharedDirectorySchema, signal });
+  }
+
+  async getSharedNavigationDirectory(signal?: AbortSignal) {
+    return this.request('/sharing/navigation', { schema: SharedNavigationDirectorySchema, signal });
   }
 
   /**

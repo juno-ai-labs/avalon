@@ -1,5 +1,10 @@
 import { asWorkspaceId, asWorkstreamId, type UserId, type WorkspaceId } from "@rally/contracts";
-import { SharedDirectorySchema, SharedWorkstreamSchema } from "@rally/contracts/scope-grants";
+import {
+  SharedDirectorySchema,
+  SharedNavigationDirectorySchema,
+  SharedNavigationSpaceSchema,
+  SharedWorkstreamSchema,
+} from "@rally/contracts/scope-grants";
 import { ScopeGrantCandidatesSchema } from "../durable-objects/scope-grant-directory";
 import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -23,9 +28,45 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
     }));
     return item;
   }));
-  const workstreams = items.filter((item) => item !== null);
+  const workstreams = items.filter((item) => item !== null).map((item) =>
+    item.conversations.some((conversation) => conversation.substreamId === "0")
+      ? item
+      : { ...item, title: null });
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (current?.status !== "active" || current.incarnation !== relationship.incarnation
     || current.revision !== relationship.revision) return SharedDirectorySchema.parse({ workstreams: [] });
   return SharedDirectorySchema.parse({ workstreams });
+}
+
+/** Guest browser hierarchy; canonical Channel owners still decide every label released. */
+export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId) {
+  const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
+  if (relationship?.status !== "active") {
+    return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
+  }
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId));
+  const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
+    workspaceId, userId, membershipIncarnation: relationship.incarnation,
+  }));
+  const items = await Promise.all(candidates.map(async (parentId) => {
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
+      workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
+    return SharedWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
+      workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
+    }));
+  }));
+  const workstreams = items.filter((item) => item !== null);
+  const spaces = SharedNavigationSpaceSchema.array().parse(await workspace.listSharedNavigationSpaces({
+    workspaceId,
+    userId,
+    membershipIncarnation: relationship.incarnation,
+    workstreamIds: workstreams.map((workstream) => workstream.parentId),
+  }));
+  const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
+  if (current?.status !== "active" || current.incarnation !== relationship.incarnation
+    || current.revision !== relationship.revision) {
+    return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
+  }
+  return SharedNavigationDirectorySchema.parse({ spaces, workstreams });
 }

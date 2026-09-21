@@ -9,6 +9,7 @@ import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
+import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, IconButton, InlineError, Modal } from '@rally/ui/components/primitives';
@@ -19,6 +20,8 @@ import { useCollaborationSession, CollaborationSessionProvider } from '../../des
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { ConversationSurface } from '../../desktop/src/renderer/screens/conversation-surface';
 import '@rally/ui/styles/app.css';
+
+const SHARED_CHANNELS_SPACE_ID = 'shared-channels';
 
 function SharedConversationRoute({ onShowNavigation }: { onShowNavigation: () => void }): React.JSX.Element {
   const { parentId, substreamId = '0' } = useParams();
@@ -34,8 +37,8 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const [changingArchive, setChangingArchive] = useState(false);
   const [archiveFailure, setArchiveFailure] = useState<'archive' | 'restore' | null>(null);
-  const directory = useQuery({ queryKey: ['shared-directory'], enabled: Boolean(api),
-    queryFn: ({ signal }) => api!.getSharedDirectory(signal), refetchOnWindowFocus: 'always' });
+  const directory = useQuery({ queryKey: ['shared-navigation'], enabled: Boolean(api),
+    queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const parent = directory.data?.workstreams.find((item) => item.parentId === parentId);
   const archived = parent?.conversations.find((item) => item.substreamId === substreamId)?.archived ?? false;
   const parentArchived = parent?.archived === true || (substreamId === '0' && archived);
@@ -45,7 +48,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
     setChangingArchive(true); setArchiveFailure(null);
     try {
       await api.setSubstreamArchived(parentId, target, value);
-      await queryClient.invalidateQueries({ queryKey: ['shared-directory'] });
+      await queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
     } catch { setArchiveFailure(value ? 'archive' : 'restore'); }
     finally { setChangingArchive(false); }
   };
@@ -79,7 +82,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
         renderHeader={(context) => <ConversationHeader grokBotMode workstream={context.detail} socketState={context.socketState}
           substreamId={substreamId} currentUserId={session?.user.id} presentUserIds={context.presentUserIds}
           onAddParticipant={context.openParticipantDialog} onOpenRail={context.openRail}
-          onRename={async (title) => { await context.rename(title); void queryClient.invalidateQueries({ queryKey: ['shared-directory'] }); }}
+          onRename={async (title) => { await context.rename(title); void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] }); }}
           onShowNavigation={onShowNavigation}
           onCopyLink={() => { void navigator.clipboard.writeText(location.href); }}
           actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} /> : null} />} />}
@@ -89,17 +92,90 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
 function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; onSignOut: () => void; open: boolean; onClose: () => void }): React.JSX.Element {
   const { session } = useCollaborationSession();
   const { pathname } = useLocation();
-  const directory = useQuery({ queryKey: ['shared-directory'], queryFn: ({ signal }) => api.getSharedDirectory(signal), refetchOnWindowFocus: 'always' });
+  const navigate = useNavigate();
+  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
+  const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const navigationSpaces = useMemo(() => {
+    const spaces = directory.data?.spaces ?? [];
+    const placedWorkstreamIds = new Set(spaces.flatMap((space) => space.workstreamIds));
+    const unplacedWorkstreamIds = (directory.data?.workstreams ?? [])
+      .map((workstream) => workstream.parentId)
+      .filter((parentId) => !placedWorkstreamIds.has(parentId));
+    return unplacedWorkstreamIds.length === 0 ? spaces : [...spaces, {
+      id: SHARED_CHANNELS_SPACE_ID,
+      name: 'Shared channels',
+      iconKey: 'users' as const,
+      colorKey: 'blue' as const,
+      workstreamIds: unplacedWorkstreamIds,
+    }];
+  }, [directory.data]);
+  useEffect(() => {
+    setSelectedSpaceId((current) => {
+      if (routeParentId) {
+        const currentSpace = navigationSpaces.find((space) =>
+          space.id === current && space.workstreamIds.includes(routeParentId));
+        if (currentSpace) return currentSpace.id;
+        const routeSpace = navigationSpaces.find((space) => space.workstreamIds.includes(routeParentId));
+        if (routeSpace) return routeSpace.id;
+      }
+      return navigationSpaces.some((space) => space.id === current) ? current : navigationSpaces[0]?.id ?? null;
+    });
+  }, [navigationSpaces, routeParentId]);
   if (!session) return <></>;
   const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
-  return <NavigationFrame className={open ? 'is-mobile-open' : undefined}>
-    <div className="sidebar-titlebar window-drag"><IconButton className="mobile-only" label="Close navigation"
-      onClick={onClose}><Menu size={16} /></IconButton></div>
-    <div className="sidebar-scroll"><nav aria-label="Shared channels" className="sidebar-section">
-      {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
-      {directory.isPending && <p>Loading shared conversations…</p>}
-      {directory.data?.workstreams.length === 0 && <p>No shared conversations yet.</p>}
-      {directory.data?.workstreams.map((workstream) => {
+  const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
+  const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
+  const openWorkstream = (parentId: string) => {
+    const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
+    const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
+    if (!first) return;
+    navigate(`/workstreams/${parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`);
+    onClose();
+  };
+  const selectSpace = (spaceId: string) => {
+    setSelectedSpaceId(spaceId);
+    const space = navigationSpaces.find((item) => item.id === spaceId);
+    const containedWorkstreams = space?.workstreamIds
+      .map((id) => directory.data?.workstreams.find((item) => item.parentId === id))
+      .filter((item) => item !== undefined) ?? [];
+    const firstActive = containedWorkstreams.find((workstream) =>
+      !workstream.archived && workstream.conversations.some((conversation) => !conversation.archived));
+    const target = firstActive ?? containedWorkstreams[0];
+    if (target) openWorkstream(target.parentId);
+  };
+  return <>
+    <aside aria-label="Spaces sidebar" className={`spaces-sidebar browser-spaces-sidebar${open ? ' is-mobile-open' : ''}`}>
+      <div className="spaces-sidebar-titlebar"><span>Spaces</span></div>
+      <nav aria-label="Shared spaces" className="spaces-sidebar-scroll">
+        {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
+        {directory.isPending && <p className="spaces-sidebar-empty">Loading spaces…</p>}
+        {directory.data && navigationSpaces.length === 0 && <p className="spaces-sidebar-empty">No shared spaces yet.</p>}
+        {navigationSpaces.map((space) => <button aria-label={space.name}
+          aria-pressed={space.id === selectedSpace?.id}
+          className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
+          key={space.id} onClick={() => selectSpace(space.id)} type="button">
+          <span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>
+          <span className="spaces-sidebar-copy"><strong>{space.name}</strong>
+            <small>{space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}</small></span>
+        </button>)}
+      </nav>
+      <footer className="spaces-sidebar-footer"><div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
+        <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
+      </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
+        <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
+        <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
+      </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></footer>
+    </aside>
+    <NavigationFrame className={`channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}>
+      <div className="sidebar-titlebar channels-sidebar-titlebar window-drag">
+        {selectedSpace && <h2 className="channels-sidebar-title">{selectedSpace.name}</h2>}
+        <IconButton className="mobile-only browser-navigation-close" label="Close navigation"
+          onClick={onClose}><Menu size={16} /></IconButton>
+      </div>
+      <div className="sidebar-scroll"><nav aria-label="Shared channels" className="sidebar-section">
+      {!directory.isPending && selectedSpace && workstreams.length === 0 && <p>No shared channels in this space.</p>}
+      {workstreams.map((workstream) => {
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
         if (!first) return null;
         return <NavLink className={`sidebar-row workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={onClose} key={workstream.parentId}
@@ -107,14 +183,9 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
           <NavigationRowContent id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </NavLink>;
       })}
-    </nav></div>
-    <footer className="sidebar-footer"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
-      <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
-    </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
-      <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
-      <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
-    </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></footer>
-  </NavigationFrame>;
+      </nav></div>
+    </NavigationFrame>
+  </>;
 }
 
 function NavigationButton({ onClick }: { onClick: () => void }): React.JSX.Element {
