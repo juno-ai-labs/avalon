@@ -219,10 +219,11 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ### 2026-09-21 — Elicitation hover belongs to the reader
 
-**What changed:** the hover over an elicitation option now paints
-`sys.color.accent.wash`, which resolves from the signed-in reader's chosen
-profile colour. Its resting surface, selected fill, keycap, checkbox and focus
-outline are unchanged.
+**What changed:** the hover over an elicitation option now layers a half-strength
+`sys.color.accent.tint` over its existing surface. The tint resolves from the
+signed-in reader's chosen profile colour; halving its 20% alpha gives the hover
+a 10% personal-colour wash without replacing the option's own fill. Its resting
+surface, selected fill, keycap, checkbox and focus outline are unchanged.
 
 **Why:** elicitation is the point where Rally is explicitly asking this reader
 to act. The product-wide neutral hover wash made that choice row read like
@@ -234,9 +235,12 @@ unrelated rows remain neutral.
 
 **Considered and rejected:** restoring the old account-level rewrite of
 `cmp.row.background-selected`. That token still serves selections, chips,
-controls and other borrowers that have no claim to personal identity. The
-elicitation row can name the existing accent wash directly, which keeps the
-exception local and lets light, dark and future themes decide the actual mix.
+controls and other borrowers that have no claim to personal identity. Also
+rejected: filling the row with `sys.color.accent.wash`. That token is opaque and
+mixed against the canvas, so in dark appearance it discards the option list's
+lighter surface and makes hover look recessed. Layering the transparent accent
+tint keeps the exception local and preserves the existing option surface in
+both appearances.
 
 ### 2026-09-19 — The lightbox stops hiding the window it covers
 
