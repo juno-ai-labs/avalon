@@ -3,11 +3,13 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
   SidebarHeader,
   SidebarHorizontalLine,
   SidebarRow,
+  SidebarScroll,
   SidebarTitle,
 } from '@rally/ui/components/resizable-sidebar';
 import {
@@ -270,7 +272,8 @@ export function SpacesSidebar({
         {ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.
         </p>}
-        <nav
+        <SidebarScroll
+          as="nav"
           aria-describedby={ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
           aria-label="Spaces"
           className="spaces-sidebar-scroll"
@@ -348,11 +351,11 @@ export function SpacesSidebar({
                   onClick={() => onSelect(space.id)}
                   to={`/spaces/${space.id}`}
                 >
-                  <span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>
-                  <span className="spaces-sidebar-copy">
-                    <strong>{space.name}</strong>
-                    <small>{space.channelCount === 1 ? '1 channel' : `${space.channelCount} channels`}</small>
-                  </span>
+                  <SidebarNavigationRowContent
+                    description={space.channelCount === 1 ? '1 channel' : `${space.channelCount} channels`}
+                    icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
+                    title={space.name}
+                  />
                 </SidebarRow>
               </Tooltip.Trigger>
               </ContextMenu.Trigger>
@@ -392,7 +395,7 @@ export function SpacesSidebar({
             </Tooltip.Root>
             ))}
           </>}
-        </nav>
+        </SidebarScroll>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
         <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
         <div className="spaces-sidebar-footer">
