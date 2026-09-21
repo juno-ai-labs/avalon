@@ -5,7 +5,7 @@
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/access-copy.ts` | Replaceable landing copy and escaped build rendering. |
-| `apps/site/src/landing.ts`, `access.css`, `index.html` | Email form and its pending/success/error states. |
+| `apps/site/src/landing.ts`, `landing.css`, `index.html` | Email form and its pending/success/error states. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
@@ -19,7 +19,9 @@
 
 ## How it works
 
-The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
+The public landing page links directly to the canonical macOS installer. It does not collect access requests or load Turnstile. The existing intake API, browser-handler module, Ace review tools, and token-based invitation downloads remain available for their separate workflows. Downloading the installer does not grant workspace membership.
+
+The retained access-request client obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
 and lowercases it. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
 failed request sends through the existing Resend service, reduced to plain text
@@ -335,6 +337,20 @@ above. Manual suppression is retained while needed to prevent unwanted acknowled
 when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
+
+## Changelog
+
+### 2026-09-21 — Collaboration landing with a direct macOS download
+
+**What changed:** Replaced the email-only landing with the approved static hero and shared-thread demo. The macOS Beta action links to the configured canonical DMG, and the announcement card is noninteractive. Visible copy and metadata use the existing copy renderer.
+
+**Why:** Outreach feedback prioritized a clear collaboration story, and the product owner explicitly requested that the beta action download the app rather than ask for an email. The full demo introduction must remain visible on normal laptop screens.
+
+**Considered and rejected:** A dialog wrapping the existing intake form preserved private acquisition but contradicted the requested direct-download behavior. It has been removed; the homepage no longer initializes its verification widget.
+
+**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. Keep the stable installer URL aligned with the release configuration. Trust/support links and regional telemetry stay intact.
+
+Shipped in #892.
 
 ### 2026-09-12 — Wire the shared issuer into Global workspace invitations
 
