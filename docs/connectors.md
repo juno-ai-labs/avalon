@@ -1360,6 +1360,8 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 **Consequences:** A Doc found through Drive search is readable even when the Docs API is disabled. Writes (`docs.create_document`, `docs.append_text`, `docs.replace_text`) and native Sheets reads still need those APIs enabled on the connector project, as [`provider-apps.md`](provider-apps.md) already requires. A Drive-export read has no tab list and no revision id — it is the text, which is what the failing run was after. Future Google 403s that cannot fall back must keep carrying the ErrorInfo reason; stripping it back to a status code is how this failure took a production investigation to name.
 
+Shipped in #909.
+
 ### 2026-09-19 — Personal Canva and explicit design observation
 
 The Canva adapter discovers the live MCP catalog and uses backend-held
