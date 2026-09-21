@@ -3730,6 +3730,12 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
     const windowId = "00000000-0000-7000-8000-000000000443";
+    // Close the regional authority before arming the overdue product entry.
+    // If the alarm is armed first, workerd may run it between object events and
+    // legitimately claim the window before the maintenance phase is installed.
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+    ).run();
     await runInDurableObject(stub, async (instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO opportunity_batch_windows
@@ -3747,9 +3753,6 @@ describe("Durable Objects in the Workers runtime", () => {
       await (instance as unknown as { refreshProductAlarm(): Promise<void> })
         .refreshProductAlarm();
     });
-    await env.DB.prepare(
-      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
-    ).run();
 
     await runInDurableObject(stub, async (instance) => {
       await instance.alarm();
