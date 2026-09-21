@@ -690,16 +690,30 @@ function WorkstreamRow({
   // otherwise is raised on one: a system Channel is not a product Channel. The
   // API refuses either change; the menu simply does not ask the question.
   const isProductChannel = !workstream.systemKind;
-  // Every active Space the viewer can see *and may place a Channel into* that
-  // does not already hold this one. Adding never removes another placement, so
-  // the ones it is already in are simply not offered again — and a Space this
-  // reader reaches only through a Channel placed in it is not offered at all:
-  // the server refuses that membership by name, and a menu entry that can only
-  // fail teaches a reader that Rally's controls are suggestions.
-  const addableSpaces = isProductChannel
-    ? spaces.filter((space) => space.reach !== 'through_channel'
-      && !workstream.spaceIds.includes(space.id))
+  // The menu is a picture of the visible directory, not only of the successful
+  // mutations left after filtering it. Hiding a read-only Space made a person
+  // who could see its row read a stale or incomplete list here. Keep every
+  // visible Space and put the existing-placement or access reason on the
+  // disabled choice; `addableSpaces` remains the capability used by drag.
+  const spaceOptions = isProductChannel
+    ? spaces.map((space) => {
+        const selected = workstream.spaceIds.includes(space.id);
+        const readOnly = space.reach === 'through_channel';
+        return {
+          id: space.id,
+          label: space.name,
+          selected,
+          disabled: selected || readOnly,
+          disabledReason: selected
+            ? `This channel is already in ${space.name}.`
+            : readOnly
+              ? `You can view ${space.name} through a channel, but only ${space.name} participants can add channels.`
+              : undefined,
+          onSelect: selected || readOnly ? undefined : () => onAddToSpace(workstream, space.id),
+        };
+      })
     : [];
+  const addableSpaces = spaceOptions.filter((space) => !space.disabled);
   const removablePlacement = isProductChannel && placementSpaceId !== undefined
     && spaces.some((space) => space.id === placementSpaceId && space.reach !== 'through_channel');
   const nextWakeupTime = workstream.nextPendingWakeup
@@ -950,15 +964,11 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
-          {addableSpaces.length > 0 && (
+          {spaceOptions.length > 0 && (
             <ContextNestedMenu
               icon={<FolderPlus aria-hidden="true" size={16} />}
               label="Add to space"
-              options={addableSpaces.map((space) => ({
-                id: space.id,
-                label: space.name,
-                onSelect: () => onAddToSpace(workstream, space.id),
-              }))}
+              options={spaceOptions}
             />
           )}
           {/* Replaces **Make private**, which could only ever describe this
