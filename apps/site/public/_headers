@@ -24,6 +24,9 @@
 /landing-init.js
   Cache-Control: public, max-age=86400
 
+/rally-social-v01.jpg
+  Cache-Control: public, max-age=86400
+
 /rally-social.jpg
   Cache-Control: public, max-age=86400
 
