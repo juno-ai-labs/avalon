@@ -19,7 +19,9 @@
 
 ## How it works
 
-The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
+The public landing page links directly to the canonical macOS installer. It does not collect access requests or load Turnstile. The existing intake API, browser-handler module, Ace review tools, and token-based invitation downloads remain available for their separate workflows. Downloading the installer does not grant workspace membership.
+
+The retained access-request client obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
 and lowercases it. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
 failed request sends through the existing Resend service, reduced to plain text
@@ -336,6 +338,20 @@ when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
+## Changelog
+
+### 2026-09-21 — Collaboration landing with a direct macOS download
+
+**What changed:** Replaced the email-only landing with the approved static hero and shared-thread demo. The macOS Beta action links to the configured canonical DMG, and the announcement card is noninteractive. Visible copy and metadata use the existing copy renderer.
+
+**Why:** Outreach feedback prioritized a clear collaboration story, and the product owner explicitly requested that the beta action download the app rather than ask for an email. The full demo introduction must remain visible on normal laptop screens.
+
+**Considered and rejected:** A dialog wrapping the existing intake form preserved private acquisition but contradicted the requested direct-download behavior. It has been removed; the homepage no longer initializes its verification widget.
+
+**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. Keep the stable installer URL aligned with the release configuration. Trust/support links and regional telemetry stay intact.
+
+Shipped in #892.
+
 ### 2026-09-12 — Wire the shared issuer into Global workspace invitations
 
 **What changed:** `WorkspaceService.createInvitation` now issues a
@@ -531,9 +547,3 @@ policy without an owner. Additional account approval was explicitly rejected.
 Verify the supplied sender separately. Invitation dispatch, suppression, workspace
 integration and closing legacy public artifact paths remain future work. The two
 open guards do not constrain abuse or memory until the team sets values.
-
-## Landing page changelog
-
-### 2026-09-21 — Shared-thread landing page
-
-Replaced the email-only home page with the approved static collaboration concept: a large headline, one macOS Beta action, and a compact sample conversation. The CTA opens the existing Turnstile-protected request form in a native dialog, retaining its submission, retry, and acknowledgement behavior. This keeps outreach focused on the product story without changing private distribution into a public installer. Trust and support links remain in the footer. The hero reserves room for the complete demo introduction at laptop viewport heights, uses four type sizes, and has no animated chat or connector tiles.
