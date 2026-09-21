@@ -9,6 +9,7 @@ import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
+import { SidebarHeader, SidebarTitle } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -146,7 +147,9 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   };
   return <>
     <aside aria-label="Spaces sidebar" className={`spaces-sidebar browser-spaces-sidebar${open ? ' is-mobile-open' : ''}`}>
-      <div className="spaces-sidebar-titlebar"><span>Spaces</span></div>
+      <SidebarHeader className="spaces-sidebar-titlebar">
+        <SidebarTitle>Spaces</SidebarTitle>
+      </SidebarHeader>
       <nav aria-label="Shared spaces" className="spaces-sidebar-scroll">
         {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
         {directory.isPending && <p className="spaces-sidebar-empty">Loading spaces…</p>}
@@ -168,11 +171,11 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></footer>
     </aside>
     <NavigationFrame className={`channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}>
-      <div className="sidebar-titlebar channels-sidebar-titlebar window-drag">
-        {selectedSpace && <h2 className="channels-sidebar-title">{selectedSpace.name}</h2>}
+      <SidebarHeader className="sidebar-titlebar channels-sidebar-titlebar window-drag">
+        {selectedSpace && <SidebarTitle className="channels-sidebar-title">{selectedSpace.name}</SidebarTitle>}
         <IconButton className="mobile-only browser-navigation-close" label="Close navigation"
           onClick={onClose}><Menu size={16} /></IconButton>
-      </div>
+      </SidebarHeader>
       <div className="sidebar-scroll"><nav aria-label="Shared channels" className="sidebar-section">
       {!directory.isPending && selectedSpace && workstreams.length === 0 && <p>No shared channels in this space.</p>}
       {workstreams.map((workstream) => {

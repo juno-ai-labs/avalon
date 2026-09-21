@@ -392,7 +392,7 @@ describe('sidebar collapse motion', () => {
     // Each drag drops only its own channel. The other two are restated rather
     // than left out, so dragging one sidebar cannot silently stop the other, or
     // a rail closing on its own, from moving.
-    expect(rule('.workspace-shell:has(.channels-sidebar.is-resizing)'))
+    expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
       .toBe(' transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; ');
     expect(rule('.workspace-shell:has(.spaces-sidebar.is-resizing)'))
       .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width, --workstream-sidebar-width; ');
@@ -424,7 +424,10 @@ describe('sidebar collapse motion', () => {
 
 describe('sidebar layout motion', () => {
   it('gives every hierarchy sidebar the same structural geometry', () => {
-    expect(rule('.sidebar-header')).toContain('border-radius: 0;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('border-radius: 0;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('padding: 0 16px;');
+    expect(rule('.sidebar-row.sidebar-header:hover')).toContain('background-image: none;');
+    expect(rule('.sidebar-row.spaces-sidebar-titlebar')).toContain('var(--window-controls-inset, 12px)');
     expect(rule('.resizable-sidebar.is-compact .sidebar-header')).toContain('margin-inline: auto;');
     expect(rule('.sidebar-title')).toContain('var(--sidebar-layout-motion)');
     expect(rule('.sidebar-row')).toContain('height: 54px;');

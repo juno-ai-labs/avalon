@@ -136,7 +136,10 @@ toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, and
 `SidebarHorizontalLine` now provide the geometry inside that shell. A
 `SidebarHeader` is itself a 54px `SidebarRow` followed by a
 `SidebarHorizontalLine`, so header marks and the rows beneath them share the
-same expanded and compact alignment instead of approximating it with a border.
+same expanded and compact alignment instead of approximating it with a border;
+the desktop and browser hosts both consume that primitive. Before the first
+rail expands or resizes, the desktop shell now caps it to the width left after
+the protected conversation and compact Channel and Breakout rails.
 
 **Why:** Spaces had become the first level of the adjacent hierarchy without
 receiving the resize interaction the next two levels already offered. Copying
@@ -147,7 +150,9 @@ headers could still arrive at different positions during the same transition,
 so their structural geometry moved into the same package boundary too.
 
 **Consequences:** A Space width is a device-local preference like the other
-sidebar widths. Responsive calculations spend that remembered width. All three
+sidebar widths. Responsive calculations spend that remembered width when it
+fits, cap it when the complete hierarchy has less room, and hold every
+expansion control disabled when even the 240px minimum cannot fit. All three
 sidebar contents consume the shell's `--sidebar-layout-motion`, while a drag
 sets that channel to zero and temporarily removes only the dragged width from
 the workspace transition so its edge tracks the pointer without stopping

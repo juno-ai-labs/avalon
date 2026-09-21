@@ -20,6 +20,7 @@ import { uuidV7 } from '../lib/telemetry';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
@@ -55,6 +56,19 @@ export function sidebarConstraintThreshold(input: {
     ? input.spacesCollapsed ? COLLAPSED_SIDEBAR_WIDTH : input.spacesSidebarWidth
     : 0;
   return input.sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH + contextWidth + spacesWidth;
+}
+
+/** Room the first hierarchy rail may use after preserving every level to its right. */
+export function spacesSidebarAvailableWidth(input: {
+  pathname: string;
+  viewportWidth: number;
+}): number {
+  const channelOpen = openWorkstreamId(input.pathname) !== null;
+  const contextWidth = channelOpen ? COLLAPSED_SIDEBAR_WIDTH : 0;
+  return input.viewportWidth
+    - SIDEBAR_CONTENT_MIN_WIDTH
+    - COLLAPSED_SIDEBAR_WIDTH
+    - contextWidth;
 }
 
 interface AppShellProps extends PropsWithChildren {
@@ -405,20 +419,25 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const spacesSidebarWidth = useUiStore((state) => state.spacesSidebarWidth);
   const spacesEnabled = spacesEnabledForSession(session);
   const [spacesSidebarCollapsed, setSpacesSidebarCollapsed] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const measure = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  const spacesAvailableWidth = spacesSidebarAvailableWidth({
+    pathname: location.pathname,
+    viewportWidth,
+  });
+  const spacesSidebarConstrained = spacesEnabled && spacesAvailableWidth < MIN_SIDEBAR_WIDTH;
   const constraintThreshold = sidebarConstraintThreshold({
     pathname: location.pathname,
     sidebarWidth,
     spacesSidebarWidth,
-    spacesCollapsed: spacesSidebarCollapsed,
+    spacesCollapsed: spacesSidebarCollapsed || spacesSidebarConstrained,
     spacesEnabled,
   });
-  const [sidebarConstrained, setSidebarConstrained] = useState(() => window.innerWidth < constraintThreshold);
-  useEffect(() => {
-    const measure = (): void => setSidebarConstrained(window.innerWidth < constraintThreshold);
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [constraintThreshold]);
+  const sidebarConstrained = viewportWidth < constraintThreshold;
   // GrokBot protects 424px for the conversation. Its saved expanded width is
   // the other half of the breakpoint, so resizing the sidebar also moves the
   // point at which it becomes an icon rail. Existing work streams also need
@@ -715,7 +734,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // and a **New space**. No directory at all is a shell with no Space
         // navigation, which is what a guest gets.
         spaces={spacesEnabled ? spaces.data?.items ?? [] : undefined}
+        spacesAvailableWidth={spacesAvailableWidth}
         spacesCollapsed={spacesSidebarCollapsed}
+        spacesConstrained={spacesSidebarConstrained}
         onSpacesCollapsedChange={setSpacesSidebarCollapsed}
         inactiveSpaces={inactiveSpaces.data?.items ?? []}
         spacesReady={spacesReady}

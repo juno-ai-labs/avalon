@@ -31,7 +31,7 @@ import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
+import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
@@ -83,6 +83,10 @@ interface SidebarProps {
   spaces?: SpaceSummary[];
   /** Controlled by the shell so responsive geometry reads the rail on screen. */
   spacesCollapsed?: boolean;
+  /** Width left for Spaces after preserving compact sibling rails and content. */
+  spacesAvailableWidth?: number;
+  /** The viewport cannot hold even the minimum expanded Spaces rail. */
+  spacesConstrained?: boolean;
   onSpacesCollapsedChange?: (collapsed: boolean) => void;
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
@@ -1111,7 +1115,9 @@ export function Sidebar({
   workspace,
   automations,
   spaces,
+  spacesAvailableWidth = MAX_SIDEBAR_WIDTH,
   spacesCollapsed: controlledSpacesCollapsed,
+  spacesConstrained = false,
   onSpacesCollapsedChange,
   inactiveSpaces = [],
   spacesReady = true,
@@ -1165,6 +1171,7 @@ export function Sidebar({
   const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   const [uncontrolledSpacesCollapsed, setUncontrolledSpacesCollapsed] = useState(false);
   const spacesCollapsed = controlledSpacesCollapsed ?? uncontrolledSpacesCollapsed;
+  const spacesCompact = spacesCollapsed || spacesConstrained;
   const setSpacesCollapsed = useCallback((collapsed: boolean): void => {
     if (controlledSpacesCollapsed === undefined) setUncontrolledSpacesCollapsed(collapsed);
     onSpacesCollapsedChange?.(collapsed);
@@ -1199,9 +1206,9 @@ export function Sidebar({
   useLayoutEffect(() => {
     const shell = panel.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return;
-    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCollapsed ? `${COLLAPSED_SIDEBAR_WIDTH}px` : `${spacesSidebarWidth}px`);
+    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCompact ? `${COLLAPSED_SIDEBAR_WIDTH}px` : `${spacesSidebarWidth}px`);
     return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
-  }, [spaces, spacesCollapsed, spacesSidebarWidth]);
+  }, [spaces, spacesCompact, spacesSidebarWidth]);
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
@@ -2020,8 +2027,10 @@ export function Sidebar({
     <>
       {spaces !== undefined && <SpacesSidebar
         accountSlotRef={setAccountSlot}
+        availableWidth={spacesAvailableWidth}
         sidekickSlotRef={setSidekickSlot}
-        collapsed={spacesCollapsed}
+        collapsed={spacesCompact}
+        constrained={spacesConstrained}
         width={spacesSidebarWidth}
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
