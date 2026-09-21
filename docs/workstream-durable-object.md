@@ -1338,7 +1338,8 @@ Every root-run ending first proves its own authority: a live attempt proves its
 lease, a queued ending proves no attempt ever claimed the run and releases the
 exact loop execution when activation preceded cancellation, stale recovery
 matches the exact expired deadline it scanned on an unlinked legacy receipt,
-and a persistent-loop failure matches the exact loop execution. Once that fence passes,
+and a persistent-loop failure matches the exact execution under a still-live
+loop lease. Once that fence passes,
 `WorkstreamHarnessRunStorage` performs one synchronous terminal commit. It
 writes the terminal lifecycle event and receipt, closes the execution activity
 tree, removes the run's output, compaction, and inference-delay checkpoints,
@@ -1825,7 +1826,9 @@ The stale-receipt scan now excludes loop-linked runs: their expired attempt
 lease is not authority to split the run from the loop and provider protocol
 that own its recovery. A queued cancellation observed after loop activation
 likewise has to prove and release that exact execution before it may commit the
-terminal receipt.
+terminal receipt. Both the generic stale mutation and persistent-loop release
+prove time at the write boundary: an advisory scan cannot authorize a future
+deadline, and a matching execution identity cannot revive an expired lease.
 
 **Why:** “terminal” had been represented by several overlapping SQL recipes.
 Each new recovery path copied the run and sidebar writes but could omit another
