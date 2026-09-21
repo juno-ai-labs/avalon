@@ -17,7 +17,7 @@ import {
   MIN_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
 } from '../lib/sidebar-geometry';
-import { DragHint, IconButton } from './primitives';
+import { DragHint, IconButton, Tip } from './primitives';
 
 const EDGE_REVEAL_DISTANCE = 20;
 const KEYBOARD_STEP = 16;
@@ -148,17 +148,23 @@ export function SidebarCollapseFooter({
   leading?: ReactNode;
   onToggle: () => void;
 }): React.JSX.Element {
+  const toggle = <IconButton
+    aria-expanded={!compact}
+    className="window-no-drag"
+    disabled={constrained}
+    label={compact ? expandLabel : collapseLabel}
+    onClick={onToggle}
+    showTooltip={!constrained}
+  >
+    {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+  </IconButton>;
+
   return <SidebarFooter {...props} className={className} leading={leading}>
-    <IconButton
-      aria-expanded={!compact}
-      className="window-no-drag"
-      disabled={constrained}
-      label={compact ? expandLabel : collapseLabel}
-      onClick={onToggle}
-      title={constrained ? constrainedTitle : undefined}
-    >
-      {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-    </IconButton>
+    {constrained && constrainedTitle
+      ? <Tip label={constrainedTitle}>
+          <span className="sidebar-collapse-footer-toggle" tabIndex={0}>{toggle}</span>
+        </Tip>
+      : toggle}
   </SidebarFooter>;
 }
 
