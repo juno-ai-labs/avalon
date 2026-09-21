@@ -133,10 +133,12 @@ desktop, from `@rally/ui`. The browser's versioned navigation directory contains
 only Space marks and containment edges for Channels that their canonical
 WorkstreamDO has independently re-authorized. A child-only share names its Channel
 so the Breakout can be placed correctly, but still omits Main and every unshared
-Breakout. Selecting a Space filters the Channel rail and opens its first authorized
-conversation. Workspace identity uses the existing account/badge treatment; no
-workspace icon/color settings are introduced. The browser does not install desktop
-background subscriptions. See [shared UI](shared-ui.md).
+Breakout. Selecting a Space filters the Channel rail and opens the first active
+authorized conversation across its Channels, falling back to archived content only
+when the Space has no active conversation. A Channel with no visible Space placement
+stays reachable in a local **Shared channels** group. Workspace identity uses the
+existing account/badge treatment; no workspace icon/color settings are introduced.
+The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
 
 ### Shared collaboration transport
 
@@ -401,10 +403,13 @@ fields. Deriving Space placement in the browser would either require the member
 directory or duplicate authority outside WorkspaceDO.
 
 **Consequences:** `/sharing/navigation` is a separately versioned browser read;
-the compatibility directory remains unchanged. The WorkspaceDO accepts only
-current scope-grant candidates and returns no Space participants, defaults,
-scope or lifecycle fields. The final service response is still fenced by the
-guest relationship revision.
+the compatibility directory remains unchanged, including its nullable Channel
+title for a child-only share. The WorkspaceDO accepts only current scope-grant
+candidates, applies the ordinary per-viewer Space visibility predicate, and
+returns no Space participants, defaults, scope or lifecycle fields. The final
+service response is still fenced by the guest relationship revision, and the
+browser uses a local fallback rather than dropping an admitted Channel when no
+visible Space contains it.
 
 ### 2026-09-19 — Fill in the mailbox an opaque invitation was sent to
 

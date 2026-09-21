@@ -28,3 +28,9 @@ a { color: inherit; }
 .browser-navigation-dialog.browser-workspace { position: fixed; inset: 0 auto 0 0; width: min(540px, 100vw); flex: none; z-index: 100; --spaces-sidebar-width: min(220px, 42vw); --av-cmp-sidebar-width: min(320px, 58vw); }
 
 .browser-navigation-scrim { background: var(--av-sys-color-scrim-default); position: fixed; inset: 0; z-index: 99; }
+
+@media (max-width: 920px) {
+  .browser-navigation-dialog.browser-workspace.workspace-shell { --av-cmp-sidebar-width: 58vw !important; --spaces-sidebar-width: 42vw; }
+  .browser-navigation-dialog.browser-workspace > .browser-spaces-sidebar { width: var(--spaces-sidebar-width); }
+  .browser-navigation-dialog.browser-workspace > .browser-channels-sidebar { width: var(--av-cmp-sidebar-width) !important; }
+}
