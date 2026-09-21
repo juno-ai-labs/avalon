@@ -2021,9 +2021,10 @@ rows. It draws a dedicated Space sidebar, an adjacent Channel sidebar filtered
 by the selected Space, and the existing Channel context sidebar for Main and
 Breakouts. Selecting a row compacts the level it came from; every compact level
 keeps the same 96px square-mark geometry and can be reopened manually. Space
-rows use the Channel hover-card language with scope and Channel count, Breakout
-rows use the branch icon instead of the enter arrow, and **New breakout** uses
-the blue enter mark instead of a generic plus. The original left sidebar keeps
+rows use the Channel hover-card language with scope and Channel count, each
+Breakout row shows its stored icon and colour or derives a stable fallback from
+its identity, and **New breakout** uses the blue enter mark instead of a generic
+plus. The original left sidebar keeps
 the original Organization-level Search and New Channel controls and their
 compact motion, standalone Sidekick shortcuts, and the user footer. The newly
 inserted Channel sidebar contains only the selected Space's Channels and uses

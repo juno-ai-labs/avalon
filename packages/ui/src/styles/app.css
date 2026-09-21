@@ -3286,15 +3286,16 @@ pre {
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
-   differs — the Channel's own tinted symbol for Main, the branch mark for a
-   Breakout, and the blue enter mark for the row that starts one. */
+   differs — Main and each Breakout have their own stable tinted symbol, while
+   the blue enter mark belongs to the row that starts a new Breakout. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
 /* A grid keeps every room mark centered in the same square slot. */
 .workstream-context-mark { display: grid; flex: 0 0 36px; height: 36px; place-items: center; }
 .workstream-context-mark > * { grid-area: 1 / 1; }
-/* The branch is the Breakout identity, so it uses readable muted ink rather
-   than the sidebar's hairline colour. */
+/* A not-yet-reserved Breakout has no id from which to derive its stable mark,
+   so its pending row temporarily uses a readable branch rather than the
+   sidebar's hairline colour. */
 .workstream-breakout-icon { color: var(--av-sys-color-text-muted); }
 .workstream-new-breakout-icon { color: var(--av-sys-color-accent-base); }
 .workstream-new-substream,

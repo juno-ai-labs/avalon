@@ -153,20 +153,18 @@ describe('WorkstreamSidebar', () => {
     /></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: /Launch risks/ })).toHaveAttribute('aria-current', 'page');
     const child = screen.getByRole('button', { name: /Launch risks/ });
-    // Breakouts use their own square branch mark instead of the old enter
-    // arrow, in the same icon slot Main uses.
-    expect(child.querySelector('.workstream-context-mark > .lucide-git-branch')).not.toBeNull();
+    // A Breakout derives its own stable icon and colour from its identity, in
+    // the same icon slot Main uses. It does not borrow the Channel's mark.
+    expect(child.querySelector('.workstream-context-mark > .workstream-mark')).not.toBeNull();
     expect(child.querySelector('.tabler-icon-border-corner-pill')).toBeNull();
     expect(child.querySelector('.avatar')).toBeNull();
-    // Never a conversation glyph: the Breakout mark is the stable hierarchy
-    // icon and the payload carries no appearance of its own.
-    expect(child.querySelector('.workstream-mark')).toBeNull();
+    expect(child.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-rose)' });
     const sidebar = screen.getByRole('complementary');
     const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Go to breakout: Launch risks', 'New breakout',
     ]);
-    expect(sidebar.querySelectorAll('.lucide-git-branch')).toHaveLength(1);
+    expect(sidebar.querySelectorAll('.lucide-git-branch')).toHaveLength(0);
     // The blue enter mark starts a Breakout; the generic plus is no longer
     // used in this hierarchy rail.
     expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
@@ -175,15 +173,33 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New breakout' }));
     expect(onNewSubstream).toHaveBeenCalledOnce();
-    // Making a selection automatically compacts this level; the same branch
+    // Making a selection automatically compacts this level; the Breakout's own
     // icon remains legible in the square mark.
     expect(sidebar).toHaveClass('is-compact');
-    expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.lucide-git-branch')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-mark')).not.toBeNull();
     expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
     fireEvent.click(child);
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
+  });
+
+  it('gives each breakout its own stable generated mark', () => {
+    setup({ ...workstream, privateChildren: [
+      { substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks' },
+      { substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: 'Launch follow-ups' },
+      { substreamId: asSubstreamId('00000000-0000-7000-8000-000000000097'), title: 'Launch visuals', appearance: { icon: 'rocket', color: 'purple' } },
+    ] });
+
+    const risks = screen.getByRole('button', { name: 'Go to breakout: Launch risks' }).querySelector('.workstream-mark');
+    const followUps = screen.getByRole('button', { name: 'Go to breakout: Launch follow-ups' }).querySelector('.workstream-mark');
+    const visuals = screen.getByRole('button', { name: 'Go to breakout: Launch visuals' }).querySelector('.workstream-mark');
+    expect(risks).toHaveClass('lucide-wand-sparkles');
+    expect(risks).toHaveStyle({ color: 'var(--av-sys-color-project-rose)' });
+    expect(followUps).toHaveClass('lucide-orbit');
+    expect(followUps).toHaveStyle({ color: 'var(--av-sys-color-project-green)' });
+    expect(visuals).toHaveClass('lucide-rocket');
+    expect(visuals).toHaveStyle({ color: 'var(--av-sys-color-project-purple)' });
   });
 
   it('holds the place of a breakout being created, last and without a destination', () => {
@@ -287,7 +303,7 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar).toHaveClass('is-compact');
     // A lone space is wire-legal, and an empty mark square says nothing at all.
     expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
-    expect(sidebar.querySelector('.lucide-git-branch')).not.toBeNull();
+    expect(sidebar.querySelector('.workstream-mark')).not.toBeNull();
   });
 
   it('collapses for available pane width without overwriting the manual preference', () => {

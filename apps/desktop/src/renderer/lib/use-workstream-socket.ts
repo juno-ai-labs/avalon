@@ -79,7 +79,11 @@ import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, Workstr
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
-import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import {
+  applyBreakoutAppearanceReceipt,
+  captureBreakoutAppearanceUpdate,
+  useWorkstreamControlSocket,
+} from './use-workstream-control-socket';
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
@@ -1202,6 +1206,9 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The channel is no longer available.', 409, 'workstream_socket_unavailable');
+        const breakoutUpdate = substreamId === '0'
+          ? null
+          : captureBreakoutAppearanceUpdate(queryClient, parentId, substreamId, appearance);
         const submitted = submitSubstreamCommand(command);
         // Read after the submit, which starts a connection attempt when none is
         // open and bumps the generation as it does.
@@ -1219,7 +1226,17 @@ export function useWorkstreamSocket(
         // reconnect's snapshot carries the current value, so the patch is
         // simply not needed there, and applying it could put the older choice
         // back with nothing left to correct it.
-        if (sentOnGeneration === connectGeneration) patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
+        if (sentOnGeneration === connectGeneration) {
+          if (substreamId === '0') {
+            patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
+          } else {
+            // A Breakout is listed by its parent rather than in the top-level
+            // Channel directory. The receipt is its durable commit, so move
+            // that one row immediately while the child-to-parent projection
+            // follows and eventually replaces the whole versioned roster.
+            applyBreakoutAppearanceReceipt(queryClient, parentId, substreamId, breakoutUpdate!);
+          }
+        }
       });
       appearanceQueue = result.catch(() => undefined);
       return result;

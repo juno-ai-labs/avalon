@@ -1111,6 +1111,38 @@ describe("conversation parent contract", () => {
     )).toBe("Private room");
   });
 
+  it("projects a private child's stored appearance into its parent-owned row", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const parent = roomParent(PERSONAL_ROOM_ID);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "appearance-child");
+    const response = await post(conversation(PERSONAL_ROOM_ID, substreamId), "/internal/product", {
+      operation: "set_appearance",
+      auth: AUTH,
+      operationId: crypto.randomUUID(),
+      patch: { icon: "rocket", color: "purple" },
+    });
+    expect(response.status).toBe(200);
+    const waterlineBeforeAppearance = await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, substreamId));
+
+    expect(await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline)).toBeGreaterThan(waterlineBeforeAppearance);
+    expect((await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
+    })).children).toEqual([expect.objectContaining({
+      substreamId,
+      title: "Private branch",
+      appearance: { icon: "rocket", color: "purple" },
+    })]);
+  });
+
   it("WorkstreamDO admits the creator of a personal room before the child's first effect arrives", async () => {
     // What creation looks like from the desktop's side: `POST /workstreams`
     // returns and the client opens the room at once. The parent has reserved

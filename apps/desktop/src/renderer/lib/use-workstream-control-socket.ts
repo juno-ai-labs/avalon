@@ -1,14 +1,19 @@
-import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
+import {
+  safeParseSocketEvent,
+  isUnknownSocketEvent,
+  type WorkstreamAppearance,
+  type WorkstreamAppearancePatch,
+} from "@rally/contracts";
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamControlSocketEventSchema,
   type WorkstreamControlMetadata,
 } from '@rally/contracts';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type RallyApi } from './api';
-import type { WorkstreamSummary } from './types';
+import type { WorkstreamDetail, WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
 import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
 import {
@@ -22,7 +27,7 @@ import {
   uuidV7,
   workstreamFeedOpenAttemptId,
 } from './telemetry';
-import { evictCachedWorkstream } from './workstreams-cache';
+import { evictCachedWorkstream, workstreamDetailQueryKey } from './workstreams-cache';
 import { retainConversationChildren } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { retainQueryData } from './retain-query-data';
@@ -32,7 +37,102 @@ type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTick
 const HEARTBEAT_MS = 50_000;
 const PONG_TIMEOUT_MS = 15_000;
 
-export type WorkstreamChildDirectory = Pick<WorkstreamControlMetadata, 'privateChildren' | 'privateChildrenWaterline' | 'stateVersion'>;
+interface BreakoutAppearanceOverlay {
+  baseline: WorkstreamAppearance | undefined;
+  expected: WorkstreamAppearance;
+}
+
+export type WorkstreamChildDirectory = Pick<WorkstreamControlMetadata, 'privateChildren' | 'privateChildrenWaterline' | 'stateVersion'> & {
+  /** Receipt-backed rows waiting for the parent's authoritative projection. */
+  appearanceOverlays?: Record<string, BreakoutAppearanceOverlay>;
+};
+
+export interface BreakoutAppearanceUpdate {
+  baseline: WorkstreamAppearance | undefined;
+  expected: WorkstreamAppearance;
+}
+
+function sameAppearance(left: WorkstreamAppearance | undefined, right: WorkstreamAppearance | undefined): boolean {
+  return left?.icon === right?.icon && left?.color === right?.color
+    && (left !== undefined) === (right !== undefined);
+}
+
+/**
+ * Bind a partial choice to the exact parent row it was made against. The child
+ * detail supplies fields an older directory row has not projected yet.
+ */
+export function captureBreakoutAppearanceUpdate(
+  queryClient: QueryClient,
+  parentId: string,
+  substreamId: string,
+  patch: WorkstreamAppearancePatch,
+): BreakoutAppearanceUpdate {
+  const directory = queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', parentId]);
+  const baseline = directory?.privateChildren?.find((child) => child.substreamId === substreamId)?.appearance;
+  const detail = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(parentId, substreamId));
+  const effective = baseline ?? detail?.appearance ?? { icon: null, color: null };
+  return {
+    baseline,
+    expected: {
+      icon: 'icon' in patch ? patch.icon ?? null : effective.icon,
+      color: 'color' in patch ? patch.color ?? null : effective.color,
+    },
+  };
+}
+
+/** Apply a child receipt only while its exact starting row is still current. */
+export function applyBreakoutAppearanceReceipt(
+  queryClient: QueryClient,
+  parentId: string,
+  substreamId: string,
+  update: BreakoutAppearanceUpdate,
+): void {
+  queryClient.setQueryData<WorkstreamChildDirectory>(['workstream-children', parentId], (current) => {
+    if (!current?.privateChildren) return current;
+    const child = current.privateChildren.find((candidate) => candidate.substreamId === substreamId);
+    if (!child || !sameAppearance(child.appearance, update.baseline)) return current;
+    return {
+      ...current,
+      privateChildren: current.privateChildren.map((candidate) => candidate.substreamId === substreamId
+        ? { ...candidate, appearance: update.expected }
+        : candidate),
+      appearanceOverlays: {
+        ...current.appearanceOverlays,
+        [substreamId]: update,
+      },
+    };
+  });
+}
+
+function reconcileBreakoutAppearanceOverlays(
+  current: WorkstreamChildDirectory | undefined,
+  incoming: WorkstreamChildDirectory,
+): WorkstreamChildDirectory {
+  if (!current?.appearanceOverlays || !incoming.privateChildren) return incoming;
+  const overlays = { ...current.appearanceOverlays };
+  const incomingIds = new Set<string>(incoming.privateChildren.map((child) => child.substreamId));
+  for (const substreamId of Object.keys(overlays)) {
+    if (!incomingIds.has(substreamId)) delete overlays[substreamId];
+  }
+  const privateChildren = incoming.privateChildren.map((child) => {
+    const overlay = overlays[child.substreamId];
+    if (!overlay) return child;
+    if (sameAppearance(child.appearance, overlay.expected)) {
+      delete overlays[child.substreamId];
+      return child;
+    }
+    if (sameAppearance(child.appearance, overlay.baseline)) {
+      return { ...child, appearance: overlay.expected };
+    }
+    delete overlays[child.substreamId];
+    return child;
+  });
+  return {
+    ...incoming,
+    privateChildren,
+    ...(Object.keys(overlays).length > 0 ? { appearanceOverlays: overlays } : {}),
+  };
+}
 
 function reconnectDelay(attempt: number): number {
   const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
@@ -219,7 +319,11 @@ export function useWorkstreamControlSocket(
             || (incoming.authorityGeneration === stored.authorityGeneration
               && (metadata.privateChildrenWaterline ?? incoming.viewerWaterline)
                 < (current?.privateChildrenWaterline ?? stored.viewerWaterline)))) return current;
-          return { privateChildren: metadata.privateChildren, privateChildrenWaterline: metadata.privateChildrenWaterline, stateVersion: incoming };
+          return reconcileBreakoutAppearanceOverlays(current, {
+            privateChildren: metadata.privateChildren,
+            privateChildrenWaterline: metadata.privateChildrenWaterline,
+            stateVersion: incoming,
+          });
         });
         // Prune from the roster the guard above accepted, which may be the
         // one already held rather than this frame's: a stale frame that lists
