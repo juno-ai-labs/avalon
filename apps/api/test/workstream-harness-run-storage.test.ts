@@ -796,9 +796,14 @@ describe("reaping a stale root", () => {
     ).one()).toEqual({ run_id: OTHER, attempt_id: "attempt-other" });
   });
 
-  it("leaves activity and checkpoints untouched when the stale fence no longer matches", () => {
+  it("leaves all subordinate state untouched when the stale fence is not authoritative", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
+    seedRun(sql, OTHER, {
+      parentRunId: RUN,
+      parentToolCallId: "tool-child",
+      chainRootRunId: RUN,
+    });
     storage.claimAttempt({
       ...fence,
       runId: RUN,
@@ -815,18 +820,7 @@ describe("reaping a stale root", () => {
       NOW,
       NOW,
     );
-    sql.exec(
-      `INSERT INTO active_output_turns
-         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
-          durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
-          seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
-       VALUES (?, 1, 'turn-1', 1, '0', 'streaming', 1, 1, 1, ?, '[]', 0, ?, ?, ?)`,
-      RUN,
-      RUN,
-      NOW,
-      NOW,
-      NOW,
-    );
+    seedTransientCheckpoints(sql, RUN, fence.attemptId, 1);
 
     expect(storage.reapStaleRoot({
       runId: RUN,
@@ -836,12 +830,33 @@ describe("reaping a stale root", () => {
       now: NOW + 60_001,
     })).toEqual({ outcome: "not_stale" });
 
+    expect(storage.reapStaleRoot({
+      runId: RUN,
+      attemptId: "attempt-1",
+      leaseExpiresAt: NOW + 60_000,
+      lifecycleEventId: "event-terminal-live-deadline",
+      now: NOW + 59_999,
+    })).toEqual({ outcome: "not_stale" });
+
     expect(sql.exec(
       `SELECT lifecycle_state, revision FROM transcript_activities WHERE activity_id = ?`,
       `${RUN}:activity`,
     ).one()).toEqual({ lifecycle_state: "active", revision: 1 });
-    expect(sql.exec(`SELECT status FROM active_output_turns WHERE run_id = ?`, RUN).one())
-      .toEqual({ status: "streaming" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_output_turns WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_agent_compaction WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM inference_delay_status WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'terminal'`,
+      RUN,
+    ).one()).toEqual({ count: 0 });
+    expect(storage.run({ runId: OTHER })).toMatchObject({
+      cancellation_requested_at: null,
+      cancellation_reason: null,
+    });
     expect(sql.exec(`SELECT status, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
       .toEqual({ status: "running", lease_expires_at: NOW + 60_000 });
   });
@@ -1413,6 +1428,15 @@ describe("ending a run that was never claimed", () => {
     });
     expect(loops.loop()).toMatchObject({ status: "executing", active_execution_id: RUN });
 
+    sql.exec(`UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`, NOW);
+    expect(storage.terminalizeQueuedRun({ ...stopped, loopExecutionFence }))
+      .toEqual({ outcome: "ownership_lost" });
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "running",
+      terminalized_at: null,
+    });
+
+    sql.exec(`UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`, NOW + 60_000);
     expect(storage.terminalizeQueuedRun({ ...stopped, loopExecutionFence }))
       .toEqual({ outcome: "terminalized" });
     expect(storage.run({ runId: RUN })).toMatchObject({

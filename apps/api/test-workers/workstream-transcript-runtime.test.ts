@@ -1698,6 +1698,22 @@ describe("work-stream transcript on workerd SQLite", () => {
           };
           settleResidualReceiptsAfterFailure(input: WorkstreamWorkflowInput): Promise<void>;
         };
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = 1 WHERE id = 1`,
+        );
+        await expect(resident.product.recordWorkflowFailed(
+          RUN_ID,
+          { code: "agent_loop_failed", message: "Rally could not complete this execution" },
+          { loopId: LOOP_ID, executionId: RUN_ID, executionEpoch: 1, leaseOwner: OWNER },
+        )).rejects.toThrow("workstream_run_failure_fenced");
+        expect(state.storage.sql.exec<{ status: string } & Record<string, SqlStorageValue>>(
+          `SELECT status FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toEqual({ status: "running" });
+        state.storage.sql.exec(
+          `UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`,
+          Date.now() + 60_000,
+        );
         await resident.product.recordWorkflowFailed(
           RUN_ID,
           { code: "agent_loop_failed", message: "Rally could not complete this execution" },
