@@ -410,7 +410,11 @@ export function createTerminalResourceBridge(
    */
   const attachPublication = async (
     context: { workspaceId: string; workstreamId: string },
-    input: { resourceId: string; attachedByUserId: string | null },
+    input: {
+      resourceId: string;
+      attachedByUserId: string | null;
+      eventType?: "resource_attached" | "resource_updated";
+    },
     internalProviderResourceId?: string | undefined,
   ) => {
     const workstreamId = publicationWorkstream(context, internalProviderResourceId);
@@ -978,7 +982,13 @@ export function createTerminalResourceBridge(
           derivativeStatus,
           harnessRunId: context.harnessRunId,
         });
-        await relink();
+        await attachPublication(context, {
+          resourceId: settled.id,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+          eventType: "resource_updated",
+        }, input.providerResourceId);
         return publishedOutput(updated, bytes.byteLength);
       }
 
@@ -1268,6 +1278,18 @@ export function createTerminalResourceBridge(
         region: env.AVALON_REGION,
         manifest: written.manifest,
       });
+      // The resource row and the public artifact pointer are separate durable
+      // authorities. Advertise a revision only after both name the new version,
+      // so a client refreshing in response cannot resolve the previous site.
+      if (settled) {
+        await attachPublication(context, {
+          resourceId,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+          eventType: "resource_updated",
+        });
+      }
 
       return siteOutput(env, {
         id: resourceId,
