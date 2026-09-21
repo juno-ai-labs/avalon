@@ -1168,7 +1168,8 @@ pre {
   min-width: 0;
 }
 .sidebar-title-header-icon {
-  display: none;
+  display: grid;
+  flex: 0 0 28px;
   height: 28px;
   place-items: center;
   width: 28px;
