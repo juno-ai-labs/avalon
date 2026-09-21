@@ -38,8 +38,10 @@ idempotent retries do not count as new setups. Verified provider delivery remain
 the installation status, not the setup telemetry result.
 
 If setup reserves an installation but its response is lost, Settings reloads the
-workspace connections and opens the saved installation. It does not change the
-attempt identity and submit corrected inputs against that reservation. A failed
+workspace connections and settles on the reservation it finds: for Ashby it
+opens that installation's window, and for Granola, which has none, it closes
+setup and leaves the refreshed row. Either way it does not change the attempt
+identity and submit corrected inputs against that reservation. A failed
 recovery lookup blocks further setup until Find existing installation succeeds.
 The main management window shows plain connection status, the last event, and
 explicit Test; trouble states offer Get help. Technical diagnostics, provider IDs,
@@ -70,10 +72,11 @@ or `failed` because the provider refused it or nothing was sent — settles as
 removed in that transaction; one whose create outcome is unknown waits for the
 administrator. The connections list then shows the disconnected connection
 only while its installation is unsettled: not yet `disconnected`, and its
-cleanup credential not forgotten. Manage events is reachable only from the row,
-so the row stays for a removal still queued, a webhook only the administrator
-can find, or a disconnect that never reached the object, and leaves once the
-removal settles or the administrator forgets the cleanup credential. Only a
+cleanup credential not forgotten. Manage events, where it is offered, is
+reachable only from the row, so the row stays for a removal still queued, a
+webhook only the administrator can find, or a disconnect that never reached the
+object, and leaves once the removal settles or the administrator forgets the
+cleanup credential. Only a
 claimed removal step for an exact recorded provider ID can obtain that snapshot.
 It cannot refresh tokens, discover tools, create, update, or reactivate a connection.
 Generation and dispatched-intent checks precede provider I/O and settlement.
@@ -89,7 +92,8 @@ failure cannot skip that teardown. A host-side cleanup authorization/decryption
 failure is failed work; only dispatch to the provider makes its outcome uncertain.
 Expected installation action refusals return stable 404/409 API errors.
 
-An administrator can replace the API key in Manage events → Advanced. Read-only provider
+An administrator can replace the API key in Manage events → Advanced, for the
+providers that window is offered over. Read-only provider
 validation precedes an atomic replacement fenced by installation generation.
 Credential settlement advances that generation, and replacement reads the
 generation before reloading the envelope it will preserve. Existing signing material and registration IDs
@@ -105,6 +109,28 @@ administrator reading a product's settings is not being asked to run a webhook
 console — so it lives here instead. Automatic rotation is reserved for facets
 with authenticated cutover evidence.
 
+### Who gets a window
+
+**`ConnectorEventConsoleProviders` in `@rally/contracts` is the list, and Ashby
+is the only entry.** It is a different question from
+`ConnectorInstallationProviders`, which says the provider has an installation at
+all: every installation behind either list keeps its subscriptions, its ingress
+and its activity, and the runner, the object and the maintenance paths described
+above do not read the console list at all. Only the settings row does.
+
+Ashby is on it because its administrator is the person who issued the key and
+goes to the Ashby dashboard when a subscription needs inspecting, so a window
+naming the exact destination and registration ID is the thing they came for.
+Granola and Fireflies are not: their installations settle without anybody
+looking, so the window offered a status line and a Test over machinery no
+administrator had asked to see.
+
+What a provider loses with the window is the manual recovery beside it —
+replacing the organization API key, reconciling an unconfirmed create, retrying
+cleanup, Test itself. For Granola, a key that must change is now a connection
+made afresh: disconnect and connect again, which is the same sequence the
+providers without verified signing cutover already walk.
+
 ### The all-manual provider
 
 **Fireflies accepts no new workspace connection.** One administrator's key is
@@ -112,7 +138,8 @@ every member's read of every meeting it can see, so the scope is closed in
 `connectableScopes`; [`connectors.md`](connectors.md#fireflies) has why. The
 installations behind that door keep running, which is why this section is
 written in the present tense — but nothing creates another, and the desktop
-offers no **Manage events** window over one.
+offers no **Manage events** window over one, as it now offers none over
+Granola's.
 
 Fireflies is the worked example of a provider that can automate none of this.
 It exposes no webhook create, inspect, update or delete operation anywhere in
@@ -332,6 +359,41 @@ and actual operator execution remain outside this implementation task.
 Only the reviewed version present in the deployed provider declaration is accepted.
 Unknown provider outcomes and not-yet-adopted Granola connections report customer
 action. An administrator's explicit Test adopts an existing Granola connection.
+
+### 2026-09-21 — The events console is Ashby's alone
+
+**What changed:** `ConnectorEventConsoleProviders` in `@rally/contracts`
+declares which providers settings shows an events window over, and Ashby is its
+only entry. A Granola organization connection's row no longer offers **Manage
+events**, and Granola setup that loses its response now closes on the
+installation it recovered instead of opening that window onto it. Nothing about
+the installation itself changed: the runner, the ingress, the maintenance paths
+and the object's authorization read the installation-provider enum, never this
+list.
+
+**Why:** Granola registers, inspects, updates and removes its webhooks through
+its own API, so the window over it settled on its own and showed a status line,
+a last-event timestamp and a Test over machinery nobody had asked to see — a
+webhook console rather than a product, which is the same judgement that removed
+subscription checkboxes from setup and the signing-key guidance from the window.
+The desktop already had to answer "does this provider still get the window" for
+Fireflies, and answered it by reading the catalog's scopes: true only by
+coincidence, since Fireflies' window went away with its workspace scope while
+Granola keeps its scope and loses the window.
+
+**Considered and rejected:** Keeping the window and hiding the controls that do
+not apply, which leaves an administrator opening a dialog to read one sentence.
+Closing Granola's workspace scope the way Fireflies' was closed — that is a
+decision about who may read whose meetings, not about a console, and nobody has
+made it.
+
+**Consequences:** A Granola organization connection has no in-product way to
+replace its API key, reconcile an unconfirmed create, retry cleanup, or run
+Test; its row keeps **Delete** and **Disconnect**. A workspace whose Granola key
+must change disconnects and connects again. The API paths are unchanged and
+still serve those actions, so restoring the window is adding one string back to
+the list. A future provider with an installation gets no window unless it is
+named there, which is the decision being asked for rather than a default.
 
 ### 2026-09-16 — A removed connection leaves the list once its installation is settled
 
