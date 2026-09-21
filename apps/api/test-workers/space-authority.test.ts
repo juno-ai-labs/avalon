@@ -492,6 +492,21 @@ function collectSpaceSnapshots(socket: WebSocket): readonly (readonly string[])[
   return seen;
 }
 
+/** Every directory invalidation this connected client receives. */
+function collectDirectorySyncs(socket: WebSocket): { readonly raw: string[]; readonly topics: string[][] } {
+  const raw: string[] = [];
+  const seen: string[][] = [];
+  socket.addEventListener("message", (event: MessageEvent) => {
+    const payload = String(event.data);
+    raw.push(payload);
+    const decoded = WorkspaceSocketSyncEventSchema.safeParse(JSON.parse(payload));
+    if (decoded.success && decoded.data.topics.includes("workstream_directory")) {
+      seen.push([...decoded.data.topics]);
+    }
+  });
+  return { raw, topics: seen };
+}
+
 /** Give a socket that should already hold `count` nudges the chance to. */
 async function settleNudges(seen: readonly (readonly string[])[], count: number): Promise<void> {
   for (let attempt = 0; attempt < 200 && seen.length < count; attempt += 1) {
@@ -1333,6 +1348,45 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [second] });
+  });
+
+  it("given a pinned placement, when it is removed, then connected directories lose only that Space's pin", async () => {
+    const removedSpace = await reserve("Company", "workspace");
+    const retainedSpace = await reserve("Recruiting", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(removedSpace, CHANNEL_A);
+    await place(retainedSpace, CHANNEL_A);
+    for (const spaceId of [removedSpace, retainedSpace]) {
+      await workspace().pinWorkstream({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        spaceId,
+        workstreamId: CHANNEL_A,
+      });
+    }
+
+    const { socket } = await connectViewer(OWNER, "f001");
+    const directorySyncs = collectDirectorySyncs(socket);
+    try {
+      await displace(removedSpace, CHANNEL_A, { scope: "workspace", participantUserIds: [] });
+      await settleNudges(directorySyncs.topics, 1);
+
+      expect(directorySyncs.topics, directorySyncs.raw.join("\n")).toHaveLength(1);
+      await expect(workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        limit: 20,
+        includeSystem: false,
+      })).resolves.toMatchObject({
+        items: [{
+          id: CHANNEL_A,
+          spaceIds: [retainedSpace],
+          spacePins: [{ spaceId: retainedSpace, position: 0 }],
+        }],
+      });
+    } finally {
+      socket.close();
+    }
   });
 
   /**

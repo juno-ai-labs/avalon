@@ -365,6 +365,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
+    spacePins: workstream.spacePins.map((pin) => ({ ...pin })),
     // Only WorkspaceDO owns this field. Child responses omit it and must not
     // erase a newer directory-waterlined visit when callers merge the result.
     ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
@@ -1462,18 +1463,21 @@ export class RallyApi {
   }
 
   /**
-   * Pin a work stream for the signed-in person, across every device they use.
+   * Pin a Channel placement for the signed-in person, across every device they use.
    *
-   * All three pin calls answer with the whole pinned list in its stored order,
-   * so the caller replaces what it holds rather than reasoning about which row
-   * moved — see {@link ApiClient.reorderWorkstreamPins}.
+   * All three pin calls answer with the selected Space's whole pinned list in
+   * its stored order, so the caller replaces only that Space's positions rather
+   * than reasoning about which row moved — see {@link ApiClient.reorderWorkstreamPins}.
    */
-  async pinWorkstream(id: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT');
+  async pinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT', { spaceId });
   }
 
-  async unpinWorkstream(id: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'DELETE');
+  async unpinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(
+      `/workstreams/${encodeURIComponent(id)}/pin?spaceId=${encodeURIComponent(spaceId)}`,
+      'DELETE',
+    );
   }
 
   /**
@@ -1483,8 +1487,8 @@ export class RallyApi {
    * as dense positions, and the list it sends back is the one to render. Ids
    * that have been unpinned elsewhere are ignored rather than refused.
    */
-  async reorderWorkstreamPins(workstreamIds: string[]): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { workstreamIds });
+  async reorderWorkstreamPins(spaceId: string, workstreamIds: string[]): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { spaceId, workstreamIds });
   }
 
   private async readPinnedWorkstreams(

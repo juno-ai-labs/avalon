@@ -590,17 +590,28 @@ export const WorkstreamSchema = z.object({
     dueAt: TimestampSchema,
     promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
   }).nullable().default(null),
-  /**
-   * Where this work stream sits in *the reader's* pinned list, or `null` when
-   * they have not pinned it. Per-viewer the way the read-state fields above are:
-   * the same row is pinned for one member and not for another, so a client must
-   * never treat it as a property of the work stream itself.
-   *
-   * A position is an index into a dense ascending run, so it is only meaningful
-   * relative to the reader's other pins and changes whenever they rearrange
-   * them. Sort by it; do not store it as an identity.
-   */
+  /** Retired workspace-wide pin position. New servers always return `null`. */
   pinPosition: z.number().int().nonnegative().nullable().default(null),
+  /**
+   * This viewer's pin positions for this Channel, one per Space placement.
+   * A Channel in several Spaces can be pinned independently in any subset of
+   * them; each position is meaningful only among pins carrying the same
+   * `spaceId`.
+   */
+  spacePins: z.array(z.strictObject({
+    spaceId: SpaceIdSchema,
+    position: z.number().int().nonnegative(),
+  })).superRefine((pins, context) => {
+    const seen = new Set<string>();
+    pins.forEach((pin, index) => {
+      if (seen.has(pin.spaceId)) context.addIssue({
+        code: "custom",
+        path: [index, "spaceId"],
+        message: "Space pin ids must be unique",
+      });
+      seen.add(pin.spaceId);
+    });
+  }).default([]),
   /** Workspace-owned visit time; omitted by older servers and child-owned responses. */
   lastAccessedAt: TimestampSchema.nullable().optional(),
   /**
@@ -1817,7 +1828,8 @@ export const UpdateWorkstreamRequestSchema = z.object({
  * than in the name of the surface that happened to build it.
  *
  * Both timestamps follow the ordinary half-open range convention. `pinned`
- * is viewer-specific; omitting it includes both pinned and unpinned rows.
+ * is viewer- and Space-specific; omitting it includes both pinned and unpinned
+ * rows, and naming it requires the Space whose placement is being selected.
  *
  * The same range selects notes for `archive`, because a sidebar recency group
  * holds both and a person archiving one is archiving what they can see under
@@ -1832,6 +1844,7 @@ export const WorkstreamBatchFilterSchema = z.strictObject({
     before: TimestampSchema.optional(),
   }).optional(),
   pinned: z.boolean().optional(),
+  spaceId: SpaceIdSchema.optional(),
   includeSystem: z.boolean().default(false),
 }).superRefine((filter, context) => {
   const atOrAfter = filter.lastActivityAt?.atOrAfter;
@@ -1847,6 +1860,11 @@ export const WorkstreamBatchFilterSchema = z.strictObject({
       message: "must be later than atOrAfter",
     });
   }
+  if (filter.pinned !== undefined && filter.spaceId === undefined) context.addIssue({
+    code: "custom",
+    path: ["spaceId"],
+    message: "Space is required when filtering by pin state",
+  });
 });
 
 /** The mutations the generic batch surface can currently enqueue. */
@@ -1912,14 +1930,14 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
  * did — a second window that pinned something a moment ago loses its position,
  * never its pin.
  *
- * Deliberately unbounded. Nothing limits how many work streams a person may
- * pin, so any count this array could be capped at would be a number the server
- * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
- * would not truncate a drag, it would refuse one and leave the list
- * unreorderable for as long as the person stayed above it.
+ * The same bound as pin creation. A reorder is an all-or-nothing complete
+ * arrangement, so this must admit every state the server can create while
+ * refusing a payload the object can never legitimately hold.
  */
+export const MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER = 1_000;
 export const ReorderWorkstreamPinsRequestSchema = z.object({
-  workstreamIds: z.array(IdSchema),
+  spaceId: SpaceIdSchema,
+  workstreamIds: z.array(IdSchema).max(MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER),
 });
 
 /** The authoritative visible pending-input queue after a reorder command. */

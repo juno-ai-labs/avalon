@@ -1,14 +1,15 @@
 # Work-stream pinning
 
-A pinned work stream leaves the list sorted by last access and moves into a
-**Pinned** section under **Automations**, where it stays until it is unpinned.
+A pinned Channel leaves its selected Space's ordinary Channel order and moves
+into that Space's **Pinned** section, where it stays until it is unpinned there.
 The section is arranged by hand — dragged into order, never sorted — and both the
 pin and the arrangement live on the server, so the same person opening Rally on
 another machine finds their list exactly as they left it.
 
-A pin is **one person's opinion about a shared row**. Pinning a work stream tells
-nobody else anything, changes nothing about who may read it, and does not appear
-on anyone else's screen. Read that alongside
+A pin is **one person's opinion about one placement of a shared Channel**. A
+Channel in two Spaces can be pinned in either, both, or neither, with a different
+position in each. Pinning tells nobody else anything, changes nothing about who
+may read the Channel, and does not appear on anyone else's screen. Read that alongside
 [`data-model.md`](data-model.md#work-streams), where `workstreams.scope` answers
 the different question of who a work stream is *for*.
 
@@ -17,33 +18,35 @@ the different question of who a work stream is *for*.
 | Path | Responsibility |
 | --- | --- |
 | `packages/db/migrations/0064_workstream_pins.sql`, `0090_drop_legacy_product_tables.sql` | Historical D1 pin source through 0089, then its final removal after import. |
-| `packages/contracts/src/index.ts` | `WorkstreamSchema.pinPosition` — the per-viewer position on the wire — and `ReorderWorkstreamPinsRequestSchema`. |
+| `packages/contracts/src/index.ts` | `WorkstreamSchema.spacePins` — the per-viewer positions keyed by Space — and `ReorderWorkstreamPinsRequestSchema`. `pinPosition` remains the selected-Space desktop projection and is null on server responses. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative `workspace_workstream_pins`, transactional position rewrites, readability checks, directory waterline, and socket invalidation. |
 | `apps/api/src/services/workstream-directory-service.ts` | Typed Worker-to-WorkspaceDO pin/unpin/reorder adapter used by the existing HTTP command routes. |
 | `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
-| `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The root route: resolves to the first pin, else the most recent row, else the composer. |
+| `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
 | `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
 
 ### Pinning
 
-The sidebar's right-click menu offers **Pin** on an unpinned work stream and
-**Unpin** on a pinned one, named for the state the item moves to the way every
-other toggle in those menus is. Pinning issues `PUT /workstreams/:id/pin`; the
+The sidebar's right-click menu offers **Pin** on an unpinned Channel and
+**Unpin** on a pinned one when a Space is selected. Pinning issues
+`PUT /workstreams/:id/pin` with that `spaceId`; the
 Worker invokes the workspace's typed RPC, which requires that the caller can
-read the authoritative directory row and then appends a
-`workspace_workstream_pins` row at the end of their list. The end rather than the top: the
+read the authoritative directory row and that the Channel has an active
+placement in that Space, then appends a `workspace_workstream_pins` row at the
+end of that Space's list. The end rather than the top: the
 list is arranged by hand, and appending is the only placement that disturbs none
 of that arrangement.
 
-Unpinning issues `DELETE /workstreams/:id/pin`, removes the row, and rewrites the
-survivors so the positions stay a dense `0..n-1` run.
+Unpinning issues `DELETE /workstreams/:id/pin?spaceId=...`, removes
+only that placement's row, and rewrites that Space's survivors so the positions
+stay a dense `0..n-1` run.
 
 ### Ordering
 
-Positions are unique and ascending per person, and `unpin` and `reorderPins`
+Positions are unique and ascending per person and Space, and `unpin` and `reorderPins`
 rewrite them as a dense `0..n-1` run. `pin` chooses its position inside the
 insert statement, as `MAX(position) + 1`, rather than reading the list and
 binding a number back in — a read-then-write hands the same position to two pins
@@ -51,7 +54,7 @@ made at once, and it also collides with a hole left by a work stream that was
 deleted outright and took its pin with it by cascade. A hole is harmless and
 closes on the next rewrite.
 
-`PUT /workstreams/pins` takes the **entire arrangement**, not a move of one row:
+`PUT /workstreams/pins` takes a `spaceId` and that Space's **entire arrangement**, not a move of one row:
 a drag produces a complete list, and sending that list is what lets the server
 write positions without inferring them from an index whose meaning depends on a
 list state the client may no longer share.
@@ -61,9 +64,9 @@ pinned is dropped; a pin the caller does not name keeps its relative order behin
 the ones it did. A second window that pinned something a moment ago therefore
 loses its *position*, never its pin.
 
-All three endpoints answer with the same shape — the caller's whole pinned list,
-in order — so the client replaces what it holds rather than reasoning about which
-row moved.
+All three endpoints answer with the same shape — the caller's pinned list for
+that Space, in order — so the client replaces only that Space's positions rather
+than reasoning about which row moved.
 
 ### Recent work streams
 
@@ -93,8 +96,8 @@ section ordering. Pins remain manually ordered.
 
 ### Leaving for the first work stream
 
-The root route resolves to the same row the sidebar shows at the top — the
-first pin, else the most recent by the viewer's access — and it is where every
+The root route has no selected Space, so it resolves to the most recent Channel
+by the viewer's access rather than borrowing any Space's first pin. It is where every
 screen goes when what it was showing is no longer there to show: an archived
 work stream, note, or project, a deleted automation or archived draft, a work
 stream the reader left, one they marked unread, the not-found screen's way out,
@@ -174,6 +177,11 @@ the one laid out there, resolved with `layoutRowAt` from
 [`list-motion.md`](list-motion.md), not the row drawn there — mid-motion the
 row drawn under the pointer is one gliding out of the slot the dragged row just
 took, and reordering against it would send it straight back.
+
+When both kinds are present, a quiet sidebar hairline separates the pinned
+placements from the remaining Channels. It is rendered only at that boundary:
+an all-pinned or all-unpinned Space gets no stranded divider, and compact mode
+keeps equal breathing room on both sides of the same line.
 
 A pinned work stream is shown once. In a member session that means once in
 **Pinned** and, if any of its Spaces are ones the reader can see, again under
@@ -266,10 +274,11 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 
 ## Invariants
 
-- **A pin is per person.** Nothing about `workspace_workstream_pins` is readable by, or
-  visible to, anybody but its owner. A surface that treated `pinPosition` as a
-  property of the work stream would show one member's arrangement to another.
-- **Positions are ascending per person and rewritten densely.** A tie makes "what order is
+- **A pin is per person and Space.** Nothing about `workspace_workstream_pins` is readable by, or
+  visible to, anybody but its owner, and a row in one Space says nothing about
+  the same Channel's placement in another. A surface must select the matching
+  `spacePins` entry before deriving its local `pinPosition`.
+- **Positions are ascending per person and Space and rewritten densely.** A tie makes "what order is
   this list in" ambiguous, and the sidebar's sort would then depend on
   row-arrival order. WorkspaceDO's list and pinned-return queries break a tie on
   `workstream_id` for the same reason: two readers that break it differently
@@ -300,8 +309,8 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **The cursor contains recency and work-stream ID.** Timestamps tie; using only
   the access-or-creation timestamp can skip a row when the next page starts below a tie. The
   cursor is opaque to Electron and must be returned unchanged.
-- **At most 1,000 pins belong to one person.** The WorkspaceDO transaction counts
-  every stored pin, including one currently hidden by visibility, before
+- **At most 1,000 pin placements belong to one person.** The WorkspaceDO transaction counts
+  every stored pin across Spaces, including one currently hidden by visibility, before
   accepting a new one. That bounds the pin-derived reorder and response work;
   the independently complete live-state supplement may make the combined first
   page larger.
@@ -321,14 +330,11 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 
 ## Boundary
 
-This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints, `pinPosition` on the
-work-stream contract, `workspace_workstream_access`/`lastAccessedAt`, and the
-Pinned and recent work-stream sections of the sidebar. The macOS menu bar
-item renders a second, read-only view of the same arrangement — its top five,
-above its own recent list — and [`menu-bar.md`](menu-bar.md) owns that; it reads
-`pinPosition` and `lastAccessedAt` and changes neither. The recency grouping the
-two surfaces share lives in `apps/desktop/src/common/recency-groups.ts` so the
-sidebar's headings and the menu's cannot disagree. It owns no part of
+This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints,
+`spacePins` on the Channel contract, and the selected-Space **Pinned** section
+of the desktop sidebar. A surface without a selected Space — the root landing,
+macOS menu bar, and current iOS history — cannot choose one placement's pin and
+therefore treats every Channel as unpinned. It owns no part of
 what a work stream *is* or who may read it.
 
 It deliberately does not:
@@ -346,7 +352,7 @@ It deliberately does not:
 
 ## Failure modes and limits
 
-- **A person may pin at most 1,000 work streams.** The same bound applies to a
+- **A person may have at most 1,000 pinned Channel placements across Spaces.** The same bound applies to a
   reorder request. The first WorkspaceDO page may contain all pins, at most 250
   recent unpinned rows, and every visible live-state row; that combined response
   intentionally has no separate guessed row cap. Pinning the 1,001st row fails
@@ -375,7 +381,8 @@ It deliberately does not:
 
 | Suite | What it covers |
 | --- | --- |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person and per-Space isolation, the same Channel pinned independently in two Spaces, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
+| `apps/api/test/workspace-space-pin-migration.test.ts` | The migration discards every legacy Organization-wide pin and recreates the primary key with `space_id`, so no ambiguous placement is carried forward. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, both error dialogs, and the row's motion following it into the section and between recency groups. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 | `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | Pin-then-recency resolution, the pending, empty, and failed states, and that named rows are passed over whatever their rank. |
@@ -396,14 +403,50 @@ replace its real Durable Object SQL transaction with a D1 shim.
 
 ## Data model
 
-`WorkspaceDO.workspace_workstream_pins` is keyed `(user_id, workstream_id)`,
-references `workspace_workstream_directory(workstream_id)` with cascade, and
-carries `position`, `created_at`, and `updated_at`. Its order index is
-`(user_id, position, workstream_id)`. It is deliberately **not** uniquely
-indexed on `(user_id, position)`: a reorder
+`WorkspaceDO.workspace_workstream_pins` is keyed
+`(user_id, space_id, workstream_id)`, references both the Space and Channel
+directory rows with cascade, and carries `position`, `created_at`, and
+`updated_at`. Its order index is `(user_id, space_id, position, workstream_id)`.
+It is deliberately **not** uniquely indexed on `(user_id, space_id, position)`: a reorder
 rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
+
+WorkspaceDO migration 66 drops the legacy `(user_id, workstream_id)` table and
+recreates it without copying rows. There is no authoritative answer for which
+Space should inherit an Organization-wide pin when a Channel has multiple
+placements, so the migration intentionally clears all existing pins.
+
+## Changelog
+
+### 2026-09-21 — Pins belong to Channel placements in Spaces
+
+**What changed:** Pin identity and ordering are now keyed by person, Space, and
+Channel. Every write names the Space; the desktop derives its displayed pin
+position from the selected Space; removing a Channel from a Space removes only
+that placement's pin. Migration 66 clears legacy Organization-wide pins while
+rebuilding the table with the new key. Surfaces without a selected Space no
+longer expose pin controls or a pinned section.
+
+**Why:** A shared Channel can appear in several Spaces, and “pinned” is a choice
+about where it appears in one Space rather than a global property of the
+Channel. Carrying the old row forward would impose one ambiguous choice on all
+placements.
+
+**Considered and rejected:** Copying each legacy pin into every Space would
+create choices the person never made; assigning it to one Space would require
+an arbitrary winner. Both were rejected in favor of the explicit clean cutover
+requested for the migration.
+
+**Consequences:** Existing pin lists start empty after migration. The wire keeps
+the legacy scalar null and carries `spacePins`; a client must have a selected
+Space before it can mutate or display a pin. Any future non-Space surface that
+wants pins must first define which Space it represents. A batch filter that
+distinguishes pinned from unpinned rows also names its Space, so a Channel pinned
+elsewhere remains unpinned in the selected Space's recency group, while a Channel
+without an active viewer-visible placement there is outside both groups. An
+optimistic reorder carries that same Space identity until its request settles,
+so switching Spaces cannot apply or persist another Space's preview.
 
 ### 2026-09-18 — Sidebar actions own their failure copy
 

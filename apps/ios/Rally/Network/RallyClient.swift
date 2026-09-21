@@ -307,16 +307,6 @@ actor RallyClient {
         return page.items
     }
 
-    func pinWorkstream(id: String) async throws {
-        struct Page: Decodable { var items: [RallyWorkstream]? }
-        _ = try await request(method: "PUT", path: "/workstreams/\(id)/pin", body: Optional<Empty>.none, as: Page.self)
-    }
-
-    func unpinWorkstream(id: String) async throws {
-        struct Page: Decodable { var items: [RallyWorkstream]? }
-        _ = try await request(method: "DELETE", path: "/workstreams/\(id)/pin", body: Optional<Empty>.none, as: Page.self)
-    }
-
     func patchWorkstream(id: String, title: String? = nil, archived: Bool? = nil, scope: String? = nil) async throws -> RallyWorkstream {
         struct Body: Encodable {
             var title: String?

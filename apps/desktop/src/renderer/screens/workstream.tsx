@@ -291,7 +291,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     reportTelemetryProductIntent({
       kind: 'workstream_action_completed', workstreamId: workstream.id, action,
       visibility: telemetryVisibility(workstream.scope),
-      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: workstream.pinPosition !== null,
+      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: (workstream.spacePins?.length ?? 0) > 0,
     });
   };
   const menuOperation = useRef(0);

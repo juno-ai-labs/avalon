@@ -34,8 +34,8 @@ choreography takes, or before adding motion to another list.
 | Path | Responsibility |
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
-| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, and its exit on a stand-in it makes and removes. Owns the interruption handling. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, and attaches the hook to both the scroll box and command bar. The command bar marks its New channel row `data-motion-insert`; stable grid tracks keep that row above Search and carry Search continuously as the first track opens or closes. |
+| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, its exit on a stand-in, and honors `data-motion-move` when the product action identifies a mover whose old and new boxes coincide. Owns the interruption handling. |
+| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, and attaches the hook to both the scroll box and command bar. The command bar marks its New channel row `data-motion-insert`; stable grid tracks keep that row above Search and carry Search continuously as the first track opens or closes. A pin action marks its known mover with `data-motion-move` so a Channel can travel between equal vertical slots. |
 | [`apps/desktop/src/renderer/components/spaces-sidebar.tsx`](../apps/desktop/src/renderer/components/spaces-sidebar.tsx) | Attaches the hook to the Space command bar, names the collapsed state as its layout key, and marks the compact New channel row `data-motion-insert`. It shares the command bar's stable row ownership and maps its own collapse interval to `--sidebar-layout-motion`, so Search and the grid track travel together. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
@@ -414,6 +414,28 @@ work stream from its right-click menu, then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-09-21 — A named mover can travel between equal slots
+
+**What changed:** A row may set `data-motion-move` for the commit caused by a
+known product action. The planner excludes that row from the kept subsequence
+and the hook runs its mover choreography even when its measured vertical offset
+is zero.
+
+**Why:** Pinning inside a selected Space moves a Channel from the ordinary list
+to the Space's pinned list, but the two sections can place it at the same y
+coordinate. Geometry alone then classified the remounted row as unchanged, so
+the action looked like a disappearance and replacement despite the identity
+being known.
+
+**Considered and rejected:** Adding fake distance to the measurement or making
+every remounted row a mover. The former corrupts layout truth; the latter turns
+unrelated conditional rendering into motion. The marker is narrow and lasts
+only for the pin response that names the row.
+
+**Consequences:** A forced mover may have `translateY(0)` while still playing
+the horizontal exit and entrance. Callers must set the marker only on the row
+whose identity the action actually moved.
 
 ### 2026-09-21 — Command rows keep stable grid ownership through sidebar layout changes
 

@@ -1,8 +1,7 @@
 # Menu bar item
 
 Rally puts a status item in the macOS menu bar. Clicking it drops down a menu
-that reopens the top five of the reader's own pinned arrangement or any of their
-ten most recent work streams — grouped under the same recency headings the
+that reopens any of the reader's ten most recent Channels — grouped under the same recency headings the
 sidebar uses — plus the two controls that keep the app reachable when nothing
 else is on screen: open Rally, and quit.
 
@@ -20,7 +19,7 @@ the main process holds the menu's content itself.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/menu-bar-menu.ts` | The drop-down as a plain Electron template: order, labels, and which action each row calls. No Electron objects, no I/O. |
-| `apps/desktop/src/main/menu-bar-content.ts` | The menu's data — the recent list and the pinned arrangement — fetched from the regional API by the main process and cached. |
+| `apps/desktop/src/main/menu-bar-content.ts` | The menu's recent Channel data, fetched from the regional API by the main process and cached. |
 | `apps/desktop/src/common/recency-groups.ts` | The recency headings themselves, shared with the renderer's sidebar so one list cannot be grouped two ways. |
 | `apps/desktop/src/main/menu-bar.ts` | The status item's lifecycle: whether it exists, and rebuilding its menu when its content moves. |
 | `apps/desktop/src/main/launch-at-login.ts` | Whether Rally is registered to open at login, and `launchedAtLogin`, which decides whether this launch opens a window. |
@@ -49,17 +48,12 @@ The drop-down is rebuilt from `menuBarMenuTemplate` whenever the content or the
 preference changes — never on open. A click therefore
 always produces a menu immediately. In order:
 
-1. A **Pinned** header and the top five of the reader's own arrangement. With
-   nothing pinned the section stays and one disabled row says **Pin a work
-   stream to see it here** — most people have never pinned anything, and a
-   section that is simply absent teaches them nothing about a feature they have
-   not found.
-2. A separator, then the ten most recent work streams from
+1. The ten most recent Channels from
    `GET /workstreams?limit=10`, split into the sidebar's own recency groups —
    **Last hour**, **Today**, **Yesterday**, **This week**, **This month**,
    **Before this month** — each with its own header and separated from the next.
    A group with nothing in it is not drawn.
-3. A separator, then **Open Rally** and **Quit Rally**.
+2. A separator, then **Open Rally** and **Quit Rally**.
 
 **The recent list carries the sidebar's headings, not one of its own.** Both
 surfaces list the same work streams, and a heading that meant "the last ten" in
@@ -73,12 +67,9 @@ the menu reads as a stray broken item rather than as an answer. That row says
 whether the list is empty because there is nothing to show or because nobody is
 signed in.
 
-**Pinned sits above the recent list.** A pin is a standing choice; the recent
-list is what moved today, and at ten rows it is long enough that a section
-underneath it is a section nobody scans to.
-
-Signed out, **Pinned** is dropped whole. It has nothing to say to a stranger,
-and the one message that state needs is already on the recent row.
+The menu has no selected Space, so it has no pinned section. A Channel pin is a
+choice about one Space placement; choosing one Space here or merging several
+would turn that state back into the global pin the model deliberately removed.
 
 Headers use `type: 'header'`, which macOS added in 14 and which AppKit
 styles as a real section header. `supportsSectionHeaders` reads
@@ -135,12 +126,10 @@ without it appears behind whatever is frontmost.
 
 ### The content
 
-One request answers both sections. `GET /workstreams` leaves pins out
-of the recency order and appends every one of them to the first page, so a page
-of ten carries the ten most recent *unpinned* streams and the whole pinned list
-behind them — [`workstream-pinning.md`](workstream-pinning.md) owns that
-behaviour. The store partitions on `pinPosition`, sorts the pinned half by it,
-and takes ten and five respectively.
+One request answers the list. The store orders the returned first page by viewer
+recency and takes ten. It deliberately ignores the retired global
+`pinPosition`; placement pins are only meaningful in a selected Space —
+[`workstream-pinning.md`](workstream-pinning.md) owns that boundary.
 
 The store also carries each row's recency forward, through `workstreamRecencyAt`
 rather than `lastActivityAt` alone. That is what puts a work stream under the
@@ -164,7 +153,8 @@ once `setContextMenu` has accepted the menu it describes; recording it for a
 build that threw would suppress every retry until it passed.
 
 Opening the drop-down emits the product event `menu_bar_opened` with only
-whether the account is signed in and bounded counts for recent and pinned rows.
+whether the account is signed in and the bounded recent-row count. The legacy
+pinned count remains zero in the event shape during this cutover.
 Electron can notify one opening through both the Tray click and the
 Menu `menu-will-show`; `MenuBarOpenObserver` coalesces those until
 `menu-will-close`, so one visible menu is one event. Selecting an enabled row
@@ -287,16 +277,14 @@ destination, so the hidden state is not sticky.
   nothing on one side.** Every section goes through `pushGroup`, which owns the
   rule above it and has exactly three outcomes: the rows, the caller's
   `emptyLabel` line, or nothing at all — header and rule together. A section
-  that must survive being empty says so by passing `emptyLabel`; **Pinned** and
-  the **Recent** fallback both do. The recency groups pass none because
+  that must survive being empty says so by passing `emptyLabel`; the **Recent**
+  fallback does. The recency groups pass none because
   `groupActivityItems` never returns an empty one, and a group that somehow had
   no rows would correctly not be drawn rather than leaving a bare header. Break
   this and the menu grows a heading with a gap under it, which reads as a menu
   that failed to draw rather than as an answer.
-- **An empty section that a person can act on says how it fills.** **Pinned**
-  and **Recent** are empty for exactly the people who have not found the
-  feature yet, so they name what to do instead of disappearing. Signing out is
-  the only thing that removes a section outright, and only **Pinned**.
+- **An empty recent section says why it is empty.** It distinguishes no recent
+  Channels from a signed-out account rather than disappearing.
 - **The menu never renders state the operating system can change behind it.**
   It is rebuilt on content changes, not on open, so anything macOS owns
   independently — the login item is the case that came up — belongs in Settings,
@@ -342,10 +330,7 @@ is the point of the module being there rather than beside either one.
 | A refresh fails | The last good menu stays. A warning is logged once per attempt. |
 | Signed out | The menu is a **Recent** header over one disabled **Sign in to Rally** row, a rule, and the two trailing controls. Content refreshes are skipped entirely rather than failing once per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
-| Nothing pinned | The header stays over one disabled row: **Pin a work stream to see it here**. |
 | Nothing recent | A **Recent** header over one disabled row. This is the only state that draws that header: with rows, the recency groups name themselves. |
-| Signed out | **Pinned** is dropped entirely, header and rule included; the recent section carries the sign-in row, and it is then the first thing in the menu. The leading separator is suppressed rather than drawn against nothing. |
-| More than five pins | The top five of the arrangement are shown, ungrouped and unsorted. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | A recency heading expires | The pointer reaching the status item rebuilds the menu from cache before anyone reads it, guarded by `nextRecencyBoundary` so a crossing that changes nothing is not a rebuild. Between those, a heading on a menu nobody has touched can be wrong; correcting it on a timer would mean waking the process to redraw a menu nobody is looking at. |
 | A recency heading expires while the menu is **open** | Not covered. macOS owns an open menu and nothing can redraw it underneath the reader. |
 | macOS 13 or older | Every header falls back to a disabled row. Everything else is unchanged. |
@@ -368,8 +353,8 @@ limit stops one model-written title stretching the menu; the fixed copy is ours,
 has to read in full, and sets the menu's width only for an account that has
 nothing in the section it belongs to.
 
-Numbers: ten recent work streams (`MENU_BAR_RECENT_LIMIT`, which is also the
-page size asked for), five pinned (`MENU_BAR_PINNED_LIMIT`), 60-character labels
+Numbers: ten recent Channels (`MENU_BAR_RECENT_LIMIT`, which is also the
+page size asked for), 60-character labels
 (`MENU_BAR_LABEL_MAX_LENGTH`) with a word boundary honoured from 40
 (`MENU_BAR_LABEL_WORD_BOUNDARY_FLOOR`), a 15 s content staleness window
 (`MENU_BAR_CONTENT_MAX_AGE_MS`), and an 8 s request timeout.
@@ -436,6 +421,24 @@ Selecting a menu action that raises Rally also records
 `application_opened(entrypoint=menu_bar, phase=activation)`. The explicit source
 is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
+
+## Changelog
+
+### 2026-09-21 — Remove pins from the Space-less menu
+
+**What changed:** The menu bar now shows recent Channels only. Its content store
+ignores the retired global pin scalar and no longer draws a pinned group or its
+empty state.
+
+**Why:** Pin state now belongs to a Channel's placement in one selected Space.
+The windowless menu has no Space context, so displaying a pin would require it
+to choose one Space arbitrarily or merge several independent arrangements.
+
+**Considered and rejected:** Showing a Channel when it is pinned in any Space.
+That recreates a global pin and cannot say which Space's order should win.
+
+**Consequences:** Opening Rally is the path to Space-scoped pinned navigation.
+The menu remains a bounded recency surface and does not expose pin mutations.
 
 ### 2026-09-11 — `pushGroup` makes a bare header unrepresentable
 

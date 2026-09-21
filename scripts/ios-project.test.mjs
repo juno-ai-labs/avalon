@@ -191,7 +191,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.doesNotMatch(shell, /NotesScreen/);
   const history = read("Rally/Features/History/HistoryPanel.swift");
   assert.match(history, /WorkstreamListScreen/);
-  assert.match(history, /Pin/);
+  assert.doesNotMatch(history, /Pin/);
   assert.match(history, /Archive/);
   assert.match(history, /Unread/);
   assert.match(history, /Rename/);

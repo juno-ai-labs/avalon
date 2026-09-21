@@ -113,17 +113,19 @@ describe('channel presentation rules', () => {
   });
 
   it('describes recency headings as generic half-open batch filters', () => {
-    expect(recencyGroupBatchFilter('This week', now)).toEqual({
+    expect(recencyGroupBatchFilter('This week', now, '00000000-0000-7000-8000-0000000000f1')).toEqual({
       lastActivityAt: {
         atOrAfter: localDate(2026, 7, 2),
         before: localDate(2026, 7, 6),
       },
       pinned: false,
+      spaceId: '00000000-0000-7000-8000-0000000000f1',
       includeSystem: false,
     });
-    expect(recencyGroupBatchFilter('Before this month', now)).toEqual({
+    expect(recencyGroupBatchFilter('Before this month', now, '00000000-0000-7000-8000-0000000000f1')).toEqual({
       lastActivityAt: { before: localDate(2026, 7, 1) },
       pinned: false,
+      spaceId: '00000000-0000-7000-8000-0000000000f1',
       includeSystem: false,
     });
   });

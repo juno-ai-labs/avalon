@@ -65,7 +65,8 @@ function isWorkstreamSummaryLike(value: unknown): value is WorkstreamSummary {
     && Array.isArray(candidate['participantUserIds'])
     && Array.isArray(candidate['spaceIds'])
     && typeof candidate['participantExtraCount'] === 'number'
-    && (candidate['pinPosition'] === null || typeof candidate['pinPosition'] === 'number');
+    && (candidate['pinPosition'] === null || typeof candidate['pinPosition'] === 'number')
+    && (candidate['spacePins'] === undefined || Array.isArray(candidate['spacePins']));
 }
 
 function isAutomationSummaryLike(value: unknown): value is AutomationSummary {

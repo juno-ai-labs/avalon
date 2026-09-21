@@ -14,12 +14,18 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../../src/durable-objects/worksp
  * copying the statement would let the two drift.
  */
 export function createWorkspaceObjectTable(database: DatabaseSync, table: string): void {
-  const definition = new RegExp(`^\\s*CREATE (?:TABLE|INDEX) \\S+\\s+(?:ON )?${table}\\b`, "u");
-  const statements = WORKSPACE_DO_SCHEMA_MIGRATIONS
-    .flatMap((migration) => migration.statements)
-    .filter((statement) => definition.test(statement) || new RegExp(`^\\s*CREATE TABLE ${table}\\b`, "u").test(statement));
-  if (statements.length === 0) throw new Error(`workspace_object_table_unknown:${table}`);
-  for (const statement of statements) database.exec(statement);
+  const ledger = WORKSPACE_DO_SCHEMA_MIGRATIONS.flatMap((migration) => migration.statements);
+  const tableDefinition = new RegExp(`^\\s*CREATE TABLE ${table}\\b`, "u");
+  let lastDefinition = -1;
+  ledger.forEach((statement, index) => {
+    if (tableDefinition.test(statement)) lastDefinition = index;
+  });
+  if (lastDefinition < 0) throw new Error(`workspace_object_table_unknown:${table}`);
+  database.exec(ledger[lastDefinition]!);
+  const indexDefinition = new RegExp(`^\\s*CREATE INDEX \\S+\\s+ON ${table}\\b`, "u");
+  for (const statement of ledger.slice(lastDefinition + 1)) {
+    if (indexDefinition.test(statement)) database.exec(statement);
+  }
 }
 
 /**

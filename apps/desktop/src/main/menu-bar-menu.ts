@@ -141,13 +141,9 @@ const RECENT_EMPTY_HEADER = 'Recent';
  * Builds the status item's drop-down as a plain Electron template, so the whole
  * mapping from content to menu is testable without a display server.
  *
- * The order is the product contract: **Pinned** with the top of the reader's own
- * arrangement, then a rule and the recent work streams under the same recency
- * headings the sidebar uses. Pinned sits above Recent because a pin is a
- * standing choice and belongs where it can be found without reading past
- * whatever moved today — the recent list is ten rows now, and a section
- * underneath a list that long is a section nobody scans to. Both sections render
- * whether or not they have anything in them; an empty one says how it fills.
+ * The product contract is the recent work streams under the same recency
+ * headings the sidebar uses. Pins are scoped to a selected Space, and this
+ * windowless surface has no Space context, so it must not choose or merge one.
  *
  * Nothing above them starts anything. Every row here reopens something that
  * already exists, which is the one thing this surface can do that no window can
@@ -167,12 +163,9 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   };
   const template: MenuItemConstructorOptions[] = [];
 
-  const openWorkstreamRow = (
-    workstream: MenuBarWorkstream,
-    action: 'recent_workstream' | 'pinned_workstream',
-  ): MenuItemConstructorOptions => ({
+  const openWorkstreamRow = (workstream: MenuBarWorkstream): MenuItemConstructorOptions => ({
     label: menuBarLabel(workstream.title),
-    click: tracked(action, () => actions.openWorkstream(workstream.id)),
+    click: tracked('recent_workstream', () => actions.openWorkstream(workstream.id)),
   });
 
   // Only between rows. The first section is always the top of the menu now, and
@@ -209,20 +202,6 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     template.push(sectionHeader(title, options.sectionHeaders), ...body);
   };
 
-  // Pinned is dropped whole when nobody is signed in: it has nothing to say to
-  // a stranger, and the Recent row below already carries the one message that
-  // state needs. Signed in it renders even when empty — an empty section says
-  // how it fills instead of disappearing, because the people it is empty for are
-  // exactly the ones who have not found pinning yet.
-  if (options.signedIn) {
-    pushGroup(
-      'Pinned',
-      content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
-        .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream')),
-      'Pin a channel to see it here',
-    );
-  }
-
   // The same grouping the sidebar draws, from the same function, so a heading
   // never means one thing in the window and another in the menu. Recency is
   // taken at build time rather than at open, which is also when the menu is
@@ -236,7 +215,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     for (const group of groupActivityItems(recents, options.now ?? new Date())) {
       pushGroup(
         group.label,
-        group.streams.map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
+        group.streams.map((workstream) => openWorkstreamRow(workstream)),
       );
     }
   } else {
