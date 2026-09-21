@@ -2633,6 +2633,7 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   privateChildren: z.array(z.strictObject({
     substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
     title: z.string().min(1).max(500),
+    appearance: WorkstreamAppearanceSchema.optional(),
     createdByUserId: UserIdSchema,
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
