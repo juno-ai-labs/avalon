@@ -97,8 +97,11 @@ policy interpreter, customer-supplied graph language or hosted policy service.
 An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
-Member proofs include a canonical regional workspace-membership observation,
-shared within one authorization batch. Each batch gathers conversation IDs from
+An authorization batch may receive the active regional workspace-membership
+observation separately produced by trusted request middleware. The artifact-open
+route carries that proof explicitly; a generic `AuthContext`, a retargeted
+subject, and every non-request caller load the fact canonically from D1. Each
+observation is shared within one authorization batch. Each batch gathers conversation IDs from
 its requests and resource locations before loading a parent, preserving one parent
 RPC across multiple substreams. A mixed response carries migrated scope decisions
 alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
@@ -108,8 +111,8 @@ An automation supplies its own scope, author, executor and child registry; an
 owning work stream's canonical roster supplies inherited access. Archived work
 streams remain readable. Deleted automations are absent.
 
-Guest membership is observed explicitly from `workspace_members.access_class` in
-each canonical batch. Guests cannot use a legacy conversation scope/roster or
+Guest membership comes from an explicitly carried request observation, or is
+read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
 Sidekick authoring fallback. For a non-owned resource, a guest always needs a
 canonical attachment in an authorized migrated conversation, including resources
 whose provider ordinarily makes them workspace-wide for members. Their own upload
@@ -225,11 +228,14 @@ one WorkstreamDO transaction. Replays return the receipt without reapplying gran
 
 ### Evidence and read lifetime
 
-Every proof carries `owner`, `revision` and `validatedAt`. Observation timestamps
-are diagnostic: old evidence does not become unavailable merely because time has
-passed. Future timestamps and empty grants remain invalid. Five-minute freshness
-is a design goal for propagation and performance, with no code-enforced timeout,
-lease duration, or permission-expiration timer.
+Every proof carries `owner`, `revision` and `validatedAt`. The resolver stamps
+`validatedAt` when an authority read returns, using the same isolate clock that
+evaluates the proof; an owner's own observation time may be retained for telemetry
+but does not order authorization across isolates. Observation timestamps are
+diagnostic: old evidence does not become unavailable merely because time has passed.
+Future timestamps and empty grants remain invalid. Five-minute freshness is a
+design goal for propagation and performance, with no code-enforced timeout, lease
+duration, or permission-expiration timer.
 
 Canonical authorization checks load owner facts; search cache hits do not. Duplicate resources and shared owners reuse observations within that batch only,
 including completed observations. Every later or concurrent check starts its own
@@ -317,7 +323,9 @@ not a switch controlling which authorization implementation serves the request.
 - Checks bind canonical observations to the trusted subject, workspace and exact
   resource address. A record for another user or private child cannot authorize a
   read. Policy-version validation remains only in the legacy snapshot wire schema.
-- Composition preserves each owner observation; it does not rewrite timestamps.
+- Composition preserves each owner's revision. The receiving isolate stamps the
+  evidence time after an authority read returns; cross-isolate wall clocks do
+  not decide whether an otherwise current proof is valid.
 - Missing discovery cannot be treated as confirmed absence. Activation before
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
@@ -479,6 +487,23 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-21 — Stamp authority evidence on the resolver's clock
+
+Healthy artifact and resource reads intermittently returned
+`authorization_unavailable` when a WorkspaceDO observation was a few milliseconds
+ahead of the calling Worker. The resolver now stamps evidence after each authority
+read returns, while preserving the owner's revision as the ordering proof. This
+keeps the future-evidence guard without comparing wall clocks across isolates;
+clock-skew tolerances were rejected because they would turn an invalid ordering
+assumption into an arbitrary authorization limit.
+
+The resolver also accepts a separately typed active-membership observation from
+trusted request middleware. The artifact-open route carries it explicitly;
+re-reading the same `workspace_members` row there added a serial D1 hop without a
+new authority boundary. A generic `AuthContext` is deliberately not evidence:
+background callers can retain one and services can retarget one to another user.
+Those paths continue to perform the canonical membership read.
 
 ### 2026-09-19 — A readable Channel discloses its Space's mark, and nothing else
 

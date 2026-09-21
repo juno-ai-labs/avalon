@@ -10,6 +10,7 @@ import {
 } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/components/space-row';
+import { SidebarList } from '@rally/ui/components/resizable-sidebar';
 
 import { compareWorkstreamRecency } from '../lib/format';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
@@ -342,7 +343,7 @@ export function SpaceSidebarSection({
         ) : spaces.length === 0 ? (
           <p className="sidebar-empty">No spaces yet</p>
         ) : (
-          <div className="sidebar-list">
+          <SidebarList>
             {/* Said once for the whole section rather than on every row: as a
                 per-row description it lands inside each link's accessible
                 name, so somebody arrowing through hears the instruction again
@@ -602,7 +603,7 @@ export function SpaceSidebarSection({
                 </SpaceRow>
               );
             })}
-          </div>
+          </SidebarList>
         )}
         {sectionFailure && <InlineError>{sectionFailure}</InlineError>}
       </section>

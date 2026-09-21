@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
-import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
 import { ConversationService } from "../services/conversation-service";
@@ -114,11 +114,10 @@ resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
  * fragment, which a browser never sends to a server, so the code stays out of
  * every request log on the way to the artifact origin.
  */
-resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) =>
-  c.json(ArtifactOpenResultSchema.parse(
-    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).open(c.req.valid("param").id),
-  )),
-);
+resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) => {
+  const service = new ArtifactOpenService(c.env, getWorkspaceAuth(c), getRequestMembership(c));
+  return c.json(ArtifactOpenResultSchema.parse(await service.open(c.req.valid("param").id)));
+});
 /** What the artifact's server module threw, for the rail to show a participant. */
 resourceRoutes.get("/:id/artifact/errors", zValidator("param", idParam), async (c) =>
   c.json(ArtifactErrorListSchema.parse(

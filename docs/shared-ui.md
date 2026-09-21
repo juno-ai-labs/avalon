@@ -125,6 +125,30 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — Hierarchy row cadence lives in one shared list
+
+**What changed:** `SidebarList` owns the vertical spacing between hierarchy
+rows, and the desktop and browser Space, Channel, and Breakout collections all
+compose it inside the shared scroll primitive. Collapsing a rail changes its
+horizontal presentation but not its row cadence.
+
+**Why:** The three hierarchy levels had accumulated separate hard-coded gaps
+and a Channel-only compact override, so adjacent rails changed rhythm depending
+on which ones were collapsed. Fixing individual selectors would leave the same
+presentation decision distributed across hosts and make the next sidebar change
+able to reintroduce the mismatch.
+
+**Considered and rejected:** A descendant selector that imposed a gap on every
+child of `SidebarScroll`. Scroll bodies also contain sections, empty states, and
+supporting controls; only an explicit row collection has list cadence.
+
+**Consequences:** Every host that draws hierarchy rows, including the lite
+browser, must put the collection in `SidebarList`. Local sidebar selectors do
+not set row gaps; changing the shared spacing token changes all three levels at
+both widths.
+
+Shipped in #902.
+
 ### 2026-09-21 — All three hierarchy sidebars share one resize edge
 
 **What changed:** The Space, Channel, and Breakout sidebars now compose one

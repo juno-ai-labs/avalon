@@ -10,6 +10,7 @@ import { AvatarStack, IconButton, Tip, TitleSkeleton } from './primitives';
 import {
   ResizableSidebar,
   SidebarHorizontalLine,
+  SidebarList,
   SidebarRow,
   SidebarScroll,
   SidebarTitleHeader,
@@ -220,6 +221,19 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         title={workstream.title}
       />
       <SidebarScroll className="workstream-context-scroll">
+        <SidebarList
+          aria-describedby={substreamDrag ? SUBSTREAM_DRAG_HINT_ID : undefined}
+          className="workstream-conversation-list"
+          // The whole list is the drop target, so a release in the gap between
+          // two rows counts as a drop: `dragend` reads a release nothing
+          // accepted as a cancellation, and the arrangement would be thrown
+          // away rather than saved.
+          onDragOver={substreamDrag ? (event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          } : undefined}
+          onDrop={substreamDrag ? (event) => event.preventDefault() : undefined}
+        >
         {mainVisible && <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>
           <SidebarRow
@@ -236,19 +250,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             />
           </SidebarRow>
         </ConversationRowMenu>}
-        <div
-          aria-describedby={substreamDrag ? SUBSTREAM_DRAG_HINT_ID : undefined}
-          className="workstream-substream-list"
-          // The whole list is the drop target, so a release in the gap between
-          // two rows counts as a drop: `dragend` reads a release nothing
-          // accepted as a cancellation, and the arrangement would be thrown
-          // away rather than saved.
-          onDragOver={substreamDrag ? (event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-          } : undefined}
-          onDrop={substreamDrag ? (event) => event.preventDefault() : undefined}
-        >
           {/* Said once for the list rather than on every row: as a per-row
               description it lands inside each button's accessible name, so
               somebody arrowing through hears the instruction again before
@@ -380,7 +381,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               />
             </SidebarRow>
           )}
-        </div>
+        </SidebarList>
         {/* Absent rather than empty, as the Sidekick strip below is: a heading
             over a placeholder row spends the rail's height saying a work
             stream has produced nothing yet, which is the ordinary state of a
