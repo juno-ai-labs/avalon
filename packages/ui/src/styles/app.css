@@ -7547,9 +7547,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
-.sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.sidebar-footer.has-leading-content { flex-basis: 54px; }
-.sidebar-footer.is-toggle-only { min-height: 62px; }
+.sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 54px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer { gap: 0; }
 .resizable-sidebar.is-compact .sidebar-footer.has-leading-content { padding: 8px; }
