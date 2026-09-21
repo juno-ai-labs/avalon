@@ -144,15 +144,11 @@ struct RallyWorkstream: Codable, Sendable, Equatable, Identifiable {
     var archivedAt: String? = nil
     var scope: String? = nil
     var harnessStatus: String? = nil
-    var pinned: Bool? = nil
-    var pinPosition: Int? = nil
     var systemKind: String? = nil
     var emailAddress: String? = nil
     var projectId: String? = nil
     var preview: String? = nil
     var appearance: RallySavedAppearance? = nil
-
-    var isPinned: Bool { pinned == true || pinPosition != nil }
 
     init(id: String, title: String) {
         self.id = id
@@ -171,7 +167,7 @@ struct RallyWorkstream: Codable, Sendable, Equatable, Identifiable {
         case id, workspaceId, title, titleStatus, objective
         case hasUnread, youAreMentioned, unseen
         case lastActivityAt, lastAccessedAt, createdAt, updatedAt, archivedAt
-        case scope, harnessStatus, pinned, pinPosition, systemKind
+        case scope, harnessStatus, systemKind
         case emailAddress, projectId, preview, appearance
     }
 
@@ -191,8 +187,6 @@ struct RallyWorkstream: Codable, Sendable, Equatable, Identifiable {
         archivedAt = try container.decodeIfPresent(String.self, forKey: .archivedAt)
         scope = try container.decodeIfPresent(String.self, forKey: .scope)
         harnessStatus = try container.decodeIfPresent(String.self, forKey: .harnessStatus)
-        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned)
-        pinPosition = try container.decodeIfPresent(Int.self, forKey: .pinPosition)
         systemKind = try container.decodeIfPresent(String.self, forKey: .systemKind)
         emailAddress = try container.decodeIfPresent(String.self, forKey: .emailAddress)
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId)

@@ -1,5 +1,6 @@
 import {
   IdSchema,
+  SpaceIdSchema,
   WorkspaceAttentionSchema,
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
@@ -171,11 +172,17 @@ export const WorkspaceDirectoryVisibleIdsPageSchema = deferredZodSchema(() => z.
   nextCursor: IdSchema.nullable(),
 }));
 
-export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
+export const WorkspaceDirectoryPinRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+  workstreamId: IdSchema,
+  spaceId: SpaceIdSchema,
+}));
 
 export const WorkspaceDirectoryReorderPinsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
+  spaceId: SpaceIdSchema,
   workstreamIds: z.array(IdSchema).max(1_000),
 }));
 

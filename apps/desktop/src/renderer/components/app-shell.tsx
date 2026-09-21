@@ -249,7 +249,10 @@ export function workstreamMatchesBatchFilter(
   filter: WorkstreamBatchFilter,
 ): boolean {
   if (!filter.includeSystem && workstream.systemKind != null) return false;
-  if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
+  if (filter.pinned !== undefined) {
+    const pinnedInSpace = workstream.spacePins?.some((pin) => pin.spaceId === filter.spaceId) ?? false;
+    if (pinnedInSpace !== filter.pinned) return false;
+  }
   const activityAt = Date.parse(filter.recency === 'access' ? workstreamRecencyAt(workstream) : workstream.lastActivityAt);
   if (!Number.isFinite(activityAt)) return false;
   const atOrAfter = filter.lastActivityAt?.atOrAfter;
@@ -294,13 +297,23 @@ export function batchArchiveSkipIds(
  */
 export function applyPinnedWorkstreams(
   queryClient: ReturnType<typeof useQueryClient>,
+  spaceId: string,
   pinned: WorkstreamSummary[],
 ): void {
-  const positions = new Map(pinned.map((workstream) => [workstream.id, workstream.pinPosition]));
+  const positions = new Map(pinned.map((workstream) => [
+    workstream.id,
+    workstream.spacePins?.find((pin) => pin.spaceId === spaceId)?.position ?? null,
+  ]));
   setCachedWorkstreams(queryClient, (current) =>
     current?.map((item) => {
       const pinPosition = positions.get(item.id) ?? null;
-      return item.pinPosition === pinPosition ? item : { ...item, pinPosition };
+      const currentPosition = item.spacePins?.find((pin) => pin.spaceId === spaceId)?.position ?? null;
+      if (currentPosition === pinPosition) return item;
+      const otherPins = (item.spacePins ?? []).filter((pin) => pin.spaceId !== spaceId);
+      const spacePins = pinPosition === null
+        ? otherPins
+        : [...otherPins, { spaceId, position: pinPosition }];
+      return { ...item, spacePins };
     }),
   );
 }
@@ -320,12 +333,13 @@ export function applyPinnedWorkstreams(
  */
 export function applyPinnedWorkstreamsIfCurrent(
   queryClient: ReturnType<typeof useQueryClient>,
+  spaceId: string,
   pinned: WorkstreamSummary[],
   issued: number,
   latestIssued: number,
 ): boolean {
   if (issued !== latestIssued) return false;
-  applyPinnedWorkstreams(queryClient, pinned);
+  applyPinnedWorkstreams(queryClient, spaceId, pinned);
   return true;
 }
 
@@ -432,15 +446,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const automations = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
-  const pinRequestsIssued = useRef(0);
+  const pinRequestsIssued = useRef(new Map<string, number>());
   // Answers whether this response was the one applied, which the sidebar needs
   // as well: a superseded response updates nothing, so the action behind it has
   // no row movement to follow and must not scroll the viewport either.
-  const applyPinResponse = async (request: () => Promise<WorkstreamSummary[]>): Promise<boolean> => {
-    pinRequestsIssued.current += 1;
-    const issued = pinRequestsIssued.current;
+  const applyPinResponse = async (spaceId: string, request: () => Promise<WorkstreamSummary[]>): Promise<boolean> => {
+    const issued = (pinRequestsIssued.current.get(spaceId) ?? 0) + 1;
+    pinRequestsIssued.current.set(spaceId, issued);
     const pinned = await request();
-    if (!applyPinnedWorkstreamsIfCurrent(queryClient, pinned, issued, pinRequestsIssued.current)) return false;
+    if (!applyPinnedWorkstreamsIfCurrent(
+      queryClient, spaceId, pinned, issued, pinRequestsIssued.current.get(spaceId) ?? 0,
+    )) return false;
     // The response is the whole pinned list and can name a work stream this
     // device has never listed — pinned on another machine, and too quiet to sit
     // on the page this one last fetched. Patching positions cannot conjure that
@@ -769,15 +785,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // would read it again.
           if (location.pathname === `/workstreams/${updated.id}`) openFirstWorkstream([updated.id]);
         }}
-        onPinWorkstream={async (workstream, pinned) => {
+        onPinWorkstream={async (workstream, spaceId, pinned) => {
           if (!api) return false;
-          return applyPinResponse(() => pinned
-            ? api.pinWorkstream(workstream.id)
-            : api.unpinWorkstream(workstream.id));
+          return applyPinResponse(spaceId, () => pinned
+            ? api.pinWorkstream(workstream.id, spaceId)
+            : api.unpinWorkstream(workstream.id, spaceId));
         }}
-        onReorderPinnedWorkstreams={async (workstreamIds) => {
+        onReorderPinnedWorkstreams={async (spaceId, workstreamIds) => {
           if (!api) return;
-          await applyPinResponse(() => api.reorderWorkstreamPins(workstreamIds));
+          await applyPinResponse(spaceId, () => api.reorderWorkstreamPins(spaceId, workstreamIds));
         }}
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
