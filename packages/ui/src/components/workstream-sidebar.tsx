@@ -70,25 +70,28 @@ function ConversationRowMenu({ actions, children, icon, target }: {
   target: ConversationRowTarget;
 }): React.JSX.Element {
   const main = target.substreamId === '0';
+  const preview = (trigger: React.ReactNode): React.JSX.Element => <Tip
+    className="sidebar-workstream-preview-surface"
+    collisionPadding={8}
+    delayDuration={300}
+    describesTrigger={false}
+    label={<div className="sidebar-workstream-preview">
+      <div className="sidebar-workstream-preview-header">
+        <span className="sidebar-workstream-preview-identity">
+          {icon}
+          <span className="sidebar-workstream-preview-name">{target.title}</span>
+        </span>
+      </div>
+    </div>}
+    side="right"
+    sideOffset={8}
+  >
+    {trigger}
+  </Tip>;
+  if (!actions) return preview(children);
   return <ContextMenu.Root>
-    <Tip
-      className="sidebar-workstream-preview-surface"
-      collisionPadding={8}
-      delayDuration={300}
-      label={<div className="sidebar-workstream-preview">
-        <div className="sidebar-workstream-preview-header">
-          <span className="sidebar-workstream-preview-identity">
-            {icon}
-            <span className="sidebar-workstream-preview-name">{target.title}</span>
-          </span>
-        </div>
-      </div>}
-      side="right"
-      sideOffset={8}
-    >
-      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
-    </Tip>
-      {actions && <ContextMenu.Portal>
+    {preview(<ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>)}
+    <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
         {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
           <Globe2 aria-hidden="true" size={16} /> Make public to organization
@@ -107,7 +110,7 @@ function ConversationRowMenu({ actions, children, icon, target }: {
           <Archive aria-hidden="true" size={16} /> {main ? 'Archive channel' : 'Archive breakout'}
         </ContextMenu.Item></>}
       </ContextMenu.Content>
-      </ContextMenu.Portal>}
+    </ContextMenu.Portal>
   </ContextMenu.Root>;
 }
 
@@ -408,10 +411,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         <section aria-label="Channel participants" className="workstream-context-section">
           <SidebarHorizontalLine />
           <h2>Participants</h2>
-          <Tip label="Participants" side="right">
-          <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
-            {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
-          </SidebarRow>
+          <Tip describesTrigger={false} label="Participants" side="right">
+            <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
+              {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
+            </SidebarRow>
           </Tip>
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
