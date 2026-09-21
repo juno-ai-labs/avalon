@@ -369,17 +369,22 @@ export function SpacesSidebar({
                   onDrop={(event) => {
                     const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
                     const sourceSpaceId = event.dataTransfer.getData(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
+                    const sourceIsWritable = spaces.some((candidate) => (
+                      candidate.id === sourceSpaceId && candidate.reach !== 'through_channel'
+                    ));
                     if (!workstreamId || !sourceSpaceId || sourceSpaceId === space.id
+                      || selectedSpaceId === space.id || !sourceIsWritable
                       || space.reach === 'through_channel') return;
                     event.preventDefault();
                     event.stopPropagation();
                     setChannelDropTargetId(null);
-                    flashAcceptedChannelDrop(space.id);
                     setFailure(null);
                     event.dataTransfer.dropEffect = 'move';
-                    void onMoveChannel(sourceSpaceId, space.id, workstreamId).catch((cause: unknown) => {
-                      setFailure(spaceFailureSentence(cause, 'That channel couldn\u2019t be moved.'));
-                    });
+                    void onMoveChannel(sourceSpaceId, space.id, workstreamId)
+                      .then(() => flashAcceptedChannelDrop(space.id))
+                      .catch((cause: unknown) => {
+                        setFailure(spaceFailureSentence(cause, 'That channel couldn\u2019t be moved.'));
+                      });
                   }}
                   onKeyDown={(event) => {
                     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
