@@ -14,7 +14,7 @@ export function backgroundRealtimeWorkstreamIds(
 ): string[] {
   const candidates = (workstreams ?? []).filter((workstream) => workstream.id !== activeWorkstreamId);
   const recentUnpinned = new Set(candidates
-    .filter((workstream) => workstream.pinPosition === null)
+    .filter((workstream) => (workstream.spacePins?.length ?? 0) === 0)
     .sort((left, right) => {
       const activityOrder = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
       return activityOrder || left.id.localeCompare(right.id);
@@ -23,7 +23,7 @@ export function backgroundRealtimeWorkstreamIds(
     .map((workstream) => workstream.id));
   return candidates.flatMap((workstream) => (
     workstream.harnessStatus === 'running'
-      || workstream.pinPosition !== null
+      || (workstream.spacePins?.length ?? 0) > 0
       || recentUnpinned.has(workstream.id)
       ? [workstream.id]
       : []

@@ -1056,6 +1056,16 @@ describe('sidebar group breaks follow the group-gap token', () => {
   });
 });
 
+describe('pinned and unpinned channel boundary', () => {
+  it('centres a hairline between the two expanded groups and preserves compact spacing', () => {
+    expect(rule('.sidebar-section-divider'))
+      .toContain('border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);');
+    expect(rule('.sidebar-section-divider'))
+      .toContain('margin: calc(var(--av-sys-space-group-gap) / 2) 0 calc(var(--av-sys-space-group-gap) / -2);');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-section-divider')).toContain('margin: 12px 0;');
+  });
+});
+
 /**
  * The microphone had both faults a state-on-a-shape can have. Its recording red
  * was set once, on the shared control, and then silently overpainted in the

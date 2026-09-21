@@ -173,6 +173,7 @@ export function useListMotion(
         top: rect.top - offset.y - originY,
         hold: element.hasAttribute('data-motion-hold')
           || (previous.get(key)?.element === element && element.contains(document.activeElement)),
+        move: element.hasAttribute('data-motion-move'),
       };
       const box = { left: rect.left - offset.x - originX, width: rect.width, height: rect.height };
       // To the container's visible edge, whatever it is scrolled to.
@@ -218,7 +219,7 @@ export function useListMotion(
 
     const changed = rows.filter(({ row }) => {
       const seen = previous.get(row.key);
-      return seen !== undefined && Math.abs(seen.top - row.top) >= 0.5;
+      return seen !== undefined && (row.move === true || Math.abs(seen.top - row.top) >= 0.5);
     });
     if (changed.length === 0) return;
 
