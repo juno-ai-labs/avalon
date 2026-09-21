@@ -700,6 +700,63 @@ and lets the expanded and compact states share one composition.
 and Channel rails. Both already use `SidebarTitleHeader`, as does the browser
 surface, so local copies would let the hierarchy headers drift again.
 
+### 2026-09-21 — Every generated artifact can leave or dock beside the feed
+
+**What changed:** The resource lightbox gives every artifact-direction resource
+an **Open in a new window** action, using Tabler's `window-maximize` glyph, and an
+**Open in a righthand sidebar** action using `layout-sidebar-right-inactive`.
+The sidebar action dismisses the lightbox and
+hands the full-bleed document to the shell's resizable right-rail primitive,
+whose only chrome is the document title and Close. Live sites still mint a fresh
+one-shot navigation and share their per-artifact browser session; generated
+files read through the existing authorized preview route and hand those preview
+bytes to either the rail reader or the main process, which opens the image,
+media, or escaped readable text in an isolated native window. Sources do not
+gain either artifact action, and an artifact with no readable content leaves
+the corresponding action disabled. All three reading surfaces follow the
+resource's canonical `currentVersion`: a mounted lightbox or sidebar re-reads
+its preview when that value advances, while the main process records the
+version in each detached window and reports stale windows back to the renderer.
+The renderer then reads newly authorized preview bytes, or mints a fresh
+single-use live-site navigation, and replaces every detached window for that
+resource. Closed windows leave the registry and therefore cause no background
+content read. Generated-file refreshes share the inline preview's
+`resource_processing` retry contract, and the main process reserves versions
+before navigation so two reads that finish out of order cannot move a detached
+window back to an older publish. The publishing bridge asks the canonical
+conversation object to emit `resource_updated` after a changed file is durable;
+for a generated site it waits until the public artifact pointer also names the
+new version, so every reading surface can refresh immediately without racing
+the previous site.
+
+**Why:** Opening in a new window lived inside the live-site detail, so it was an accidental
+capability of one artifact renderer rather than of artifacts. Images, Markdown,
+plain text, PDFs, Office documents, audio, and every later generated-file type
+all converge on the authorized preview boundary already; keying the control on
+artifact direction makes both affordances follow the product meaning instead of
+repeating a file-type allowlist that would immediately drift. Reusing the shell
+rail also preserves its one width, feed reflow, responsive cap, keyboard resize,
+focus, Escape, and close motion rather than creating a document-only layout
+system beside it. Keeping detached-window lifetime in the main process and
+content authorization in the renderer preserves the existing boundary while
+letting the canonical resource version drive every preview consistently.
+
+**Considered and rejected:** Giving generated files public or directly
+navigable API URLs. Their content is workspace-authorized and the preview route
+may be a materialized derivative rather than the stored file, so a URL-based
+shortcut either loses authorization or creates a second content path. Also
+rejected: interpreting generated HTML in the file window. The pop-out treats
+all non-media preview bytes as escaped prose under a script-free CSP, preserving
+the same trust boundary as the in-product reader.
+
+**Consequences:** `popOutArtifact` now accepts either a site navigation or a
+generated preview payload. The shell right rail is active only when a lightbox
+hands it an artifact; the retired context-sidebar entry point remains off. New
+generated file kinds inherit both actions without a renderer change as long as
+the preview route can return readable bytes. A new live executable artifact
+still owns its navigation/session minting and must not be routed through the
+generated-file payload branch.
+
 ### 2026-09-19 — The capsule composer clips rather than hides
 
 **What changed:** The message capsule takes `overflow: clip` in place of

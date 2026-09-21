@@ -323,12 +323,30 @@ export interface DesktopArtifactPreviewRequest {
   cornerRadius: number;
 }
 
-export interface DesktopArtifactWindowRequest {
+export interface DesktopSiteArtifactWindowRequest {
+  kind: 'site';
+  resourceId: string;
+  version: number;
   artifactId: string;
   url: string;
   /** Shown in the window's title bar, so a person knows what they popped out. */
   title: string;
 }
+
+export interface DesktopGeneratedArtifactWindowRequest {
+  kind: 'generated';
+  resourceId: string;
+  version: number;
+  /** The authorized preview bytes, not the stored source file. */
+  content: Uint8Array;
+  mimeType: string;
+  /** Shown in the window's title bar, so a person knows what they popped out. */
+  title: string;
+}
+
+export type DesktopArtifactWindowRequest =
+  | DesktopSiteArtifactWindowRequest
+  | DesktopGeneratedArtifactWindowRequest;
 
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
@@ -452,8 +470,12 @@ export interface RallyDesktopBridge {
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
   /** Tear the preview down: the detail closed, or the work stream changed. */
   closeArtifactPreview: () => Promise<void>;
-  /** Open the same artifact in its own window, sharing the preview's session. */
+  /** Open a generated artifact in its own isolated window. */
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<void>;
+  /** Versions currently shown by detached artifact windows, keyed by resource. */
+  getPoppedOutArtifactVersions: () => Promise<Record<string, number>>;
+  /** Replace every detached window for this resource with a newly published version. */
+  updatePoppedOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /**
    * Raise the singleton Sidekicks window, on its library or on one target.
    *

@@ -23,7 +23,6 @@ import {
   MIN_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
   useUiStore,
-  RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
 import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -458,9 +457,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // room for their context rail; other routes keep the original reservation.
   const sidebarCompact = sidebarCollapsed || sidebarConstrained;
   const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
-  // The main pane keeps room for an inspector that is still fading out.
-  const showShellRail = RIGHT_SIDEBAR_ENABLED && (railOpen || railLeaving);
-  const expandForShellRail = RIGHT_SIDEBAR_ENABLED && railOpen;
+  // The main pane keeps room for a sidebar that is still fading out.
+  const showShellRail = railOpen || railLeaving;
+  const expandForShellRail = railOpen;
   useEffect(() => {
     void desktopBridge().setConversationDetailsOpen({
       // A leaving rail remains laid out for its short cross-fade, but no longer

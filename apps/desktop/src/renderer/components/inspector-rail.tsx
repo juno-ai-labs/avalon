@@ -2,6 +2,7 @@ import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
+import { IconLayoutSidebarRightInactive, IconWindowMaximize } from '@tabler/icons-react';
 import {
   Archive,
   ArrowLeft,
@@ -43,6 +44,7 @@ interface InspectorRailProps {
     resourceId: string;
     returnFocus: HTMLElement;
     onClose: () => void;
+    onOpenSidebar: (resourceId: string) => void;
   };
   failure?: 'watch' | 'detach' | 'refresh' | 'attach';
   /**
@@ -586,6 +588,7 @@ function InspectorDetail({
           loadTable={siteArtifacts.loadTable}
           openArtifact={siteArtifacts.openArtifact}
           resourceId={resource.id}
+          version={resource.currentVersion}
           surface={siteArtifacts.surface}
           title={resource.title}
         />
@@ -637,6 +640,69 @@ function inspectedResource(
   return workstream.resources.find((item) => item.id === inspector.id);
 }
 
+/**
+ * The document-only occupant of the shell's right rail.
+ *
+ * Resource metadata and actions belong to the lightbox. This surface is the
+ * reading mode that lightbox can hand off to, so its only chrome is identity
+ * and dismissal; the shared rail frame supplies resizing and feed layout.
+ */
+export function ArtifactSidebar({
+  leaving = false,
+  loadResourceContent,
+  onClose,
+  onResize,
+  resource,
+  siteArtifacts,
+  width,
+}: {
+  leaving?: boolean;
+  loadResourceContent?: InspectorRailProps['loadResourceContent'];
+  onClose: () => void;
+  onResize: (width: number) => void;
+  resource: WorkstreamResource;
+  siteArtifacts?: InspectorRailProps['siteArtifacts'];
+  width: number;
+}): React.JSX.Element {
+  const site = isSiteResource(resource);
+  return (
+    <RailSurface
+      className="artifact-sidebar"
+      label={`Artifact: ${resource.title}`}
+      leaving={leaving}
+      onClose={onClose}
+      onResize={onResize}
+      resizeLabel="Resize artifact sidebar"
+      scrimLabel="Close artifact sidebar"
+      width={width}
+    >
+      <header className="artifact-sidebar-header window-drag">
+        <h2 title={resource.title}>{resource.title}</h2>
+        <IconButton className="window-no-drag" label="Close sidebar" onClick={onClose}>
+          <X size={18} />
+        </IconButton>
+      </header>
+      <div className="artifact-sidebar-body">
+        {site && siteArtifacts ? (
+          <SiteResourceDetail
+            describeData={siteArtifacts.describeData}
+            loadTable={siteArtifacts.loadTable}
+            openArtifact={siteArtifacts.openArtifact}
+            resourceId={resource.id}
+            version={resource.currentVersion}
+            surface={siteArtifacts.surface}
+            title={resource.title}
+          />
+        ) : loadResourceContent && !site ? (
+          <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
+        ) : (
+          <EmptyState description="This artifact has no preview available." title="Preview unavailable" />
+        )}
+      </div>
+    </RailSurface>
+  );
+}
+
 const railTitle: Record<RailVariant, string> = {
   context: 'Channel',
 };
@@ -661,6 +727,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveFailed, setArchiveFailed] = useState(false);
+  const [popOutFailed, setPopOutFailed] = useState(false);
+  const [poppingOut, setPoppingOut] = useState(false);
   const versionsTriggerRef = useRef<HTMLButtonElement>(null);
   const closeInspectorRef = useRef<HTMLButtonElement>(null);
 
@@ -668,7 +736,31 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     setArchiveTarget(null);
     setArchiveFailed(false);
     setArchiving(false);
+    setPopOutFailed(false);
+    setPoppingOut(false);
   }, [inspector?.id]);
+
+  const popOutGeneratedArtifact = async (): Promise<void> => {
+    if (!resource || resource.direction !== 'artifact' || isSiteResource(resource)
+      || !resource.contentAvailable || !props.loadResourceContent || poppingOut) return;
+    setPoppingOut(true);
+    setPopOutFailed(false);
+    try {
+      const content = await props.loadResourceContent(resource.id);
+      await desktopBridge().popOutArtifact({
+        kind: 'generated',
+        resourceId: resource.id,
+        version: resource.currentVersion,
+        content: new Uint8Array(await content.arrayBuffer()),
+        mimeType: content.type || resource.mimeType || 'text/plain',
+        title: resource.title,
+      });
+    } catch {
+      setPopOutFailed(true);
+    } finally {
+      setPoppingOut(false);
+    }
+  };
 
   const closeArchive = (): void => {
     if (archiving) return;
@@ -735,6 +827,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
           {resource && (
             <>
+              {props.lightbox && resource.direction === 'artifact' && (
+                <IconButton
+                  disabled={isSiteResource(resource)
+                    ? !props.siteArtifacts
+                    : !resource.contentAvailable || !props.loadResourceContent}
+                  label="Open in a righthand sidebar"
+                  onClick={() => props.lightbox?.onOpenSidebar(resource.id)}
+                  tooltipSide="top"
+                >
+                  <IconLayoutSidebarRightInactive size={15} />
+                </IconButton>
+              )}
+              {resource.direction === 'artifact' && !isSiteResource(resource) && (
+                <IconButton
+                  disabled={!resource.contentAvailable || !props.loadResourceContent || poppingOut}
+                  label="Open in a new window"
+                  onClick={() => void popOutGeneratedArtifact()}
+                  tooltipSide="top"
+                >
+                  <IconWindowMaximize size={15} />
+                </IconButton>
+              )}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton label="Versions" ref={versionsTriggerRef} tooltipSide="top">
@@ -772,6 +886,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </header>
       <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
+        {popOutFailed && <div className="rail-inline-error"><InlineError>
+          The artifact couldn’t be opened in a new window.
+        </InlineError></div>}
         {props.failure && <div className="rail-inline-error"><InlineError>
           {inspectorRailFailureCopy[props.failure]}
         </InlineError></div>}

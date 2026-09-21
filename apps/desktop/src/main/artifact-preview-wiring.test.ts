@@ -36,7 +36,7 @@ describe('artifact preview wiring', () => {
       'confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents))',
     );
     expect(text).toContain(
-      'confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents))',
+      'confineToArtifactOrigin(window.webContents, new URL(url).origin, artifactLinkHandoff(window.webContents))',
     );
     // The activation can only be reconstructed from the surface's own input
     // stream; nothing else in this process is told when a person presses
@@ -66,5 +66,16 @@ describe('artifact preview wiring', () => {
     // decides what may still be touched.
     expect(factory).toContain('destroyed: () => window.isDestroyed()');
     expect(factory).toContain('destroyed: () => contents.isDestroyed()');
+  });
+
+  it('keeps detached windows versioned by resource until they close', () => {
+    const text = source();
+
+    expect(text).toContain('poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version })');
+    expect(text).toContain("window.once('closed', () => poppedOutArtifacts.delete(window))");
+    expect(text).toContain("ipcMain.handle('artifact:popped-out-versions'");
+    expect(text).toContain("ipcMain.handle('artifact:update-pop-out'");
+    expect(text).toContain('artifact.resourceId === request.resourceId');
+    expect(text).toContain('artifact.version < request.version');
   });
 });
