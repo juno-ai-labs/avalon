@@ -101,6 +101,18 @@ test('the app is health-gated against the regional APIs before it is distributed
   assert.ok(healthGate < published, 'Regional health must be checked before anything is published');
 });
 
+test('verified macOS release artifacts retain only the seven-day recovery window', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const artifactStep = workflow.slice(
+    workflow.indexOf('- name: Preserve verified release artifacts'),
+    workflow.indexOf('- name: Verify regional API health before distributing'),
+  );
+
+  // R2 owns durable release retention. The Actions copy is a short recovery
+  // window whose per-artifact expiry avoids a separate cleanup schedule.
+  assert.match(artifactStep, /^ {10}retention-days: 7$/mu);
+});
+
 test('a real packaged Crashpad fixture gates every desktop release', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const fixture = workflow.indexOf('pnpm --filter @rally/desktop test:crashpad');
