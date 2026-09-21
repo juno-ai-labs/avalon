@@ -368,6 +368,9 @@ describe('Sidebar channel markers', () => {
     }
     render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    expect(edge.querySelector('svg')).toHaveAttribute('width', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
 
     fireEvent.focus(edge);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
@@ -2092,10 +2095,12 @@ describe('Sidebar channel markers', () => {
 
     expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'General' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'General' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'General' }).closest('.sidebar-titlebar')).not.toBeNull();
+    expect(screen.getByRole('heading', { name: 'General' })).toHaveClass('sidebar-title');
+    const header = screen.getByRole('heading', { name: 'General' }).closest('.sidebar-header');
+    expect(header).toHaveClass('sidebar-row');
+    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveClass('sidebar-row');
   });
 
   // The section is showing its opening card and no rows, so there is nothing to

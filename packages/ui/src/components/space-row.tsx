@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react';
 
 import { SpaceIcon } from './space-appearance-picker';
+import { SidebarRow } from './resizable-sidebar';
 
 /**
  * The part of a Space a row draws. Deliberately not `SpaceSummary`: a row does
@@ -63,9 +64,9 @@ export interface SpaceRowDrag {
  * actions a row carries.
  *
  * Presentational. Expansion, activity, drag semantics and navigation are all
- * the host's; what lives here is the geometry, the accordion control, the
- * motion keys — `space:<id>` on the row, so a Space
- * reordered past another glides with the placements under it.
+ * the host's; shared row geometry comes from `SidebarRow`, while this component
+ * owns the accordion control and the motion keys — `space:<id>` on the row,
+ * so a Space reordered past another glides with the placements under it.
  *
  * **The context menu is optional.** A person who reaches a Space only because
  * they can read a Channel placed in it is shown its mark and name so that
@@ -98,8 +99,9 @@ export function SpaceRow({
   space: SpaceRowSpace;
 }): React.JSX.Element {
   const visualRow = (
-    <div
-      className={clsx('sidebar-row space-sidebar-row', active && 'is-active')}
+    <SidebarRow
+      as="div"
+      className={clsx('space-sidebar-row', active && 'is-active')}
       data-motion-hold=""
       data-motion-key={`space:${space.id}`}
       onKeyDown={onRowKeyDown}
@@ -114,7 +116,7 @@ export function SpaceRow({
         <IconTriangle className={clsx(expanded && 'is-expanded')} size={10} stroke={1.8} />
       </button>
       {link}
-    </div>
+    </SidebarRow>
   );
   return (
     <div
