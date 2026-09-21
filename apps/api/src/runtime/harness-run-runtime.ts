@@ -256,6 +256,7 @@ export async function terminalizeQueuedHarnessRun(
   identity: AttemptIdentity,
   error: { code: string; message: string },
   status: "failed" | "stopped" = "failed",
+  loopExecutionFence: TerminalLoopExecutionFence | null = null,
 ): Promise<"terminalized" | "already_terminal"> {
   const settled = await runs.terminalizeQueuedRun({
     runId: input.harnessRunId,
@@ -264,6 +265,7 @@ export async function terminalizeQueuedHarnessRun(
     errorJson: status === "failed" ? safeErrorJson(error) : null,
     memberSafePayloadJson: stableJson({ code: error.code.slice(0, 120) }),
     lifecycleEventId: uuidV7(),
+    loopExecutionFence,
     now: Date.now(),
   });
   if (settled.outcome === "not_found" || settled.outcome === "ownership_lost") {

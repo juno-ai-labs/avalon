@@ -10,6 +10,7 @@ import { asSubstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import {
   USER_ID,
   WORKSPACE_ID,
@@ -20,6 +21,7 @@ import {
 } from "./helpers/substream-fixture";
 
 const RUN_ID = "00000000-0000-7000-8000-0000000008a1";
+const LINKED_RUN_ID = "00000000-0000-7000-8000-0000000008a2";
 const NOW = 1_787_000_000_000;
 
 beforeEach(async () => {
@@ -38,6 +40,73 @@ function agent(): DurableObjectStub {
 }
 
 describe("stale-run reaping on real workerd", () => {
+  it("releases the exact loop execution with a cancelled pre-claim receipt", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state, NOW);
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      expect(runs.admitRun({
+        runId: LINKED_RUN_ID,
+        origin: "member_message",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "admitted",
+        startedAt: NOW,
+        model: "test/model",
+        triggerPartId: null,
+        parentRunId: null,
+        expectedLatestRunId: null,
+        now: NOW,
+      })).toEqual({ outcome: "admitted" });
+      state.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+        LINKED_RUN_ID,
+      );
+      const loops = new SubstreamLoopStorage(state.storage);
+      loops.ensureLoop({ loopId: LINKED_RUN_ID, bindStateRevision: 0, now: NOW });
+      loops.activateExecutionReceipt({
+        runId: LINKED_RUN_ID,
+        loopId: LINKED_RUN_ID,
+        executionEpoch: 1,
+        leaseOwner: "loop-owner",
+        leaseExpiresAt: NOW + 60_000,
+        expectedLoopRevision: loops.loop()!.revision,
+        expectedBindStateRevision: 0,
+        now: NOW,
+      });
+      const terminalInput = {
+        runId: LINKED_RUN_ID,
+        attemptId: "attempt-cancelled-before-claim",
+        status: "cancelled" as const,
+        errorJson: null,
+        memberSafePayloadJson: '{"code":"run_cancelled"}',
+        lifecycleEventId: "queued-terminal-event",
+        loopExecutionFence: {
+          loopId: LINKED_RUN_ID,
+          executionId: LINKED_RUN_ID,
+          executionEpoch: 1,
+          leaseOwner: "loop-owner",
+        },
+        now: NOW + 1,
+      };
+
+      expect(runs.terminalizeQueuedRun({ ...terminalInput, loopExecutionFence: null }))
+        .toEqual({ outcome: "ownership_lost" });
+      expect(loops.loop()).toMatchObject({ status: "executing", active_execution_id: LINKED_RUN_ID });
+
+      expect(runs.terminalizeQueuedRun(terminalInput)).toEqual({ outcome: "terminalized" });
+      expect(runs.run({ runId: LINKED_RUN_ID })).toMatchObject({
+        status: "cancelled",
+        terminalized_at: NOW + 1,
+      });
+      expect(loops.loop()).toMatchObject({
+        status: "idle",
+        active_execution_id: null,
+        lease_owner: null,
+      });
+    });
+  });
+
   it("rolls activity and checkpoint cleanup back when terminalization aborts", async () => {
     const stub = agent();
     await boot(stub);
