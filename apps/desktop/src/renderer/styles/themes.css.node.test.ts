@@ -310,7 +310,7 @@ describe('window background', () => {
 describe('token references', () => {
   // Properties the stylesheet defines for its own use rather than taking from a
   // theme. Each is set by a rule in this same file.
-  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--sidebar-row-background', '--pill-overhang', '--rail-slot',
+  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--pill-overhang', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
@@ -338,7 +338,7 @@ describe('token references', () => {
     '--sidebar-layout-motion', '--sidebar-compact',
     // The first rail's current width and its shared collapse interval. The
     // shell owns both as layout geometry, not as theme choices.
-    '--spaces-sidebar-width', '--spaces-sidebar-motion',
+    '--spaces-sidebar-width',
     // Near and far fade lengths on a scroller that clips its items. Registered
     // so they interpolate as lengths; a theme has no opinion about them.
     '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',

@@ -19,6 +19,7 @@ import {
   hasLiveSpaceArchiveAuthority,
   invitationAccountMismatch,
   sidebarConstraintThreshold,
+  spacesSidebarAvailableWidth,
   spacesEnabledForSession,
   useLayoutMountedRef,
   useLatestCommittedValue,
@@ -33,21 +34,37 @@ describe('sidebarConstraintThreshold', () => {
     expect(sidebarConstraintThreshold({
       pathname: '/spaces/hiring',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: false,
       spacesEnabled: true,
-    })).toBe(944);
+    })).toBe(984);
     expect(sidebarConstraintThreshold({
       pathname: '/workstreams/launch',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: true,
       spacesEnabled: true,
-    })).toBe(896);
+    })).toBe(880);
     expect(sidebarConstraintThreshold({
       pathname: '/workstreams/launch',
       sidebarWidth: 280,
+      spacesSidebarWidth: 280,
       spacesCollapsed: false,
       spacesEnabled: false,
-    })).toBe(800);
+    })).toBe(792);
+  });
+});
+
+describe('spacesSidebarAvailableWidth', () => {
+  it('reserves compact Channel and context rails before sizing Spaces', () => {
+    expect(spacesSidebarAvailableWidth({
+      pathname: '/workstreams/launch',
+      viewportWidth: 850,
+    })).toBe(250);
+    expect(spacesSidebarAvailableWidth({
+      pathname: '/spaces/hiring',
+      viewportWidth: 850,
+    })).toBe(338);
   });
 });
 

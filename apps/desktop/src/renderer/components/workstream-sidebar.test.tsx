@@ -49,8 +49,13 @@ describe('WorkstreamSidebar', () => {
   it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
     setup();
     const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
-    expect(within(sidebar).getByRole('heading', { name: 'Launch preparation' })).toBeInTheDocument();
-    expect(sidebar.querySelector('.workstream-context-toolbar-mark')).not.toBeNull();
+    expect(within(sidebar).getByRole('heading', { name: 'Launch preparation' })).toHaveClass('sidebar-title');
+    const header = sidebar.querySelector('.sidebar-header');
+    expect(header).toHaveClass('sidebar-row');
+    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
+    expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
+    expect(sidebar.querySelector('.workstream-context-scroll')).toHaveClass('sidebar-scroll');
+    expect(sidebar.querySelector('.sidebar-title-header-icon')).not.toBeNull();
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel sidebar',
@@ -59,6 +64,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByText('Breakouts')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toHaveClass('sidebar-row');
   });
 
   it('marks the main conversation with the channel\u2019s own icon and colour', () => {
@@ -75,8 +81,11 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getAllByText('Launch preparation')).toHaveLength(2);
     expect(screen.queryByText('Main log')).not.toBeInTheDocument();
     const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
+    expect(edge.querySelector('svg')).toHaveAttribute('width', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
+    expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
     fireEvent.doubleClick(edge);
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.doubleClick(edge);
     expect(edge).toHaveAttribute('aria-valuenow', '280');
   });
@@ -100,7 +109,7 @@ describe('WorkstreamSidebar', () => {
 
     expect(sidebar).not.toHaveClass('is-resizing');
     fireEvent.doubleClick(edge);
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     expect(sidebar).not.toHaveClass('is-resizing');
   });
 
@@ -124,7 +133,7 @@ describe('WorkstreamSidebar', () => {
     const view = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    expect(screen.getByRole('complementary').querySelector('.workstream-context-toolbar-mark .workstream-mark')).not.toBeNull();
+    expect(screen.getByRole('complementary').querySelector('.sidebar-title-header-icon .workstream-mark')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
@@ -155,7 +164,7 @@ describe('WorkstreamSidebar', () => {
     const child = screen.getByRole('button', { name: /Launch risks/ });
     // A Breakout derives its own stable icon and colour from its identity, in
     // the same icon slot Main uses. It does not borrow the Channel's mark.
-    expect(child.querySelector('.workstream-context-mark > .workstream-mark')).not.toBeNull();
+    expect(child.querySelector('.sidebar-row-icon > .workstream-mark')).not.toBeNull();
     expect(child.querySelector('.tabler-icon-border-corner-pill')).toBeNull();
     expect(child.querySelector('.avatar')).toBeNull();
     expect(child.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-rose)' });
@@ -167,7 +176,7 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar.querySelectorAll('.lucide-git-branch')).toHaveLength(0);
     // The blue enter mark starts a Breakout; the generic plus is no longer
     // used in this hierarchy rail.
-    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.sidebar-row-icon > .tabler-icon-corner-down-right')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.tabler-icon-plus')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
@@ -229,7 +238,7 @@ describe('WorkstreamSidebar', () => {
     ]);
     const pending = sidebar.querySelector('.workstream-pending-substream');
     expect(pending).toHaveAttribute('aria-current', 'page');
-    expect(pending?.querySelector('.workstream-context-mark > .lucide-git-branch')).not.toBeNull();
+    expect(pending?.querySelector('.sidebar-row-icon > .lucide-git-branch')).not.toBeNull();
     expect(pending?.querySelector('.title-skeleton')).not.toBeNull();
     expect(within(sidebar).getByText('Rally is creating this breakout')).toBeInTheDocument();
     // Nothing to click: the reader is already on the surface this row stands
@@ -243,7 +252,7 @@ describe('WorkstreamSidebar', () => {
     const create = screen.getByRole('button', { name: 'New breakout' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
-    // Compact hides `.workstream-context-copy` with `visibility: hidden`, which
+    // Compact hides `.sidebar-row-main` with `visibility: hidden`, which
     // takes everything inside it out of the accessibility tree — so the row's
     // only name must not live there. Every other row survives the collapse on
     // its button's `aria-label`; this one has no button, so the text is on the
@@ -253,8 +262,8 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar).toHaveClass('is-compact');
     const name = within(sidebar).getByText('Rally is creating this breakout');
     expect(name.closest('.workstream-pending-substream')).toBe(pending);
-    expect(name.closest('.workstream-context-copy')).toBeNull();
-    expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
+    expect(name.closest('.sidebar-row-main')).toBeNull();
+    expect(pending?.querySelector('.sidebar-row-main')).not.toBeNull();
   });
 
   it('yields the creating row the moment the child it reserved is published', () => {
@@ -368,12 +377,12 @@ describe('WorkstreamSidebar', () => {
     const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
 
     fireEvent.keyDown(edge, { key: 'Enter' });
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(edge, { key: 'Enter' });
     expect(edge).toHaveAttribute('aria-valuenow', '280');
 
     act(() => { width = 703; resized(); });
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(edge, { key: 'Enter' });
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBe('false');
   });
@@ -492,9 +501,9 @@ describe('WorkstreamSidebar', () => {
     handle.setPointerCapture = vi.fn();
     fireEvent.pointerDown(handle, { clientX: 560, pointerId: 1, button: 0 });
     fireEvent.pointerMove(handle, { clientX: 489, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.pointerMove(handle, { clientX: 499, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     fireEvent.pointerCancel(handle, { pointerId: 1 });
@@ -512,7 +521,7 @@ describe('WorkstreamSidebar', () => {
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '400');
     act(() => { width = 700; resized(); });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });

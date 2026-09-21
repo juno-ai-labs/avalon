@@ -38,7 +38,7 @@ describe('SidekickSection', () => {
     const row = screen.getByRole('button', { name: 'Editor' });
     expect(screen.queryByRole('button', { name: 'Remove Editor' })).toBeNull();
     // Compact drops every title in this rail, so the row has to carry a mark.
-    expect(row.querySelector('.workstream-context-mark .automation-glyph')).not.toBeNull();
+    expect(row.querySelector('.sidebar-row-icon .automation-glyph')).not.toBeNull();
     fireEvent.click(row);
     expect(openSidekicks).toHaveBeenCalledWith('one');
     fireEvent.contextMenu(row);

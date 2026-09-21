@@ -1,15 +1,23 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { Archive, Copy, GitBranch, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { Archive, Copy, GitBranch, Globe2, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconShare2 } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/sidebar-geometry';
-import { AvatarStack, DragHint, IconButton, Tip, TitleSkeleton } from './primitives';
+import { AvatarStack, IconButton, Tip, TitleSkeleton } from './primitives';
+import {
+  ResizableSidebar,
+  SidebarHorizontalLine,
+  SidebarRow,
+  SidebarScroll,
+  SidebarTitleHeader,
+} from './resizable-sidebar';
 export const PENDING_SUBSTREAM_DRAFT_ID = 'new';
 import { ResourceIcon } from './resource-icon';
 import { WorkstreamMark } from './workstream-glyph';
+import { SidebarNavigationRowContent } from './navigation';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
@@ -134,14 +142,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
     } catch { return DEFAULT_SIDEBAR_WIDTH; }
   });
   const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
-  const [resizing, setResizing] = useState(false);
-  // The keyboard's drag: held arrow keys write the width repeatedly, and
-  // animating each step would leave the edge trailing the width the collapse
-  // threshold is judged against. Separate from `resizing` so it raises the
-  // class without entering the pointer drag's state.
-  const [keyResizing, setKeyResizing] = useState(false);
-  const [dragWidth, setDragWidth] = useState<number | null>(null);
-  const drag = useRef<{ pointerId: number; offset: number } | null>(null);
   // Observe the available pane, never this sidebar or the transcript. Its
   // width does not change when this rail collapses, avoiding resize feedback.
   useLayoutEffect(() => {
@@ -202,17 +202,27 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
    */
   const currentSubstreamId = publishedReserved ?? selectedSubstreamId;
   return (
-    <aside aria-label="Channel sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
-      <div className="workstream-context-toolbar window-drag">
-        <h2 title={workstream.title}>{workstream.title}</h2>
-        <span aria-hidden="true" className="workstream-context-toolbar-mark">
-          <WorkstreamMark appearance={workstream.appearance} id={workstream.id} />
-        </span>
-      </div>
-      <div className="workstream-context-scroll">
+    <ResizableSidebar
+      aria-label="Channel sidebar"
+      className="workstream-context-sidebar"
+      compact={compact}
+      constrained={narrow}
+      onResize={resize}
+      onToggle={() => saveCollapsed(!collapsed)}
+      resizeLabel="Resize channel sidebar"
+      sidebarRef={sidebar}
+      style={{ flexBasis: effectiveWidth }}
+      width={effectiveWidth}
+    >
+      <SidebarTitleHeader
+        className="workstream-context-toolbar window-drag"
+        icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
+        title={workstream.title}
+      />
+      <SidebarScroll className="workstream-context-scroll">
         {mainVisible && <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>
-          <button
+          <SidebarRow
             className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
@@ -220,9 +230,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             type="button"
             onClick={() => { saveCollapsed(true); onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
-            <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
-            <span className="workstream-context-copy"><span>{workstream.title}</span></span>
-          </button>
+            <SidebarNavigationRowContent
+              icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
+              title={workstream.title}
+            />
+          </SidebarRow>
         </ConversationRowMenu>}
         <div
           aria-describedby={substreamDrag ? SUBSTREAM_DRAG_HINT_ID : undefined}
@@ -254,7 +266,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             // markup differs.
             const position = `${index + 1} of ${workstream.privateChildren?.length ?? 0}`;
             const row = (
-              <button
+              <SidebarRow
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
                 aria-label={[`Go to breakout: ${child.title}`, substreamDrag ? position : undefined]
                   .filter(Boolean).join(', ')}
@@ -303,11 +315,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 title={child.title}
                 type="button"
               >
-                <span aria-hidden="true" className="workstream-context-mark">
-                  <WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />
-                </span>
-                <span className="workstream-context-copy"><span>{child.title}</span></span>
-              </button>
+                <SidebarNavigationRowContent
+                  icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />}
+                  title={child.title}
+                />
+              </SidebarRow>
             );
             return substreamActions
               ? <ConversationRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>
@@ -323,7 +335,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                is would disagree the moment either changed. It carries the
                same `title` its siblings do, because compact leaves nothing but
                a mark and hovering it is how a reader asks what a row is. */
-            <div
+            <SidebarRow
+              as="div"
               aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
               className={clsx(
                 'workstream-context-row workstream-conversation-row workstream-pending-substream',
@@ -331,9 +344,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               )}
               title="Rally is creating this breakout"
             >
-              <span aria-hidden="true" className="workstream-context-mark">
-                <GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />
-              </span>
+              <SidebarNavigationRowContent
+                icon={<GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />}
+                title={<span aria-hidden="true"><TitleSkeleton /></span>}
+              />
               {/* The row's name, and outside the copy below on purpose: compact
                   hides that element with `visibility: hidden`, which takes
                   everything inside it out of the accessibility tree as well as
@@ -341,13 +355,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   is an `aria-label` on the button; this one has no button to
                   carry one, so the text sits on the row itself. */}
               <span className="sr-only">Rally is creating this breakout</span>
-              {/* Decorative from here: a pulsing bar standing in for a title
-                  nothing has chosen yet, with the skeleton's own label
-                  suppressed so the row is not announced twice. */}
-              <span aria-hidden="true" className="workstream-context-copy">
-                <TitleSkeleton />
-              </span>
-            </div>
+            </SidebarRow>
           )}
           {onNewSubstream && (
             // Current while a substream is being written, because that surface
@@ -355,7 +363,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             // thing on screen that still says so. Once it has been submitted
             // the row above says it instead — this one is back to being what
             // starts the next substream.
-            <button
+            <SidebarRow
               aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream ? 'page' : undefined}
               aria-label="New breakout"
               className={clsx(
@@ -366,9 +374,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               title="New breakout"
               type="button"
             >
-              <span aria-hidden="true" className="workstream-context-mark"><IconCornerDownRight className="workstream-new-breakout-icon" size={21} stroke={1.7} /></span>
-              <span className="workstream-context-copy"><span>New breakout</span></span>
-            </button>
+              <SidebarNavigationRowContent
+                icon={<IconCornerDownRight className="workstream-new-breakout-icon" size={21} stroke={1.7} />}
+                title="New breakout"
+              />
+            </SidebarRow>
           )}
         </div>
         {/* Absent rather than empty, as the Sidekick strip below is: a heading
@@ -378,16 +388,17 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         <ResourceSection label="Artifacts" resources={artifacts} onOpen={onOpenArtifact} />
         {onOpenResource && <ResourceSection label="Resources" resources={workstream.resources.filter((item) => item.direction !== 'artifact')} onOpen={onOpenResource} />}
         <section aria-label="Channel participants" className="workstream-context-section">
+          <SidebarHorizontalLine />
           <h2>Participants</h2>
-          <button className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
+          <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
             {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
-          </button>
+          </SidebarRow>
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
         <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
         {addSidekick}
-      </div>
+      </SidebarScroll>
       <div className="sidebar-collapse-footer">
         <IconButton
           className="window-no-drag"
@@ -400,86 +411,22 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
           }}
         >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
       </div>
-      {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
-      {/* Named only while the double-click would do something: a pane too
-          narrow for this rail's contents holds it compact, and the toggle
-          above is disabled for the same reason. */}
-      <DragHint
-        action="Drag to resize"
-        suppressed={resizing}
-        shortcut={narrow ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
-      >
-        <div
-          role="separator"
-          aria-label="Resize channel sidebar"
-          aria-orientation="vertical"
-          aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuenow={effectiveWidth}
-          className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
-          tabIndex={0}
-          onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
-          onBlur={() => setKeyResizing(false)}
-          onKeyDown={(event) => {
-            // As in the navigation: the key the ARIA authoring practices give a
-            // splitter, performing the toggle the double-click performs, so the
-            // hint names something a keyboard can actually do.
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              if (!narrow) saveCollapsed(!collapsed);
-              return;
-            }
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-            event.preventDefault();
-            setKeyResizing(true);
-            if (event.key === 'ArrowLeft' && !compact) resize(width > MIN_SIDEBAR_WIDTH ? width - 16 : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
-            if (event.key === 'ArrowRight') resize(compact ? MIN_SIDEBAR_WIDTH : width + 16);
-          }}
-          onKeyUp={() => setKeyResizing(false)}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.focus();
-            const bounds = sidebar.current?.getBoundingClientRect();
-            if (!bounds) return;
-            drag.current = { pointerId: event.pointerId, offset: event.clientX - bounds.right };
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setResizing(true);
-          }}
-          onPointerMove={(event) => {
-            if (drag.current?.pointerId !== event.pointerId) return;
-            const bounds = sidebar.current?.getBoundingClientRect();
-            if (bounds) {
-              const requested = event.clientX - drag.current.offset - bounds.left;
-              setDragWidth(Math.max(0, requested));
-              resize(requested);
-            }
-          }}
-          onPointerUp={(event) => {
-            if (drag.current?.pointerId !== event.pointerId) return;
-            drag.current = null;
-            setResizing(false); setDragWidth(null);
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onPointerCancel={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
-          onLostPointerCapture={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
-        >
-          <span aria-hidden="true" className="sidebar-resizer-handle"><GripVertical size={11} strokeWidth={2} /></span>
-        </div>
-      </DragHint>
-    </aside>
+    </ResizableSidebar>
   );
 }
 
 function ResourceSection({ label, resources, onOpen }: { label: string; resources: SidebarPresentation['resources']; onOpen: (id: string, returnFocus: HTMLElement) => void }): React.JSX.Element | null {
   if (!resources.length) return null;
-  return <section aria-label={label} className="workstream-context-section"><h2>{label}</h2>
+  return <section aria-label={label} className="workstream-context-section"><SidebarHorizontalLine /><h2>{label}</h2>
     {/* The rail owns its tooltip: native title uses a different delay and
         never appears for someone reaching the row with the keyboard. */}
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
-      <button className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
-        <span className="workstream-context-resource-icon"><ResourceIcon resource={resource} /></span>
-        <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
-      </button></Tip>)}
+      <SidebarRow className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
+        <SidebarNavigationRowContent
+          description={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
+          icon={<ResourceIcon resource={resource} />}
+          title={resource.title}
+        />
+      </SidebarRow></Tip>)}
   </section>;
 }

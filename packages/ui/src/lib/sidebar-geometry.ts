@@ -1,5 +1,7 @@
-export const COLLAPSED_SIDEBAR_WIDTH = 96;
-export const EXPANDED_SPACES_SIDEBAR_WIDTH = 240;
+// macOS places 12px traffic lights at x=18, 38, and 58. The last one ends at
+// 70px, so 88px leaves the same 18px from that edge as the first light has
+// from the leading edge. Every hierarchy rail uses this width.
+export const COLLAPSED_SIDEBAR_WIDTH = 88;
 export const MIN_SIDEBAR_WIDTH = 240;
 export const MAX_SIDEBAR_WIDTH = 400;
 export const DEFAULT_SIDEBAR_WIDTH = 280;

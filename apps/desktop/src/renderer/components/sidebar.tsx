@@ -1,7 +1,15 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
 import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 import { IconShare2 } from '@tabler/icons-react';
-import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
+import { NavigationRowContent } from '@rally/ui/components/navigation';
+import {
+  ResizableSidebar,
+  SidebarHeader,
+  SidebarHorizontalLine,
+  SidebarRow,
+  SidebarScroll,
+  SidebarTitleHeader,
+} from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
@@ -10,7 +18,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, CreateSpaceRequest, PersonalOrder, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
+import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -24,12 +32,12 @@ import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SPACES_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
+import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacesSidebar } from './spaces-sidebar';
@@ -76,6 +84,10 @@ interface SidebarProps {
   spaces?: SpaceSummary[];
   /** Controlled by the shell so responsive geometry reads the rail on screen. */
   spacesCollapsed?: boolean;
+  /** Width left for Spaces after preserving compact sibling rails and content. */
+  spacesAvailableWidth?: number;
+  /** The viewport cannot hold even the minimum expanded Spaces rail. */
+  spacesConstrained?: boolean;
   onSpacesCollapsedChange?: (collapsed: boolean) => void;
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
@@ -194,7 +206,6 @@ function formatSidebarActivityTime(value: string, now = new Date()): string {
 }
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
-const EDGE_REVEAL_DISTANCE = 20;
 
 /**
  * How near the bottom the scroll comes before the next page is asked for.
@@ -409,8 +420,8 @@ function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
         label={tip.label}
         side={tip.side}
       >
-        <button
-          className="sidebar-row automation-row automation-tile"
+        <SidebarRow
+          className="automation-row automation-tile"
           aria-description={description}
           aria-label={label}
           onClick={onClick}
@@ -418,7 +429,7 @@ function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
         >
           <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
           <span className="automation-tile-name">{name}</span>
-        </button>
+        </SidebarRow>
       </Tip>
     </div>
   );
@@ -855,12 +866,13 @@ function WorkstreamRow({
                   Keep the positioning trigger on a plain element and leave the
                   navigation element's class resolver untouched. */}
               <div className="sidebar-workstream-preview-anchor">
-                <NavLink
+                <SidebarRow
+            as={NavLink}
             aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this channel' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             className={({ isActive }: { isActive: boolean }) => clsx(
-              'sidebar-row workstream-row',
+              'workstream-row',
               isActive && 'is-active',
               workstream.hasUnread && 'is-unread',
               // Machinery the reader has opted into seeing. Dimmed rather than
@@ -928,7 +940,7 @@ function WorkstreamRow({
                 </span>
               </Tip>
             )}
-                </NavLink>
+                </SidebarRow>
               </div>
             </Tooltip.Trigger>
             <Tooltip.Portal>
@@ -1104,7 +1116,9 @@ export function Sidebar({
   workspace,
   automations,
   spaces,
+  spacesAvailableWidth = MAX_SIDEBAR_WIDTH,
   spacesCollapsed: controlledSpacesCollapsed,
+  spacesConstrained = false,
   onSpacesCollapsedChange,
   inactiveSpaces = [],
   spacesReady = true,
@@ -1143,9 +1157,11 @@ export function Sidebar({
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  const spacesSidebarWidth = useUiStore((state) => state.spacesSidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const setSpacesSidebarWidth = useUiStore((state) => state.setSpacesSidebarWidth);
   // The window's own answer, not one inferred from `compact`. Inferred as
   // `compact && !sidebarCollapsed`, this read false for a reader who collapsed
   // navigation and then narrowed the window: the footer toggle came back to
@@ -1156,6 +1172,10 @@ export function Sidebar({
   const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   const [uncontrolledSpacesCollapsed, setUncontrolledSpacesCollapsed] = useState(false);
   const spacesCollapsed = controlledSpacesCollapsed ?? uncontrolledSpacesCollapsed;
+  const spacesCompact = spacesCollapsed || spacesConstrained;
+  const displayedSpacesSidebarWidth = spacesCompact
+    ? COLLAPSED_SIDEBAR_WIDTH
+    : Math.min(spacesSidebarWidth, spacesAvailableWidth);
   const setSpacesCollapsed = useCallback((collapsed: boolean): void => {
     if (controlledSpacesCollapsed === undefined) setUncontrolledSpacesCollapsed(collapsed);
     onSpacesCollapsedChange?.(collapsed);
@@ -1190,29 +1210,15 @@ export function Sidebar({
   useLayoutEffect(() => {
     const shell = panel.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return;
-    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCollapsed ? `${COLLAPSED_SIDEBAR_WIDTH}px` : `${EXPANDED_SPACES_SIDEBAR_WIDTH}px`);
+    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : `${displayedSpacesSidebarWidth}px`);
     return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
-  }, [spaces, spacesCollapsed]);
+  }, [displayedSpacesSidebarWidth, spaces]);
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
     await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
   }, []);
-  const [resizing, setResizing] = useState(false);
-  // Held arrow keys are the keyboard's drag: they write the width repeatedly,
-  // and animating each 16px step leaves the edge trailing the width the
-  // threshold is judged against, so the sidebar collapses at a width the
-  // reader cannot see. Not `resizing`, which also arms the window pointer
-  // listeners — a mouse moved during a keyboard resize would grab the edge.
-  const [keyResizing, setKeyResizing] = useState(false);
-  const [dragWidth, setDragWidth] = useState<number | null>(null);
   const panel = useRef<HTMLElement>(null);
-  // The handle stands in the strip beside the sidebar rather than on its edge,
-  // so the pointer's own position is not the sidebar's width. Holding the
-  // difference from the moment of the grab keeps the edge from jumping out to
-  // meet a pointer that grabbed the far side of the strip.
-  const grabOffset = useRef(0);
-  const [pointerNearEdge, setPointerNearEdge] = useState(false);
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -1884,23 +1890,8 @@ export function Sidebar({
     }
   };
 
-  // The pill is revealed by how close the pointer is to the edge, not by
-  // hovering the handle: a hit area wide enough to be a 20-pixel proximity
-  // sensor would also be a 20-pixel column of the main pane that swallows
-  // clicks, the window-drag region, and the left edge of the title. Watching
-  // the pointer instead keeps the reveal generous and the hit area honest.
-  useEffect(() => {
-    const track = (event: PointerEvent): void => {
-      const measuredEdge = panel.current?.getBoundingClientRect().right ?? 0;
-      const edge = measuredEdge > 0 ? measuredEdge : effectiveSidebarWidth;
-      const near = Math.abs(event.clientX - edge) <= EDGE_REVEAL_DISTANCE;
-      setPointerNearEdge((current) => current === near ? current : near);
-    };
-    window.addEventListener('pointermove', track);
-    return () => window.removeEventListener('pointermove', track);
-  }, [effectiveSidebarWidth]);
-
   const resizeSidebar = useCallback((requestedWidth: number): void => {
+    if (forcedCompact) return;
     const availableWidth = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
     if (compact) {
       if (requestedWidth < SIDEBAR_EXPAND_DRAG_THRESHOLD || availableWidth < MIN_SIDEBAR_WIDTH) return;
@@ -1914,27 +1905,7 @@ export function Sidebar({
     }
     if (availableWidth < MIN_SIDEBAR_WIDTH) return;
     setSidebarWidth(Math.min(requestedWidth, availableWidth));
-  }, [compact, setSidebarCollapsed, setSidebarWidth]);
-
-  useEffect(() => {
-    if (!resizing) return undefined;
-
-    const move = (event: PointerEvent): void => {
-      const left = panel.current?.getBoundingClientRect().left ?? 0;
-      const requested = event.clientX - left - grabOffset.current;
-      setDragWidth(Math.max(0, requested));
-      resizeSidebar(requested);
-    };
-    const stop = (): void => { setResizing(false); setDragWidth(null); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop, { once: true });
-    window.addEventListener('pointercancel', stop, { once: true });
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-      window.removeEventListener('pointercancel', stop);
-    };
-  }, [resizeSidebar, resizing]);
+  }, [compact, forcedCompact, setSidebarCollapsed, setSidebarWidth]);
 
   useEffect(() => {
     const toggleCompact = (event: KeyboardEvent): void => {
@@ -2061,13 +2032,17 @@ export function Sidebar({
     <>
       {spaces !== undefined && <SpacesSidebar
         accountSlotRef={setAccountSlot}
+        availableWidth={spacesAvailableWidth}
         sidekickSlotRef={setSidekickSlot}
-        collapsed={spacesCollapsed}
+        collapsed={spacesCompact}
+        constrained={spacesConstrained}
+        width={displayedSpacesSidebarWidth}
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
         loading={loading}
         onArchive={onArchiveSpace}
         onCollapsedChange={setSpacesCollapsed}
+        onWidthChange={setSpacesSidebarWidth}
         onCreateChannel={createChannelFromSidebar}
         onCreateSpace={createSpaceFromSidebar}
         onImportChannel={onImportChannel}
@@ -2093,22 +2068,31 @@ export function Sidebar({
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <NavigationFrame
+      <ResizableSidebar
         aria-label="Rally navigation"
-        className={clsx('sidebar', spaces !== undefined && 'channels-sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', (resizing || keyResizing) && 'is-resizing')}
+        className={clsx('sidebar', spaces !== undefined && 'channels-sidebar', sidebarOpen && 'is-mobile-open')}
+        compact={compact}
+        constrained={forcedCompact}
         data-sidebar-collapsed={compact ? '' : undefined}
+        onResize={resizeSidebar}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         onTransitionCancel={trackLayoutTransition}
         onTransitionEnd={trackLayoutTransition}
         onTransitionRun={trackLayoutTransition}
-        ref={panel}
+        resizeLabel="Resize navigation"
+        sidebarRef={panel}
+        width={effectiveSidebarWidth}
       >
-        <div className={clsx('sidebar-titlebar window-drag', spaces !== undefined && 'channels-sidebar-titlebar')}>
-          {selectedSpace && <>
-            <h2 className="channels-sidebar-title">{selectedSpace.name}</h2>
-            <span aria-hidden="true" className="channels-sidebar-toolbar-mark">
-              <SpaceIcon size={22} space={selectedSpace} />
-            </span>
-          </>}
+        {selectedSpace ? <SidebarTitleHeader
+          className="sidebar-titlebar window-drag channels-sidebar-titlebar"
+          icon={<SpaceIcon size={22} space={selectedSpace} />}
+          title={selectedSpace.name}
+          titleClassName="channels-sidebar-title"
+        >
+          <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
+            <ChevronsLeft size={16} />
+          </IconButton>
+        </SidebarTitleHeader> : <SidebarHeader className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
@@ -2119,7 +2103,7 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               work stream buttons for a quarter of a second. */}
-          {spaces === undefined && <NewWorkstreamMenu
+          <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             spaces={placementSpaces}
             onCreateChannel={createChannelFromSidebar}
@@ -2136,8 +2120,8 @@ export function Sidebar({
             >
               <Plus aria-hidden="true" size={16} />
             </button>
-          </NewWorkstreamMenu>}
-        </div>
+          </NewWorkstreamMenu>
+        </SidebarHeader>}
 
         {spaces === undefined && <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
           {/* The rail's New work stream row. Inserted by the compact toggle and
@@ -2176,11 +2160,12 @@ export function Sidebar({
         </div>
         }
 
-        <nav
-          className="sidebar-scroll"
+        <SidebarScroll
+          as="nav"
+          aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
           onClick={() => setSidebarOpen(false)}
           onScroll={loadMoreWhenNearBottom}
-          ref={scrollRef}
+          scrollRef={scrollRef}
         >
           {spaces === undefined && !conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NewWorkstreamMenu
@@ -2276,6 +2261,7 @@ export function Sidebar({
                   />
                 ))}
               </div>
+              <SidebarHorizontalLine className="pinned-section-line" />
             </section>
           )}
 
@@ -2422,7 +2408,7 @@ export function Sidebar({
 
           </section>
           )}
-        </nav>
+        </SidebarScroll>
 
         {/*
           OnboardingChecklist is disabled: it was left over from a demo and
@@ -2519,69 +2505,7 @@ export function Sidebar({
             {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </IconButton>
         </div>
-        {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
-        {/* The hint names the double-click only while it would do something:
-            a window too narrow to hold the expanded sidebar pins it compact,
-            and the toggle in the footer is disabled for the same reason. */}
-        <DragHint
-          action="Drag to resize"
-          suppressed={resizing}
-          shortcut={forcedCompact ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
-        >
-          <div
-            aria-label="Resize navigation"
-            aria-orientation="vertical"
-            aria-valuemax={MAX_SIDEBAR_WIDTH}
-            aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
-            aria-valuenow={effectiveSidebarWidth}
-            className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
-            onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
-            onBlur={() => setKeyResizing(false)}
-            onKeyDown={(event) => {
-              // The same toggle the double-click performs, on the key the ARIA
-              // authoring practices give a splitter. The arrows reach the
-              // collapsed width too, by crossing its threshold, but the hint
-              // names a gesture a keyboard cannot make, so it has to name a key
-              // as well.
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed);
-                return;
-              }
-              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-              setKeyResizing(true);
-              if (event.key === 'ArrowLeft' && !compact) {
-                resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
-                  ? sidebarWidth - 16
-                  : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
-              }
-              if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
-            }}
-            onKeyUp={() => setKeyResizing(false)}
-            onPointerDown={(event) => {
-              if (event.button !== 0) return;
-              event.preventDefault();
-              event.currentTarget.focus();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              // Measure the panel rather than reading the width state. The handle
-              // is drawn at the sidebar's trailing edge, and while a collapse or
-              // expand is still travelling that edge is not yet the width the
-              // state holds — an offset taken from the state would be wrong by
-              // however far the animation had left to go, and stay wrong for the
-              // whole drag. The work-stream sidebar's handle already measures.
-              const edge = panel.current?.getBoundingClientRect().right;
-              grabOffset.current = event.clientX - (edge ?? effectiveSidebarWidth);
-              setResizing(true);
-            }}
-            role="separator"
-            tabIndex={0}
-          >
-            <span aria-hidden="true" className="sidebar-resizer-handle">
-              <GripVertical size={11} strokeWidth={2} />
-            </span>
-          </div>
-        </DragHint>
-      </NavigationFrame>
+      </ResizableSidebar>
       <Modal
         footer={(
           <>
