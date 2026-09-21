@@ -125,6 +125,21 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — Hierarchy title headers keep one identity composition
+
+**What changed:** `SidebarTitleHeader` now keeps a 20px Space or Channel mark in
+its fixed 28px leading slot while expanded. Compact mode collapses only the
+title, so both states use the same icon-first composition across desktop and
+browser hosts.
+
+**Why:** Expanded hierarchy headers named the current object while withholding
+the identity mark already used by its navigation rows. Keeping the mark stable
+aligns the adjacent headers and removes the visual swap during collapse.
+
+**Considered and rejected:** Host-specific expanded icons. The shared header
+already owns the layout for each host, and local copies would let their order,
+size, and transition behavior diverge again.
+
 ### 2026-09-21 — Hierarchy row cadence lives in one shared list
 
 **What changed:** `SidebarList` owns the vertical spacing between hierarchy
@@ -160,9 +175,9 @@ toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, `SidebarScroll`, and
 `SidebarHorizontalLine` now provide the geometry inside that shell. A
 `SidebarHeader` is a 43px specialization of `SidebarRow` followed by a
 `SidebarHorizontalLine`, matching the message feed's 44px titlebar as a whole.
-`SidebarTitleHeader` owns the title and its shared 28px compact icon as one
-substitution, so header marks stay smaller than the 36px navigation-row marks
-beneath them;
+`SidebarTitleHeader` owns one stable 28px icon slot containing a 20px mark beside
+the title. Compact mode collapses only the title, so header marks stay smaller
+than the 36px navigation-row marks beneath them and do not swap composition;
 `SidebarScroll` gives every rail the same 8px divider-to-first-row gap and the
 same compact gutters. The desktop and browser hosts consume these primitives.
 Space, Channel, and Breakout rows also pass their icon, title, optional detail,

@@ -1174,7 +1174,6 @@ pre {
   place-items: center;
   width: 28px;
 }
-.resizable-sidebar.is-compact .sidebar-title-header-icon { display: grid; }
 /* Hidden by the attribute in the rail, and faded rather than cut: `display`
    transitions discretely, holding the element until the fade is over, and the
    starting style fades it back in when the sidebar expands. */
