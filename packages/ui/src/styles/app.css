@@ -959,6 +959,11 @@ pre {
   inherits: true;
   initial-value: 280px;
 }
+@property --spaces-sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
 /* The sidebar's own channel for the same interval: 0 expanded, 1 compact,
    travelling between them over the collapse motion. Nothing draws from it. It
    exists so the component can hear, from the platform's own transition
@@ -994,6 +999,139 @@ pre {
   z-index: 30;
 }
 .sidebar.is-compact { --sidebar-compact: 1; }
+
+/* The Organization hierarchy is three adjacent navigation levels. Spaces own
+   the first rail, Channels keep the established navigation rail, and the open
+   Channel owns the existing room/Breakout rail. The two left widths are
+   independent so selecting deeper into the hierarchy can collapse only the
+   level that has finished its job. */
+.workspace-shell { --spaces-sidebar-width: 0px; }
+.workspace-shell .channels-sidebar { left: var(--spaces-sidebar-width); }
+.workspace-shell:has(> .spaces-sidebar) .main-pane {
+  margin-left: calc(var(--spaces-sidebar-width) + var(--av-cmp-sidebar-width));
+}
+.spaces-sidebar {
+  --spaces-sidebar-motion: var(--sidebar-collapse-motion);
+  background: var(--av-cmp-sidebar-background);
+  border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  position: fixed;
+  top: 0;
+  /* The shell transitions the registered width once. Transitioning `width`
+     here as well would chase each interpolated custom-property frame and make
+     this visible edge lag behind the Channel rail that reads the same value. */
+  width: var(--spaces-sidebar-width);
+  z-index: 31;
+}
+.spaces-sidebar-titlebar {
+  align-items: center;
+  display: flex;
+  flex: 0 0 44px;
+  gap: 8px;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: 0 12px 0 var(--window-controls-inset, 12px);
+}
+.spaces-sidebar-titlebar > span {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spaces-sidebar-titlebar-actions { align-items: center; display: flex; gap: 4px; margin-left: auto; }
+.spaces-sidebar-titlebar-actions > .sidebar-new-button {
+  opacity: 1;
+  transform: translateX(0);
+  transition: color 120ms ease, background 120ms ease, opacity var(--spaces-sidebar-motion), transform var(--spaces-sidebar-motion), visibility var(--spaces-sidebar-motion);
+  visibility: visible;
+}
+.spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions > .sidebar-new-button {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(44px);
+  visibility: hidden;
+}
+.spaces-sidebar-commandbar { flex: 0 0 auto; }
+.spaces-sidebar-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
+}
+.spaces-sidebar-row {
+  align-items: center;
+  border-radius: 10px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  flex: 0 0 54px;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  text-decoration: none;
+}
+.spaces-sidebar-row:hover { background-image: var(--hover-layer); }
+.spaces-sidebar-row.is-active { background: var(--av-cmp-row-background-selected); }
+.spaces-sidebar-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
+.spaces-sidebar-mark {
+  align-items: center;
+  background: var(--av-sys-color-surface-raised);
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: 10px;
+  display: flex;
+  flex: 0 0 36px;
+  height: 36px;
+  justify-content: center;
+}
+.spaces-sidebar-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.spaces-sidebar-copy strong,
+.spaces-sidebar-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-sidebar-copy strong { font-size: 14px; font-weight: 550; line-height: 20px; }
+.spaces-sidebar-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; line-height: 16px; }
+.spaces-sidebar-footer {
+  align-items: center;
+  border-top: 1px solid var(--av-cmp-sidebar-border);
+  display: flex;
+  flex: 0 0 54px;
+  justify-content: flex-end;
+  padding: 8px 12px;
+}
+.spaces-account-slot,
+.sidebar-account-slot { flex: 1; min-width: 0; }
+.spaces-account-slot .account-trigger,
+.sidebar-account-slot .account-trigger { margin: 0; width: 100%; }
+.spaces-sidebar.is-compact .spaces-account-slot .account-trigger {
+  gap: 0;
+  justify-content: center;
+  min-height: 38px;
+  padding: 6px;
+}
+.spaces-sidebar.is-compact .spaces-account-slot .account-copy { display: none; }
+.spaces-sidekick-slot { flex: 0 0 auto; min-width: 0; overflow: hidden; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile { gap: 0; padding: 9px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-glyph { height: 36px; width: 36px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
+.spaces-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 12px; padding: 8px; }
+.spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; padding: 0; }
+.spaces-sidebar.is-compact .spaces-sidebar-titlebar > span { display: none; }
+.spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions { margin-left: 0; }
+.spaces-sidebar.is-compact .spaces-sidebar-restore { display: none; }
+.spaces-sidebar.is-compact .spaces-sidebar-scroll { align-items: center; padding-inline: 20.5px; }
+.spaces-sidebar.is-compact .spaces-sidebar-row { flex-basis: 54px; gap: 0; padding: 9px; width: 54px; }
+.spaces-sidebar.is-compact .spaces-sidebar-copy { display: none; }
+.spaces-sidebar.is-compact .spaces-sidebar-footer { justify-content: flex-end; padding-inline: 8px; }
+.spaces-sidebar-preview-surface { min-width: 210px; }
+.channels-space-heading { margin-top: 0 !important; }
 
 /* A drag lands the edge on the pointer, so nothing inside may still be
    travelling. The interval going to `0s` turns off every transition the drag
@@ -1031,6 +1169,36 @@ pre {
   justify-content: flex-end;
   padding: 0 16px;
 }
+.channels-sidebar-titlebar {
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 0 20px;
+  transition: border-color var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
+}
+.channels-sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  margin: 0;
+  min-width: 0;
+  opacity: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+  white-space: nowrap;
+}
+.channels-sidebar-toolbar-mark {
+  display: none;
+  height: 36px;
+  place-items: center;
+  width: 36px;
+}
+.sidebar.is-compact .channels-sidebar-titlebar {
+  border-bottom: 1px solid var(--av-cmp-sidebar-border);
+  padding: 0 30px;
+}
+.sidebar.is-compact .channels-sidebar-title { display: none; opacity: 0; visibility: hidden; }
+.sidebar.is-compact .channels-sidebar-toolbar-mark { display: grid; }
 /* Hidden by the attribute in the rail, and faded rather than cut: `display`
    transitions discretely, holding the element until the fade is over, and the
    starting style fades it back in when the sidebar expands. */
@@ -1054,6 +1222,11 @@ pre {
   scrollbar-gutter: auto;
   transition: padding var(--sidebar-layout-motion);
 }
+
+/* The adjacent Main/Breakouts rail begins its expanded list 8px below the
+   shared 44px header. Give the Channel rail the same header-to-row interval;
+   compact mode keeps its divider flush with the icon rail instead. */
+.channels-sidebar:not(.is-compact) .sidebar-scroll { padding-top: 8px; }
 
 .sidebar-scroll::-webkit-scrollbar { width: 0; }
 
@@ -3085,7 +3258,26 @@ pre {
 .workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
 .workstream-context-sidebar.is-compact { flex-basis: 96px; }
-.workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: space-between; padding: 0 12px; }
+.workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: flex-start; min-width: 0; padding: 0 20px; transition: border-color var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.workstream-context-toolbar h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  margin: 0;
+  opacity: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+  white-space: nowrap;
+}
+.workstream-context-sidebar.is-compact .workstream-context-toolbar h2 { opacity: 0; visibility: hidden; }
+.workstream-context-toolbar-mark { display: none; height: 36px; place-items: center; width: 36px; }
+.workstream-context-sidebar.is-compact .workstream-context-toolbar {
+  border-bottom: 1px solid var(--av-cmp-sidebar-border);
+  padding: 0 30px;
+}
+.workstream-context-sidebar.is-compact .workstream-context-toolbar h2 { display: none; }
+.workstream-context-sidebar.is-compact .workstream-context-toolbar-mark { display: grid; }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; transition: padding var(--sidebar-layout-motion); }
 .workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
@@ -3093,18 +3285,17 @@ pre {
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
-   differs — the stream's own tinted symbol for the main conversation, the
-   ↳ arrow for a substream, a plus for the row that starts one. */
+   differs — the Channel's own tinted symbol for Main, the branch mark for a
+   Breakout, and the blue enter mark for the row that starts one. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
-/* A grid rather than a flex row so that a substream's two marks — its arrow
-   and its initial — stack in the one cell and can cross-fade. */
+/* A grid keeps every room mark centered in the same square slot. */
 .workstream-context-mark { display: grid; flex: 0 0 36px; height: 36px; place-items: center; }
 .workstream-context-mark > * { grid-area: 1 / 1; }
-/* Muted text, not the sidebar-border token the earlier branch line used: the
-   arrow is the only thing that says this row is a substream, and at 10% it
-   read as a smudge beside a title drawn in full ink. */
-.workstream-substream-arrow { color: var(--av-sys-color-text-muted); transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
+/* The branch is the Breakout identity, so it uses readable muted ink rather
+   than the sidebar's hairline colour. */
+.workstream-breakout-icon { color: var(--av-sys-color-text-muted); }
+.workstream-new-breakout-icon { color: var(--av-sys-color-accent-base); }
 .workstream-new-substream,
 .workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
 /* The row of a substream that does not exist yet: a place held, not a
@@ -3127,15 +3318,6 @@ pre {
 .workstream-context-section { border-top: 0 solid var(--av-cmp-sidebar-border); margin-top: 20px; transition: border-top-width var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-top var(--sidebar-layout-motion); }
 .workstream-context-section h2 { margin: 0 8px 6px; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
-/* Compact drops the title. The arrow stays the mark only for a substream
-   whose title has no first character; under an initial it fades out while
-   the initial fades in, both drawn in the one cell so neither is swapped
-   for the other. */
-.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-arrow { opacity: 0; visibility: hidden; }
-/* The trim centres the cap height rather than the line box: an uppercase
-   letter carries no descender and would otherwise sit a pixel high. */
-.workstream-substream-initial { font-size: 17px; font-weight: 600; opacity: 0; text-box: trim-both cap alphabetic; transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); visibility: hidden; }
-.workstream-context-sidebar.is-compact .workstream-substream-initial { opacity: 1; visibility: visible; }
 /* Copy and headings close to nothing and fade; the section rule and its
    spacing arrive over the same interval. */
 .workstream-context-sidebar.is-compact .workstream-context-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
@@ -4629,9 +4811,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    window has capped. Each breakpoint that changes the room available restates
    it. */
 .workspace-shell {
-  --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width)));
+  --rail-max-slot: max(280px, calc(100vw - var(--spaces-sidebar-width, 0px) - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width)));
   --rail-slot: min(var(--rail-width), var(--rail-max-slot));
-  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
+  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
 }
 /* A drag has to track the pointer exactly, so for the length of the gesture the
    dragged sidebar's own width channel leaves the transitioned set and the
@@ -4642,8 +4824,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    entries above carry the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --workstream-sidebar-width; }
-.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width; }
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
+.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
@@ -5975,20 +6157,25 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    `.sidebar-empty`, which only ever shows over an empty list. */
 .app-shell .sidebar.is-compact .sidebar-empty { display: none; }
 .app-shell .sidebar.is-compact .sidebar-scroll { padding: 0 20.5px 12px; }
-.app-shell .sidebar.is-compact .sidebar-commandbar {
+.app-shell .sidebar.is-compact .sidebar-commandbar,
+.app-shell .spaces-sidebar.is-compact .sidebar-commandbar {
   grid-template-rows: 54px 54px;
   padding: 4px 20.5px 0;
 }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search {
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search,
+.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search {
   background: transparent;
   box-shadow: none;
   gap: 0;
   height: 54px;
   padding: 0 0 0 17.5px;
 }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background-image: var(--hover-layer); }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover,
+.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background-image: var(--hover-layer); }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span,
+.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg,
+.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
 /* Only ever rendered in the rail, and styled without reference to it: the
    list motion draws a copy of this row on its way out after the rail's class
    has already gone, and the copy has to still look like the row. */

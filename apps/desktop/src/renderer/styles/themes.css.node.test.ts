@@ -165,7 +165,7 @@ describe('no colour is written into app.css', () => {
       // composites the tint over the offered theme's own `--av-sys-color-surface-canvas`, which is
       // what the real navigation does over the shell, rather than over a
       // surface already carrying it.
-      .filter((selector) => selector !== '.sidebar' && selector !== '.settings-sidebar' && selector !== '.workstream-context-sidebar' && selector !== '.settings-theme-swatch-sidebar');
+      .filter((selector) => selector !== '.sidebar' && selector !== '.spaces-sidebar' && selector !== '.settings-sidebar' && selector !== '.workstream-context-sidebar' && selector !== '.settings-theme-swatch-sidebar');
 
     expect(offenders).toEqual([]);
   });
@@ -336,6 +336,9 @@ describe('token references', () => {
     // turned it off, and the number that travels over it so the component
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
+    // The first rail's current width and its shared collapse interval. The
+    // shell owns both as layout geometry, not as theme choices.
+    '--spaces-sidebar-width', '--spaces-sidebar-motion',
     // Near and far fade lengths on a scroller that clips its items. Registered
     // so they interpolate as lengths; a theme has no opinion about them.
     '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',
