@@ -425,15 +425,18 @@ describe('sidebar collapse motion', () => {
 describe('sidebar layout motion', () => {
   it('gives every hierarchy sidebar the same structural geometry', () => {
     expect(rule('.sidebar-row.sidebar-header')).toContain('border-radius: 0;');
-    expect(rule('.sidebar-row.sidebar-header')).toContain('padding: 0 16px;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('padding: 0 20px;');
     expect(rule('.sidebar-row.sidebar-header:hover')).toContain('background-image: none;');
-    expect(rule('.sidebar-row.spaces-sidebar-titlebar')).toContain('var(--window-controls-inset, 12px)');
     expect(rule('.resizable-sidebar.is-compact .sidebar-header')).toContain('margin-inline: auto;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-header-mark')).toContain('display: grid;');
     expect(rule('.sidebar-title')).toContain('var(--sidebar-layout-motion)');
     expect(rule('.sidebar-row')).toContain('height: 54px;');
     expect(rule('.sidebar-row')).toContain('padding: var(--av-cmp-row-padding);');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row')).toContain('width: 54px;');
     expect(rule('.sidebar-horizontal-line')).toContain('height: var(--av-sys-size-border-hairline);');
+    expect(rule('.sidebar-scroll')).toContain('padding: 8px 12px 16px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-scroll')).toContain('padding-inline: 20.5px;');
+    expect(stylesheet).not.toContain('.app-shell .sidebar-scroll { padding-top: 0; }');
   });
 
   // The rows travel on the box's own interval, restated once on the sidebar so
@@ -482,11 +485,11 @@ describe('sidebar layout motion', () => {
   // `visibility` on the same interval is what takes them out of the
   // accessibility tree when the fade ends.
   it('keeps the rail\'s hidden copy in layout and takes it out of the tree by visibility', () => {
-    const title = rule('.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
+    const title = rule('.resizable-sidebar.is-compact .sidebar-row-main');
     expect(title).toContain('opacity: 0;');
     expect(title).toContain('visibility: hidden;');
     expect(title).not.toContain('display: none');
-    expect(rule('.app-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
+    expect(rule('.sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
   // The work-stream sidebar restates the interval and travels the same way.
@@ -495,19 +498,19 @@ describe('sidebar layout motion', () => {
     expect(rule('.resizable-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
     expect(rule('.resizable-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
     for (const selector of [
-      '.workstream-context-scroll',
+      '.sidebar-scroll',
       '.sidebar-row',
-      '.workstream-context-copy',
+      '.sidebar-row-main',
       '.workstream-context-section',
       '.workstream-context-section h2',
       '.workstream-context-sidebar .sidebar-collapse-footer',
     ]) {
       expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
     }
-    expect(rule('.workstream-context-mark > *')).toContain('grid-area: 1 / 1;');
+    expect(rule('.sidebar-row-icon')).toContain('width: 36px;');
     expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row')).not.toContain('justify-content');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row-main')).not.toContain('display: none');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row')).not.toContain('justify-content');
     expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
   });
 
@@ -563,8 +566,8 @@ describe('channel context sidebar layout', () => {
     expect(rule('.resizable-sidebar')).toContain('position: relative');
     expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
     expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 96px');
-    expect(rule('.workstream-context-scroll')).toContain('overflow-y: auto');
-    expect(rule('.workstream-context-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
+    expect(rule('.sidebar-scroll')).toContain('overflow-y: auto');
+    expect(rule('.sidebar-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
   });
 });
 
@@ -591,8 +594,6 @@ describe('clipped lines in both navigation rails', () => {
     '.sidebar-row-hint-text',
     '.sidebar-row-title',
     '.sidebar-row-title-copy',
-    '.workstream-context-copy > small',
-    '.workstream-context-copy > span',
   ];
 
   it('fades a line from its own inline scroller, so a line that fits keeps its last characters', () => {
@@ -631,7 +632,6 @@ describe('clipped lines in both navigation rails', () => {
     ['.automation-tile-name'],
     ['.account-copy strong'],
     ['.account-copy span'],
-    ['.workstream-context-copy > span,\n.workstream-context-copy > small'],
   ])('clips %s without an ellipsis to fade out', (selector) => {
     const declarations = rule(selector);
 
@@ -1349,10 +1349,10 @@ describe('sidebar space rows', () => {
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
     expect(stylesheet).toContain(
-      '.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }',
+      '.sidebar-row:hover { background-image: var(--hover-layer); }',
     );
     expect(stylesheet).toContain(
-      '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
+      '.sidebar-row:is(.is-active, .is-current) { background: var(--av-cmp-row-background-selected); }',
     );
   });
 });

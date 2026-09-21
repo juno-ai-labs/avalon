@@ -2099,6 +2099,7 @@ describe('Sidebar channel markers', () => {
     const header = screen.getByRole('heading', { name: 'General' }).closest('.sidebar-header');
     expect(header).toHaveClass('sidebar-row');
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
+    expect(screen.getByRole('navigation', { name: 'Channels' })).toHaveClass('sidebar-scroll');
     expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveClass('sidebar-row');
   });

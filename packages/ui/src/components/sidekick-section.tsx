@@ -4,6 +4,7 @@ import { IconCarambola } from '@tabler/icons-react';
 import { AutomationGlyph } from './workstream-glyph';
 import { InlineError, Tip } from './primitives';
 import { SidebarHorizontalLine, SidebarRow } from './resizable-sidebar';
+import { SidebarNavigationRowContent } from './navigation';
 export interface SidekickRow {
   recommended?: boolean;
   /** Management options have not arrived for this non-owned row yet. */
@@ -81,11 +82,13 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
               to an empty square there. */}
-          <span aria-hidden="true" className="workstream-context-mark"><span className="workstream-context-sidekick-glyph">
-            <AutomationGlyph id={item.id} {...(item.appearance ? { appearance: item.appearance } : {})} />
-          </span></span>
-          <span className="workstream-context-copy"><span>{item.name}</span>
-            <small>{item.note ? `${item.note} · ${item.description}` : item.description}</small></span>
+          <SidebarNavigationRowContent
+            description={item.note ? `${item.note} · ${item.description}` : item.description}
+            icon={<span className="workstream-context-sidekick-glyph">
+              <AutomationGlyph id={item.id} {...(item.appearance ? { appearance: item.appearance } : {})} />
+            </span>}
+            title={item.name}
+          />
         </SidebarRow>
         </ContextMenu.Trigger>
       </Tip>

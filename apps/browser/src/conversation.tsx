@@ -8,8 +8,8 @@ import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, usePar
 import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
-import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
-import { SidebarHeader, SidebarTitle } from '@rally/ui/components/resizable-sidebar';
+import { NavigationFrame, NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
+import { SidebarHeader, SidebarRow, SidebarScroll, SidebarTitle } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -150,19 +150,21 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       <SidebarHeader className="spaces-sidebar-titlebar">
         <SidebarTitle>Spaces</SidebarTitle>
       </SidebarHeader>
-      <nav aria-label="Shared spaces" className="spaces-sidebar-scroll">
+      <SidebarScroll as="nav" aria-label="Shared spaces" className="spaces-sidebar-scroll">
         {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
         {directory.isPending && <p className="spaces-sidebar-empty">Loading spaces…</p>}
         {directory.data && navigationSpaces.length === 0 && <p className="spaces-sidebar-empty">No shared spaces yet.</p>}
-        {navigationSpaces.map((space) => <button aria-label={space.name}
+        {navigationSpaces.map((space) => <SidebarRow aria-label={space.name}
           aria-pressed={space.id === selectedSpace?.id}
           className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
           key={space.id} onClick={() => selectSpace(space.id)} type="button">
-          <span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>
-          <span className="spaces-sidebar-copy"><strong>{space.name}</strong>
-            <small>{space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}</small></span>
-        </button>)}
-      </nav>
+          <SidebarNavigationRowContent
+            description={space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}
+            icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
+            title={space.name}
+          />
+        </SidebarRow>)}
+      </SidebarScroll>
       <footer className="spaces-sidebar-footer"><div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
         <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
       </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
@@ -176,7 +178,7 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
         <IconButton className="mobile-only browser-navigation-close" label="Close navigation"
           onClick={onClose}><Menu size={16} /></IconButton>
       </SidebarHeader>
-      <div className="sidebar-scroll"><nav aria-label="Shared channels" className="sidebar-section">
+      <SidebarScroll><nav aria-label="Shared channels" className="sidebar-section">
       {!directory.isPending && selectedSpace && workstreams.length === 0 && <p>No shared channels in this space.</p>}
       {workstreams.map((workstream) => {
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
@@ -186,7 +188,7 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
           <NavigationRowContent id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </NavLink>;
       })}
-      </nav></div>
+      </nav></SidebarScroll>
     </NavigationFrame>
   </>;
 }

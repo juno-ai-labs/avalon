@@ -79,6 +79,7 @@ describe('SpacesSidebar', () => {
     expect(header).toHaveClass('sidebar-row');
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
+    expect(sidebar.querySelector('.spaces-sidebar-scroll')).toHaveClass('sidebar-scroll');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('sidebar-row');
     expect(screen.getByText('3 channels')).toBeVisible();
