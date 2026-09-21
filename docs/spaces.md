@@ -1086,7 +1086,11 @@ It never exposes the full member directory or any Space write capability.
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
-twice, with one unread state, one running state and one destination.
+twice, with one unread state, one running state and one destination. Dropping a
+Channel from the selected Channel rail onto another Space is a move: the client
+establishes the destination membership before withdrawing the selected source
+membership, preserving the invariant that every Channel has a home if the
+second operation is interrupted. **Add to space** remains explicitly additive.
 
 **A Space this reader reaches only through a Channel in it is an ordinary
 row.** Mark, colour, name, expansion, its placements — limited to the Channels
@@ -1544,7 +1548,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, drag-to-Space placement, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, cross-rail drag-to-Space moves, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's Space, Channel and Breakout rails; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
@@ -1872,6 +1876,34 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-21 — A cross-rail drag moves its Channel
+
+**What changed:** Dragging a Channel from the selected Space's center rail onto
+a different Space in the left rail now adds the destination membership and then
+removes the source membership. The context-menu **Add to space** action remains
+additive. An eligible Space holds a visible target highlight while the Channel
+is over it, then pulses the accent colour three times in quick succession when
+the membership move settles successfully. Each pulse eases through its rise and
+fall rather than switching the accent on and off; reduced-motion settings replace
+the pulses with the same accepted state held briefly. Read-only source placements
+do not advertise the cross-rail move, and a cross-rail drop always abandons any
+pinned or unpinned order preview built while the pointer crossed Channel rows.
+
+**Why:** The adjacent rails present the Channel as a member of the selected
+Space and the destination as a peer container. In that layout, carrying the row
+across reads as moving it between containers; leaving the source membership in
+place made the gesture silently duplicate the placement instead.
+
+**Considered and rejected:** A new server-side move primitive. Space membership
+already has durable, idempotent add and remove operations, and composing them
+destination-first preserves the final-membership invariant without adding a
+second implementation of those authority transitions.
+
+**Consequences:** A failure after the destination settles can leave the Channel
+in both Spaces, which is visible and recoverable; it cannot leave the Channel in
+neither. The drag payload carries its source Space explicitly, while ordinary
+Space reordering and within-Space Channel ordering retain their existing paths.
 
 ### 2026-09-21 — Pin state follows the Space placement
 

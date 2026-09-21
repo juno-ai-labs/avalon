@@ -556,7 +556,7 @@ describe('applyPinnedWorkstreams', () => {
 });
 
 describe('channelSpaceMutationHandlers', () => {
-  it('keeps the Space and Channel identifiers in API order for both writes', async () => {
+  it('keeps the Space and Channel identifiers in API order for membership writes and moves', async () => {
     const queryClient = new QueryClient();
     const api = {
       addChannelToSpace: vi.fn().mockResolvedValue({ ...space, channelCount: 1 }),
@@ -566,9 +566,16 @@ describe('channelSpaceMutationHandlers', () => {
 
     await handlers.onAddChannelToSpace(space.id, workstreamId);
     await handlers.onRemoveChannelFromSpace(space.id, workstreamId);
+    await handlers.onMoveChannelToSpace('source-space', 'target-space', workstreamId);
 
-    expect(api.addChannelToSpace).toHaveBeenCalledWith(space.id, workstreamId);
-    expect(api.removeChannelFromSpace).toHaveBeenCalledWith(space.id, workstreamId);
+    expect(api.addChannelToSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
+    expect(api.removeChannelFromSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
+    expect(api.addChannelToSpace).toHaveBeenNthCalledWith(2, 'target-space', workstreamId);
+    expect(api.removeChannelFromSpace).toHaveBeenNthCalledWith(2, 'source-space', workstreamId);
+    const moveAddOrder = api.addChannelToSpace.mock.invocationCallOrder[1];
+    const moveRemoveOrder = api.removeChannelFromSpace.mock.invocationCallOrder[1];
+    if (moveAddOrder === undefined || moveRemoveOrder === undefined) throw new Error('move calls missing');
+    expect(moveAddOrder).toBeLessThan(moveRemoveOrder);
   });
 });
 
