@@ -131,6 +131,7 @@ interface SidebarProps {
   onImportChannel?: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
+  onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   /**
    * Every list this person has arranged by hand, and the one way to change one.
@@ -807,6 +808,9 @@ function WorkstreamRow({
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', workstream.id);
               event.dataTransfer.setData('application/x-rally-workstream-id', workstream.id);
+              if (placementSpaceId !== undefined) {
+                event.dataTransfer.setData('application/x-rally-channel-source-space-id', placementSpaceId);
+              }
               drag?.onDragStart(workstream);
             }}
           onDrop={drag
@@ -1141,6 +1145,7 @@ export function Sidebar({
     throw new Error('Space creation is unavailable.');
   },
   onAddChannelToSpace = async () => undefined,
+  onMoveChannelToSpace = async () => undefined,
   onRemoveChannelFromSpace = async () => undefined,
   ordering = [],
   onReorderContainer = async () => undefined,
@@ -2048,7 +2053,7 @@ export function Sidebar({
         onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
         onOrderPreviewChange={setSpaceOrderPreview}
-        onAddChannel={onAddChannelToSpace}
+        onMoveChannel={onMoveChannelToSpace}
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
         onRestore={onRestoreSpace}

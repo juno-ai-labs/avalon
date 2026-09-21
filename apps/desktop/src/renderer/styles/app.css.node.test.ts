@@ -14,6 +14,31 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('cross-rail Channel drop feedback', () => {
+  it('holds the destination highlight, then pulses an accepted drop', () => {
+    expect(rule('.spaces-sidebar-row.is-channel-drop-target')).toContain('box-shadow: inset 0 0 0 2px');
+    expect(rule('.spaces-sidebar-row.is-channel-drop-accepted'))
+      .toContain('animation: spaces-sidebar-channel-drop-accepted 720ms cubic-bezier(.37, 0, .63, 1);');
+
+    const pulse = stylesheet.match(
+      /@keyframes spaces-sidebar-channel-drop-accepted \{([\s\S]*?)\n\}/u,
+    )?.[1] ?? null;
+    expect(pulse).toContain('0%, 33.33%, 66.67%, 100% {');
+    expect(pulse).toContain('16.67%, 50%, 83.33% {');
+    expect(pulse).toContain('var(--av-sys-color-accent-base) 28%');
+    expect(pulse).toContain('box-shadow: inset 0 0 0 2px transparent;');
+  });
+
+  it('holds a static accepted state when reduced motion is requested', () => {
+    const reduced = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n {2}\.spaces-sidebar-row\.is-channel-drop-accepted \{([\s\S]*?)\n {2}\}\n\}/u,
+    )?.[1] ?? null;
+
+    expect(reduced).toContain('animation: none;');
+    expect(reduced).toContain('box-shadow: inset 0 0 0 2px var(--av-sys-color-accent-base);');
+  });
+});
+
 describe('connections table', () => {
   /**
    * The row is a flex line: dot, provider mark, name. A name long enough to

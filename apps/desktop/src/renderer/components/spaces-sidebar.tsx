@@ -20,7 +20,7 @@ import {
 } from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
 import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
@@ -54,7 +54,7 @@ interface SpacesSidebarProps {
   onOpenSearch?: () => void;
   onOrderPreviewChange: (order: string[] | null) => void;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
-  onAddChannel: (spaceId: string, workstreamId: string) => Promise<void>;
+  onMoveChannel: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onReorder: (order: ContainerOrder) => Promise<void>;
   onRetry: () => void;
   onRestore: (spaceId: string) => Promise<void>;
@@ -64,6 +64,8 @@ interface SpacesSidebarProps {
 }
 
 const CHANNEL_DRAG_TYPE = 'application/x-rally-workstream-id';
+const CHANNEL_DRAG_SOURCE_SPACE_TYPE = 'application/x-rally-channel-source-space-id';
+const CHANNEL_DROP_ACCEPTED_FLASH_MS = 780;
 const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
 
 /**
@@ -96,7 +98,7 @@ export function SpacesSidebar({
   onOpenSearch,
   onOrderPreviewChange,
   onArchive,
-  onAddChannel,
+  onMoveChannel,
   onReorder,
   onRetry,
   onRestore,
@@ -112,6 +114,9 @@ export function SpacesSidebar({
   const dragOrderRef = useRef<string[] | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const draggingSpaceId = useRef<string | null>(null);
+  const [channelDropTargetId, setChannelDropTargetId] = useState<string | null>(null);
+  const [acceptedChannelDropTargetId, setAcceptedChannelDropTargetId] = useState<string | null>(null);
+  const acceptedChannelDropTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<SpaceSummary | null>(null);
   const [archiveFailure, setArchiveFailure] = useState<string | null>(null);
   const [archiveSaving, setArchiveSaving] = useState(false);
@@ -122,6 +127,9 @@ export function SpacesSidebar({
   // its second grid track while the first track opens; list motion draws the
   // Create control's leftward entrance and stand-in exit independently.
   useListMotion(commandRef, collapsed);
+  useEffect(() => () => {
+    if (acceptedChannelDropTimer.current !== null) clearTimeout(acceptedChannelDropTimer.current);
+  }, []);
   const storedSpaces = useMemo(() => orderByStoredIds(
     spaces,
     storedOrderFor(ordering, { kind: 'organization' }),
@@ -185,6 +193,15 @@ export function SpacesSidebar({
     } finally {
       if (dragOrderRef.current === ids) previewOrder(null);
     }
+  };
+
+  const flashAcceptedChannelDrop = (spaceId: string): void => {
+    if (acceptedChannelDropTimer.current !== null) clearTimeout(acceptedChannelDropTimer.current);
+    setAcceptedChannelDropTargetId(spaceId);
+    acceptedChannelDropTimer.current = setTimeout(() => {
+      setAcceptedChannelDropTargetId(null);
+      acceptedChannelDropTimer.current = null;
+    }, CHANNEL_DROP_ACCEPTED_FLASH_MS);
   };
 
   const closeArchive = (): void => {
@@ -296,7 +313,12 @@ export function SpacesSidebar({
                 <SidebarRow
                   as={NavLink}
                   aria-label={space.name}
-                  className={clsx('spaces-sidebar-row', selectedSpaceId === space.id && 'is-active')}
+                  className={clsx(
+                    'spaces-sidebar-row',
+                    selectedSpaceId === space.id && 'is-active',
+                    channelDropTargetId === space.id && 'is-channel-drop-target',
+                    acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
+                  )}
                   draggable
                   onDragEnd={(event) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
@@ -305,6 +327,15 @@ export function SpacesSidebar({
                     else previewOrder(null);
                   }}
                   onDragEnter={(event) => {
+                    const placesChannel = space.reach !== 'through_channel'
+                      && selectedSpaceId !== space.id
+                      && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)
+                      && event.dataTransfer.types.includes(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
+                    if (placesChannel) {
+                      event.preventDefault();
+                      setChannelDropTargetId(space.id);
+                      return;
+                    }
                     if (!event.dataTransfer.types.includes(SPACE_DRAG_TYPE)) return;
                     event.preventDefault();
                     const dragged = draggingSpaceId.current;
@@ -318,10 +349,16 @@ export function SpacesSidebar({
                   onDragOver={(event) => {
                     const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
                     const placesChannel = space.reach !== 'through_channel'
-                      && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE);
+                      && selectedSpaceId !== space.id
+                      && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)
+                      && event.dataTransfer.types.includes(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
                     if (!reordersSpace && !placesChannel) return;
                     event.preventDefault();
-                    event.dataTransfer.dropEffect = reordersSpace ? 'move' : 'copy';
+                    event.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDragLeave={(event) => {
+                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                    setChannelDropTargetId((current) => current === space.id ? null : current);
                   }}
                   onDragStart={(event) => {
                     draggingSpaceId.current = space.id;
@@ -331,12 +368,17 @@ export function SpacesSidebar({
                   }}
                   onDrop={(event) => {
                     const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
-                    if (!workstreamId || space.reach === 'through_channel') return;
+                    const sourceSpaceId = event.dataTransfer.getData(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
+                    if (!workstreamId || !sourceSpaceId || sourceSpaceId === space.id
+                      || space.reach === 'through_channel') return;
                     event.preventDefault();
                     event.stopPropagation();
+                    setChannelDropTargetId(null);
+                    flashAcceptedChannelDrop(space.id);
                     setFailure(null);
-                    void onAddChannel(space.id, workstreamId).catch(() => {
-                      setFailure('That channel couldn\u2019t be added to the space.');
+                    event.dataTransfer.dropEffect = 'move';
+                    void onMoveChannel(sourceSpaceId, space.id, workstreamId).catch((cause: unknown) => {
+                      setFailure(spaceFailureSentence(cause, 'That channel couldn\u2019t be moved.'));
                     });
                   }}
                   onKeyDown={(event) => {

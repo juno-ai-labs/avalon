@@ -207,6 +207,7 @@ export function channelSpaceMutationHandlers(
   queryClient: QueryClient,
 ): {
   onAddChannelToSpace: (spaceId: string, workstreamId: string) => Promise<void>;
+  onMoveChannelToSpace: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace: (spaceId: string, workstreamId: string) => Promise<void>;
 } {
   const activeApi = (): Pick<RallyApi, 'addChannelToSpace' | 'removeChannelFromSpace'> => {
@@ -227,6 +228,19 @@ export function channelSpaceMutationHandlers(
       // The placement is on the Channel's row, which only WorkspaceDO writes;
       // its socket push is what puts the row under the Space.
       await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+    },
+    // A cross-rail drag composes the two existing membership primitives in the
+    // safe order: establish the destination before withdrawing the source, so
+    // an interrupted move can leave an extra placement but never a homeless
+    // Channel. WorkspaceDO remains the authority for both settlements.
+    onMoveChannelToSpace: async (sourceSpaceId, targetSpaceId, workstreamId) => {
+      if (sourceSpaceId === targetSpaceId) return;
+      applySpace(await activeApi().addChannelToSpace(targetSpaceId, workstreamId));
+      try {
+        applySpace(await activeApi().removeChannelFromSpace(sourceSpaceId, workstreamId));
+      } finally {
+        await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+      }
     },
     onRemoveChannelFromSpace: async (spaceId, workstreamId) => {
       applySpace(await activeApi().removeChannelFromSpace(spaceId, workstreamId));
