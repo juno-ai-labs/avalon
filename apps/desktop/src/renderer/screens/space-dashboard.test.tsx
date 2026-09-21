@@ -153,7 +153,7 @@ describe('the Space dashboard', () => {
   it('draws no composer, transcript, Main link or breakout list', async () => {
     renderSpace();
 
-    expect(await screen.findByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Needs attention' })).toBeVisible();
     expect(screen.queryByRole('textbox', { name: /message/iu })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Main' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /breakout/iu })).not.toBeInTheDocument();
@@ -301,7 +301,7 @@ describe('the Space dashboard', () => {
   it('given General, then archive and audience are absent while rename and icon stay', async () => {
     renderSpace(makeSpace({ name: 'General', scope: 'workspace', systemRole: 'general' }));
 
-    expect(await screen.findByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Needs attention' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Archive space' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Space audience' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'General' })).toBeInTheDocument();
@@ -328,7 +328,7 @@ describe('the Space dashboard', () => {
 
     // The header and the list, which is what the disclosure is for.
     expect(await screen.findByRole('link', { name: /Ship the launch/u })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Side work' })).toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: 'Archive space' })).not.toBeInTheDocument();
@@ -466,6 +466,6 @@ describe('the Space dashboard', () => {
     renderSpace(hiring, { ready: false });
 
     expect(screen.getByText(/Rally is opening this organization/u)).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Needs attention' })).not.toBeInTheDocument();
   });
 });
