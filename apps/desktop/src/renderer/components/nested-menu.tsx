@@ -1,7 +1,9 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Check, ChevronRight } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
+
+import { Tip } from './primitives';
 
 export interface NestedMenuOption {
   id: string;
@@ -9,6 +11,7 @@ export interface NestedMenuOption {
   icon?: ReactNode;
   selected?: boolean;
   disabled?: boolean;
+  disabledReason?: ReactNode;
   onSelect?: () => void;
 }
 
@@ -26,6 +29,15 @@ function OptionContents({ option }: { option: NestedMenuOption }): React.JSX.Ele
   return <>{option.icon ?? <span />}<span>{option.label}</span>{option.selected ? <Check aria-hidden="true" className="nested-menu-check" size={15} /> : <span />}</>;
 }
 
+/** Keep a disabled choice visible while putting the reason on the choice itself. */
+function ExplainedOption({ children, option }: {
+  children: ReactElement;
+  option: NestedMenuOption;
+}): React.JSX.Element {
+  if (!option.disabled || option.disabledReason === undefined) return children;
+  return <Tip label={option.disabledReason} side="right" sideOffset={8}>{children}</Tip>;
+}
+
 /** A consistently positioned right-hand submenu for a Radix context menu. */
 export function ContextNestedMenu({ icon, label, options }: NestedMenuProps): React.JSX.Element {
   return (
@@ -36,15 +48,16 @@ export function ContextNestedMenu({ icon, label, options }: NestedMenuProps): Re
       <ContextMenu.Portal>
         <ContextMenu.SubContent alignOffset={-5} className="menu-content nested-menu-content" sideOffset={3}>
           {options.map((option) => (
-            <ContextMenu.Item
-              aria-current={option.selected ? 'true' : undefined}
-              className="menu-item nested-menu-option"
-              disabled={option.disabled}
-              key={option.id}
-              onSelect={option.onSelect}
-            >
-              <OptionContents option={option} />
-            </ContextMenu.Item>
+            <ExplainedOption key={option.id} option={option}>
+              <ContextMenu.Item
+                aria-current={option.selected ? 'true' : undefined}
+                className="menu-item nested-menu-option"
+                disabled={option.disabled}
+                onSelect={option.onSelect}
+              >
+                <OptionContents option={option} />
+              </ContextMenu.Item>
+            </ExplainedOption>
           ))}
         </ContextMenu.SubContent>
       </ContextMenu.Portal>
@@ -62,15 +75,16 @@ export function DropdownNestedMenu({ icon, label, options }: NestedMenuProps): R
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent alignOffset={-5} className="menu-content nested-menu-content" sideOffset={3}>
           {options.map((option) => (
-            <DropdownMenu.Item
-              aria-current={option.selected ? 'true' : undefined}
-              className="menu-item nested-menu-option"
-              disabled={option.disabled}
-              key={option.id}
-              onSelect={option.onSelect}
-            >
-              <OptionContents option={option} />
-            </DropdownMenu.Item>
+            <ExplainedOption key={option.id} option={option}>
+              <DropdownMenu.Item
+                aria-current={option.selected ? 'true' : undefined}
+                className="menu-item nested-menu-option"
+                disabled={option.disabled}
+                onSelect={option.onSelect}
+              >
+                <OptionContents option={option} />
+              </DropdownMenu.Item>
+            </ExplainedOption>
           ))}
         </DropdownMenu.SubContent>
       </DropdownMenu.Portal>
