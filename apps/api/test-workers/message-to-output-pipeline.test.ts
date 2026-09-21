@@ -2793,7 +2793,7 @@ describe("a member's message travels the whole pipeline", () => {
       const artifactOpen = await artifactResponse.json() as { openUrl: string };
       const artifactSession = await artifactHost.redeemCode(new URL(artifactOpen.openUrl).hash.slice(1));
       expect(artifactSession).not.toBeNull();
-      expect(await artifactHost.checkSession(artifactSession!.session, 0)).toMatchObject({ ok: true, viewerId: USER_ID });
+      expect(await artifactHost.checkSession(artifactSession!.session)).toMatchObject({ ok: true, viewerId: USER_ID });
 
       const attachmentChecks = vi.spyOn(AuthorizationService.prototype, "checkMany");
       try {
@@ -3202,7 +3202,7 @@ describe("a member's message travels the whole pipeline", () => {
       const overlappingDownload = await app.request(`/resources/${sharedResource}/versions/2/model-content`, { headers }, apiEnv);
       expect(overlappingDownload.status).toBe(200);
       expect(await overlappingDownload.text()).toBe("Shared extracted text");
-      expect(await artifactHost.checkSession(artifactSession!.session, 0)).toMatchObject({ ok: true });
+      expect(await artifactHost.checkSession(artifactSession!.session)).toMatchObject({ ok: true });
       await runInDurableObject(parent, (_instance) => {
         const store = _instance['scopeGrants'](address);
         const target = { kind: "conversation" as const, ...secondAddress };
@@ -3222,7 +3222,10 @@ describe("a member's message travels the whole pipeline", () => {
 
 
       await expect(artifactService.open(sharedResource)).rejects.toThrow("Authorization could not be established");
-      await expect(async () => await artifactHost.checkSession(artifactSession!.session, 0)).rejects.toThrow("Authorization could not be established");
+      // A viewer session is an admitted capability: resource-scope changes do
+      // not put canonical authorization back in front of every artifact asset.
+      // It remains valid until explicit revocation or fixed expiry.
+      expect(await artifactHost.checkSession(artifactSession!.session)).toMatchObject({ ok: true, viewerId: USER_ID });
 
       expect((await app.request(path,{ headers },apiEnv)).status).toBe(404);
       expect((await app.request(path, { method: "PATCH",

@@ -49,7 +49,7 @@ function mintingAccess() {
   });
 }
 
-function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
+function setup(overrides: Partial<SiteResourceDetailProps> = {}, options: { strict?: boolean } = {}) {
   const props: SiteResourceDetailProps = {
     resourceId: RESOURCE,
     title: 'Offsite RSVP',
@@ -68,7 +68,11 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
     surface: surface(),
     ...overrides,
   };
-  return { props, ...render(<Harness props={props} />) };
+  const detail = <Harness props={props} />;
+  return {
+    props,
+    ...render(options.strict ? <React.StrictMode>{detail}</React.StrictMode> : detail),
+  };
 }
 
 /**
@@ -113,12 +117,13 @@ describe('showing a live artifact in the rail', () => {
   it('hands the pane to the main process rather than embedding anything', async () => {
     // The renderer measures a rectangle and gets out of the way; it never
     // embeds artifact content itself.
-    const { props } = setup();
+    const { props } = setup({}, { strict: true });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     expect(props.surface.present).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: ARTIFACT,
       bounds: expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
     }));
+    expect(props.openArtifact).toHaveBeenCalledOnce();
   });
 
   it('gives every navigating surface its own code, because redemption spends it', async () => {
@@ -141,26 +146,18 @@ describe('showing a live artifact in the rail', () => {
     expect(new Set([presented, poppedOut, external]).size).toBe(3);
   });
 
-  it('pairs a navigation URL with the artifact identity minted alongside it', async () => {
+  it('pairs the initial navigation URL with the artifact identity returned alongside it', async () => {
     // The URL origin and artifact id enforce different halves of the native
     // viewer's isolation. They must come from one access response rather than
     // combining a fresh URL with identity retained from an earlier response.
     const navigationArtifact = '3f2504e0-4f89-41d3-9a0c-0305e82c3399';
-    const openArtifact = vi.fn()
-      .mockResolvedValueOnce({
-        openUrl: OPEN_URL,
-        canonicalUrl: CANONICAL,
-        artifactId: ARTIFACT,
-        mode: 'active' as const,
-        stateful: true,
-      })
-      .mockResolvedValueOnce({
-        openUrl: `https://${navigationArtifact}-g.rallyusercontent.test/__rally/open#fresh-code`,
-        canonicalUrl: `https://${navigationArtifact}-g.rallyusercontent.test`,
-        artifactId: navigationArtifact,
-        mode: 'active' as const,
-        stateful: true,
-      });
+    const openArtifact = vi.fn().mockResolvedValue({
+      openUrl: `https://${navigationArtifact}-g.rallyusercontent.test/__rally/open#fresh-code`,
+      canonicalUrl: `https://${navigationArtifact}-g.rallyusercontent.test`,
+      artifactId: navigationArtifact,
+      mode: 'active' as const,
+      stateful: true,
+    });
     const { props } = setup({ openArtifact });
 
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
@@ -168,6 +165,7 @@ describe('showing a live artifact in the rail', () => {
       artifactId: navigationArtifact,
       url: expect.stringContaining(navigationArtifact),
     }));
+    expect(openArtifact).toHaveBeenCalledOnce();
   });
 
   it('shows the unavailable state when the preview cannot be presented at all', async () => {
@@ -230,25 +228,17 @@ describe('showing a live artifact in the rail', () => {
     expect(props.surface.close).toHaveBeenCalled();
   });
 
-  it('does not present after it goes away while minting a navigation', async () => {
-    // Switching work streams unmounts this detail. If its second, navigation-
-    // specific mint finishes afterwards, presenting then resurrects the old
-    // native view after the cleanup has already tried to close it.
+  it('does not present after it goes away while opening the artifact', async () => {
+    // Switching Channels unmounts this detail. If its initial open finishes
+    // afterwards, presenting then would resurrect the old native view after
+    // the cleanup has already tried to close it.
     let finishMint: ((access: SiteArtifactAccess) => void) | undefined;
-    const openArtifact = vi.fn()
-      .mockResolvedValueOnce({
-        openUrl: OPEN_URL,
-        canonicalUrl: CANONICAL,
-        artifactId: ARTIFACT,
-        mode: 'active' as const,
-        stateful: true,
-      })
-      .mockImplementationOnce(() => new Promise<SiteArtifactAccess>((resolve) => {
-        finishMint = resolve;
-      }));
+    const openArtifact = vi.fn(() => new Promise<SiteArtifactAccess>((resolve) => {
+      finishMint = resolve;
+    }));
     const previewSurface = surface();
     const { unmount } = setup({ openArtifact, surface: previewSurface });
-    await waitFor(() => expect(openArtifact).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(openArtifact).toHaveBeenCalledOnce());
 
     unmount();
     await act(async () => finishMint?.({
@@ -259,9 +249,9 @@ describe('showing a live artifact in the rail', () => {
       stateful: true,
     }));
 
-    // Exactly one close proves cleanup ran without a late continuation trying
-    // to compensate by closing a second time after stale content was shown.
-    expect(previewSurface.close).toHaveBeenCalledOnce();
+    // No surface existed to close, and the late continuation must not create
+    // one after the detail has gone away.
+    expect(previewSurface.close).not.toHaveBeenCalled();
     expect(previewSurface.present).not.toHaveBeenCalled();
   });
 });

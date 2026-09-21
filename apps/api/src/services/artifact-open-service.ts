@@ -2,9 +2,8 @@
  * Minting one person's access to one live artifact.
  *
  * This is the only door into an artifact origin, and it is the place resource
- * visibility is checked *at open time* — the supervisor object re-checks it on
- * every request afterwards, because a grant frozen at open is exactly the
- * regression `access-revocation.md` records.
+ * visibility is checked *at open time*. The admitted viewer session is then the
+ * serving capability until it is explicitly revoked or expires.
  *
  * **What it returns is a URL whose code lives in the fragment.** A fragment is
  * never sent to a server, so the proof stays out of Cloudflare's invocation log,
@@ -88,10 +87,13 @@ export class ArtifactOpenService {
     if (!row) throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
 
     const workspace = asWorkspaceId(workspaceId);
-    const affinity = await workspacePlacementAffinity(this.env, workspaceId);
-    const [decision] = await new AuthorizationService(this.env).checkMany({
-      workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
-    }, [{ kind: "resource", workspaceId: workspace, resourceId }]);
+    const [affinity, decisions] = await Promise.all([
+      workspacePlacementAffinity(this.env, workspaceId),
+      new AuthorizationService(this.env, this.auth).checkMany({
+        workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
+      }, [{ kind: "resource", workspaceId: workspace, resourceId }]),
+    ]);
+    const [decision] = decisions;
     if (!decision || decision.status === "unavailable") {
       if (decision) requireAuthorizedRead(decision);
       throw new ApiError(503, "authorization_unavailable", "Authorization could not be established. Retry the request.");
@@ -118,7 +120,10 @@ export class ArtifactOpenService {
    * will redeem.
    */
   async open(resourceId: string): Promise<ArtifactOpenResult> {
-    const { row, host } = await this.resolveAuthorized(resourceId);
+    const [{ row, host }, displayName] = await Promise.all([
+      this.resolveAuthorized(resourceId),
+      this.displayName(),
+    ]);
     const workspaceId = this.auth.workspaceId;
     // Pre-stub artifacts are migrated lazily, but only after the ordinary
     // visibility check. The platform-D1 reservation is durable before the
@@ -144,7 +149,7 @@ export class ArtifactOpenService {
       // Read here rather than carried on the auth context: the artifact needs a
       // name to attribute a vote to, and the session that authorized the open
       // carries only the identity, not the profile.
-      displayName: await this.displayName(),
+      displayName,
     });
 
     const origin = artifactOrigin(
