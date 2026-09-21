@@ -835,15 +835,16 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // The Space rail owns its own opening copy; the Channel rail keeps the two
-    // row groups that settle into four and three Channels.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(7);
+    // The Space rail reserves four rows while its directory arrives; the
+    // Channel rail keeps the two groups that settle into four and three rows.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(11);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
+    expect(screen.queryByText('No spaces yet')).not.toBeInTheDocument();
     expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
 
     rerender(
@@ -3734,6 +3735,54 @@ describe('reordering the channels inside a space', () => {
       container: { kind: 'space', id: hiring.id },
       itemIds: [bravo.id, alpha.id],
     }));
+  });
+
+  it('describes the keyboard gesture that reorders Channels in a Space', () => {
+    renderSidebar();
+
+    expect(screen.getByRole('region', { name: 'Channels' }))
+      .toHaveAccessibleDescription('Hold Alt and press the up or down arrow to move a channel in this space.');
+  });
+
+  it('keeps an in-flight order and its failure scoped to the Space that started it', async () => {
+    let rejectOrder: ((cause: unknown) => void) | undefined;
+    const onReorderContainer = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      rejectOrder = reject;
+    }));
+    const shared = placedIn({ ...alpha, lastActivityAt: '2026-08-01T09:00:00.000Z' }, hiring.id, launch.id);
+    const launchFirst = placedIn(
+      workstream('ws-launch', 'Launch first', 'completed', '2026-08-03T09:00:00.000Z'),
+      launch.id,
+    );
+    renderSidebar({ onReorderContainer, workstreams: [shared, bravo, launchFirst] });
+
+    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
+    fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
+
+    const launchList = document.querySelector(`[data-motion-scope="space:${launch.id}"]`);
+    if (!launchList) throw new Error('The Launch space has no placement list');
+    expect(within(launchList as HTMLElement).getAllByRole('link').map((row) => row.textContent ?? ''))
+      .toEqual([expect.stringContaining('Launch first'), expect.stringContaining('Alpha')]);
+
+    rejectOrder?.(new Error('The space changed while this was applied'));
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
+    expect(screen.queryByText('The channels in that space couldn’t be reordered.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(await screen.findByText('The channels in that space couldn’t be reordered.')).toBeVisible();
+  });
+
+  it('offers placement removal for a pinned Channel in the selected Space', async () => {
+    const onRemoveChannelFromSpace = vi.fn(async () => undefined);
+    renderSidebar({
+      onRemoveChannelFromSpace,
+      workstreams: [pinned(alpha, 0), bravo],
+    });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Alpha/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from space' }));
+
+    await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, alpha.id));
   });
 
   it('given a refused reorder, then the placements snap back and the section says so', async () => {

@@ -207,6 +207,7 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+const PLACEMENT_DRAG_HINT_ID = 'placement-drag-hint';
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -1291,9 +1292,9 @@ export function Sidebar({
   // ends. `null` means the pinned list is showing what the server last said.
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const draggingWorkstreamId = useRef<string | null>(null);
-  const [placementOrder, setPlacementOrder] = useState<string[] | null>(null);
-  const placementDrag = useRef<{ workstreamId: string; dropped: boolean } | null>(null);
-  const [placementFailure, setPlacementFailure] = useState(false);
+  const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
+  const placementDrag = useRef<{ workstreamId: string; dropped: boolean; spaceId: string } | null>(null);
+  const [placementFailure, setPlacementFailure] = useState<string | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
   const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
@@ -1369,9 +1370,12 @@ export function Sidebar({
     (workstream) => workstream.id,
   ), [ordering, selectedSpaceId, visibleWorkstreams]);
   const storedUnpinnedIds = storedUnpinnedWorkstreams.map((workstream) => workstream.id);
-  const unpinnedWorkstreams = placementOrder === null
+  const activePlacementOrder = placementOrder?.spaceId === selectedSpaceId
+    ? placementOrder.itemIds
+    : null;
+  const unpinnedWorkstreams = activePlacementOrder === null
     ? storedUnpinnedWorkstreams
-    : orderByStoredIds(storedUnpinnedWorkstreams, placementOrder, (workstream) => workstream.id);
+    : orderByStoredIds(storedUnpinnedWorkstreams, activePlacementOrder, (workstream) => workstream.id);
   // Whether this session has the hierarchy at all. A host that hands over no
   // directory is the guest shell, where Space discovery is deferred — see
   // `spaces` above — and that shell keeps the flat, time-grouped list this
@@ -1740,33 +1744,37 @@ export function Sidebar({
     />
   );
 
-  const commitPlacementOrder = async (ids: string[]): Promise<void> => {
-    if (selectedSpaceId === null) return;
-    setPlacementOrder(ids);
-    setPlacementFailure(false);
+  const commitPlacementOrder = async (spaceId: string, ids: string[]): Promise<void> => {
+    setPlacementOrder({ spaceId, itemIds: ids });
+    setPlacementFailure(null);
     try {
-      await onReorderContainer({ container: { kind: 'space', id: selectedSpaceId }, itemIds: ids });
+      await onReorderContainer({ container: { kind: 'space', id: spaceId }, itemIds: ids });
     } catch {
-      setPlacementFailure(true);
+      setPlacementFailure(spaceId);
     } finally {
-      setPlacementOrder((current) => current === ids ? null : current);
+      setPlacementOrder((current) => current?.spaceId === spaceId && current.itemIds === ids ? null : current);
     }
   };
 
   const placementRowDrag = (workstream: WorkstreamSummary, index: number): WorkstreamRowDrag => ({
-    dragging: placementDrag.current?.workstreamId === workstream.id && placementOrder !== null,
+    dragging: placementDrag.current?.workstreamId === workstream.id && activePlacementOrder !== null,
     position: selectedSpace ? `In ${selectedSpace.name}, ${index + 1} of ${unpinnedWorkstreams.length}.` : '',
     onDragStart: (target) => {
-      placementDrag.current = { workstreamId: target.id, dropped: false };
-      setPlacementOrder(unpinnedWorkstreams.map((item) => item.id));
+      if (selectedSpaceId === null) return;
+      placementDrag.current = { workstreamId: target.id, dropped: false, spaceId: selectedSpaceId };
+      setPlacementOrder({ spaceId: selectedSpaceId, itemIds: unpinnedWorkstreams.map((item) => item.id) });
     },
     onDragOver: (targetId) => {
       const current = placementDrag.current;
-      if (!current || current.workstreamId === targetId) return;
+      if (!current || current.spaceId !== selectedSpaceId || current.workstreamId === targetId) return;
       setPlacementOrder((held) => {
-        const ids = held ?? unpinnedWorkstreams.map((item) => item.id);
+        const ids = held?.spaceId === current.spaceId
+          ? held.itemIds
+          : unpinnedWorkstreams.map((item) => item.id);
         const targetIndex = ids.indexOf(targetId);
-        return targetIndex < 0 ? held : moveWithin(ids, current.workstreamId, targetIndex);
+        return targetIndex < 0
+          ? held
+          : { spaceId: current.spaceId, itemIds: moveWithin(ids, current.workstreamId, targetIndex) };
       });
     },
     onDrop: () => {
@@ -1776,17 +1784,20 @@ export function Sidebar({
     },
     onDragEnd: (cancelled) => {
       const current = placementDrag.current;
-      const held = placementOrder;
+      const held = current && placementOrder?.spaceId === current.spaceId
+        ? placementOrder.itemIds
+        : null;
       placementDrag.current = null;
       const next = committedOrder(held, storedUnpinnedIds, cancelled || current?.dropped !== true);
-      if (next) void commitPlacementOrder(next);
+      if (next && current) void commitPlacementOrder(current.spaceId, next);
       else setPlacementOrder(null);
     },
     onMove: (target, direction) => {
       const from = unpinnedWorkstreams.findIndex((item) => item.id === target.id);
       const to = from + direction;
       if (from < 0 || to < 0 || to >= unpinnedWorkstreams.length) return;
-      void commitPlacementOrder(moveWithin(unpinnedWorkstreams.map((item) => item.id), target.id, to));
+      if (selectedSpaceId === null) return;
+      void commitPlacementOrder(selectedSpaceId, moveWithin(unpinnedWorkstreams.map((item) => item.id), target.id, to));
     },
   });
 
@@ -1997,6 +2008,7 @@ export function Sidebar({
         collapsed={spacesCollapsed}
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
+        loading={loading}
         onArchive={onArchiveSpace}
         onCollapsedChange={setSpacesCollapsed}
         onCreateChannel={createChannelFromSidebar}
@@ -2195,6 +2207,7 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
+                    {...(selectedSpaceId !== null ? { placementSpaceId: selectedSpaceId } : {})}
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     spaces={placementSpaces}
                     workspace={workspace}
@@ -2222,6 +2235,7 @@ export function Sidebar({
           */}
           {(
           <section
+            aria-describedby={spacesEnabled && unpinnedWorkstreams.length > 1 ? PLACEMENT_DRAG_HINT_ID : undefined}
             aria-label="Channels"
             className="sidebar-section workstreams-section"
           >
@@ -2236,6 +2250,11 @@ export function Sidebar({
                 <span className="sr-only">Loading your spaces and channels</span>
               </div>
             )}
+            {spacesEnabled && unpinnedWorkstreams.length > 1 && (
+              <p className="sr-only" id={PLACEMENT_DRAG_HINT_ID}>
+                Hold Alt and press the up or down arrow to move a channel in this space.
+              </p>
+            )}
             {loading && visibleWorkstreams.length === 0 ? (
               <>
                 <SidebarSkeletonGroup count={4} />
@@ -2247,7 +2266,7 @@ export function Sidebar({
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
                 <div className="sidebar-list" data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined} data-reorder-list="">
-                  {placementFailure && <InlineError>The channels in that space couldn’t be reordered.</InlineError>}
+                  {placementFailure === selectedSpaceId && <InlineError>The channels in that space couldn’t be reordered.</InlineError>}
                   {unpinnedWorkstreams.map((workstream, index) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
                       workstream,

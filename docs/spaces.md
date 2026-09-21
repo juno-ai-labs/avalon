@@ -1981,6 +1981,10 @@ through one of its Channels refuses Channel drops before any mutation is sent.
 The shell owns the Space rail's collapsed state so its narrow-window threshold
 reserves the rail actually on screen, and a stale archived-Space URL falls back
 to a valid sidebar selection without competing route and directory effects.
+Channel reorder state, failures, placement menus, and keyboard instructions stay
+scoped to the selected Space; the Space rail keeps loading placeholders until
+the first directory arrives, and placement drops remain copies rather than
+accidental pinned-list reorders.
 
 **Why:** The accordion made containment and destination the same gesture: a
 Space row both opened a Space and disclosed an indented copy of every Channel
