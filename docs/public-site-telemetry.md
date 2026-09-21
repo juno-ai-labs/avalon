@@ -5,6 +5,8 @@ The retained access-request client submits only to `/access/requests`; email val
 skips telemetry initialization so its bearer fragment cannot reach analytics.
 The macOS Beta action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
+Support and Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -139,6 +141,16 @@ is allowed.
 **Considered and rejected:** Replacing only the bytes at the old URL leaves image caches using the old design.
 
 **Consequences:** Keep the versioned URL aligned with the generated card; existing Messages previews may retain cached page metadata until their client refreshes it.
+
+### 2026-09-21 — Unify support and policy page presentation
+
+**What changed:** All 24 support and Trust Center pages use pale surfaces, the homepage typography scale, rounded controls, and responsive navigation and cards.
+
+**Why:** The homepage redesign left linked pages using the prior neon artwork and heavy display type.
+
+**Considered and rejected:** Adding more overrides to the legacy stylesheet would retain conflicting designs. A dedicated shared stylesheet lets these informational pages use one design without changing desktop handoff screens.
+
+**Consequences:** Preserve existing policy text and destinations; mobile tables scroll within their container rather than widening the page. Review follow-up restores visible Implemented labels, includes getting-started cards in the responsive grid, and stacks header actions below labels on narrow phones. Source-contract tests now check the stylesheet these pages actually load; real-browser checks cover 320px header overflow and overlap.
 
 ### 2026-09-14 — Configurable deployment isolation
 

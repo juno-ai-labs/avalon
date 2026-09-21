@@ -16,7 +16,7 @@
  *
  * Decorative: the label for the wait is said once, by the section.
  */
-import { SidebarRow } from '@rally/ui/components/resizable-sidebar';
+import { SidebarList, SidebarRow } from '@rally/ui/components/resizable-sidebar';
 
 export function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.JSX.Element {
   return (
@@ -32,9 +32,9 @@ export function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.
 
 export function SidebarSkeletonRows({ count, hint = false }: { count: number; hint?: boolean }): React.JSX.Element {
   return (
-    <div className="sidebar-list">
+    <SidebarList>
       {Array.from({ length: count }, (_, index) => <SidebarSkeletonRow hint={hint} key={index} />)}
-    </div>
+    </SidebarList>
   );
 }
 
