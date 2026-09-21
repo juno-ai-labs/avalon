@@ -125,6 +125,30 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — Hierarchy row cadence lives in one shared list
+
+**What changed:** `SidebarList` owns the vertical spacing between hierarchy
+rows, and the desktop and browser Space, Channel, and Breakout collections all
+compose it inside the shared scroll primitive. Collapsing a rail changes its
+horizontal presentation but not its row cadence.
+
+**Why:** The three hierarchy levels had accumulated separate hard-coded gaps
+and a Channel-only compact override, so adjacent rails changed rhythm depending
+on which ones were collapsed. Fixing individual selectors would leave the same
+presentation decision distributed across hosts and make the next sidebar change
+able to reintroduce the mismatch.
+
+**Considered and rejected:** A descendant selector that imposed a gap on every
+child of `SidebarScroll`. Scroll bodies also contain sections, empty states, and
+supporting controls; only an explicit row collection has list cadence.
+
+**Consequences:** Every host that draws hierarchy rows, including the lite
+browser, must put the collection in `SidebarList`. Local sidebar selectors do
+not set row gaps; changing the shared spacing token changes all three levels at
+both widths.
+
+Shipped in #902.
+
 ### 2026-09-21 — All three hierarchy sidebars share one resize edge
 
 **What changed:** The Space, Channel, and Breakout sidebars now compose one
@@ -132,19 +156,15 @@ shared `ResizableSidebar` shell. Each keeps its own content and remembered
 expanded width, while the shell owns their compact/resizing states, motion
 channel, 88px compact width, 240–400px expanded range, 210/220px collapse
 hysteresis, grip, drag guide, tooltip, keyboard controls, and double-click
-toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, `SidebarScroll`,
-`SidebarHorizontalLine`, and `SidebarList` now provide the geometry inside that
-shell. A
+toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, `SidebarScroll`, and
+`SidebarHorizontalLine` now provide the geometry inside that shell. A
 `SidebarHeader` is a 43px specialization of `SidebarRow` followed by a
 `SidebarHorizontalLine`, matching the message feed's 44px titlebar as a whole.
 `SidebarTitleHeader` owns the title and its shared 28px compact icon as one
 substitution, so header marks stay smaller than the 36px navigation-row marks
 beneath them;
 `SidebarScroll` gives every rail the same 8px divider-to-first-row gap and the
-same compact gutters. `SidebarList` owns the one row-gap token consumed by the
-Space, Channel, and Breakout rails at both widths; collapsing a rail changes its
-horizontal presentation but not its vertical cadence. The desktop and browser
-hosts consume these primitives.
+same compact gutters. The desktop and browser hosts consume these primitives.
 Space, Channel, and Breakout rows also pass their icon, title, optional detail,
 and host-owned interaction through `SidebarNavigationRowContent`, so their icon
 slot, copy sizing, clipping, and compact motion cannot diverge in local CSS.
@@ -163,10 +183,7 @@ the behavior into a third component was rejected because the visible contract
 would drift again; the edge interaction now lives below all three surfaces.
 Sharing only the edge was not enough: three independently sized rows and
 headers could still arrive at different positions during the same transition,
-so their structural geometry moved into the same package boundary too. The row
-lists had also retained three older spacing decisions—two hard-coded gaps and a
-Channel-only compact override—which made the hierarchy change rhythm as levels
-collapsed; one shared token replaces those local rules.
+so their structural geometry moved into the same package boundary too.
 
 **Consequences:** A Space width is a device-local preference like the other
 sidebar widths. Responsive calculations spend that remembered width when it
