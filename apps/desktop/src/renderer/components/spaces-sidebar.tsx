@@ -15,6 +15,7 @@ import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import { Button, IconButton, InlineError, Modal } from './primitives';
 import { SidebarSearch } from './sidebar-search';
+import { SidebarSkeletonRows } from './sidebar-skeleton';
 
 interface SpacesSidebarProps {
   accountSlotRef: (element: HTMLDivElement | null) => void;
@@ -22,6 +23,7 @@ interface SpacesSidebarProps {
   collapsed: boolean;
   currentPath: string;
   inactiveSpaces: SpaceSummary[];
+  loading?: boolean;
   spaces: SpaceSummary[];
   selectedSpaceId: string | null;
   ready: boolean;
@@ -58,6 +60,7 @@ export function SpacesSidebar({
   collapsed,
   currentPath,
   inactiveSpaces,
+  loading = false,
   spaces,
   selectedSpaceId,
   ready,
@@ -212,6 +215,8 @@ export function SpacesSidebar({
         >
           {!ready ? (
             <p className="spaces-sidebar-empty">Rally is opening this organization. Spaces appear once every channel has one.</p>
+          ) : loading && spaces.length === 0 ? (
+            <SidebarSkeletonRows count={4} hint />
           ) : spaces.length === 0 ? (
             <p className="spaces-sidebar-empty">No spaces yet</p>
           ) : <>
@@ -248,7 +253,7 @@ export function SpacesSidebar({
                       && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE);
                     if (!reordersSpace && !placesChannel) return;
                     event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
+                    event.dataTransfer.dropEffect = reordersSpace ? 'move' : 'copy';
                   }}
                   onDragStart={(event) => {
                     draggingSpaceId.current = space.id;
