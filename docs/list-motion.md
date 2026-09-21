@@ -13,9 +13,9 @@ compact toggle inserts above the search row and the expand removes — plays the
 same two halves on their own: in from the left when it appears, and out to the
 left, through a stand-in, when it is removed.
 
-Nothing in it knows what a work stream is: the sidebar is its one caller, and
-it is written against a small contract — keyed rows under a scroll box — so
-that a second list could take it without a second implementation. The
+Nothing in it knows what a work stream is: the Channel and Space sidebars are
+its callers, and it is written against a small contract — keyed rows under a
+scroll box — so another list could take it without a second implementation. The
 transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
 different thing, an entrance for a new message rather than a move, and stays
 where it is. So is the sidebar *box* travelling between its expanded and
@@ -35,7 +35,8 @@ choreography takes, or before adding motion to another list.
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
 | [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, and its exit on a stand-in it makes and removes. Owns the interruption handling. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, attaches the hook to the scroll box, and attaches a second instance to the command bar above it, whose New work stream row is marked `data-motion-insert`. Stable command-bar grid tracks keep that row above Search and carry Search continuously as the first track opens or closes. |
+| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, and attaches the hook to both the scroll box and command bar. The command bar marks its New channel row `data-motion-insert`; stable grid tracks keep that row above Search and carry Search continuously as the first track opens or closes. |
+| [`apps/desktop/src/renderer/components/spaces-sidebar.tsx`](../apps/desktop/src/renderer/components/spaces-sidebar.tsx) | Attaches the hook to the Space command bar, names the collapsed state as its layout key, and marks the compact New channel row `data-motion-insert`. It shares the command bar's stable row ownership and maps its own collapse interval to `--sidebar-layout-motion`, so Search and the grid track travel together. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ### The contract a list makes
@@ -388,8 +389,9 @@ step.
 | Suite | What it covers |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays, the exit and the entrance on their own included. |
-| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in that is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
+| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in whose inherited grid placement is cleared and which is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, a project's members are scoped apart from the recent list under a held project row, the rail's New work stream row sits above a search row outside the scroll box and is marked as inserted, and the aside's own `transitionrun` for `--sidebar-compact` holds the motion until its `transitionend`. |
+| `apps/desktop/src/renderer/components/spaces-sidebar.test.tsx` | That the Space sidebar wires the same command-bar contract: compact New channel is marked as inserted and precedes Search. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
@@ -410,6 +412,35 @@ The motion itself is judged in a real window, per
 work stream from its right-click menu, then pause every animation with
 `document.getAnimations()` and step `currentTime` through the phases to capture
 each one.
+
+## Changelog
+
+### 2026-09-21 — Command rows keep stable grid ownership through sidebar layout changes
+
+**What changed:** The collapsed Channel and Space sidebars place New channel in
+the command bar's first grid row and Search in its second in both layouts. The
+first track grows from zero instead of reassigning Search to a different row,
+and the Space sidebar supplies the shared layout-motion interval. An exiting
+row's stand-in clears any inherited grid placement before using its measured
+absolute coordinates.
+
+**Why:** New channel belongs above Search in the compact rail. Merely reordering
+the elements made Search switch rows discretely, so it jumped while the sidebar
+edge travelled. The exit clone also retained the source button's grid row,
+making its measured `top` relative to that area and visibly applying part of the
+offset twice.
+
+**Considered and rejected:** Translating Search independently, which would
+duplicate the grid's layout arithmetic and could drift from future spacing
+changes. Excluding only the current button class from stand-in placement, which
+would leave the reusable motion primitive vulnerable to any future grid row.
+
+**Consequences:** Command-bar callers preserve stable row ownership with numeric
+tracks in every layout. A stand-in is never a participating grid item: its
+inline `grid-area: auto` makes the container padding box the positioning frame,
+and its measured `top` and `left` are the only placement authority.
+
+Shipped in #893.
 
 ### 2026-09-10 — Marked rows are seen arriving and leaving, and the hook holds while a layout travels
 
