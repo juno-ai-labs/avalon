@@ -217,6 +217,27 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-21 — Elicitation hover belongs to the reader
+
+**What changed:** the hover over an elicitation option now paints
+`sys.color.accent.wash`, which resolves from the signed-in reader's chosen
+profile colour. Its resting surface, selected fill, keycap, checkbox and focus
+outline are unchanged.
+
+**Why:** elicitation is the point where Rally is explicitly asking this reader
+to act. The product-wide neutral hover wash made that choice row read like
+ordinary chrome and ignored the colour the reader chose for their controls.
+This is a deliberate semantic exception to
+the shared neutral hover: the personal wash appears only under the pointer and
+does not re-point `cmp.row.background-selected`, so persistent selection and
+unrelated rows remain neutral.
+
+**Considered and rejected:** restoring the old account-level rewrite of
+`cmp.row.background-selected`. That token still serves selections, chips,
+controls and other borrowers that have no claim to personal identity. The
+elicitation row can name the existing accent wash directly, which keeps the
+exception local and lets light, dark and future themes decide the actual mix.
+
 ### 2026-09-19 — The lightbox stops hiding the window it covers
 
 **What changed:** `sys.color.scrim.veil` is new — `scrim.solid`'s colour at half
