@@ -1090,8 +1090,9 @@ Channel released on it is ignored the way one released on a Space it is already
 in is ignored — the gesture changed nothing, and there is nothing here for a
 refusal to name. **Add to space** is the exception in presentation, not in
 authority: its submenu is the visible Space directory, so this Space remains in
-the list as a disabled choice whose tooltip says that only its participants may
-add Channels. Existing placements are disabled and checked in the same list.
+the list as a keyboard-focusable disabled choice whose tooltip says that only
+its participants may add Channels. Existing placements use checked-item
+semantics and remain keyboard-focusable in the same list.
 The server still refuses either write by name; the disabled rows explain the
 boundary without pretending that a visible Space disappeared.
 
@@ -1860,7 +1861,8 @@ afterwards.
 **What changed:** **Add to space** lists every Space visible to the reader.
 Spaces the Channel already belongs to stay checked and disabled; Spaces reached
 only through one of their Channels stay disabled, with a tooltip explaining
-that only Space participants may add Channels.
+that only Space participants may add Channels. Disabled rows remain in keyboard
+navigation so the same explanation is available without a pointer.
 
 **Why:** Removing unavailable destinations made the submenu disagree with the
 Space rail. A reader could see Engineering beside General and VCs, then open
