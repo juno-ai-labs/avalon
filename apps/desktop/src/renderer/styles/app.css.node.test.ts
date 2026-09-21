@@ -567,7 +567,7 @@ describe('channel context sidebar layout', () => {
     expect(rule('.conversation-layout > .workstream-screen')).toContain('flex: 1');
     expect(rule('.resizable-sidebar')).toContain('position: relative');
     expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
-    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: var(--sidebar-collapsed-width)');
+    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 88px');
     expect(rule('.sidebar-scroll')).toContain('overflow-y: auto');
     expect(rule('.sidebar-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
   });
