@@ -37,6 +37,13 @@ participants and resources belong to the selected authorized conversation; deskt
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
 
+Every hierarchy sidebar composes `SidebarCollapseFooter`. The primitive owns
+the expand/collapse control, accessible state, constrained state and motion
+destination. A footer with no leading content centers the toggle when compact;
+a footer with an account slot keeps the slot and toggle as one trailing control
+row. Hosts provide labels, persistence and the optional leading content rather
+than rebuilding either layout.
+
 Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
 marks itself `data-reorder-list`: a host's row finds the slots it is being
 measured against through that mark rather than by knowing whose list it is in,
@@ -124,6 +131,26 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-21 — Collapse footers become one layout primitive
+
+**What changed:** The Space, Channel and Breakout sidebars now compose
+`SidebarCollapseFooter`. It owns their toggle button, icon swap, accessible
+expanded state, constrained state and footer layout. A toggle-only footer has
+one shared compact destination that centers its 30px control using animated
+padding; a footer with leading account content keeps the two-control layout.
+
+**Why:** The Channel and Breakout rails reached the same visual result through
+different sidebar-specific CSS, while Spaces built the same footer structure in
+a third component. The Channel rule had drifted and left its compact toggle at
+the trailing edge. Fixing that selector alone would preserve the mechanism that
+caused the drift, so the footer structure and its two real variants moved below
+all three owners instead.
+
+**Consequences:** A hierarchy rail cannot independently choose the compact
+position, icon, disabled behavior or ARIA state of its collapse control. New
+leading content must use the primitive's explicit slot; new sidebar-specific
+footer positioning is not part of the contract.
 
 ### 2026-09-21 — Hierarchy title headers keep one identity composition
 
