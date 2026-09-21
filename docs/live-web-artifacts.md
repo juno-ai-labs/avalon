@@ -147,9 +147,11 @@ Fences apply in this order, all before any model-authored code runs:
    same-origin requests and genuine top-level navigations may carry Rally
    viewer identity. See [Invariants](#invariants).
 3. **Optional viewer session** — when a request is eligible and carries the
-   artifact cookie, it is checked against `ArtifactHostDO`, which also confirms
-   the viewer still sees the work stream. A missing, expired, or no-longer-visible
-   session falls back to the public representation with no identity headers.
+   artifact cookie, it is checked against `ArtifactHostDO`. Admission already
+   proved resource access; ordinary page and asset requests trust that durable
+   session until explicit revocation removes it or its fixed lifetime expires.
+   A missing or expired session falls back to the public representation with no
+   identity headers.
 
 Then `/__rally/*` paths are Rally's own (the access bootstrap, the redeem
 endpoint, prior-version mounts) and everything else is artifact content: assets
@@ -304,11 +306,11 @@ is the only place that can forward into it.
   failure — a component that used one flashes an unavailable message on every
   open of a page that is about to work.
 - **A preview presentation cannot outlive the detail that requested it.** The
-  navigation-specific access mint crosses the API and can settle after a work-
-  stream switch has unmounted the detail. A cancelled detail must refuse to
+  initial artifact open crosses the API and can settle after a Channel switch
+  has unmounted the detail. A cancelled detail must refuse to
   call the main process after cleanup, or it recreates an ownerless old preview
-  over the newly selected stream. The presentation's artifact ID and open URL
-  must also come from that same navigation mint: the ID selects its isolated
+  over the newly selected Channel. The presentation's artifact ID and open URL
+  must also come from that same response: the ID selects its isolated
   storage partition while the URL selects its confined origin.
 - **Everything the renderer measures is a request, not an instruction.** The
   preview rectangle is clamped to the window, because a wrong or hostile one
@@ -393,10 +395,10 @@ facet that holds a stateful artifact's data. It does not own:
   versioning layer own those, and this module adds a resource type and an
   attachment kind to them.
 - **Resource visibility.** The canonical authorization service composes current
-  membership, conversation grants and attachment exposure; the supervisor asks
-  it before serving an authenticated request.
-  [`access-revocation.md`](access-revocation.md) owns why those two mechanisms
-  must never be merged.
+  membership, conversation grants and attachment exposure before a viewer
+  session is minted. Once admitted, that durable session is the serving
+  capability; [`access-revocation.md`](access-revocation.md) owns the queue that
+  removes it when membership or the login session ends.
 - **The Terminal sandbox.** [`terminal-workspaces.md`](terminal-workspaces.md)
   owns the sandbox boundary; this module only reads files out of it.
 - **Durable Object addressing rules.** `lib/durable-object-namespace.ts` is the
@@ -420,18 +422,17 @@ facet that holds a stateful artifact's data. It does not own:
   per-artifact log (50 entries), which no client surface currently reads (see
   the changelog entry for 2026-09-10), so recovering it means asking for it
   back into chat.
-- **A viewer loses resource visibility.** Their next eligible request loses
-  its Rally identity and receives the anonymous public representation. A
-  protected active site's own early header guard then returns 401; a public site
-  continues serving it. `VISIBILITY_CACHE_MS` bounds how long a removed viewer
-  may still receive identity and **ships at the open value of zero** — every
-  request rechecks canonical resource admission — because that security window is the team's
-  number to set rather than this code's to guess.
-- **Viewer identity cannot be checked.** Identity is an optional enhancement to
-  public serving, so a failed visibility hop falls back to the anonymous
-  representation rather than making a browser with an old cookie less able to
-  read than a crawler. The failure emits a structured warning; a protected
-  active site's header guard still refuses the anonymous request.
+- **A viewer session is revoked or expires.** Its next eligible request receives
+  the anonymous public representation. A protected active site's own early
+  header guard then returns 401; a public site continues serving it. Resource-
+  scope changes do not poll canonical authorization from every page asset: the
+  admitted session assumes access until an explicit revocation removes it or
+  its fixed 24-hour lifetime ends.
+- **Viewer-session lookup fails.** Identity is an optional enhancement to public
+  serving, so a failed supervisor hop falls back to the anonymous representation
+  rather than making a browser with an old cookie less able to read than a
+  crawler. The failure emits a structured warning; a protected active site's
+  header guard still refuses the anonymous request.
 - **An anonymous request makes the model handler throw.** It receives the same
   neutral 500 response, but cannot append to the participant-facing error ring:
   otherwise crafted public requests could evict every useful diagnosis and
@@ -471,7 +472,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
-| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
+| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that the first access response drives the initial preview without a second mint, later surfaces get fresh single-use codes, it measures and hands over rather than embedding, its actions land in the host's header and each carries a tooltip, Copy link carries no code, the data toggle only exists for a site that keeps data and takes the composited view down with it, and the pane never flashes its unavailable state. |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, each artifact surface being confined with an activation tracker built from its own input stream, the consuming call rather than the peeking one reaching the fence, the press being dropped on `did-navigate`, and the external opener's rejection being caught. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
@@ -537,6 +538,35 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-09-21 — Open once and trust the admitted viewer session
+
+**What changed:** The desktop uses the first artifact-open response for its
+initial preview instead of discarding that response's code and minting a second
+one. Pop-out, browser, and a preview reopened after showing stored data still
+mint fresh single-use codes. The open service overlaps its independent profile,
+placement, and authorization reads. Once the resulting viewer session is
+redeemed, artifact requests validate that durable session locally rather than
+re-running canonical resource authorization for the document and every asset.
+
+**Why:** Production showed one preview serially paying 1,075 ms and then 252 ms
+for two complete opens before navigation began. The first response already held
+the exact URL and artifact identity the preview needed. After redemption, the
+zero-duration visibility cache made every page request cross the same D1 and
+Durable Object authorization path again, even though admission had just proved
+access and the revocation walk already removes sessions when membership or the
+login session ends.
+
+**Considered and rejected:** A guessed visibility TTL would retain periodic
+polling and merely choose how often the redundant authority path runs. Keeping
+ArtifactHostDO warm, adding another cache service, or merging WorkspaceDO RPCs
+would optimize around work the serving path no longer needs.
+
+**Consequences:** A viewer session assumes resource access until explicit
+revocation or its fixed 24-hour expiry. Resource-scope changes that do not yet
+publish an artifact-session revocation therefore do not interrupt an already
+open page. New revocation cases must extend the existing durable walk rather
+than putting canonical authorization back in front of artifact assets.
 
 ### 2026-09-18 — The supervisor becomes inspectable
 

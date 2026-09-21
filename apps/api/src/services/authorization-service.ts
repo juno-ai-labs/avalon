@@ -20,11 +20,27 @@ import {
 
 const unavailable = (): AuthorizationDecision => ({ status: 'unavailable', reason: 'authority_unavailable', retryable: true });
 
+function atReceipt<T extends { validatedAt: number }>(value: T, validatedAt = Date.now()): T {
+  return { ...value, validatedAt };
+}
+
+function atBatchReceipt<T extends { validatedAt: number }>(values: readonly T[]): T[] {
+  const validatedAt = Date.now();
+  return values.map((value) => atReceipt(value, validatedAt));
+}
+
+interface RequestMembershipObservation {
+  workspaceId: string;
+  userId: string;
+  accessClass: 'member' | 'guest';
+  validatedAt: number;
+}
+
 async function ownerEvidence<T extends { validatedAt: number }>(cache: Map<string, Promise<T>>, key: string,
   load: () => Promise<T>): Promise<T> {
   const pending = cache.get(key);
   if (pending) return pending;
-  const work = load();
+  const work = load().then((value) => atReceipt(value));
   cache.set(key, work);
   return work;
 }
@@ -56,11 +72,21 @@ export function requireAuthorizedRead(decision: AuthorizationDecision): void {
 
 /** Created once per trusted request; no model-provided or browser-provided grants. */
 export function createAccessContext(env: Env, auth: AuthContext): AccessContext {
-  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null }, new AuthorizationService(env));
+  return new AccessContext(
+    { workspaceId: auth.workspaceId, userId: auth.userId, delegation: null },
+    new AuthorizationService(env, auth),
+  );
 }
 
 export class AuthorizationService {
-  constructor(private readonly env: Env) {}
+  private readonly requestMembership: RequestMembershipObservation | null;
+
+  constructor(private readonly env: Env, auth?: AuthContext) {
+    const accessClass = auth?.accessClass ?? (auth?.role ? 'member' : null);
+    this.requestMembership = auth && accessClass
+      ? { workspaceId: auth.workspaceId, userId: auth.userId, accessClass, validatedAt: Date.now() }
+      : null;
+  }
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
     if (resources.length === 0) return [];
@@ -79,7 +105,7 @@ export class AuthorizationService {
     }
     const unique = [...new Map(resources.map((resource) => [authorizationSnapshotKey(subject, resource), resource])).values()];
     // One observation batch per call: a later check must never join an earlier read.
-    const decisions = await new AuthorizationBatch(this.env).checkMany(subject, unique);
+    const decisions = await new AuthorizationBatch(this.env, this.requestMembership).checkMany(subject, unique);
     const byKey = new Map(unique.map((resource, index) => [authorizationSnapshotKey(subject, resource), decisions[index]!]));
     return resources.map((resource) => byKey.get(authorizationSnapshotKey(subject, resource))!);
   }
@@ -95,7 +121,10 @@ class AuthorizationBatch {
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
   private guest = false;
   private readonly parentScopes = new Map<string, Set<string>>();
-  constructor(private readonly env: Env) {}
+  constructor(
+    private readonly env: Env,
+    private readonly requestMembership: RequestMembershipObservation | null,
+  ) {}
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
     try { return await this.checkBatch(subject, resources); }
@@ -111,19 +140,25 @@ class AuthorizationBatch {
     const decisions: AuthorizationDecision[] = [];
     const requested = resources.map((resource, index) => ({ resource, index }));
     if (!subject.userId) return resources.map(() => ({ status: 'denied', reason: 'outside_delegation', evidence: [] }));
-    const membership = await ownerEvidence(this.memberships, JSON.stringify([subject.workspaceId, subject.userId]), async () => {
-      const validatedAt = Date.now();
-      const row = await this.env.DB.prepare(
-        "SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
-      ).bind(subject.workspaceId, subject.userId).first<{ access_class: "member" | "guest" }>();
-      return { active: Boolean(row), guest: row?.access_class === "guest", validatedAt };
-    });
+    const membership = this.requestMembership?.workspaceId === subject.workspaceId
+      && this.requestMembership.userId === subject.userId
+      ? {
+          active: true,
+          guest: this.requestMembership.accessClass === 'guest',
+          validatedAt: this.requestMembership.validatedAt,
+        }
+      : await ownerEvidence(this.memberships, JSON.stringify([subject.workspaceId, subject.userId]), async () => {
+          const row = await this.env.DB.prepare(
+            "SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+          ).bind(subject.workspaceId, subject.userId).first<{ access_class: "member" | "guest" }>();
+          return { active: Boolean(row), guest: row?.access_class === "guest", validatedAt: Date.now() };
+        });
     this.guest = membership.guest;
     const membershipEvidence = { owner: `workspace:${subject.workspaceId}/member:${subject.userId}`,
       revision: membership.active ? (membership.guest ? 'guest:active' : 'member:active') : 'inactive', validatedAt: membership.validatedAt };
     const resourceIds = requested.flatMap((entry) => entry.resource.kind === 'resource' ? [entry.resource.resourceId] : []);
     const facts = membership.active && resourceIds.length
-      ? await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds }) : [];
+      ? atBatchReceipt(await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds })) : [];
     const factsById = new Map(facts.map((value) => [value.resourceId, value]));
     // Gather the whole batch before reading an owner, including attachment locations.
     const addScope = (parentId: string, substreamId: string) => {
@@ -141,7 +176,7 @@ class AuthorizationBatch {
     }
     const connectionIds = requested.flatMap((entry) => entry.resource.kind === 'connection' ? [entry.resource.connectionId] : []);
     const connections = membership.active && connectionIds.length
-      ? await workspace.authorizationConnectionFacts({ workspaceId: subject.workspaceId, userId: subject.userId, connectionIds }) : [];
+      ? atBatchReceipt(await workspace.authorizationConnectionFacts({ workspaceId: subject.workspaceId, userId: subject.userId, connectionIds })) : [];
     const connectionsById = new Map(connections.map((value) => [value.connectionId, value]));
     // Serialize distinct canonical owners rather than inventing another concurrency limit.
     // Resource facts above are batched for the whole page.
@@ -189,7 +224,7 @@ class AuthorizationBatch {
         owner:resource.parentId,revision:'legacy',validatedAt:workstream.validatedAt,
       }),Date.now());
       const child = workstream.children.find((value) => value.substreamId === resource.substreamId);
-      const mainEvidence = { owner: `${resource.parentId}/0`, revision: workstream.main.revision, validatedAt: workstream.main.validatedAt };
+      const mainEvidence = { owner: `${resource.parentId}/0`, revision: workstream.main.revision, validatedAt: workstream.validatedAt };
       const childEvidence = { owner: resource.parentId, revision: JSON.stringify([workstream.generation, child?.version]), validatedAt: workstream.validatedAt };
       if (!child?.exists || child.failed || !workstream.main.exists) return { status: 'not_found', resource, evidence: [mainEvidence, childEvidence] };
       if (!child.ready) return { status: 'unavailable', reason: 'projection_incomplete', retryable: true };
@@ -276,7 +311,7 @@ class AuthorizationBatch {
     }
     if (incomplete) return unavailable();
     return evaluateReadPolicy(fact(false, 'resource_not_shared', {
-      owner: `workspace:${subject.workspaceId}/attachment-discovery`, revision: String(facts.discoveryAt), validatedAt: facts.discoveryAt,
+      owner: `workspace:${subject.workspaceId}/attachment-discovery`, revision: String(facts.discoveryAt), validatedAt: facts.validatedAt,
     }), Date.now());
   }
 }
