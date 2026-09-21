@@ -6,6 +6,7 @@ import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
+  SidebarCollapseFooter,
   SidebarHeader,
   SidebarHorizontalLine,
   SidebarList,
@@ -20,7 +21,7 @@ import {
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
-import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
@@ -446,18 +447,15 @@ export function SpacesSidebar({
         </SidebarScroll>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
         <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
-        <div className="spaces-sidebar-footer">
-          <div className="spaces-account-slot" ref={accountSlotRef} />
-          <IconButton
-            label={collapsed ? 'Expand spaces' : 'Collapse spaces'}
-            aria-expanded={!collapsed}
-            disabled={constrained}
-            title={constrained ? 'Widen the window to expand spaces' : undefined}
-            onClick={toggle}
-          >
-            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </IconButton>
-        </div>
+        <SidebarCollapseFooter
+          collapseLabel="Collapse spaces"
+          compact={collapsed}
+          constrained={constrained}
+          constrainedTitle="Widen the window to expand spaces"
+          expandLabel="Expand spaces"
+          leading={<div className="spaces-account-slot" ref={accountSlotRef} />}
+          onToggle={toggle}
+        />
       </ResizableSidebar>
       <Modal
         footer={<>

@@ -339,7 +339,11 @@ describe('WorkstreamSidebar', () => {
     setup();
     act(() => { width = 703; resized(); });
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    expect(screen.getByRole('button', { name: 'Expand channel sidebar' })).toBeDisabled();
+    const toggle = screen.getByRole('button', { name: 'Expand channel sidebar' });
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toHaveAttribute('title');
+    expect(toggle.parentElement).toHaveClass('sidebar-collapse-footer-toggle');
+    expect(toggle.parentElement).toHaveAttribute('tabindex', '0');
     act(() => { width = 900; resized(); });
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();

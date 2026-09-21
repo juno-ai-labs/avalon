@@ -9,7 +9,7 @@ import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationFrame, NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
-import { SidebarHeader, SidebarList, SidebarRow, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
+import { SidebarFooter, SidebarHeader, SidebarList, SidebarRow, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -166,12 +166,12 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
           </SidebarRow>)}
         </SidebarList>
       </SidebarScroll>
-      <footer className="spaces-sidebar-footer"><div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
+      <SidebarFooter as="footer" leading={<div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
         <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
       </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
         <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
         <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
-      </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></footer>
+      </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>} />
     </aside>
     <NavigationFrame className={`channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}>
       {selectedSpace ? <SidebarTitleHeader
