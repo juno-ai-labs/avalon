@@ -1,6 +1,6 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
-import { IconRosetteAsterisk } from '@tabler/icons-react';
+import { IconAppWindow } from '@tabler/icons-react';
 type ResourceKindInput = { resourceType: string; mimeType?: string | null; title: string };
 export const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
 /**
@@ -35,7 +35,7 @@ export function ResourceIcon({ resource }: { resource: ResourceKindInput }): Rea
   // Ahead of the substring chain, which has no branch a site reaches: it would
   // fall through to the generic file mark, and a site is a page somebody opens
   // rather than a file they download.
-  if (SITE_TYPES.has(normalized)) return <IconRosetteAsterisk size={15} />;
+  if (SITE_TYPES.has(normalized)) return <IconAppWindow size={15} />;
   if (normalized.includes('audio')) return <Volume2 size={15} />;
   if (normalized.includes('image')) return <ImageIcon size={15} />;
   if (normalized.includes('doc') || normalized.includes('text')) return <FileText size={15} />;
