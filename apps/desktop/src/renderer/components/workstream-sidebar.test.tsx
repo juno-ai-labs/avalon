@@ -552,7 +552,7 @@ describe('WorkstreamSidebar', () => {
     const second = { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b2'), title: 'Launch comms' };
 
     function setupRail(drag?: React.ComponentProps<typeof WorkstreamSidebar>['substreamDrag']) {
-      render(<Tooltip.Provider><WorkstreamSidebar
+      return render(<Tooltip.Provider><WorkstreamSidebar
         workstream={{ ...workstream, privateChildren: [first, second] }}
         presentUserIds={[]}
         onOpenArtifact={vi.fn()}
@@ -584,6 +584,27 @@ describe('WorkstreamSidebar', () => {
       // release, so the list settles under the pointer instead of jumping once
       // at the end.
       expect(drag.onDragOver).toHaveBeenCalledWith(first.substreamId);
+      expect(drag.onDragEnd).toHaveBeenCalledWith(false);
+    });
+
+    it('given a breakout released in the gap between rows, then the drag is completed', () => {
+      const drag = {
+        draggingSubstreamId: null,
+        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
+      };
+      const view = setupRail(drag);
+      const row = screen.getByRole('button', { name: /Launch comms/u });
+      const list = view.container.querySelector<HTMLElement>('.workstream-conversation-list');
+      const dataTransfer = transfer('none');
+      expect(list).not.toBeNull();
+      if (!list) return;
+
+      fireEvent.dragStart(row, { dataTransfer });
+      fireEvent.dragOver(list, { dataTransfer });
+      fireEvent.drop(list, { dataTransfer });
+      fireEvent.dragEnd(row, { dataTransfer });
+
+      expect(dataTransfer.dropEffect).toBe('move');
       expect(drag.onDragEnd).toHaveBeenCalledWith(false);
     });
 
