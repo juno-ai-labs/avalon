@@ -7,6 +7,7 @@ describe('context rail state', () => {
     useUiStore.setState({
       sidebarOpen: false,
       sidebarWidth: 300,
+      spacesSidebarWidth: 280,
       railOpen: false,
       railVariant: 'context',
       railWidth: 360,
@@ -41,6 +42,10 @@ describe('context rail state', () => {
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(400);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
+
+    useUiStore.getState().setSpacesSidebarWidth(200);
+    expect(useUiStore.getState().spacesSidebarWidth).toBe(240);
+    expect(window.localStorage.getItem('rally.spaces-sidebar-width')).toBe('240');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {

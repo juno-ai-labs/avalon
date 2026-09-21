@@ -3,6 +3,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import { IconCarambola } from '@tabler/icons-react';
 import { AutomationGlyph } from './workstream-glyph';
 import { InlineError, Tip } from './primitives';
+import { SidebarHorizontalLine, SidebarRow } from './resizable-sidebar';
 export interface SidekickRow {
   recommended?: boolean;
   /** Management options have not arrived for this non-owned row yet. */
@@ -61,12 +62,12 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
     return failure === 'load'
-      ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
+      ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
         <InlineError>Sidekicks couldn’t be loaded.</InlineError>
       </section>
       : null;
   }
-  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
+  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
     {failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li>
       {/* The rail's own tooltip rather than the platform's, as the artifact
@@ -76,7 +77,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
           nobody can read is the one place **Paused** is worth saying twice. */}
       <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
         <ContextMenu.Trigger asChild disabled={!item.managementPending && !item.onRemove && !item.onRemoveRecommendation && !item.onRecommend}>
-        <Row className="workstream-context-row" {...(onOpen ? { type: "button" as const } : { tabIndex: 0 })} aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => onOpen?.(item.id)}>
+        <SidebarRow as={Row} className="workstream-context-row" {...(onOpen ? { type: "button" as const } : { tabIndex: 0 })} aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => onOpen?.(item.id)}>
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
               to an empty square there. */}
@@ -85,7 +86,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
           </span></span>
           <span className="workstream-context-copy"><span>{item.name}</span>
             <small>{item.note ? `${item.note} · ${item.description}` : item.description}</small></span>
-        </Row>
+        </SidebarRow>
         </ContextMenu.Trigger>
       </Tip>
       {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every breakout in this channel. Agents can load it when relevant; it isn’t automatically loaded." side="right">

@@ -387,7 +387,7 @@
    * not here: it is `sys.color.state.hover`, which every control in the
    * product shares. */
   --av-cmp-row-height: 46px;
-  --av-cmp-row-padding: 9px 10px;
+  --av-cmp-row-padding: 8px;
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
@@ -753,7 +753,7 @@
   --av-cmp-marker-glow: 0 0 10px rgba(232, 161, 92, 0.5);
 
   --av-cmp-row-height: 46px;
-  --av-cmp-row-padding: 9px 10px;
+  --av-cmp-row-padding: 8px;
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;

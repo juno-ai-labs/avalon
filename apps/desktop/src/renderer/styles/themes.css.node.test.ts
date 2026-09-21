@@ -338,7 +338,7 @@ describe('token references', () => {
     '--sidebar-layout-motion', '--sidebar-compact',
     // The first rail's current width and its shared collapse interval. The
     // shell owns both as layout geometry, not as theme choices.
-    '--spaces-sidebar-width', '--spaces-sidebar-motion',
+    '--spaces-sidebar-width',
     // Near and far fade lengths on a scroller that clips its items. Registered
     // so they interpolate as lengths; a theme has no opinion about them.
     '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',

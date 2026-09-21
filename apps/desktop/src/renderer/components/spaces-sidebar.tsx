@@ -3,9 +3,24 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import {
+  ResizableSidebar,
+  SidebarHeader,
+  SidebarHorizontalLine,
+  SidebarRow,
+  SidebarTitle,
+} from '@rally/ui/components/resizable-sidebar';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
+  SIDEBAR_CONTENT_MIN_WIDTH,
+  SIDEBAR_EXPAND_DRAG_THRESHOLD,
+} from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
 import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
@@ -21,6 +36,7 @@ interface SpacesSidebarProps {
   accountSlotRef: (element: HTMLDivElement | null) => void;
   sidekickSlotRef: (element: HTMLDivElement | null) => void;
   collapsed: boolean;
+  width: number;
   currentPath: string;
   inactiveSpaces: SpaceSummary[];
   loading?: boolean;
@@ -29,6 +45,7 @@ interface SpacesSidebarProps {
   ready: boolean;
   outOfDate: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  onWidthChange: (width: number) => void;
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
   onImportChannel: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
@@ -59,6 +76,7 @@ export function SpacesSidebar({
   accountSlotRef,
   sidekickSlotRef,
   collapsed,
+  width,
   currentPath,
   inactiveSpaces,
   loading = false,
@@ -67,6 +85,7 @@ export function SpacesSidebar({
   ready,
   outOfDate,
   onCollapsedChange,
+  onWidthChange,
   onCreateChannel,
   onCreateSpace,
   onImportChannel,
@@ -82,6 +101,7 @@ export function SpacesSidebar({
   workstreams,
 }: SpacesSidebarProps): React.JSX.Element {
   const navigate = useNavigate();
+  const sidebarRef = useRef<HTMLElement>(null);
   const onNewChannelRoute = currentPath === '/workstreams/new';
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
@@ -120,6 +140,22 @@ export function SpacesSidebar({
           || currentArchiveTarget.systemRole === 'general'
         ? 'This space is no longer available to archive.'
         : null;
+  const effectiveWidth = collapsed ? COLLAPSED_SIDEBAR_WIDTH : width;
+  const resize = useCallback((requested: number): void => {
+    const available = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
+    if (collapsed) {
+      if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || available < MIN_SIDEBAR_WIDTH) return;
+      onWidthChange(Math.min(MAX_SIDEBAR_WIDTH, requested, available));
+      onCollapsedChange(false);
+      return;
+    }
+    if (requested < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
+      onCollapsedChange(true);
+      return;
+    }
+    if (available < MIN_SIDEBAR_WIDTH) return;
+    onWidthChange(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested, available)));
+  }, [collapsed, onCollapsedChange, onWidthChange]);
 
   const previewOrder = (order: string[] | null): void => {
     dragOrderRef.current = order;
@@ -163,12 +199,18 @@ export function SpacesSidebar({
 
   return (
     <>
-      <aside
+      <ResizableSidebar
         aria-label="Spaces sidebar"
-        className={clsx('spaces-sidebar', collapsed && 'is-compact')}
+        className="spaces-sidebar"
+        compact={collapsed}
+        onResize={resize}
+        onToggle={() => onCollapsedChange(!collapsed)}
+        resizeLabel="Resize spaces sidebar"
+        sidebarRef={sidebarRef}
+        width={effectiveWidth}
       >
-        <div className="spaces-sidebar-titlebar window-drag">
-          <span>Spaces</span>
+        <SidebarHeader className="spaces-sidebar-titlebar window-drag">
+          <SidebarTitle>Spaces</SidebarTitle>
           <div className="spaces-sidebar-titlebar-actions window-no-drag">
           {ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
             <IconRestore size={16} stroke={1.8} />
@@ -191,7 +233,7 @@ export function SpacesSidebar({
             </button>
           </NewWorkstreamMenu>}
           </div>
-        </div>
+        </SidebarHeader>
         {ready && <div className="sidebar-commandbar spaces-sidebar-commandbar window-no-drag" ref={commandRef}>
           {collapsed && <NewWorkstreamMenu
             tooltipSide="right"
@@ -238,7 +280,8 @@ export function SpacesSidebar({
               <ContextMenu.Root>
               <ContextMenu.Trigger asChild>
               <Tooltip.Trigger asChild>
-                <NavLink
+                <SidebarRow
+                  as={NavLink}
                   aria-label={space.name}
                   className={clsx('spaces-sidebar-row', selectedSpaceId === space.id && 'is-active')}
                   draggable
@@ -298,7 +341,7 @@ export function SpacesSidebar({
                     <strong>{space.name}</strong>
                     <small>{space.channelCount === 1 ? '1 channel' : `${space.channelCount} channels`}</small>
                   </span>
-                </NavLink>
+                </SidebarRow>
               </Tooltip.Trigger>
               </ContextMenu.Trigger>
               {space.reach !== 'through_channel' && space.systemRole !== 'general' && onArchive !== undefined && <ContextMenu.Portal>
@@ -339,6 +382,7 @@ export function SpacesSidebar({
           </>}
         </nav>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
+        <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
         <div className="spaces-sidebar-footer">
           <div className="spaces-account-slot" ref={accountSlotRef} />
           <IconButton
@@ -349,7 +393,7 @@ export function SpacesSidebar({
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </IconButton>
         </div>
-      </aside>
+      </ResizableSidebar>
       <Modal
         footer={<>
           <Button disabled={archiveSaving} onClick={closeArchive}>Cancel</Button>

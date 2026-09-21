@@ -28,6 +28,7 @@ function space(id: string, name: string, channelCount: number): SpaceSummary {
 
 function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>> = {}) {
   const onCollapsedChange = vi.fn();
+  const onWidthChange = vi.fn();
   const onSelect = vi.fn();
   render(
     <MemoryRouter>
@@ -36,7 +37,9 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
           accountSlotRef={vi.fn()}
           sidekickSlotRef={vi.fn()}
           collapsed={false}
+          width={280}
           onCollapsedChange={onCollapsedChange}
+          onWidthChange={onWidthChange}
           currentPath="/workstreams/current"
           inactiveSpaces={[]}
           onAddChannel={vi.fn(async () => undefined)}
@@ -61,14 +64,21 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
       </Tooltip.Provider>
     </MemoryRouter>,
   );
-  return { onCollapsedChange, onSelect };
+  return { onCollapsedChange, onSelect, onWidthChange };
 }
 
 describe('SpacesSidebar', () => {
   it('draws one navigation row per Space and selects the next level', () => {
     const { onSelect } = renderSidebar();
+    const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
 
+    expect(within(sidebar).getByRole('heading', { name: 'Spaces' })).toHaveClass('sidebar-title');
+    const header = sidebar.querySelector('.sidebar-header');
+    expect(header).toHaveClass('sidebar-row');
+    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
+    expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: 'General' })).toHaveClass('sidebar-row');
     expect(screen.getByText('3 channels')).toBeVisible();
     fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
 
@@ -135,6 +145,50 @@ describe('SpacesSidebar', () => {
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
   });
 
+  it('uses the shared edge gesture to resize, collapse, and expand', () => {
+    const { onCollapsedChange, onWidthChange } = renderSidebar();
+    const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
+    vi.spyOn(sidebar, 'getBoundingClientRect').mockReturnValue({
+      bottom: 900, height: 900, left: 0, right: 280, top: 0, width: 280, x: 0, y: 0,
+      toJSON: () => ({}),
+    });
+    const handle = screen.getByRole('separator', { name: 'Resize spaces sidebar' });
+    handle.setPointerCapture = vi.fn();
+    expect(handle.querySelector('svg')).toHaveAttribute('width', '11');
+    expect(handle.querySelector('svg')).toHaveAttribute('height', '11');
+    expect(handle.querySelector('svg')).toHaveAttribute('stroke-width', '2');
+
+    fireEvent.focus(handle);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 286, pointerId: 7 });
+    expect(handle).toHaveFocus();
+    expect(sidebar).toHaveClass('is-resizing');
+    fireEvent.pointerMove(window, { clientX: 326, pointerId: 7 });
+    expect(document.querySelector('.sidebar-drag-guide')).not.toBeNull();
+    expect(onWidthChange).toHaveBeenCalledWith(320);
+    fireEvent.pointerUp(window, { pointerId: 7 });
+    expect(document.querySelector('.sidebar-drag-guide')).toBeNull();
+
+    fireEvent.doubleClick(handle);
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+  });
+
+  it('uses the shared collapse thresholds and keyboard toggle', () => {
+    const { onCollapsedChange, onWidthChange } = renderSidebar();
+    const handle = screen.getByRole('separator', { name: 'Resize spaces sidebar' });
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(onWidthChange).toHaveBeenCalledWith(264);
+    fireEvent.keyDown(handle, { key: 'Enter' });
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+
+    const compact = renderSidebar({ collapsed: true });
+    fireEvent.doubleClick(screen.getAllByRole('separator', { name: 'Resize spaces sidebar' })[1]!);
+    expect(compact.onCollapsedChange).toHaveBeenCalledWith(false);
+  });
+
   it('keeps stale rows visible and offers the directory retry', () => {
     const onRetry = vi.fn();
     renderSidebar({ onRetry, outOfDate: true });
@@ -183,6 +237,7 @@ describe('SpacesSidebar', () => {
       onAddChannel: vi.fn(async () => undefined),
       onArchive: vi.fn(async () => undefined),
       onCollapsedChange: vi.fn(),
+      onWidthChange: vi.fn(),
       onCreateChannel: vi.fn(async () => undefined),
       onCreateSpace: vi.fn(async () => undefined),
       onImportChannel: vi.fn(async () => undefined),
@@ -198,6 +253,7 @@ describe('SpacesSidebar', () => {
       selectedSpaceId: 'general',
       spaces: [space('general', 'General', 3)],
       workstreams: [],
+      width: 280,
     };
     const { rerender } = render(<MemoryRouter><Tooltip.Provider>
       <SpacesSidebar {...props} collapsed={false} />

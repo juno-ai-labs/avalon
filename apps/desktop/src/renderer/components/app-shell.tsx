@@ -20,7 +20,6 @@ import { uuidV7 } from '../lib/telemetry';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
-  EXPANDED_SPACES_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
   useUiStore,
   RIGHT_SIDEBAR_ENABLED,
@@ -46,13 +45,14 @@ import { WorkspaceAccountMenu } from './workspace-account-menu';
 export function sidebarConstraintThreshold(input: {
   pathname: string;
   sidebarWidth: number;
+  spacesSidebarWidth: number;
   spacesCollapsed: boolean;
   spacesEnabled: boolean;
 }): number {
   const channelOpen = openWorkstreamId(input.pathname) !== null;
   const contextWidth = channelOpen ? COLLAPSED_SIDEBAR_WIDTH : 0;
   const spacesWidth = input.spacesEnabled
-    ? input.spacesCollapsed ? COLLAPSED_SIDEBAR_WIDTH : EXPANDED_SPACES_SIDEBAR_WIDTH
+    ? input.spacesCollapsed ? COLLAPSED_SIDEBAR_WIDTH : input.spacesSidebarWidth
     : 0;
   return input.sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH + contextWidth + spacesWidth;
 }
@@ -402,11 +402,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  const spacesSidebarWidth = useUiStore((state) => state.spacesSidebarWidth);
   const spacesEnabled = spacesEnabledForSession(session);
   const [spacesSidebarCollapsed, setSpacesSidebarCollapsed] = useState(false);
   const constraintThreshold = sidebarConstraintThreshold({
     pathname: location.pathname,
     sidebarWidth,
+    spacesSidebarWidth,
     spacesCollapsed: spacesSidebarCollapsed,
     spacesEnabled,
   });
