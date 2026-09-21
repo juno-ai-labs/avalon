@@ -1934,9 +1934,9 @@ Shipped in #876.
 ### 2026-09-20 — The Space landing page is about Channels
 
 **What changed:** The desktop Space landing page no longer renders Resources or
-Sidekicks sections, their add/remove controls, or their pickers. The **Needs
-attention** section also no longer offers **Add channel** or the adjacent
-new-Channel plus control, and Channel rows no longer offer **Remove**. The unused shared list
+Sidekicks sections, their add/remove controls, or their pickers. The Channels
+section also no longer offers **Add channel** or the adjacent new-Channel plus
+control, and Channel rows no longer offer **Remove**. The unused shared list
 components and desktop default API wrappers left behind by those controls were
 removed too. The underlying default inheritance and Channel-placement authority
 remain unchanged.
