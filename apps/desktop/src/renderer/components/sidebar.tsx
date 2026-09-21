@@ -2066,7 +2066,7 @@ export function Sidebar({
           </IconButton>
           {/* Hidden rather than unmounted in the rail, so it can fade out with
               the layout instead of vanishing a frame ahead of it; the row that
-              takes its place is the one under the search row below. The
+              takes its place is the one above the search row below. The
               fade holds `display` for its length, so the button leaves the
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
@@ -2092,10 +2092,9 @@ export function Sidebar({
         </div>
 
         {spaces === undefined && <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
           {/* The rail's New work stream row. Inserted by the compact toggle and
               removed by the expand, and marked so that it is seen arriving and
-              leaving rather than appearing in place: it slides in under the
+              leaving rather than appearing in place: it slides in above the
               search row as the bar opens the slot for it, and out to the left
               as the slot closes. See `useListMotion`. */}
           {compact && (
@@ -2125,6 +2124,7 @@ export function Sidebar({
               </button>
             </NewWorkstreamMenu>
           )}
+          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
         </div>
         }
 

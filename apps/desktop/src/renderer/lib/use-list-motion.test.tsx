@@ -363,6 +363,7 @@ describe('useListMotion', () => {
     expect(standIn).not.toHaveAttribute('data-motion-key');
     expect(standIn).not.toHaveAttribute('data-motion-insert');
     expect(standIn?.style.position).toBe('absolute');
+    expect(standIn?.style.gridArea).toBe('auto');
     expect(standIn?.style.top).toBe(`${ROW}px`);
     expect(standIn?.style.left).toBe(`${ROW_LEFT - CONTAINER_LEFT}px`);
     expect(standIn?.style.width).toBe(`${ROW_WIDTH}px`);
