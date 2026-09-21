@@ -327,6 +327,25 @@ describe('Sidebar channel markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  it('temporarily caps Spaces to the available hierarchy width without replacing its saved preference', () => {
+    const hiring = space();
+    useUiStore.getState().setSpacesSidebarWidth(400);
+    const { container } = render(
+      <div className="workspace-shell">
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+              spacesAvailableWidth={300} workspace={workspace} workstreams={[]} />
+          </Tooltip.Provider>
+        </MemoryRouter>
+      </div>,
+    );
+
+    expect(screen.getByRole('separator', { name: 'Resize spaces sidebar' })).toHaveAttribute('aria-valuenow', '300');
+    expect(container.querySelector<HTMLElement>('.workspace-shell')?.style.getPropertyValue('--spaces-sidebar-width')).toBe('300px');
+    expect(useUiStore.getState().spacesSidebarWidth).toBe(400);
+  });
+
   it('preserves the expanded preference while navigation is forced compact', () => {
     useUiStore.getState().setSidebarCollapsed(false);
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
