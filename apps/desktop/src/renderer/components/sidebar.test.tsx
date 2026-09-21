@@ -2705,6 +2705,22 @@ describe('pinned channels', () => {
       .toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-c', 'ws-a', 'ws-b']));
   });
 
+  it('reorders the full selected-Space arrangement from server-style space pins', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        { ...pinned(workstream('ws-a', 'Alpha', 'completed'), 0), pinPosition: null },
+        { ...pinned(workstream('ws-b', 'Bravo', 'completed'), 1), pinPosition: null },
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    await waitFor(() => expect(onReorderPinnedWorkstreams)
+      .toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-b', 'ws-a']));
+  });
+
   it('sends nothing when a drag ends where it started', () => {
     const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
     renderWith(
@@ -3298,6 +3314,8 @@ describe('pinned channels', () => {
 
     await screen.findByRole('region', { name: 'Pinned' });
     expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /Quarterly planning/u }).closest('[data-motion-key]'))
+      .not.toHaveAttribute('data-motion-move');
   });
 
   // Arming the reveal for a row the list does not carry would leave it waiting

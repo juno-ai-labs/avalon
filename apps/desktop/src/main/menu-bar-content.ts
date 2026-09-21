@@ -138,7 +138,8 @@ export class MenuBarContentStore {
       } satisfies MenuBarWorkstream));
     this.cached = {
       recents: workstreams
-        .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt))
+        .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt)
+          || left.id.localeCompare(right.id))
         .slice(0, MENU_BAR_RECENT_LIMIT),
       pinned: [],
     };

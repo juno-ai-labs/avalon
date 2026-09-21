@@ -1,5 +1,6 @@
 import {
   IdSchema,
+  MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
   SpaceIdSchema,
   WorkspaceAttentionSchema,
   WorkspaceWorkstreamCursorSchema,
@@ -183,7 +184,7 @@ export const WorkspaceDirectoryReorderPinsRequestSchema = deferredZodSchema(() =
   workspaceId: IdSchema,
   userId: IdSchema,
   spaceId: SpaceIdSchema,
-  workstreamIds: z.array(IdSchema).max(1_000),
+  workstreamIds: z.array(IdSchema).max(MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER),
 }));
 
 export const WorkspaceDirectoryNotificationRequestSchema = deferredZodSchema(() => z.strictObject({

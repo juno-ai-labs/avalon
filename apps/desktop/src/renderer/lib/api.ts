@@ -1474,7 +1474,10 @@ export class RallyApi {
   }
 
   async unpinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'DELETE', { spaceId });
+    return this.readPinnedWorkstreams(
+      `/workstreams/${encodeURIComponent(id)}/pin?spaceId=${encodeURIComponent(spaceId)}`,
+      'DELETE',
+    );
   }
 
   /**

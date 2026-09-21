@@ -125,7 +125,7 @@ export class WorkstreamDirectoryService {
         throw new ApiError(404, "workstream_not_found", "Work stream not found");
       }
       if (error instanceof Error && error.message === "workstream_pin_limit_reached") {
-        throw new ApiError(422, "workstream_pin_limit_reached", "Up to 1,000 work streams may be pinned");
+        throw new ApiError(422, "workstream_pin_limit_reached", "Up to 1,000 Channel placements may be pinned");
       }
       throw error;
     }
