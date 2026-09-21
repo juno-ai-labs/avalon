@@ -369,26 +369,6 @@ final class PersonalAppearanceTests: XCTestCase {
 }
 
 final class WorkstreamDirectoryTests: XCTestCase {
-    func testPinnedSectionUsesPinPositionThenId() {
-        var later = RallyWorkstream(id: "b", title: "B")
-        later.pinPosition = 2
-        var first = RallyWorkstream(id: "a", title: "A")
-        first.pinPosition = 0
-        var middle = RallyWorkstream(id: "c", title: "C")
-        middle.pinPosition = 1
-        var recent = RallyWorkstream(id: "d", title: "D")
-        recent.lastActivityAt = "2026-08-07T17:25:00Z"
-        recent.lastAccessedAtOmitted = true
-
-        let sections = RallyWorkstreamDirectory.sections(
-            from: [later, first, middle, recent],
-            now: Date()
-        )
-        XCTAssertEqual(sections.first?.title, "Pinned")
-        XCTAssertEqual(sections.first?.items.map(\.id), ["a", "c", "b"])
-        XCTAssertEqual(sections.dropFirst().flatMap(\.items).map(\.id), ["d"])
-    }
-
     func testRecencyGroupsMatchElectronHeadings() {
         let now = localDate(2026, 8, 7, 10, 30)
         let streams: [RallyWorkstream] = [

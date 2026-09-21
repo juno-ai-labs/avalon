@@ -1,5 +1,6 @@
 import {
   WorkstreamSchema,
+  type SpaceId,
   type Workstream,
   type WorkstreamBatchFilter,
   type WorkstreamBatchUpdate,
@@ -110,39 +111,42 @@ export class WorkstreamDirectoryService {
     );
   }
 
-  async pin(workstreamId: string): Promise<{ items: Workstream[] }> {
+  async pin(workstreamId: string, spaceId: SpaceId): Promise<{ items: Workstream[] }> {
     const workspace = await this.workspace();
     try {
       return PinnedWorkstreamsSchema.parse(await workspace.pinWorkstream({
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
         workstreamId,
+        spaceId,
       }));
     } catch (error) {
       if (error instanceof Error && error.message === "workstream_not_found") {
         throw new ApiError(404, "workstream_not_found", "Work stream not found");
       }
       if (error instanceof Error && error.message === "workstream_pin_limit_reached") {
-        throw new ApiError(422, "workstream_pin_limit_reached", "Up to 1,000 work streams may be pinned");
+        throw new ApiError(422, "workstream_pin_limit_reached", "Up to 1,000 Channel placements may be pinned");
       }
       throw error;
     }
   }
 
-  async unpin(workstreamId: string): Promise<{ items: Workstream[] }> {
+  async unpin(workstreamId: string, spaceId: SpaceId): Promise<{ items: Workstream[] }> {
     const workspace = await this.workspace();
     return PinnedWorkstreamsSchema.parse(await workspace.unpinWorkstream({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       workstreamId,
+      spaceId,
     }));
   }
 
-  async reorderPins(workstreamIds: string[]): Promise<{ items: Workstream[] }> {
+  async reorderPins(spaceId: SpaceId, workstreamIds: string[]): Promise<{ items: Workstream[] }> {
     const workspace = await this.workspace();
     return PinnedWorkstreamsSchema.parse(await workspace.reorderWorkstreamPins({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
+      spaceId,
       workstreamIds,
     }));
   }

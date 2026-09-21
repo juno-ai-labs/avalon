@@ -20,6 +20,7 @@ import {
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
+  SpaceIdSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema,
@@ -258,17 +259,18 @@ workstreamRoutes.post("/batch", zValidator("json", ApplyWorkstreamBatchRequestSc
 });
 workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
-  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds);
+  const { spaceId, workstreamIds } = c.req.valid("json");
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(spaceId, workstreamIds);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.put("/:id/pin", zValidator("param", idParam), async (c) => {
+workstreamRoutes.put("/:id/pin", zValidator("param", idParam), zValidator("json", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
-  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id, c.req.valid("json").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
+workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), zValidator("query", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
-  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
+  const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id, c.req.valid("query").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 // Through the service, not the object client: an audience change has to be

@@ -78,6 +78,7 @@ import {
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
+  MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   workstreamParticipantPreview,
   WorkspaceIdSchema,
@@ -646,6 +647,7 @@ import {
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
+  spaceVisibleToViewerSql,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WorkspaceSpaceStorage,
 } from "./workspace-space-storage";
@@ -1068,7 +1070,6 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
   claimed_at: number | null;
 }
 
-const MAX_WORKSPACE_PINS_PER_USER = 1_000;
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 // Queue consumers have a 15-minute platform wall-time limit. This expiry is
 // only for Queue claims. A retiring Workflow can retry multiple 15-minute
@@ -3551,6 +3552,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 65,
   description: "breakout directory projections",
   statements: [...WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS],
+}, {
+  version: 66,
+  description: "scope channel pins to space placements and clear legacy pins",
+  statements: [
+    "DROP TABLE workspace_workstream_pins",
+    `CREATE TABLE workspace_workstream_pins (
+      user_id TEXT NOT NULL,
+      space_id TEXT NOT NULL REFERENCES workspace_space_directory(space_id) ON DELETE CASCADE,
+      workstream_id TEXT NOT NULL REFERENCES workspace_workstream_directory(workstream_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (user_id, space_id, workstream_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_workstream_pins_order_idx
+      ON workspace_workstream_pins(user_id, space_id, position, workstream_id)`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3825,6 +3843,7 @@ function directoryWorkstream(
     participantExtraCount: 0,
   },
   spaceIds: readonly string[] = [],
+  spacePins: readonly { spaceId: string; position: number }[] = [],
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
@@ -3869,6 +3888,7 @@ function directoryWorkstream(
         }
       : null,
     pinPosition: row.pin_position,
+    spacePins,
     lastAccessedAt: iso(row.last_accessed_at),
     spaceIds,
     ...participantPreview,
@@ -3981,9 +4001,51 @@ function mapDirectoryWorkstreams(
   )];
   const previews = loadParticipantPreviews(sql, personalIds);
   const spaceIds = spaces.spaceIdsByChannel(userId, rows.map((row) => row.workstream_id));
+  const pins = loadSpacePins(sql, userId, rows.map((row) => row.workstream_id));
   return rows.map((row) => directoryWorkstream(
     row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
+    pins.get(row.workstream_id) ?? [],
   ));
+}
+
+function loadSpacePins(
+  sql: DurableObjectState["storage"]["sql"],
+  userId: string,
+  workstreamIds: readonly string[],
+): Map<string, { spaceId: string; position: number }[]> {
+  const result = new Map<string, { spaceId: string; position: number }[]>();
+  for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
+    const rows = sql.exec<{
+      workstream_id: string;
+      space_id: string;
+      position: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT pin.workstream_id, pin.space_id, pin.position
+         FROM workspace_workstream_pins pin
+         JOIN space_channel_memberships membership
+           ON membership.space_id = pin.space_id
+          AND membership.workstream_id = pin.workstream_id
+          AND membership.state = 'active'
+         JOIN workspace_space_directory space ON space.space_id = pin.space_id
+         LEFT JOIN workspace_space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ? AND viewer.is_participant = 1
+        WHERE pin.user_id = ? AND space.archived_at IS NULL
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND pin.workstream_id IN (${ids.map(() => "?").join(", ")})
+        ORDER BY pin.workstream_id, pin.space_id, pin.position`,
+      userId,
+      userId,
+      userId,
+      ...ids,
+    ).toArray();
+    for (const row of rows) {
+      const pins = result.get(row.workstream_id) ?? [];
+      pins.push({ spaceId: row.space_id, position: row.position });
+      result.set(row.workstream_id, pins);
+    }
+  }
+  return result;
 }
 
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
@@ -4047,16 +4109,16 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     viewer.seen_attention_ordinal, viewer.manual_unread_from_ordinal,
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
     viewer.is_participant, viewer.unseen, viewer.waterline AS viewer_waterline,
-    viewer.source_event_id AS viewer_event_id, pin.position AS pin_position, access.last_accessed_at
+    viewer.source_event_id AS viewer_event_id,
+    NULL AS pin_position,
+    access.last_accessed_at
   FROM workspace_workstream_directory directory
   LEFT JOIN workspace_workstream_viewers viewer
     ON viewer.workstream_id = directory.workstream_id
    AND viewer.user_id = ?
    AND viewer.authority_generation = directory.authority_generation
-  LEFT JOIN workspace_workstream_pins pin
-    ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
   LEFT JOIN workspace_workstream_access access
-    ON access.workstream_id = directory.workstream_id AND access.user_id = ?1`;
+    ON access.workstream_id = directory.workstream_id AND access.user_id = ?2`;
 
 /**
  * One regional synchronization and command/control object per workspace.
@@ -6495,6 +6557,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
     });
+    await this.publishDirectorySync(request.workspaceId);
     await this.publishWorkstreamState(request.workstreamId);
     await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
@@ -8563,8 +8626,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
-         LEFT JOIN workspace_workstream_pins pin
-           ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
          LEFT JOIN workspace_workstream_access access
            ON access.workstream_id = directory.workstream_id AND access.user_id = ?1
         WHERE directory.archived_at IS NULL
@@ -8572,20 +8633,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
           AND (? IS NULL OR ${recency} >= ?)
           AND (? IS NULL OR ${recency} < ?)
+          AND (? IS NULL OR EXISTS (
+            SELECT 1
+              FROM space_channel_memberships membership
+              JOIN workspace_space_directory space ON space.space_id = membership.space_id
+              LEFT JOIN workspace_space_viewers space_viewer
+                ON space_viewer.space_id = space.space_id
+               AND space_viewer.user_id = ?1 AND space_viewer.is_participant = 1
+             WHERE membership.space_id = ?
+               AND membership.workstream_id = directory.workstream_id
+               AND membership.state = 'active'
+               AND space.archived_at IS NULL
+               AND ${spaceVisibleToViewerSql("space", "space_viewer")}
+          ))
           AND (? IS NULL
-            OR (? = 1 AND pin.user_id IS NOT NULL)
-            OR (? = 0 AND pin.user_id IS NULL))
+            OR (? = 1 AND EXISTS (
+              SELECT 1 FROM workspace_workstream_pins pin
+               WHERE pin.user_id = ?1 AND pin.space_id = ? AND pin.workstream_id = directory.workstream_id
+            ))
+            OR (? = 0 AND NOT EXISTS (
+              SELECT 1 FROM workspace_workstream_pins pin
+               WHERE pin.user_id = ?1 AND pin.space_id = ? AND pin.workstream_id = directory.workstream_id
+            )))
         ORDER BY directory.workstream_id`,
-      userId,
       userId,
       filter.includeSystem ? 1 : 0,
       atOrAfter ?? null,
       atOrAfter ? Date.parse(atOrAfter) : 0,
       before ?? null,
       before ? Date.parse(before) : 0,
+      filter.spaceId ?? null,
+      filter.spaceId ?? "",
+      userId,
       pinned === undefined ? null : Number(pinned),
       Number(pinned ?? false),
+      filter.spaceId ?? "",
       Number(pinned ?? false),
+      filter.spaceId ?? "",
     ).toArray().map((row) => row.workstream_id);
   }
 
@@ -10277,15 +10361,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryPinRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    if (!this.directoryVisible(request.userId, request.workstreamId)) {
+    if (!this.directoryVisible(request.userId, request.workstreamId)
+      || !this.spaceStorage().channelSpaceIds(request.userId, request.workstreamId).includes(request.spaceId)) {
       throw new Error("workstream_not_found");
     }
     const now = Date.now();
     const changed = this.state.storage.transactionSync(() => {
       const alreadyPinned = this.state.storage.sql.exec<{ one: number }>(
         `SELECT 1 AS one FROM workspace_workstream_pins
-          WHERE user_id = ? AND workstream_id = ?`,
+          WHERE user_id = ? AND space_id = ? AND workstream_id = ?`,
         request.userId,
+        request.spaceId,
         request.workstreamId,
       ).toArray().length === 1;
       if (!alreadyPinned) {
@@ -10293,17 +10379,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `SELECT COUNT(*) AS count FROM workspace_workstream_pins WHERE user_id = ?`,
           request.userId,
         ).one().count;
-        if (count >= MAX_WORKSPACE_PINS_PER_USER) throw new Error("workstream_pin_limit_reached");
+        if (count >= MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER) throw new Error("workstream_pin_limit_reached");
       }
       const inserted = this.state.storage.sql.exec<{ workstream_id: string }>(
         `INSERT OR IGNORE INTO workspace_workstream_pins
-           (user_id, workstream_id, position, created_at, updated_at)
-         VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM workspace_workstream_pins
-                                  WHERE user_id = ?), 0), ?, ?)
+           (user_id, space_id, workstream_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM workspace_workstream_pins
+                                     WHERE user_id = ? AND space_id = ?), 0), ?, ?)
          RETURNING workstream_id`,
         request.userId,
+        request.spaceId,
         request.workstreamId,
         request.userId,
+        request.spaceId,
         now,
         now,
       ).toArray().length === 1;
@@ -10313,7 +10401,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (changed) await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true),
+      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       request.userId,
@@ -10328,12 +10416,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const changed = this.state.storage.transactionSync(() => {
       const removed = this.state.storage.sql.exec<{ workstream_id: string }>(
         `DELETE FROM workspace_workstream_pins
-          WHERE user_id = ? AND workstream_id = ? RETURNING workstream_id`,
+          WHERE user_id = ? AND space_id = ? AND workstream_id = ? RETURNING workstream_id`,
         request.userId,
+        request.spaceId,
         request.workstreamId,
       ).toArray().length === 1;
       if (removed) {
-        this.rewritePinOrder(request.userId, [], now);
+        this.rewritePinOrder(request.userId, request.spaceId, [], now);
         this.advanceDirectoryVersion(now);
       }
       return removed;
@@ -10341,7 +10430,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (changed) await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true),
+      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       request.userId,
@@ -10356,13 +10445,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const now = Date.now();
     this.state.storage.transactionSync(() => {
-      this.rewritePinOrder(request.userId, request.workstreamIds, now);
+      this.rewritePinOrder(request.userId, request.spaceId, request.workstreamIds, now);
       this.advanceDirectoryVersion(now);
     });
     await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true),
+      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       request.userId,
@@ -11351,7 +11440,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
+       WHERE directory.archived_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM workspace_workstream_pins pin
+            WHERE pin.user_id = ?2 AND pin.workstream_id = directory.workstream_id
+         )
          AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -11416,15 +11509,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map(automationSummary);
   }
 
-  private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
+  private pinnedDirectoryRows(userId: string, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.archived_at IS NULL AND pin.user_id IS NOT NULL
+       WHERE directory.archived_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM workspace_workstream_pins pin
+            WHERE pin.user_id = ?2 AND pin.workstream_id = directory.workstream_id
+              AND (?3 IS NULL OR pin.space_id = ?3)
+         )
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
-       ORDER BY pin.position, directory.workstream_id`,
+       ORDER BY (
+         SELECT MIN(pin.position) FROM workspace_workstream_pins pin
+          WHERE pin.user_id = ?2 AND pin.workstream_id = directory.workstream_id
+            AND (?3 IS NULL OR pin.space_id = ?3)
+       ), directory.workstream_id`,
       userId,
       userId,
+      spaceId ?? null,
       includeSystem ? 1 : 0,
     ).toArray();
   }
@@ -11463,11 +11566,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().length === 1;
   }
 
-  private rewritePinOrder(userId: string, requestedIds: string[], now: number): void {
+  private rewritePinOrder(userId: string, spaceId: string, requestedIds: string[], now: number): void {
     const current = this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT workstream_id FROM workspace_workstream_pins
-        WHERE user_id = ? ORDER BY position, workstream_id`,
+        WHERE user_id = ? AND space_id = ? ORDER BY position, workstream_id`,
       userId,
+      spaceId,
     ).toArray().map((row) => row.workstream_id);
     const pinned = new Set(current);
     const requested = [...new Set(requestedIds)].filter((id) => pinned.has(id));
@@ -11476,10 +11580,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const [position, workstreamId] of ordered.entries()) {
       this.state.storage.sql.exec(
         `UPDATE workspace_workstream_pins SET position = ?, updated_at = ?
-          WHERE user_id = ? AND workstream_id = ?`,
+          WHERE user_id = ? AND space_id = ? AND workstream_id = ?`,
         position,
         now,
         userId,
+        spaceId,
         workstreamId,
       );
     }

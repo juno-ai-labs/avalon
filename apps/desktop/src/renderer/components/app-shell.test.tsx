@@ -2,7 +2,7 @@ import { render } from '@testing-library/react';
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
+import { asSpaceId, SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useLayoutEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -404,11 +404,13 @@ describe('workstreamMatchesBatchFilter', () => {
         before: '2026-08-12T00:00:00.000Z',
       },
       pinned: false,
+      spaceId: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
       includeSystem: false,
     })).toBe(true);
     expect(workstreamMatchesBatchFilter(summary('completed'), {
       lastActivityAt: { before: '2026-08-11T10:00:00.000Z' },
       pinned: false,
+      spaceId: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
       includeSystem: false,
     })).toBe(false);
   });
@@ -419,12 +421,17 @@ describe('batchArchiveSkipIds', () => {
     const filter = {
       lastActivityAt: { atOrAfter: '2026-08-11T00:00:00.000Z', before: '2026-08-12T00:00:00.000Z' },
       pinned: false,
+      spaceId: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
       includeSystem: false,
     };
     const taken = summary('completed');
     const alsoTaken = { ...summary('running'), id: '00000000-0000-7000-8000-000000000031' };
     const older = { ...summary('completed'), id: '00000000-0000-7000-8000-000000000032', lastActivityAt: '2026-08-01T10:00:00.000Z' };
-    const pinned = { ...summary('completed'), id: '00000000-0000-7000-8000-000000000033', pinPosition: 0 };
+    const pinned = {
+      ...summary('completed'),
+      id: '00000000-0000-7000-8000-000000000033',
+      spacePins: [{ spaceId: '00000000-0000-7000-8000-0000000000f2', position: 0 }],
+    };
     expect(batchArchiveSkipIds([older, taken, pinned, alsoTaken], filter)).toEqual([taken.id, alsoTaken.id]);
     expect(batchArchiveSkipIds([], filter)).toEqual([]);
   });
@@ -437,7 +444,7 @@ describe('backgroundRealtimeWorkstreamIds', () => {
     const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
     const pinned = {
       ...summary('completed', '00000000-0000-7000-8000-000000000004'),
-      pinPosition: 0,
+      spacePins: [{ spaceId: '00000000-0000-7000-8000-0000000000f2', position: 0 }],
       lastActivityAt: '2025-01-01T00:00:00.000Z',
     };
     const unpinned = Array.from({ length: 7 }, (_, index) => ({
@@ -469,6 +476,7 @@ describe('backgroundRealtimeWorkstreamIds', () => {
 
 describe('applyPinnedWorkstreams', () => {
   const other = '00000000-0000-7000-8000-000000000002';
+  const spaceId = '00000000-0000-7000-8000-0000000000f2';
 
   function cacheWith(items: WorkstreamSummary[]): QueryClient {
     const queryClient = new QueryClient();
@@ -478,18 +486,18 @@ describe('applyPinnedWorkstreams', () => {
 
   it('takes every position from the response, including the pins it does not name', () => {
     const queryClient = cacheWith([
-      { ...summary('completed'), pinPosition: 0 },
+      { ...summary('completed'), spacePins: [{ spaceId, position: 0 }] },
       { ...summary('completed', other), pinPosition: null },
     ]);
 
-    applyPinnedWorkstreams(queryClient, [
-      { ...summary('completed', other), pinPosition: 0 },
+    applyPinnedWorkstreams(queryClient, spaceId, [
+      { ...summary('completed', other), spacePins: [{ spaceId, position: 0 }] },
     ]);
 
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY))
       .toEqual([
-        expect.objectContaining({ id: workstreamId, pinPosition: null }),
-        expect.objectContaining({ id: other, pinPosition: 0 }),
+        expect.objectContaining({ id: workstreamId, spacePins: [] }),
+        expect.objectContaining({ id: other, spacePins: [{ spaceId, position: 0 }] }),
       ]);
   });
 
@@ -498,27 +506,31 @@ describe('applyPinnedWorkstreams', () => {
   // order has been cleared by the time it lands, so nothing else would hold the
   // newer arrangement on screen.
   it('discards a response a later request has superseded', () => {
-    const newest = { ...summary('completed'), pinPosition: 1 };
-    const queryClient = cacheWith([newest, { ...summary('completed', other), pinPosition: 0 }]);
+    const newest = { ...summary('completed'), spacePins: [{ spaceId, position: 1 }] };
+    const queryClient = cacheWith([newest, {
+      ...summary('completed', other), spacePins: [{ spaceId, position: 0 }],
+    }]);
 
-    const stale = [{ ...summary('completed'), pinPosition: 0 }];
-    expect(applyPinnedWorkstreamsIfCurrent(queryClient, stale, 1, 2)).toBe(false);
+    const stale = [{ ...summary('completed'), spacePins: [{ spaceId, position: 0 }] }];
+    expect(applyPinnedWorkstreamsIfCurrent(queryClient, spaceId, stale, 1, 2)).toBe(false);
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toBe(newest);
 
     // The response of the newest request is the one that wins, whenever it lands.
-    expect(applyPinnedWorkstreamsIfCurrent(queryClient, stale, 2, 2)).toBe(true);
+    expect(applyPinnedWorkstreamsIfCurrent(queryClient, spaceId, stale, 2, 2)).toBe(true);
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY))
       .toEqual([
-        expect.objectContaining({ id: workstreamId, pinPosition: 0 }),
-        expect.objectContaining({ id: other, pinPosition: null }),
+        expect.objectContaining({ id: workstreamId, spacePins: [{ spaceId, position: 0 }] }),
+        expect.objectContaining({ id: other, spacePins: [] }),
       ]);
   });
 
   it('leaves a row untouched when its position has not moved', () => {
-    const unchanged = { ...summary('completed'), pinPosition: 0 };
+    const unchanged = { ...summary('completed'), spacePins: [{ spaceId, position: 0 }] };
     const queryClient = cacheWith([unchanged]);
 
-    applyPinnedWorkstreams(queryClient, [{ ...summary('running'), pinPosition: 0 }]);
+    applyPinnedWorkstreams(queryClient, spaceId, [{
+      ...summary('running'), spacePins: [{ spaceId, position: 0 }],
+    }]);
 
     // Rewriting the row would replace a status the socket is authoritative for
     // with whatever the pin response happened to carry.

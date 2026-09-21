@@ -94,6 +94,7 @@ import {
   ensureStorageAlarmNoLaterThan,
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import { spaceVisibleToViewerSql } from "./workspace-space-storage";
 import { substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
@@ -1735,9 +1736,21 @@ export class WorkstreamObjectProductService {
         ? Math.min(latest, attention.seen_attention_ordinal + 1)
         : null);
     const workspaceDatabase = this.workspaceDatabase(root.parent_workspace_key);
-    const pin = await workspaceDatabase.prepare(
-      `SELECT position FROM workspace_workstream_pins WHERE workstream_id = ? AND user_id = ?`,
-    ).bind(root.workstream_key, userId).first<{ position: number }>();
+    const pins = await workspaceDatabase.prepare(
+      `SELECT pin.space_id, pin.position
+         FROM workspace_workstream_pins pin
+         JOIN space_channel_memberships membership
+           ON membership.space_id = pin.space_id
+          AND membership.workstream_id = pin.workstream_id
+          AND membership.state = 'active'
+         JOIN workspace_space_directory space ON space.space_id = pin.space_id
+         LEFT JOIN workspace_space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ? AND viewer.is_participant = 1
+        WHERE pin.workstream_id = ? AND pin.user_id = ? AND space.archived_at IS NULL
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
+        ORDER BY pin.space_id`,
+    ).bind(userId, root.workstream_key, userId, userId).all<{ space_id: string; position: number }>();
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(
       `SELECT due_at, prompt FROM workstream_wakeups
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
@@ -1779,7 +1792,10 @@ export class WorkstreamObjectProductService {
         dueAt: iso(wakeup.due_at),
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),
       } : null,
-      pinPosition: pin?.position ?? null,
+      // Pin identity belongs to a Channel's placement in a Space. A detail
+      // read has no selected Space, so the legacy scalar must stay empty.
+      pinPosition: null,
+      spacePins: pins.results.map((pin) => ({ spaceId: pin.space_id, position: pin.position })),
       ...(root.scope === "personal"
         ? workstreamParticipantPreview(this.recentParticipantUserIds())
         : { participantUserIds: [], participantExtraCount: 0 }),

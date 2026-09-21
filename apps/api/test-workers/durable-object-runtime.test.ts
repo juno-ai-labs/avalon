@@ -3,6 +3,7 @@
 import { env } from "cloudflare:workers";
 import {
   asAutomationId,
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -81,6 +82,8 @@ const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103")
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000000010a");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010b");
+const OTHER_SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010c");
 
 beforeEach(async () => {
   clearFlagTargetingAttributeCache();
@@ -3012,50 +3015,95 @@ describe("Durable Objects in the Workers runtime", () => {
         }, `00000000-0000-7000-8000-${(0x280 + index).toString(16).padStart(12, "0")}`, 1, workstreamId),
       ]),
     });
+    const now = Date.now();
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000288",
+      statements: [
+        ...[SPACE_ID, OTHER_SPACE_ID].map((spaceId, index) => ({
+          sql: `INSERT INTO workspace_space_directory
+            (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+             system_role, authority_generation, source_version, payload_hash, revision,
+             created_at, updated_at, source_created_at, source_updated_at)
+            VALUES (?, ?, 'workspace', NULL, NULL, ?, NULL, 1, 1, ?, 1, ?, ?, ?, ?)`,
+          params: [spaceId, `Space ${index + 1}`, USER_ID, `hash-${index}`, now, now, now, now],
+        })),
+        ...[SPACE_ID, OTHER_SPACE_ID].flatMap((spaceId) => workstreamIds.map((workstreamId) => ({
+          sql: `INSERT INTO space_channel_memberships
+            (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+            VALUES (?, ?, 'active', 1, ?, ?, NULL)`,
+          params: [spaceId, workstreamId, now, now],
+        }))),
+      ],
+    });
 
     await expect(stub.pinWorkstream({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      spaceId: SPACE_ID,
       workstreamId: workstreamIds[2]!,
-    })).resolves.toMatchObject({ items: [{ id: workstreamIds[2], pinPosition: 0 }] });
+    })).resolves.toMatchObject({
+      items: [{ id: workstreamIds[2], pinPosition: null, spacePins: [{ spaceId: SPACE_ID, position: 0 }] }],
+    });
     await stub.pinWorkstream({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      spaceId: SPACE_ID,
       workstreamId: workstreamIds[0]!,
     });
     const repeated = await stub.pinWorkstream({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      spaceId: SPACE_ID,
       workstreamId: workstreamIds[2]!,
     });
-    expect(repeated.items.map((item) => [item.id, item.pinPosition])).toEqual([
-      [workstreamIds[2], 0],
-      [workstreamIds[0], 1],
+    expect(repeated.items.map((item) => [item.id, item.spacePins])).toEqual([
+      [workstreamIds[2], [{ spaceId: SPACE_ID, position: 0 }]],
+      [workstreamIds[0], [{ spaceId: SPACE_ID, position: 1 }]],
     ]);
 
     const reordered = await stub.reorderWorkstreamPins({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      spaceId: SPACE_ID,
       workstreamIds: [workstreamIds[0]!, workstreamIds[1]!, workstreamIds[2]!],
     });
-    expect(reordered.items.map((item) => [item.id, item.pinPosition])).toEqual([
-      [workstreamIds[0], 0],
-      [workstreamIds[2], 1],
+    expect(reordered.items.map((item) => [item.id, item.spacePins])).toEqual([
+      [workstreamIds[0], [{ spaceId: SPACE_ID, position: 0 }]],
+      [workstreamIds[2], [{ spaceId: SPACE_ID, position: 1 }]],
     ]);
     const unpinned = await stub.unpinWorkstream({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      spaceId: SPACE_ID,
       workstreamId: workstreamIds[0]!,
     });
-    expect(unpinned.items.map((item) => [item.id, item.pinPosition]))
-      .toEqual([[workstreamIds[2], 0]]);
+    expect(unpinned.items.map((item) => [item.id, item.spacePins]))
+      .toEqual([[workstreamIds[2], [{ spaceId: SPACE_ID, position: 0 }]]]);
 
-    const otherUserId = asUserId("00000000-0000-7000-8000-000000000108");
-    await expect(stub.pinWorkstream({
+    const pinnedInBothSpaces = await stub.pinWorkstream({
       workspaceId: WORKSPACE_ID,
-      userId: otherUserId,
-      workstreamId: workstreamIds[1]!,
-    })).resolves.toMatchObject({ items: [{ id: workstreamIds[1], pinPosition: 0 }] });
+      userId: USER_ID,
+      spaceId: OTHER_SPACE_ID,
+      workstreamId: workstreamIds[2]!,
+    });
+    expect(pinnedInBothSpaces.items).toEqual([
+      expect.objectContaining({
+        id: workstreamIds[2],
+        spacePins: [
+          { spaceId: SPACE_ID, position: 0 },
+          { spaceId: OTHER_SPACE_ID, position: 0 },
+        ],
+      }),
+    ]);
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000289",
+      statements: [{
+        sql: "UPDATE workspace_space_directory SET archived_at = ?, updated_at = ? WHERE space_id = ?",
+        params: [now + 1, now + 1, OTHER_SPACE_ID],
+      }],
+    });
     await expect(stub.listWorkstreams({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
@@ -3063,9 +3111,41 @@ describe("Durable Objects in the Workers runtime", () => {
       includeSystem: false,
     })).resolves.toMatchObject({
       items: [
-        { id: workstreamIds[0], pinPosition: null },
-        { id: workstreamIds[1], pinPosition: null },
-        { id: workstreamIds[2], pinPosition: 0 },
+        { id: workstreamIds[0], spaceIds: [SPACE_ID], spacePins: [] },
+        { id: workstreamIds[1], spaceIds: [SPACE_ID], spacePins: [] },
+        {
+          id: workstreamIds[2],
+          spaceIds: [SPACE_ID],
+          spacePins: [{ spaceId: SPACE_ID, position: 0 }],
+        },
+      ],
+    });
+    await expect(stub.unpinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      spaceId: OTHER_SPACE_ID,
+      workstreamId: workstreamIds[2]!,
+    })).resolves.toMatchObject({ items: [] });
+
+    const otherUserId = asUserId("00000000-0000-7000-8000-000000000108");
+    await expect(stub.pinWorkstream({
+      workspaceId: WORKSPACE_ID,
+      userId: otherUserId,
+      spaceId: SPACE_ID,
+      workstreamId: workstreamIds[1]!,
+    })).resolves.toMatchObject({
+      items: [{ id: workstreamIds[1], spacePins: [{ spaceId: SPACE_ID, position: 0 }] }],
+    });
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    })).resolves.toMatchObject({
+      items: [
+        { id: workstreamIds[0], pinPosition: null, spacePins: [] },
+        { id: workstreamIds[1], pinPosition: null, spacePins: [] },
+        { id: workstreamIds[2], pinPosition: null, spacePins: [{ spaceId: SPACE_ID, position: 0 }] },
       ],
     });
   });
