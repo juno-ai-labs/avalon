@@ -18,15 +18,17 @@ html[data-personal-color='teal'] { --personal-color: var(--av-sys-color-project-
 html[data-personal-color='green'] { --personal-color: var(--av-sys-color-project-emerald); }
 html[data-personal-color='amber'] { --personal-color: var(--av-sys-color-project-orange); }
 html[data-personal-color='slate'] { --personal-color: var(--av-sys-color-project-black); }
-/* The accent colours marks and controls; it does not fill rows. A selected row
-   used to take it here, which is defensible — the row this reader picked, in
-   this reader's colour — but the fill is `cmp.row.background-selected`, and
-   half of what reads that token is not a selection: an inline mention chip, a
-   resting dictation button, two hovers, and the letter beside an option. Those
-   wore somebody's colour for no reason anyone chose, and splitting one token
-   per borrower to keep the accent on the other half was more names than the
-   effect was worth. So row fills stay neutral in both appearances and the
-   accent keeps the `sys.color.accent.*` group below. */
+/* The accent colours marks and controls; it does not define persistent row
+   selection. A selected row used to take it here, which is defensible — the
+   row this reader picked, in this reader's colour — but the fill is
+   `cmp.row.background-selected`, and half of what reads that token is not a
+   selection: an inline mention chip, a resting dictation button, two hovers,
+   and the letter beside an option. Those wore somebody's colour for no reason
+   anyone chose, and splitting one token per borrower to keep the accent on the
+   other half was more names than the effect was worth. So selected row fills
+   stay neutral in both appearances. A surface that deliberately wants a
+   transient personal accent, such as elicitation option hover, reads the
+   `sys.color.accent.*` group below directly instead. */
 html[data-personal-color] {
   --av-sys-color-accent-base: color-mix(in srgb, var(--personal-color) 35%, var(--av-sys-color-text-default));
   --av-sys-color-accent-strong: color-mix(in srgb, var(--personal-color), var(--av-sys-color-text-default) 20%);
