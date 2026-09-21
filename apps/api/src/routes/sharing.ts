@@ -1,11 +1,11 @@
 import { ScopeGrantManagementRequestSchema, ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
-import { listSharedDirectory } from "../services/shared-directory-service";
+import { listSharedDirectory, listSharedNavigationDirectory } from "../services/shared-directory-service";
 import { Hono } from "hono";
 import { z } from "zod";
 import { IdSchema } from "@rally/contracts";
 import { UNAVAILABLE_INVITATION, openScopeInvitationCredential, workstreamStub } from "../services/scope-invitation-link";
 import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema, ScopeInvitationCredentialSchema,
-  SharedDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
+  SharedDirectorySchema, SharedNavigationDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { HonoAppEnv } from "../env";
 import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -44,6 +44,13 @@ sharingRoutes.get("/directory", requireWorkspaceAuth, async (c) => {
   const auth = getWorkspaceAuth(c);
   c.header("Cache-Control", "no-store");
   return c.json(SharedDirectorySchema.parse(await listSharedDirectory(c.env, auth.workspaceId, auth.userId)));
+});
+sharingRoutes.get("/navigation", requireWorkspaceAuth, async (c) => {
+  const auth = getWorkspaceAuth(c);
+  c.header("Cache-Control", "no-store");
+  return c.json(SharedNavigationDirectorySchema.parse(
+    await listSharedNavigationDirectory(c.env, auth.workspaceId, auth.userId),
+  ));
 });
 sharingRoutes.get("/:parentId/options", requireWorkspaceAuth, zValidator("param", z.object({ parentId: IdSchema })), async (c) => {
   const auth = getWorkspaceAuth(c);

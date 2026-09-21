@@ -5,7 +5,7 @@ import { beforeEach, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
-import { listSharedDirectory } from "../src/services/shared-directory-service";
+import { listSharedDirectory, listSharedNavigationDirectory } from "../src/services/shared-directory-service";
 import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
 import { consumeEffectBodies, pendingParentEffects } from "./helpers/conversation-effects";
@@ -17,10 +17,17 @@ const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000072");
 const actorId = asUserId("00000000-0000-4000-8000-000000000073");
 const recipientId = asUserId("00000000-0000-4000-8000-000000000074");
 const childId = asSubstreamId("00000000-0000-4000-8000-000000000075");
+const firstSpaceId = "00000000-0000-4000-8000-000000000076";
+const secondSpaceId = "00000000-0000-4000-8000-000000000077";
+const privateSpaceId = "00000000-0000-4000-8000-000000000080";
+const secondParentId = asWorkstreamId("00000000-0000-4000-8000-000000000078");
+const secondChildId = asSubstreamId("00000000-0000-4000-8000-000000000079");
 const child: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId, substreamId: childId };
+const secondChild: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId: secondParentId, substreamId: secondChildId };
 const main: ScopeGrantTarget = { ...child, substreamId: asSubstreamId("0") };
 const parent: ScopeGrantTarget = { kind: "workstream", workspaceId, parentId };
 const room = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", workspaceId, parentId));
+const secondRoom = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", workspaceId, secondParentId));
 const mutation = (target: ScopeGrantTarget = child) => ({ operationId: crypto.randomUUID(), actorUserId: actorId,
   userId: recipientId, target, active: true, expectedRevision: 0 });
 
@@ -29,6 +36,31 @@ async function seedActorGrant(target: ScopeGrantTarget) {
     _instance['scopeGrants']({ workspaceId, parentId }).mutate({
       operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId, target, active: true, expectedRevision: 0,
     }, actorId);
+  });
+}
+
+async function initializeSecondRoom() {
+  await secondRoom().authority({ workspaceId, parentId: secondParentId });
+  await runInDurableObject(secondRoom(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO workstream_metadata
+      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+      VALUES (1,?,?,'global',1,'Research channel','','','personal','idle',0,0,0)`,workspaceId,secondParentId);
+    state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at,title) VALUES ('0','main',0,'Main'), (?,'child',0,'Research breakout')", secondChildId);
+    _instance['scopeGrants']({ workspaceId, parentId: secondParentId }).mutate({
+      operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId,
+      target: secondChild, active: true, expectedRevision: 0,
+    }, actorId);
+  });
+}
+
+async function parkEffectQueue(stub: ReturnType<typeof room>) {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    const refused = () => Promise.reject(new Error("effect_queue_parked_by_test"));
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
+        ? { send: refused, sendBatch: refused } : Reflect.get(current, property, receiver),
+    });
   });
 }
 
@@ -225,21 +257,104 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   const directory = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
   await directory.initializeWorkspace(workspaceId, "wnam");
   expect(await consumeEffectBodies(env, effects)).toEqual({ acked: 2, retried: 0 });
+  await runInDurableObject(directory, (_instance, state) => {
+    for (const [spaceId, title, appearance, createdAt] of [
+      [firstSpaceId, "Product", '{"icon":"rocket","color":"violet"}', 1],
+      [secondSpaceId, "Research", '{"icon":"lightbulb","color":"teal"}', 2],
+    ] as const) {
+      state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+        space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+        system_role, authority_generation, source_version, payload_hash, revision,
+        created_at, updated_at, source_created_at, source_updated_at
+      ) VALUES (?, ?, 'workspace', ?, NULL, ?, NULL, 1, 1, ?, 1, ?, ?, ?, ?)`,
+      spaceId, title, appearance, actorId, `hash-${spaceId}`, createdAt, createdAt, createdAt, createdAt);
+      state.storage.sql.exec(`INSERT INTO space_channel_memberships
+        (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+        VALUES (?, ?, 'active', 1, 1, 1, NULL)`, spaceId, parentId);
+    }
+  });
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
     parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
   }] });
+  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
+    spaces: [
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", workstreamIds: [parentId] },
+    ],
+    workstreams: [{ parentId, title: "Private parent", archived: false,
+      conversations: [{ substreamId: childId, title: "Shared substream", archived: false }] }],
+  });
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
   // The workspace still contains the added candidate, but the canonical grant
   // has already been revoked. No Queue flush is needed to stop exposing labels.
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [] });
+  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
+});
+
+it("shows both Spaces when a guest has one shared Breakout in two different Channels", async () => {
+  await initializeSecondRoom();
+  await parkEffectQueue(room());
+  await parkEffectQueue(secondRoom());
+  await seedActorGrant(child);
+  expect(await room().mutateScopeGrant(mutation())).toMatchObject({ status: "committed" });
+  expect(await secondRoom().mutateScopeGrant({
+    ...mutation(secondChild),
+    target: secondChild,
+  })).toMatchObject({ status: "committed" });
+
+  const directory = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
+  await directory.initializeWorkspace(workspaceId, "wnam");
+  const effects = [
+    ...await pendingParentEffects(room()),
+    ...await pendingParentEffects(secondRoom()),
+  ].filter((item) => item.effect.kind === "scope_grant_directory");
+  expect((await consumeEffectBodies(env, effects)).retried).toBe(0);
+  await runInDurableObject(directory, (_instance, state) => {
+    for (const [spaceId, title, appearance, workstreamId, createdAt] of [
+      [firstSpaceId, "Product", '{"icon":"rocket","color":"violet"}', parentId, 1],
+      [secondSpaceId, "Research", '{"icon":"lightbulb","color":"teal"}', secondParentId, 2],
+    ] as const) {
+      state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+        space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+        system_role, authority_generation, source_version, payload_hash, revision,
+        created_at, updated_at, source_created_at, source_updated_at
+      ) VALUES (?, ?, 'workspace', ?, NULL, ?, NULL, 1, 1, ?, 1, ?, ?, ?, ?)`,
+      spaceId, title, appearance, actorId, `hash-${spaceId}`, createdAt, createdAt, createdAt, createdAt);
+      state.storage.sql.exec(`INSERT INTO space_channel_memberships
+        (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+        VALUES (?, ?, 'active', 1, 1, 1, NULL)`, spaceId, workstreamId);
+    }
+    state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+      space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+      system_role, authority_generation, source_version, payload_hash, revision,
+      created_at, updated_at, source_created_at, source_updated_at
+    ) VALUES (?, 'Private planning', 'personal', '{"icon":"star","color":"red"}', NULL, ?, NULL, 1, 1, 'private-hash', 1, 3, 3, 3, 3)`,
+    privateSpaceId, actorId);
+    state.storage.sql.exec(`INSERT INTO space_channel_memberships
+      (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+      VALUES (?, ?, 'active', 1, 1, 1, NULL)`, privateSpaceId, parentId);
+  });
+
+  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
+    spaces: [
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", workstreamIds: [secondParentId] },
+    ],
+    workstreams: [
+      { parentId, title: "Private parent", archived: false,
+        conversations: [{ substreamId: childId, title: "Shared substream", archived: false }] },
+      { parentId: secondParentId, title: "Research channel", archived: false,
+        conversations: [{ substreamId: secondChildId, title: "Research breakout", archived: false }] },
+    ],
+  });
 });
 
 
-it("releases only canonical shared conversation labels and hides Main metadata from child-only guests", async () => {
+it("releases canonical Channel and shared conversation labels without granting Main", async () => {
   await seedActorGrant(parent);
   await seedActorGrant(child);
   await runInDurableObject(room(), (_instance, state) => {
@@ -248,7 +363,7 @@ it("releases only canonical shared conversation labels and hides Main metadata f
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
   expect(await room().readSharedWorkstream(request)).toBeNull();
   await room().mutateScopeGrant(mutation());
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: null, archived: false,
+  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", archived: false,
     conversations: [{ substreamId: childId, title: "Visible child", archived: false }] });
   expect(await room().readSharedWorkstream({ ...request, membershipIncarnation: "replacement" })).toBeNull();
   await room().mutateScopeGrant(mutation(main));
