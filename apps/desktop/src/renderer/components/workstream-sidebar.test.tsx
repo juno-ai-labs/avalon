@@ -228,10 +228,11 @@ describe('WorkstreamSidebar', () => {
       onFocusTranscript={vi.fn()}
     /></Tooltip.Provider>);
     const sidebar = screen.getByRole('complementary');
-    const rows = [...sidebar.querySelectorAll('.workstream-substream-list > *')];
+    const rows = [...sidebar.querySelectorAll('.workstream-conversation-list > .sidebar-row')];
     // Last, where a child created now will be listed: the directory orders
     // children oldest first, so the row does not move when it becomes real.
     expect(rows.map((row) => row.className)).toEqual([
+      expect.stringContaining('workstream-conversation-row'),
       expect.stringContaining('workstream-conversation-row'),
       expect.stringContaining('workstream-pending-substream'),
       expect.stringContaining('workstream-new-substream'),
@@ -246,9 +247,9 @@ describe('WorkstreamSidebar', () => {
     // saying where they are. Asserted as the list's whole button inventory, so
     // it fails the moment the placeholder becomes navigable rather than
     // depending on the label a regression would happen to give it.
-    const list = sidebar.querySelector('.workstream-substream-list');
+    const list = sidebar.querySelector('.workstream-conversation-list');
     expect([...list?.querySelectorAll('button') ?? []].map((button) => button.getAttribute('aria-label')))
-      .toEqual(['Go to breakout: Launch risks', 'New breakout']);
+      .toEqual(['Go to conversation: Launch preparation', 'Go to breakout: Launch risks', 'New breakout']);
     const create = screen.getByRole('button', { name: 'New breakout' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
