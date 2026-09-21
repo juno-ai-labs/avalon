@@ -8,7 +8,7 @@ import {
   SidebarHorizontalLine,
   SidebarRow,
   SidebarScroll,
-  SidebarTitle,
+  SidebarTitleHeader,
 } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { NewWorkstreamMenu } from './new-workstream-menu';
@@ -2079,13 +2079,16 @@ export function Sidebar({
         sidebarRef={panel}
         width={effectiveSidebarWidth}
       >
-        <SidebarHeader className={clsx('sidebar-titlebar window-drag', spaces !== undefined && 'channels-sidebar-titlebar')}>
-          {selectedSpace && <>
-            <SidebarTitle className="channels-sidebar-title">{selectedSpace.name}</SidebarTitle>
-            <span aria-hidden="true" className="sidebar-header-mark channels-sidebar-toolbar-mark">
-              <SpaceIcon size={22} space={selectedSpace} />
-            </span>
-          </>}
+        {selectedSpace ? <SidebarTitleHeader
+          className="sidebar-titlebar window-drag channels-sidebar-titlebar"
+          icon={<SpaceIcon size={22} space={selectedSpace} />}
+          title={selectedSpace.name}
+          titleClassName="channels-sidebar-title"
+        >
+          <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
+            <ChevronsLeft size={16} />
+          </IconButton>
+        </SidebarTitleHeader> : <SidebarHeader className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
@@ -2096,7 +2099,7 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               work stream buttons for a quarter of a second. */}
-          {spaces === undefined && <NewWorkstreamMenu
+          <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             spaces={placementSpaces}
             onCreateChannel={createChannelFromSidebar}
@@ -2113,8 +2116,8 @@ export function Sidebar({
             >
               <Plus aria-hidden="true" size={16} />
             </button>
-          </NewWorkstreamMenu>}
-        </SidebarHeader>
+          </NewWorkstreamMenu>
+        </SidebarHeader>}
 
         {spaces === undefined && <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
           {/* The rail's New work stream row. Inserted by the compact toggle and

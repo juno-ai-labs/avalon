@@ -10,7 +10,6 @@ import {
   SidebarHorizontalLine,
   SidebarRow,
   SidebarScroll,
-  SidebarTitle,
 } from '@rally/ui/components/resizable-sidebar';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
@@ -223,8 +222,7 @@ export function SpacesSidebar({
         sidebarRef={sidebarRef}
         width={effectiveWidth}
       >
-        <SidebarHeader className="spaces-sidebar-titlebar window-drag">
-          <SidebarTitle>Spaces</SidebarTitle>
+        <SidebarHeader aria-label="Space actions" className="spaces-sidebar-titlebar window-drag">
           <div className="spaces-sidebar-titlebar-actions window-no-drag">
           {ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
             <IconRestore size={16} stroke={1.8} />

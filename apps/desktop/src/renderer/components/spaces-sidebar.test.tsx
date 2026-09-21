@@ -74,9 +74,10 @@ describe('SpacesSidebar', () => {
     const { onSelect } = renderSidebar();
     const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
 
-    expect(within(sidebar).getByRole('heading', { name: 'Spaces' })).toHaveClass('sidebar-title');
+    expect(within(sidebar).queryByRole('heading', { name: 'Spaces' })).not.toBeInTheDocument();
     const header = sidebar.querySelector('.sidebar-header');
     expect(header).toHaveClass('sidebar-row');
+    expect(header).toHaveAttribute('aria-label', 'Space actions');
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
     expect(sidebar.querySelector('.spaces-sidebar-scroll')).toHaveClass('sidebar-scroll');
