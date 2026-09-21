@@ -139,10 +139,9 @@ describe('public Rally site', () => {
     };
 
     expect(pages[0]).toContain('class="rally-symbol"');
-    expect(pages[0]).toContain('/brand/rally-mark.svg');
-    // The lime cut at header size belongs to the dark homepage alone; every
-    // light-surfaced page renders the ink cut so the mark keeps its contrast.
-    for (const page of pages.slice(1)) {
+    expect(pages[0]).toContain('/brand/rally-mark-ink.svg');
+    // Every public page uses the ink mark on its light header.
+    for (const page of pages) {
       expect(page).toContain('/brand/rally-mark-ink.svg');
       expect(page).not.toContain('/brand/rally-mark.svg"');
     }
