@@ -767,6 +767,11 @@ title, and **New substream** carries a plus.
 Check each bottom toggle and double-click each right edge to collapse and
 expand. Drag short of the expansion/collapse threshold and confirm a faint
 vertical guide follows the pointer; release or cancel and confirm it disappears.
+Expand all three hierarchy rails, then select a Space, a Channel, Main, a
+Breakout, and **New breakout**. Confirm only the Spaces rail auto-collapses:
+the Channels and Breakouts rails remain expanded until their own explicit
+controls or a narrow window compacts them. Manually collapse either contextual
+rail, navigate within it, and confirm navigation preserves that choice too.
 Check both appearances, long titles, and a short window: account and collapse
 controls must remain visible while the content scrolls.
 

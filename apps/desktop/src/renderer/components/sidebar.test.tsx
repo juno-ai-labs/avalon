@@ -731,7 +731,7 @@ describe('Sidebar channel markers', () => {
     expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/starting-point');
   });
 
-  it('collapses both hierarchy sidebars when the same Channel is re-entered', () => {
+  it('collapses only the Spaces sidebar when the same Channel is re-entered', () => {
     const hiring = space();
     const target = placedIn(workstream('route-reset', 'Route reset', 'completed'), hiring.id);
     function Navigation() {
@@ -754,7 +754,7 @@ describe('Sidebar channel markers', () => {
 
     fireEvent.click(screen.getByRole('link', { name: /Route reset/u }));
     expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
-    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).toHaveClass('is-compact');
+    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
   });
 
   it('does not start navigation telemetry when the active channel row is clicked again', () => {
