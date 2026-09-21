@@ -44,13 +44,13 @@ code { font-size: var(--small); overflow-wrap: anywhere; }
 .trust-contact-row a, .trust-text-link { text-decoration: underline; }
 .trust-section, .support-hub-section { padding: 56px 0; border-bottom: 1px solid var(--line); }
 .trust-section-heading { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 28px; }
-.trust-control-grid, .trust-provider-grid, .support-topic-grid, .support-connector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-.trust-control-card, .trust-provider-grid article, .support-topic-grid > a, .support-connector-grid > a, .support-contact-card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: #fff; min-width: 0; }
-.trust-control-card header { display: flex; align-items: baseline; gap: 12px; }
+.trust-control-grid, .trust-provider-grid, .support-topic-grid, .support-connector-grid, .support-paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.trust-control-card, .trust-provider-grid article, .support-topic-grid > a, .support-connector-grid > a, .support-contact-card, .support-paths > article { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: #fff; min-width: 0; }
+.trust-control-card header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
 .trust-control-card header > span, .trust-provider-grid article > span, .support-topic-grid > a > span, .support-contact-card > span { font-size: var(--small); }
 .trust-control-card ul { padding-left: 22px; }
 .trust-control-wide { grid-column: 1 / -1; }
-.trust-status { display: none; }
+.trust-status { margin-left: auto; font-size: var(--small); font-weight: 400; }
 .trust-resource-list > a, .trust-directory-list > a { display: grid; grid-template-columns: 160px 1fr auto; gap: 24px; align-items: center; padding: 24px 0; border-bottom: 1px solid var(--line); text-decoration: none; }
 .trust-resource-list span, .trust-directory-list span { font-size: var(--small); }
 .trust-resource-list strong, .trust-directory-list strong, .support-topic-grid strong, .support-connector-grid strong, .support-contact-card strong { font-size: var(--heading); font-weight: 500; }
@@ -70,9 +70,7 @@ code { font-size: var(--small); overflow-wrap: anywhere; }
 .support-section-body h3 { margin-top: 28px; }
 .support-callout, .support-note, .legal-callout { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 24px; margin: 24px 0; }
 .support-callout p:last-child, .legal-callout p:last-child { margin-bottom: 0; }
-.support-steps { padding-left: 24px; }
 .support-steps li > span { font-size: var(--small); }
-.support-paths { display: flex; flex-wrap: wrap; gap: 16px; }
 .legal-shell { max-width: 1120px; margin: auto; padding: 48px 32px 64px; display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 48px; }
 .legal-nav { align-self: start; font-size: var(--small); }
 .legal-nav ul { list-style: none; padding: 0; }
@@ -100,7 +98,7 @@ code { font-size: var(--small); overflow-wrap: anywhere; }
   .trust-center, .support-center { padding: 0 20px; }
   .trust-tabs, .support-page-nav { gap: 8px 20px; }
   .trust-hero, .support-hero { margin: 0 -20px; padding: 40px 20px; }
-  .support-hero, .trust-section-heading, .trust-control-grid, .trust-provider-grid, .support-topic-grid, .support-connector-grid { grid-template-columns: 1fr; }
+  .support-hero, .trust-section-heading, .trust-control-grid, .trust-provider-grid, .support-topic-grid, .support-connector-grid, .support-paths { grid-template-columns: 1fr; }
   .trust-resource-list > a, .trust-directory-list > a { grid-template-columns: 1fr auto; gap: 8px; }
   .trust-resource-list span, .trust-directory-list span { grid-column: 1 / -1; }
   .trust-reporting, .support-contact-section, .trust-overview-contact { padding: 24px; }
@@ -119,4 +117,10 @@ code { font-size: var(--small); overflow-wrap: anywhere; }
 @media (max-width: 700px) {
   .support-article > header { padding: 32px 20px; margin-inline: -20px; }
   .legal-nav li + li { margin-top: 0; }
+}
+
+@media (max-width: 400px) {
+  .trust-header-inner, .legal-header-inner { grid-template-columns: minmax(0, 1fr); }
+  .trust-header-title, .legal-header-label { grid-column: 1; grid-row: 2; justify-self: center; text-align: center; }
+  .trust-report-link, .legal-header .button { grid-column: 1; grid-row: 3; justify-self: center; max-width: 100%; }
 }

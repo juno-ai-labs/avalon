@@ -140,7 +140,7 @@ is allowed.
 
 **Considered and rejected:** Adding more overrides to the legacy stylesheet would retain conflicting designs. A dedicated shared stylesheet lets these informational pages use one design without changing desktop handoff screens.
 
-**Consequences:** Preserve existing policy text and destinations; mobile tables scroll within their container rather than widening the page.
+**Consequences:** Preserve existing policy text and destinations; mobile tables scroll within their container rather than widening the page. Review follow-up restores visible Implemented labels, includes getting-started cards in the responsive grid, and stacks header actions below labels on narrow phones. Source-contract tests now check the stylesheet these pages actually load; real-browser checks cover 320px header overflow and overlap.
 
 ### 2026-09-14 — Configurable deployment isolation
 
