@@ -23,13 +23,15 @@ interface Fixture {
   registryRow?: Record<string, unknown> | null;
   canRead?: boolean;
   displayName?: string | null;
+  profileError?: Error;
+  placementError?: Error;
   page?: { rows?: Record<string, unknown>[]; ok?: boolean };
 }
 
 /**
  * Unit coverage for URL, profile and inspection orchestration. Canonical
  * authorization is a controlled boundary here; the guest pipeline workerd
- * test proves actual attachment/grant admission and artifact session revocation.
+ * test proves actual attachment/grant admission and admitted-session behavior.
  */
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
@@ -57,7 +59,12 @@ function fixture(input: Fixture = {}) {
           }
           if (sql.includes("FROM users")) {
             readProfile();
+            if (input.profileError) throw input.profileError;
             return { name: input.displayName === undefined ? "Ada" : input.displayName };
+          }
+          if (sql.includes("SELECT placement_affinity FROM workspaces")) {
+            if (input.placementError) throw input.placementError;
+            return { placement_affinity: "wnam" };
           }
           return other();
         },
@@ -80,7 +87,7 @@ function fixture(input: Fixture = {}) {
   const env = createTestEnv({
     DB: database,
     AVALON_REGION: "global",
-    APP_ENV: "test",
+    APP_ENV: input.placementError ? "production" : "test",
     ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test",
     ARTIFACT_HOSTS: hosts,
   });
@@ -143,6 +150,24 @@ describe("minting access to a live artifact", () => {
     await service.open(RESOURCE);
     expect(openForViewer).toHaveBeenCalledWith(expect.objectContaining({ displayName: "" }));
   });
+
+  it("loads the viewer profile while canonical authorization is in flight", async () => {
+    const { service, checkAccess, readProfile } = fixture();
+    let releaseAuthorization: (() => void) | undefined;
+    checkAccess.mockImplementationOnce(async () => await new Promise<Awaited<ReturnType<AuthorizationService["checkMany"]>>>((resolve) => {
+      releaseAuthorization = () => resolve([
+        { status: "allowed", evidence: [{ owner: "resource:test", revision: "1", validatedAt: 0 }] },
+      ]);
+    }));
+
+    const opening = service.open(RESOURCE);
+    await vi.waitFor(() => {
+      expect(checkAccess).toHaveBeenCalledOnce();
+      expect(readProfile).toHaveBeenCalledOnce();
+    }, { timeout: 1_000 });
+    releaseAuthorization?.();
+    await expect(opening).resolves.toMatchObject({ artifactId: ARTIFACT });
+  });
 });
 
 describe("who is refused, and how indistinguishably", () => {
@@ -169,6 +194,29 @@ describe("who is refused, and how indistinguishably", () => {
     expect(missing.status).toBe(invisible.status);
     expect(missing.code).toBe(invisible.code);
     expect(missing.message).toBe(invisible.message);
+  });
+
+  it("preserves a concealed denial when the concurrent profile read fails", async () => {
+    const error = await refusal(() => fixture({
+      canRead: false,
+      profileError: new Error("profile unavailable"),
+    }).service.open(RESOURCE));
+    expect(error).toMatchObject({ status: 404, code: "artifact_not_found" });
+  });
+
+  it("preserves a concealed denial when the concurrent placement read fails", async () => {
+    const error = await refusal(() => fixture({
+      canRead: false,
+      placementError: new Error("placement unavailable"),
+    }).service.open(RESOURCE));
+    expect(error).toMatchObject({ status: 404, code: "artifact_not_found" });
+  });
+
+  it("surfaces auxiliary failures after authorization succeeds", async () => {
+    await expect(fixture({ profileError: new Error("profile unavailable") }).service.open(RESOURCE))
+      .rejects.toThrow("profile unavailable");
+    await expect(fixture({ placementError: new Error("placement unavailable") }).service.open(RESOURCE))
+      .rejects.toThrow("placement unavailable");
   });
 
   it("refuses to read the error log without the visibility that opening needs", async () => {
