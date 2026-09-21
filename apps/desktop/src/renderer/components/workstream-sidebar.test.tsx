@@ -339,7 +339,7 @@ describe('WorkstreamSidebar', () => {
     ] });
     for (const title of ['Launch dashboard', 'Offsite RSVP']) {
       const row = screen.getByRole('button', { name: `Open ${title}` });
-      expect(row.querySelector('.tabler-icon-rosette-asterisk'), title).not.toBeNull();
+      expect(row.querySelector('.tabler-icon-app-window'), title).not.toBeNull();
     }
   });
 

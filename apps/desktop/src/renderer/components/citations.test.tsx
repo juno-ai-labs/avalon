@@ -197,13 +197,13 @@ describe('resource citations', () => {
     expect(screen.getByText('Document')).toBeInTheDocument();
   });
 
-  it('marks a site with the rosette under both names it arrives with, and leaves a web link alone', () => {
+  it('marks a site with the app window under both names it arrives with, and leaves a web link alone', () => {
     const { unmount } = render(
       <MarkdownBody citations={context({ resolve: () => ({ ...DECK, title: 'Offsite RSVP', resourceType: 'generated_site' }) })}>
         {'See [the RSVP page](resource://board-deck).'}
       </MarkdownBody>,
     );
-    expect(document.querySelector('.citation-chip-icon .tabler-icon-rosette-asterisk')).not.toBeNull();
+    expect(document.querySelector('.citation-chip-icon .tabler-icon-app-window')).not.toBeNull();
     unmount();
 
     // The same page reached as a generated file: the type says nothing, and
@@ -213,7 +213,7 @@ describe('resource citations', () => {
         {'See [the RSVP page](resource://board-deck).'}
       </MarkdownBody>,
     );
-    expect(document.querySelector('.citation-chip-icon .tabler-icon-rosette-asterisk')).not.toBeNull();
+    expect(document.querySelector('.citation-chip-icon .tabler-icon-app-window')).not.toBeNull();
     unmountFile();
 
     render(
@@ -221,7 +221,7 @@ describe('resource citations', () => {
         {'See [the status page](resource://board-deck).'}
       </MarkdownBody>,
     );
-    expect(document.querySelector('.citation-chip-icon .tabler-icon-rosette-asterisk')).toBeNull();
+    expect(document.querySelector('.citation-chip-icon .tabler-icon-app-window')).toBeNull();
     expect(document.querySelector('.citation-chip-icon .lucide-link-2')).not.toBeNull();
   });
 
