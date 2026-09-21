@@ -1,7 +1,7 @@
 /** Approved early-access copy. Change these values without changing the form or API. */
 export const accessCopy = {
   title: 'Rally — Work together',
-  headline: 'Stop copy-pasting between Claude and Slack.',
+  headline: 'Stop copy-pasting\nbetween Claude and Slack.',
   description: 'Rally gives you, your (human) coworkers, and AI a single place to get work done together.',
   capabilities: 'Collaborative Chat. Team Skills. Ready Out of the Box.',
   emailLabel: 'Work email',
