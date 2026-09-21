@@ -1856,6 +1856,29 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-21 — Place guest browser Channels in visible Spaces
+
+**What changed:** WorkspaceDO can project the name, icon, colour and authorized
+Channel IDs of every active Space containing a guest's canonically admitted
+Channels. The browser uses that bounded projection for its Space and Channel
+rails; it receives no participant, default, audience or lifecycle fields.
+
+**Why:** Direct Breakout grants are indexed by Channel owner, so the browser had
+enough authority to open conversations but not enough containment information to
+group two shared Channels under two different Spaces.
+
+**Considered and rejected:** Reusing the member Space directory would disclose
+more Space state and depend on viewer projections that direct-scope guests do
+not need. Trusting caller-supplied Channel IDs would turn a containment lookup
+into a Space-name oracle, so WorkspaceDO intersects them with the guest's
+current membership-incarnation candidate index.
+
+**Consequences:** Space identity follows the existing `through_channel`
+disclosure rule, but this browser projection is intentionally smaller than a
+`SpaceSummary`. Canonical WorkstreamDO reads remain the label and conversation
+authority, and the final relationship revision fence empties the whole response
+if guest membership changes while the read is in flight.
+
 ### 2026-09-21 — Add to space shows the whole visible directory
 
 **What changed:** **Add to space** lists every Space visible to the reader.
@@ -2024,10 +2047,9 @@ conversation width automatically as a person moves deeper.
 but it appears in the Channel rail for whichever Space is selected instead of
 being duplicated under simultaneously open accordions. Future hierarchy levels
 must preserve this selection-and-compaction rule rather than nesting another
-disclosure list inside an existing row. The lite guest browser remains a
-separate, deliberately smaller host: its cookie-scoped directory has shared
-Channels and conversations but no Space directory, so it does not draw this
-three-level member navigation.
+disclosure list inside an existing row. The lite guest browser reuses the
+adjacent hierarchy with a smaller, cookie-scoped projection containing only
+the Space marks and Channels its direct conversation grants make visible.
 
 ### 2026-09-19 — A Space's mark reaches whoever can see a Channel in it, and nothing else does
 

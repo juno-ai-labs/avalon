@@ -21,8 +21,10 @@ a { color: inherit; }
 .browser-conversation, .browser-workspace, .browser-feed { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .browser-feed > * { flex: 1; min-width: 0; }
 .browser-empty { padding: 32px; }
-.browser-workspace { --av-cmp-sidebar-width: 280px; --screen-drag-strip-height: 0px; }
+.browser-workspace { --spaces-sidebar-width: 220px; --av-cmp-sidebar-width: 260px; --screen-drag-strip-height: 0px; }
+.browser-space-row { background: transparent; border: 0; font: inherit; margin: 0; text-align: left; width: 100%; }
+.browser-navigation-close { margin-left: auto; }
 
-.browser-navigation-dialog.browser-workspace { position: fixed; inset: 0 auto 0 0; width: min(300px, 100vw); flex: none; z-index: 100; --av-cmp-sidebar-width: 280px; }
+.browser-navigation-dialog.browser-workspace { position: fixed; inset: 0 auto 0 0; width: min(540px, 100vw); flex: none; z-index: 100; --spaces-sidebar-width: min(220px, 42vw); --av-cmp-sidebar-width: min(320px, 58vw); }
 
 .browser-navigation-scrim { background: var(--av-sys-color-scrim-default); position: fixed; inset: 0; z-index: 99; }

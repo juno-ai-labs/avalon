@@ -1,5 +1,9 @@
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
+import {
+  SharedNavigationSpaceSchema,
+  SharedNavigationSpacesRequestSchema,
+} from "@rally/contracts/scope-grants";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
@@ -8414,6 +8418,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = ScopeGrantCandidatesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return scopeGrantCandidates(this.state.storage, request.userId, request.membershipIncarnation);
+  }
+
+  async listSharedNavigationSpaces(input: unknown) {
+    await this.initialized;
+    const request = SharedNavigationSpacesRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const candidates = new Set(scopeGrantCandidates(
+      this.state.storage,
+      request.userId,
+      request.membershipIncarnation,
+    ));
+    const admittedIds = request.workstreamIds.filter((workstreamId) => candidates.has(workstreamId));
+    return this.spaceStorage().sharedNavigationSpaces(admittedIds).map((space) =>
+      SharedNavigationSpaceSchema.parse(space));
   }
 
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {
