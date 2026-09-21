@@ -64,9 +64,14 @@ export function SidebarScroll<Component extends ElementType = 'div'>(
 export function SidebarList<Component extends ElementType = 'div'>(
   props: SidebarListProps<Component>,
 ): React.JSX.Element {
-  const { as, className, ...rest } = props;
+  const { as, ...rest } = props;
+  const listProps = rest as typeof rest & { className?: string | ClassNameResolver };
+  const className = listProps.className;
+  const mergedClassName = typeof className === 'function'
+    ? (...args: unknown[]): string => clsx('sidebar-list', className(...args))
+    : clsx('sidebar-list', className);
   const List: ElementType = as ?? 'div';
-  return <List {...rest} className={clsx('sidebar-list', className)} />;
+  return <List {...rest} className={mergedClassName} />;
 }
 
 /** The shared title row and divider at the top of a hierarchy sidebar. */
