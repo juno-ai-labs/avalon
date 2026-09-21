@@ -71,21 +71,6 @@ import {
   socialPreviewMarkup,
 } from "./social-preview";
 
-/**
- * How stale a work-stream visibility answer may be.
- *
- * It is the window in which a viewer who lost access to the work stream keeps
- * being served the artifact, so it is a security-relevant number and therefore
- * **the team's to set, not this code's to guess**. It ships at the open value —
- * zero, meaning every request re-asks the owning `WorkstreamDO` — because that
- * is the value at which the guard changes nothing about correctness. What it
- * costs at zero is a Durable Object hop per request; what a real number buys is
- * that cost amortized, at the price of a bounded staleness window. The
- * arithmetic the team needs: requests per artifact open × the hop's latency,
- * against how long a removed viewer may keep reading.
- */
-const VISIBILITY_CACHE_MS = 0;
-
 /** The cookie one artifact origin's viewer session lives in. */
 const SESSION_COOKIE = "__rally_artifact_session";
 
@@ -275,7 +260,7 @@ export default {
       let checked: Awaited<ReturnType<ArtifactHostDO["checkSession"]>> | null = null;
       if (session) {
         try {
-          checked = await artifact.checkSession(session, VISIBILITY_CACHE_MS);
+          checked = await artifact.checkSession(session);
         } catch (error) {
           logWarn({
             LOG_LEVEL: "info",

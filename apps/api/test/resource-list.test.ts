@@ -22,9 +22,51 @@ const auth: AuthContext = {
   workspaceId,
   region: "global",
   role: "owner",
+  accessClass: "member",
 };
 
 describe("resource listing", () => {
+  it("reuses the active membership established by request authentication", async ({ onTestFinished }) => {
+    const regional = new DatabaseSync(':memory:');
+    const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
+    seedMember(regional);
+    onTestFinished(() => { workspace.objectDatabase.close(); regional.close(); });
+    workspace.objectDatabase.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'document', 'fixture', 'One membership read', '{}', 'attached', ?, ?)`)
+      .run(firstResourceId, workspaceId, '2026-09-21T12:00:00.000Z', '2026-09-21T12:00:00.000Z');
+    let membershipReads = 0;
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(regional, (sql) => { if (sql.includes('workspace_members')) membershipReads += 1; }),
+      APP_ENV: 'test',
+      AVALON_REGION: 'global',
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'authorizationResourceFacts']),
+    }), auth);
+
+    await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId });
+    expect(membershipReads).toBe(0);
+  });
+
+  it("uses the caller clock for evidence returned by another isolate", async ({ onTestFinished }) => {
+    const regional = new DatabaseSync(':memory:');
+    const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
+    seedMember(regional);
+    onTestFinished(() => { workspace.objectDatabase.close(); regional.close(); });
+    workspace.objectDatabase.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'document', 'fixture', 'Clock skew', '{}', 'attached', ?, ?)`)
+      .run(firstResourceId, workspaceId, '2026-09-21T12:00:00.000Z', '2026-09-21T12:00:00.000Z');
+    const readFacts = workspace.instance.authorizationResourceFacts.bind(workspace.instance);
+    vi.spyOn(workspace.instance, 'authorizationResourceFacts').mockImplementation(async (input) =>
+      (await readFacts(input)).map((value) => ({ ...value, validatedAt: Number.MAX_SAFE_INTEGER })));
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(regional), APP_ENV: 'test', AVALON_REGION: 'global',
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'authorizationResourceFacts']),
+    }), auth);
+
+    await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId, title: 'Clock skew' });
+  });
+
   it("uses keyset pagination and literal resource title search", async ({ onTestFinished }) => {
     const regional = new DatabaseSync(':memory:');
     const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
@@ -217,9 +259,10 @@ describe("resource listing", () => {
 
 });
 
-function sqliteD1(database: DatabaseSync): D1Database {
+function sqliteD1(database: DatabaseSync, onPrepare?: (sql: string) => void): D1Database {
   return createTestD1Database({
     prepare(sql: string) {
+      onPrepare?.(sql);
       let values: Array<string | number | null> = [];
       return {
         bind(...next: Array<string | number | null>) {

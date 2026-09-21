@@ -29,7 +29,7 @@ interface Fixture {
 /**
  * Unit coverage for URL, profile and inspection orchestration. Canonical
  * authorization is a controlled boundary here; the guest pipeline workerd
- * test proves actual attachment/grant admission and artifact session revocation.
+ * test proves actual attachment/grant admission and admitted-session behavior.
  */
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
@@ -142,6 +142,24 @@ describe("minting access to a live artifact", () => {
     const { service, openForViewer } = fixture({ displayName: null });
     await service.open(RESOURCE);
     expect(openForViewer).toHaveBeenCalledWith(expect.objectContaining({ displayName: "" }));
+  });
+
+  it("loads the viewer profile while canonical authorization is in flight", async () => {
+    const { service, checkAccess, readProfile } = fixture();
+    let releaseAuthorization: (() => void) | undefined;
+    checkAccess.mockImplementationOnce(async () => await new Promise<Awaited<ReturnType<AuthorizationService["checkMany"]>>>((resolve) => {
+      releaseAuthorization = () => resolve([
+        { status: "allowed", evidence: [{ owner: "resource:test", revision: "1", validatedAt: 0 }] },
+      ]);
+    }));
+
+    const opening = service.open(RESOURCE);
+    await vi.waitFor(() => {
+      expect(checkAccess).toHaveBeenCalledOnce();
+      expect(readProfile).toHaveBeenCalledOnce();
+    }, { timeout: 1_000 });
+    releaseAuthorization?.();
+    await expect(opening).resolves.toMatchObject({ artifactId: ARTIFACT });
   });
 });
 

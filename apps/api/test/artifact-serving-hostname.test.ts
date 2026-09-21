@@ -443,7 +443,7 @@ describe("artifact serving hostname routes", () => {
       viewerId: "user-1",
       viewerName: "Ada%20Lovelace",
     });
-    expect(checkSession).toHaveBeenCalledWith("secret", 0);
+    expect(checkSession).toHaveBeenCalledWith("secret");
     expect(currentState).not.toHaveBeenCalled();
   });
 
@@ -488,13 +488,13 @@ describe("artifact serving hostname routes", () => {
     warn.mockRestore();
   });
 
-  it("falls back to public without identity after work-stream visibility is lost", async () => {
+  it("falls back to public without identity after its viewer session is revoked", async () => {
     const { env, checkSession, currentState } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
     }, {
-      checkSessionResult: { ok: false, reason: "not_visible" },
+      checkSessionResult: { ok: false, reason: "no_session" },
       currentStateResult: {
         artifactId: ARTIFACT,
         workspaceId: "00000000-0000-7000-8000-0000000000c1",
