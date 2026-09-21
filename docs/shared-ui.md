@@ -152,8 +152,9 @@ all three owners instead.
 **Consequences:** A hierarchy rail cannot independently choose the compact
 position, icon, disabled behavior or ARIA state of its collapse control. New
 leading content must use the primitive's explicit slot; new sidebar-specific
-footer positioning is not part of the contract. The structural variants retain
-the former 54px leading-content footer and 62px toggle-only footer floors.
+footer positioning is not part of the contract. Every footer shares the former
+54px Space/browser height so its controls sit on one vertical centerline across
+the three adjacent desktop rails.
 
 ### 2026-09-21 — Hierarchy title headers keep one identity composition
 
