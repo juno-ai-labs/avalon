@@ -1301,6 +1301,9 @@ export function Sidebar({
   // before anything is sent; the server's answer replaces it when the drag
   // ends. `null` means the pinned list is showing what the server last said.
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  // SpacesSidebar owns the gesture, but every destination picker owns the
+  // promise's optimistic result with it so no sibling surface lags the rail.
+  const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
   const draggingWorkstreamId = useRef<string | null>(null);
   const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const placementDrag = useRef<{ workstreamId: string; dropped: boolean; spaceId: string } | null>(null);
@@ -1413,9 +1416,9 @@ export function Sidebar({
    */
   const placementSpaces = useMemo(() => orderByStoredIds(
     spaces !== undefined && spacesReady ? spaces : [],
-    storedOrderFor(ordering, { kind: 'organization' }),
+    spaceOrderPreview ?? storedOrderFor(ordering, { kind: 'organization' }),
     (space) => space.id,
-  ), [ordering, spaces, spacesReady]);
+  ), [ordering, spaceOrderPreview, spaces, spacesReady]);
   /**
    * Channels this reader can open that none of their visible Spaces holds.
    *
@@ -2028,6 +2031,7 @@ export function Sidebar({
         onCreateSpace={createSpaceFromSidebar}
         onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
+        onOrderPreviewChange={setSpaceOrderPreview}
         onAddChannel={onAddChannelToSpace}
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
@@ -2041,7 +2045,7 @@ export function Sidebar({
         ready={spacesReady}
         outOfDate={spacesOutOfDate}
         selectedSpaceId={selectedSpaceId}
-        spaces={spaces}
+        spaces={placementSpaces}
         workstreams={workstreams}
       />}
       <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
