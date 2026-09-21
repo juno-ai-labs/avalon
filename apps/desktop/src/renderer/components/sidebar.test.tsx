@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { SpaceSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
@@ -658,6 +658,58 @@ describe('Sidebar channel markers', () => {
     expect(row).toHaveClass('sidebar-row', 'workstream-row');
     expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
     expect(row.querySelector('.sidebar-row-hint')).toBeNull();
+  });
+
+  it('adds one history entry when a Space is selected', () => {
+    const hiring = space();
+    function HistoryProbe() {
+      const location = useLocation();
+      const navigate = useNavigate();
+      return <>
+        <output aria-label="Current route">{location.pathname}</output>
+        <button onClick={() => navigate(-1)} type="button">Back</button>
+      </>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/starting-point']}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+            workspace={workspace} workstreams={[]} />
+          <HistoryProbe />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent(`/spaces/${hiring.id}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/starting-point');
+  });
+
+  it('collapses both hierarchy sidebars when the same Channel is re-entered', () => {
+    const hiring = space();
+    const target = placedIn(workstream('route-reset', 'Route reset', 'completed'), hiring.id);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()}
+        spaces={[hiring]} workspace={workspace} workstreams={[target]} />;
+    }
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Navigation />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand spaces' }));
+    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).not.toHaveClass('is-compact');
+    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
+
+    fireEvent.click(screen.getByRole('link', { name: /Route reset/u }));
+    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
+    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).toHaveClass('is-compact');
   });
 
   it('does not start navigation telemetry when the active channel row is clicked again', () => {
@@ -3374,6 +3426,23 @@ describe('the sidebar without a recency list', () => {
       unobserve(): void {}
       disconnect(): void {}
     });
+  });
+
+  it('continues paging until the selected Space has all of its Channels', () => {
+    const hiring = space(undefined, undefined, { channelCount: 2 });
+    const member = placedIn(workstream('first-space-page', 'First page', 'completed'), hiring.id);
+    const onLoadMoreWorkstreams = vi.fn();
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams
+            onLoadMoreWorkstreams={onLoadMoreWorkstreams} onSignOut={vi.fn()} spaces={[hiring]}
+            workspace={workspace} workstreams={[member]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledOnce();
   });
 
   afterEach(() => {

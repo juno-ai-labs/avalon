@@ -202,7 +202,14 @@ export function SpacesSidebar({
             </button>
           </NewWorkstreamMenu>}
         </div>}
-        <nav className="spaces-sidebar-scroll" aria-label="Spaces">
+        {ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
+          Hold Alt and press the Up or Down Arrow key to reorder a space.
+        </p>}
+        <nav
+          aria-describedby={ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
+          aria-label="Spaces"
+          className="spaces-sidebar-scroll"
+        >
           {!ready ? (
             <p className="spaces-sidebar-empty">Rally is opening this organization. Spaces appear once every channel has one.</p>
           ) : spaces.length === 0 ? (
@@ -236,8 +243,10 @@ export function SpacesSidebar({
                     setDragOrder((current) => moveWithin(current ?? orderedSpaces.map((item) => item.id), dragged, index));
                   }}
                   onDragOver={(event) => {
-                    if (!event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)
-                      && !event.dataTransfer.types.includes(SPACE_DRAG_TYPE)) return;
+                    const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
+                    const placesChannel = space.reach !== 'through_channel'
+                      && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE);
+                    if (!reordersSpace && !placesChannel) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
                   }}
@@ -249,7 +258,7 @@ export function SpacesSidebar({
                   }}
                   onDrop={(event) => {
                     const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
-                    if (!workstreamId) return;
+                    if (!workstreamId || space.reach === 'through_channel') return;
                     event.preventDefault();
                     event.stopPropagation();
                     setFailure(null);

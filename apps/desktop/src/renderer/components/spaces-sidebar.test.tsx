@@ -74,6 +74,33 @@ describe('SpacesSidebar', () => {
     expect(onSelect).toHaveBeenCalledWith('launch');
   });
 
+  it('describes the keyboard gesture that reorders Spaces', () => {
+    renderSidebar();
+
+    expect(screen.getByRole('navigation', { name: 'Spaces' }))
+      .toHaveAccessibleDescription('Hold Alt and press the Up or Down Arrow key to reorder a space.');
+  });
+
+  it('does not accept a Channel drop on a read-only Space', () => {
+    const onAddChannel = vi.fn(async () => undefined);
+    const readOnly = { ...space('shared', 'Shared', 1), reach: 'through_channel' as const };
+    renderSidebar({ onAddChannel, spaces: [readOnly] });
+    const row = screen.getByRole('link', { name: 'Shared' });
+    const transfer = {
+      dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-rally-workstream-id' ? 'channel-1' : '',
+      types: ['application/x-rally-workstream-id'],
+    };
+
+    const over = new Event('dragover', { bubbles: true, cancelable: true });
+    Object.defineProperty(over, 'dataTransfer', { value: transfer });
+    row.dispatchEvent(over);
+    fireEvent.drop(row, { dataTransfer: transfer });
+
+    expect(over.defaultPrevented).toBe(false);
+    expect(onAddChannel).not.toHaveBeenCalled();
+  });
+
   it('keeps the square Space marks when compact and can be expanded again', () => {
     const { onCollapsedChange } = renderSidebar({ collapsed: true });
     const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
