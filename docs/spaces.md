@@ -1886,6 +1886,42 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-20 — Archive is available from a live Space row
+
+**What changed:** An editable, non-General Space row opens a context menu whose
+single danger action is **Archive space**. The confirmation keeps its dialog
+open when the write fails, maps named Space refusals through the shared copy,
+and names affected Channels the authority safely returned. General, a Space
+reached only through one of its Channels, and rows still sourced only from the
+local directory cache expose no menu. A compatible sidebar payload that omits
+its optional Space snapshot does not mark those cached rows live; a disconnect
+or a newly opened transport revokes the prior connection's authority until its
+own snapshot arrives. If that happens with confirmation open, the dialog stays
+open, disables its write, and names the reconnect needed rather than ignoring
+the click. The same reconciliation disables the dialog if that Space leaves the
+active directory or becomes reachable only through a Channel while it is open.
+
+**Why:** Archiving was available only after opening the Space dashboard, even
+though the sidebar row is the natural place to act on the container. A direct
+menu mutation with a disappearing error was rejected because a failed request
+would look like a click that did nothing; offering an action before live
+authority or on a protected/read-only row was rejected because Rally controls
+are not suggestions.
+
+**Consequences:** A successful response moves the Space from the active cache
+to the archived cache without duplicating or reordering a socket publication,
+and leaves the Space route when that was the page open. A response older than a
+socket-delivered
+restore, later archive, or authoritative removal from both directories is
+discarded rather than reintroducing stale access or moving newer state across
+directories. Route fallback reads a layout-synchronized pathname when the
+archive answers, so a late response neither replaces navigation made while it
+was pending nor strands the reader on a Space they opened meanwhile. A response
+that returns after its Organization shell unmounts is ignored before touching
+shared caches or navigation; layout cleanup revokes that shell token in the
+same commit rather than waiting for passive effects. Transport and unexpected
+failures use stable action-specific copy rather than raw server text.
+
 ### 2026-09-20 — A Channel placement can be removed where it is shown
 
 **What changed:** A Channel row rendered under a Space now offers **Remove from

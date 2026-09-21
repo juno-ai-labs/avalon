@@ -126,6 +126,7 @@ interface SidebarProps {
   ordering?: PersonalOrder;
   onReorderContainer?: (order: ContainerOrder) => Promise<void>;
   onRestoreSpace?: (spaceId: string) => Promise<void>;
+  onArchiveSpace?: ((spaceId: string) => Promise<void>) | undefined;
   onSignOut: () => void;
 }
 
@@ -1106,6 +1107,7 @@ export function Sidebar({
   ordering = [],
   onReorderContainer = async () => undefined,
   onRestoreSpace = async () => undefined,
+  onArchiveSpace,
   onSignOut,
   hasMoreWorkstreams = false,
   loadingMoreWorkstreams = false,
@@ -1972,6 +1974,7 @@ export function Sidebar({
               inactiveSpaces={inactiveSpaces}
               loading={loading === true}
               onAddChannel={onAddChannelToSpace}
+              onArchive={onArchiveSpace}
               onReorder={onReorderContainer}
               onRestore={onRestoreSpace}
               onRetry={onRetrySpaces}

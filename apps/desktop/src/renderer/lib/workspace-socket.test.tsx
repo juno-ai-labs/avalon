@@ -1200,6 +1200,63 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Caught up while away' })]);
   });
 
+  it('scopes live Space authority between this connection’s open and snapshot', async () => {
+    const queryClient = new QueryClient();
+    function Probe(): JSX.Element {
+      const { sidebarConnect } = useWorkspaceSocket();
+      return <div data-testid="spaces-live">{String(sidebarConnect?.spacesLive ?? false)}</div>;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
+            url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+            ticket: 'workspace-ticket',
+            protocols: socketTicketProtocols('workspace-ticket'),
+          })) }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000018',
+      waterline: 1,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+        automations: { waterline: 0, items: [] },
+        notes: { waterline: 0, items: [] },
+      },
+    }));
+    expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
+
+    act(() => socket.message({
+      type: 'workspace_space_snapshot',
+      occurredAt: '2026-08-17T20:01:00.000Z',
+      spacesReady: true,
+      ordering: [],
+      spaces: {
+        active: { waterline: 1, items: [] },
+        inactive: { waterline: 1, items: [] },
+      },
+    }));
+    expect(screen.getByTestId('spaces-live')).toHaveTextContent('true');
+
+    // The next transport is connected before its subscribe response arrives.
+    // Its open event must revoke the previous transport's snapshot meanwhile.
+    act(() => socket.open());
+    expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
+  });
+
   it('refetches an open automation page when its list row is pushed', async () => {
     const queryClient = new QueryClient();
     const automationId = '00000000-0000-7000-8000-000000000005';
