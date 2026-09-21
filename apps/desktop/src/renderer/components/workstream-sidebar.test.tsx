@@ -71,7 +71,10 @@ describe('WorkstreamSidebar', () => {
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
     expect(sidebar.querySelector('.workstream-context-scroll')).toHaveClass('sidebar-scroll');
-    expect(sidebar.querySelector('.sidebar-title-header-icon')).not.toBeNull();
+    const titleIcon = sidebar.querySelector('.sidebar-title-header-icon');
+    expect(titleIcon?.querySelector('.workstream-mark')).toHaveAttribute('width', '20');
+    expect(titleIcon?.querySelector('.workstream-mark')).toHaveAttribute('height', '20');
+    expect(titleIcon?.nextElementSibling).toBe(within(sidebar).getByRole('heading', { name: 'Launch preparation' }));
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel sidebar',

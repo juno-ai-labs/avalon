@@ -2125,6 +2125,10 @@ describe('Sidebar channel markers', () => {
     expect(screen.getByRole('heading', { name: 'General' })).toHaveClass('sidebar-title');
     const header = screen.getByRole('heading', { name: 'General' }).closest('.sidebar-header');
     expect(header).toHaveClass('sidebar-row');
+    const titleIcon = header?.querySelector('.sidebar-title-header-icon');
+    expect(titleIcon?.querySelector('svg')).toHaveAttribute('width', '20');
+    expect(titleIcon?.querySelector('svg')).toHaveAttribute('height', '20');
+    expect(titleIcon?.nextElementSibling).toBe(screen.getByRole('heading', { name: 'General' }));
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(screen.getByRole('navigation', { name: 'Channels' })).toHaveClass('sidebar-scroll');
     expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
