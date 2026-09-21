@@ -29,7 +29,7 @@ shows a loading state before offering sign-in.
 
 ## How it works
 
-Conversation archive state is part of the existing shared-directory response.
+Conversation archive state is part of the shared-navigation response.
 The selected feed opens immediately while navigation loads; it has no separate
 lifecycle preflight. Archive and restore refresh that same directory query.
 
@@ -127,11 +127,15 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-The shared navigation uses the same navigation frame, workstream rows, contextual
-sidebar, header, resource rows, Sidekick controls and account trigger as desktop,
-from `@rally/ui`. Only authorized directory entries are supplied. Child-only shares
-omit Main and its title. Workspace identity uses the existing account/badge treatment;
-no workspace icon/color settings are introduced. The browser does not install desktop
+The shared navigation uses the same adjacent Space and Channel rails, contextual
+Channel sidebar, header, resource rows, Sidekick controls and account trigger as
+desktop, from `@rally/ui`. The browser's versioned navigation directory contains
+only Space marks and containment edges for Channels that their canonical
+WorkstreamDO has independently re-authorized. A child-only share names its Channel
+so the Breakout can be placed correctly, but still omits Main and every unshared
+Breakout. Selecting a Space filters the Channel rail and opens its first authorized
+conversation. Workspace identity uses the existing account/badge treatment; no
+workspace icon/color settings are introduced. The browser does not install desktop
 background subscriptions. See [shared UI](shared-ui.md).
 
 ### Shared collaboration transport
@@ -361,12 +365,12 @@ mutation. A failed rename keeps its draft and shows the API error; success close
 the dialog and refreshes shared navigation. Guest Main renames use the same
 exact-conversation route as child renames, without requiring full membership.
 
-The shared-directory response carries both parent and conversation archive state.
+The shared-navigation response carries both parent and conversation archive state.
 There is no separate lifecycle preflight. An independently archived child under an
 active parent offers Restore substream outside the feed. An archived parent shows
 Archived work stream and explains that its work stream must be restored first;
 it never sends a child restore for Main or for a parent-archived child.
-Archive/restore uses the existing child mutation and refreshes the directory.
+Archive/restore uses the existing child mutation and refreshes shared navigation.
 
 Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
@@ -378,6 +382,29 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-21 — Put guest Channels in their Spaces
+
+**What changed:** The browser's shared navigation now returns the minimal Space
+mark and containment edges for canonically authorized Channels, and renders an
+adjacent Space rail before the Channel rail. Child-only shares carry their
+Channel name while Main and unshared Breakouts remain absent.
+
+**Why:** A guest shared into Breakouts under Channels in two different Spaces
+received both conversations but saw one flat Channel list. That lost the
+Organization's navigation hierarchy and made it impossible to tell which
+Channels belonged to the selected Space.
+
+**Considered and rejected:** Extending the existing strict `/sharing/directory`
+response in place would make already-deployed browser bundles reject the new
+fields. Deriving Space placement in the browser would either require the member
+directory or duplicate authority outside WorkspaceDO.
+
+**Consequences:** `/sharing/navigation` is a separately versioned browser read;
+the compatibility directory remains unchanged. The WorkspaceDO accepts only
+current scope-grant candidates and returns no Space participants, defaults,
+scope or lifecycle fields. The final service response is still fenced by the
+guest relationship revision.
 
 ### 2026-09-19 — Fill in the mailbox an opaque invitation was sent to
 
