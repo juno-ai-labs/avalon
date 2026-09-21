@@ -1012,6 +1012,7 @@ pre {
 }
 .spaces-sidebar {
   --spaces-sidebar-motion: var(--sidebar-collapse-motion);
+  --sidebar-layout-motion: var(--spaces-sidebar-motion);
   background: var(--av-cmp-sidebar-background);
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
   bottom: 0;
@@ -5857,16 +5858,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    opt-in layer over the existing components: the data and interaction
    contracts stay shared, while the main work-stream surface owns the new
    visual hierarchy. */
-/* Above the scroll box, so search stays at the top however far the list is
-   scrolled. Two tracks: the search row, and under it the slot the rail's New
-   chat row takes. Both tracks are numbers in both layouts so the slot opens
-   and closes over the layout motion rather than the bar growing by a row in
-   the frame React inserts one; the row itself arrives and leaves through the
-   list motion, which draws a removed row's stand-in in this box — hence
-   positioned. */
+/* Above the scroll box, so search stays fixed however far the list is
+   scrolled. The rail's New channel control always owns row one and Search
+   always owns row two. Growing the first track carries Search down
+   continuously while list motion brings the New channel control in from the
+   side; the removed row's stand-in is drawn in this positioned box. */
 .sidebar-commandbar {
   display: grid;
-  grid-template-rows: 32px 0px;
+  grid-template-rows: 0px 32px;
   padding: 4px 12px var(--av-sys-space-group-gap);
   position: relative;
   transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
@@ -5919,6 +5918,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    ends 17.5px in — centred in the square by padding, so it never jumps to a
    different alignment at the end. */
 .sidebar-commandbar .sidebar-search {
+  grid-row: 2;
   overflow: hidden;
   transition: background-color var(--sidebar-layout-motion), box-shadow var(--sidebar-layout-motion), gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
@@ -6181,6 +6181,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    has already gone, and the copy has to still look like the row. */
 .sidebar-rail-new-button {
   border-radius: 10px;
+  grid-row: 1;
   height: 54px;
   padding: 9px;
   width: 54px;
