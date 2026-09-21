@@ -1,4 +1,5 @@
-import { IconRestore } from '@tabler/icons-react';
+import { IconArchive, IconRestore } from '@tabler/icons-react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import clsx from 'clsx';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -12,7 +13,7 @@ import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/compone
 
 import { compareWorkstreamRecency } from '../lib/format';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { spaceFailureSentence } from '../lib/space-failure-copy';
+import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { Button, IconButton, InlineError, Modal } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamRowDrag } from './sidebar';
@@ -73,6 +74,8 @@ interface SpaceSidebarSectionProps {
   /** Every list this person has arranged, including the two drawn here. */
   ordering: PersonalOrder;
   onRestore: (spaceId: string) => Promise<void>;
+  /** Omitted until this device has a live Space directory to mutate. */
+  onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   /**
    * The Organization's Channel list is paged, and an expanded Space is the one
    * surface that can say the page in hand is not enough.
@@ -126,6 +129,7 @@ export function SpaceSidebarSection({
   onReorder,
   ordering,
   onRestore,
+  onArchive,
   hasMoreChannels,
   loadingMoreChannels,
   onLoadMoreChannels,
@@ -141,6 +145,22 @@ export function SpaceSidebarSection({
   const [expansion, setExpansion] = useState<Record<string, boolean>>({});
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<SpaceSummary | null>(null);
+  const [archiveFailure, setArchiveFailure] = useState<string | null>(null);
+  const [archiveSaving, setArchiveSaving] = useState(false);
+  const currentArchiveTarget = archiveTarget === null
+    ? null
+    : spaces.find((space) => space.id === archiveTarget.id) ?? null;
+  const archiveUnavailableSentence = archiveTarget === null
+    ? null
+    : onArchive === undefined
+      ? 'The space directory is unavailable. Reconnect and try again.'
+      : currentArchiveTarget === null
+          || currentArchiveTarget.reach === 'through_channel'
+          || currentArchiveTarget.systemRole === 'general'
+        ? 'This space is no longer available to archive.'
+        : null;
+  const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
   const [sectionFailure, setSectionFailure] = useState<string | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
@@ -217,6 +237,30 @@ export function SpaceSidebarSection({
     lastAutomaticPage.current = expandedPageKey;
     onLoadMoreChannels?.();
   }, [expandedPageKey, expandedShortOfPages, hasMoreChannels, loadingMoreChannels, onLoadMoreChannels]);
+
+  const closeArchive = (): void => {
+    if (archiveSaving) return;
+    setArchiveTarget(null);
+    setArchiveFailure(null);
+    setBlockedChannelIds([]);
+  };
+
+  const submitArchive = async (): Promise<void> => {
+    if (archiveTarget === null || onArchive === undefined
+      || archiveUnavailableSentence !== null || archiveSaving) return;
+    setArchiveSaving(true);
+    setArchiveFailure(null);
+    setBlockedChannelIds([]);
+    try {
+      await onArchive(archiveTarget.id);
+      setArchiveTarget(null);
+    } catch (cause) {
+      setBlockedChannelIds(spaceRefusalChannelIds(cause));
+      setArchiveFailure(spaceFailureSentence(cause, 'The space could not be archived.'));
+    } finally {
+      setArchiveSaving(false);
+    }
+  };
 
   const commit = async (ids: string[]): Promise<void> => {
     setDragOrder(ids);
@@ -411,6 +455,20 @@ export function SpaceSidebarSection({
               return (
                 <SpaceRow
                   active={active}
+                  {...(!readOnly && space.systemRole !== 'general' && onArchive !== undefined ? {
+                    contextMenu: (
+                      <ContextMenu.Item
+                        className="menu-item menu-item-danger"
+                        onSelect={() => {
+                          setArchiveFailure(null);
+                          setBlockedChannelIds([]);
+                          setArchiveTarget(space);
+                        }}
+                      >
+                        <IconArchive aria-hidden="true" size={16} stroke={1.8} /> Archive space
+                      </ContextMenu.Item>
+                    ),
+                  } : {})}
                   drag={{
                     // Escape, or a release outside the section, must not be the
                     // same thing as finishing the drag: the arrangement built
@@ -548,6 +606,31 @@ export function SpaceSidebarSection({
         )}
         {sectionFailure && <InlineError>{sectionFailure}</InlineError>}
       </section>
+      <Modal
+        footer={<>
+          <Button disabled={archiveSaving} onClick={closeArchive}>Cancel</Button>
+          <Button
+            className="button-danger"
+            disabled={archiveSaving || archiveUnavailableSentence !== null}
+            onClick={() => void submitArchive()}
+          >Archive space</Button>
+        </>}
+        onOpenChange={(open) => { if (!open) closeArchive(); }}
+        open={archiveTarget !== null}
+        title="Archive space?"
+      >
+        <p>Its channels keep the resources and Sidekicks they already have, and stay in every other space they belong to. A channel whose only space is this one has to be moved first.</p>
+        {archiveUnavailableSentence
+          ? <InlineError>{archiveUnavailableSentence}</InlineError>
+          : archiveFailure && <InlineError>{archiveFailure}</InlineError>}
+        {blockedChannelIds.length > 0 && (
+          <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
+            {blockedChannelIds.map((id) => (
+              <li key={id}>{workstreams.find((workstream) => workstream.id === id)?.title ?? 'A channel not loaded on this device'}</li>
+            ))}
+          </ul>
+        )}
+      </Modal>
       <Modal
         footer={<Button onClick={() => { setRestoreFailed(false); setRecoveryOpen(false); }}>Cancel</Button>}
         onOpenChange={(open) => { if (!open) setRestoreFailed(false); setRecoveryOpen(open); }}

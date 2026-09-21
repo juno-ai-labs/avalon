@@ -1,23 +1,82 @@
+import { render } from '@testing-library/react';
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { SpaceSummarySchema } from '@rally/contracts';
+import { SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
+import { useLayoutEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
+import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
+  applyArchivedSpace,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
+  archiveSpaceMutationHandler,
   channelSpaceMutationHandlers,
+  hasLiveSpaceArchiveAuthority,
   invitationAccountMismatch,
   spacesEnabledForSession,
+  useLayoutMountedRef,
+  useLatestCommittedValue,
   upsertSpaceDirectory,
   windowControlsShellClass,
   batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
+
+describe('hasLiveSpaceArchiveAuthority', () => {
+  const liveConnect = { generation: 1, nextCursor: null, spacesLive: true };
+
+  it('requires both a live Space snapshot and a currently connected socket', () => {
+    expect(hasLiveSpaceArchiveAuthority('connected', liveConnect)).toBe(true);
+    expect(hasLiveSpaceArchiveAuthority('connected', { ...liveConnect, spacesLive: false })).toBe(false);
+    expect(hasLiveSpaceArchiveAuthority('reconnecting', liveConnect)).toBe(false);
+    expect(hasLiveSpaceArchiveAuthority('unavailable', liveConnect)).toBe(false);
+  });
+});
+
+describe('useLatestCommittedValue', () => {
+  it('publishes a new route before later layout work can observe the commit', () => {
+    let observed = '';
+    function Probe({ pathname }: { pathname: string }): null {
+      const currentPathname = useLatestCommittedValue(pathname);
+      useLayoutEffect(() => {
+        observed = currentPathname.current;
+      }, [currentPathname, pathname]);
+      return null;
+    }
+
+    const view = render(<Probe pathname="/spaces/old" />);
+    view.rerender(<Probe pathname="/workstreams/new" />);
+
+    expect(observed).toBe('/workstreams/new');
+  });
+});
+
+describe('useLayoutMountedRef', () => {
+  it('revokes the token before parent layout work observes the unmount commit', () => {
+    let mountedRef: React.RefObject<boolean> | null = null;
+    let observedAfterUnmount = true;
+    function Child(): null {
+      mountedRef = useLayoutMountedRef();
+      return null;
+    }
+    function Probe({ show }: { show: boolean }): React.JSX.Element | null {
+      useLayoutEffect(() => {
+        if (!show) observedAfterUnmount = mountedRef?.current ?? true;
+      }, [show]);
+      return show ? <Child /> : null;
+    }
+
+    const view = render(<Probe show />);
+    view.rerender(<Probe show={false} />);
+
+    expect(observedAfterUnmount).toBe(false);
+  });
+});
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
 const space = SpaceSummarySchema.parse({
@@ -122,6 +181,185 @@ describe('upsertSpaceDirectory', () => {
       waterline: 4,
       items: [space],
     });
+  });
+});
+
+describe('applyArchivedSpace', () => {
+  const archived = SpaceSummarySchema.parse({ ...space, status: 'archived', revision: 2 });
+
+  it('moves the response between directories exactly once and leaves its open route', () => {
+    const queryClient = new QueryClient();
+    const newerArchive = SpaceSummarySchema.parse({
+      ...space,
+      id: '00000000-0000-7000-8000-0000000000f3',
+      name: 'Onboarding',
+      status: 'archived',
+      revision: 3,
+    });
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 5, items: [space] });
+    // This archive and then another one may publish before the REST response.
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, {
+      waterline: 7,
+      items: [newerArchive, archived],
+    });
+    const openFirstWorkstream = vi.fn();
+
+    applyArchivedSpace(queryClient, archived, `/spaces/${space.id}/participants`, openFirstWorkstream);
+
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)).toEqual({ waterline: 5, items: [] });
+    expect(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)).toEqual({
+      waterline: 7,
+      items: [newerArchive, archived],
+    });
+    expect(openFirstWorkstream).toHaveBeenCalledOnce();
+  });
+
+  it('does not move the route when another Space is open', () => {
+    const openFirstWorkstream = vi.fn();
+
+    applyArchivedSpace(new QueryClient(), archived, '/workstreams/new', openFirstWorkstream);
+
+    expect(openFirstWorkstream).not.toHaveBeenCalled();
+  });
+
+  it('preserves a newer socket-delivered restore when the archive response arrives late', () => {
+    const queryClient = new QueryClient();
+    const restored = SpaceSummarySchema.parse({ ...space, revision: archived.revision + 1 });
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 9, items: [restored] });
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, { waterline: 9, items: [] });
+    const openFirstWorkstream = vi.fn();
+
+    expect(applyArchivedSpace(
+      queryClient,
+      archived,
+      `/spaces/${space.id}`,
+      openFirstWorkstream,
+    )).toBe(false);
+
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)).toEqual({
+      waterline: 9,
+      items: [restored],
+    });
+    expect(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)).toEqual({
+      waterline: 9,
+      items: [],
+    });
+    expect(openFirstWorkstream).not.toHaveBeenCalled();
+  });
+
+  it('leaves the route while preserving a newer socket-delivered re-archive', () => {
+    const queryClient = new QueryClient();
+    const rearchived = SpaceSummarySchema.parse({ ...archived, revision: archived.revision + 2 });
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 11, items: [] });
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, { waterline: 11, items: [rearchived] });
+    const openFirstWorkstream = vi.fn();
+
+    expect(applyArchivedSpace(
+      queryClient,
+      archived,
+      `/spaces/${space.id}/participants`,
+      openFirstWorkstream,
+    )).toBe(false);
+
+    expect(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)).toEqual({
+      waterline: 11,
+      items: [rearchived],
+    });
+    expect(openFirstWorkstream).toHaveBeenCalledOnce();
+  });
+});
+
+describe('archiveSpaceMutationHandler', () => {
+  const archived = SpaceSummarySchema.parse({ ...space, status: 'archived', revision: 2 });
+
+  it.each([
+    {
+      start: `/spaces/${space.id}`,
+      current: '/workstreams/new',
+      expectedRedirects: 0,
+      label: 'does not replace a route selected while the request was pending',
+    },
+    {
+      start: '/workstreams/new',
+      current: `/spaces/${space.id}`,
+      expectedRedirects: 1,
+      label: 'leaves the archived Space when it became current while the request was pending',
+    },
+  ])('$label', async ({ start, current, expectedRedirects }) => {
+    let finishArchive!: (value: typeof archived) => void;
+    const api = {
+      archiveSpace: vi.fn(() => new Promise<typeof archived>((resolve) => { finishArchive = resolve; })),
+    };
+    let pathname = start;
+    const openFirstWorkstream = vi.fn();
+    const archive = archiveSpaceMutationHandler(
+      api,
+      new QueryClient(),
+      () => pathname,
+      openFirstWorkstream,
+    );
+
+    const pending = archive(space.id);
+    pathname = current;
+    finishArchive(archived);
+    await pending;
+
+    expect(openFirstWorkstream).toHaveBeenCalledTimes(expectedRedirects);
+  });
+
+  it('preserves a socket removal from both directories while the request is pending', async () => {
+    let finishArchive!: (value: typeof archived) => void;
+    const api = {
+      archiveSpace: vi.fn(() => new Promise<typeof archived>((resolve) => { finishArchive = resolve; })),
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 8, items: [space] });
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, { waterline: 8, items: [] });
+    const openFirstWorkstream = vi.fn();
+    const archive = archiveSpaceMutationHandler(
+      api,
+      queryClient,
+      () => `/spaces/${space.id}`,
+      openFirstWorkstream,
+    );
+
+    const pending = archive(space.id);
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 9, items: [] });
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, { waterline: 9, items: [] });
+    finishArchive(archived);
+    await pending;
+
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)).toEqual({ waterline: 9, items: [] });
+    expect(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)).toEqual({ waterline: 9, items: [] });
+    expect(openFirstWorkstream).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a completion after its Organization shell unmounts', async () => {
+    let finishArchive!: (value: typeof archived) => void;
+    const api = {
+      archiveSpace: vi.fn(() => new Promise<typeof archived>((resolve) => { finishArchive = resolve; })),
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, { waterline: 4, items: [space] });
+    queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, { waterline: 4, items: [] });
+    const openFirstWorkstream = vi.fn();
+    let shellMounted = true;
+    const archive = archiveSpaceMutationHandler(
+      api,
+      queryClient,
+      () => `/spaces/${space.id}`,
+      openFirstWorkstream,
+      () => shellMounted,
+    );
+
+    const pending = archive(space.id);
+    shellMounted = false;
+    finishArchive(archived);
+    await pending;
+
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)).toEqual({ waterline: 4, items: [space] });
+    expect(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)).toEqual({ waterline: 4, items: [] });
+    expect(openFirstWorkstream).not.toHaveBeenCalled();
   });
 });
 
