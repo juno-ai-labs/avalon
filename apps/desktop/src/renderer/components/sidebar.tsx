@@ -6,6 +6,7 @@ import {
   ResizableSidebar,
   SidebarHeader,
   SidebarHorizontalLine,
+  SidebarList,
   SidebarRow,
   SidebarScroll,
   SidebarTitleHeader,
@@ -2244,7 +2245,7 @@ export function Sidebar({
               <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>
-              <div className="sidebar-list">
+              <SidebarList>
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     {...workstreamRowActions}
@@ -2260,7 +2261,7 @@ export function Sidebar({
                     workstream={pinned}
                   />
                 ))}
-              </div>
+              </SidebarList>
               <SidebarHorizontalLine className="pinned-section-line" />
             </section>
           )}
@@ -2319,7 +2320,7 @@ export function Sidebar({
                 /* The selected Space above is the heading for this rail. A
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
-                <div className="sidebar-list" data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined} data-reorder-list="">
+                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined} data-reorder-list="">
                   {placementFailure === selectedSpaceId && <InlineError>The channels in that space couldn’t be reordered.</InlineError>}
                   {unpinnedWorkstreams.map((workstream, index) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
@@ -2328,7 +2329,7 @@ export function Sidebar({
                       selectedSpaceId ?? undefined,
                     )}</Fragment>
                   ))}
-                </div>
+                </SidebarList>
               )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only
@@ -2383,7 +2384,7 @@ export function Sidebar({
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
                   </div>
-                  <div className="sidebar-list">
+                  <SidebarList>
                     {group.streams.map((item) => (
                       <WorkstreamRow
                         {...workstreamRowActions}
@@ -2395,7 +2396,7 @@ export function Sidebar({
                         workstream={item.workstream}
                       />
                     ))}
-                  </div>
+                  </SidebarList>
                 </div>
               ))
             )}

@@ -33,6 +33,10 @@ type SidebarScrollProps<Component extends ElementType> = {
   scrollRef?: Ref<HTMLElement>;
 } & ComponentPropsWithoutRef<Component>;
 
+type SidebarListProps<Component extends ElementType> = {
+  as?: Component;
+} & ComponentPropsWithoutRef<Component>;
+
 /** One interactive or presentational row in any hierarchy sidebar. */
 export function SidebarRow<Component extends ElementType = 'button'>(
   props: SidebarRowProps<Component>,
@@ -54,6 +58,15 @@ export function SidebarScroll<Component extends ElementType = 'div'>(
   const { as, className, scrollRef, ...rest } = props;
   const Scroll: ElementType = as ?? 'div';
   return <Scroll {...rest} className={clsx('sidebar-scroll', className)} ref={scrollRef} />;
+}
+
+/** One vertical list rhythm shared by every hierarchy sidebar. */
+export function SidebarList<Component extends ElementType = 'div'>(
+  props: SidebarListProps<Component>,
+): React.JSX.Element {
+  const { as, className, ...rest } = props;
+  const List: ElementType = as ?? 'div';
+  return <List {...rest} className={clsx('sidebar-list', className)} />;
 }
 
 /** The shared title row and divider at the top of a hierarchy sidebar. */

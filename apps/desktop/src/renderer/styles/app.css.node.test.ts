@@ -441,6 +441,14 @@ describe('sidebar layout motion', () => {
     expect(stylesheet).not.toContain('.app-shell .sidebar-scroll { padding-top: 0; }');
   });
 
+  it('keeps one row gap in every hierarchy sidebar at both widths', () => {
+    expect(rule('.sidebar-list')).toContain('gap: var(--av-sys-space-row-gap);');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-list')).toBeNull();
+    expect(rule('.spaces-sidebar-scroll')).toBeNull();
+    expect(rule('.workstream-substream-list')).toBeNull();
+    expect(rule('.space-sidebar-workstreams')).not.toContain('gap:');
+  });
+
   // The rows travel on the box's own interval, restated once on the sidebar so
   // a drag — which snaps the edge to the pointer — turns every one of them off
   // with one override rather than a rule per shape.
