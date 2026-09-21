@@ -44,14 +44,14 @@ describe('sidebarConstraintThreshold', () => {
       spacesSidebarWidth: 280,
       spacesCollapsed: true,
       spacesEnabled: true,
-    })).toBe(896);
+    })).toBe(880);
     expect(sidebarConstraintThreshold({
       pathname: '/workstreams/launch',
       sidebarWidth: 280,
       spacesSidebarWidth: 280,
       spacesCollapsed: false,
       spacesEnabled: false,
-    })).toBe(800);
+    })).toBe(792);
   });
 });
 
@@ -60,11 +60,11 @@ describe('spacesSidebarAvailableWidth', () => {
     expect(spacesSidebarAvailableWidth({
       pathname: '/workstreams/launch',
       viewportWidth: 850,
-    })).toBe(234);
+    })).toBe(250);
     expect(spacesSidebarAvailableWidth({
       pathname: '/spaces/hiring',
       viewportWidth: 850,
-    })).toBe(330);
+    })).toBe(338);
   });
 });
 

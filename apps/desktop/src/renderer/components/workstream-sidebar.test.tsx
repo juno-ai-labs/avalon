@@ -55,7 +55,7 @@ describe('WorkstreamSidebar', () => {
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
     expect(sidebar.querySelector('.workstream-context-scroll')).toHaveClass('sidebar-scroll');
-    expect(sidebar.querySelector('.workstream-context-toolbar-mark')).not.toBeNull();
+    expect(sidebar.querySelector('.sidebar-title-header-icon')).not.toBeNull();
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel sidebar',
@@ -85,7 +85,7 @@ describe('WorkstreamSidebar', () => {
     expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
     expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
     fireEvent.doubleClick(edge);
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.doubleClick(edge);
     expect(edge).toHaveAttribute('aria-valuenow', '280');
   });
@@ -109,7 +109,7 @@ describe('WorkstreamSidebar', () => {
 
     expect(sidebar).not.toHaveClass('is-resizing');
     fireEvent.doubleClick(edge);
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     expect(sidebar).not.toHaveClass('is-resizing');
   });
 
@@ -133,7 +133,7 @@ describe('WorkstreamSidebar', () => {
     const view = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    expect(screen.getByRole('complementary').querySelector('.workstream-context-toolbar-mark .workstream-mark')).not.toBeNull();
+    expect(screen.getByRole('complementary').querySelector('.sidebar-title-header-icon .workstream-mark')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
@@ -377,12 +377,12 @@ describe('WorkstreamSidebar', () => {
     const edge = screen.getByRole('separator', { name: 'Resize channel sidebar' });
 
     fireEvent.keyDown(edge, { key: 'Enter' });
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(edge, { key: 'Enter' });
     expect(edge).toHaveAttribute('aria-valuenow', '280');
 
     act(() => { width = 703; resized(); });
-    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(edge).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(edge, { key: 'Enter' });
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBe('false');
   });
@@ -501,9 +501,9 @@ describe('WorkstreamSidebar', () => {
     handle.setPointerCapture = vi.fn();
     fireEvent.pointerDown(handle, { clientX: 560, pointerId: 1, button: 0 });
     fireEvent.pointerMove(handle, { clientX: 489, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.pointerMove(handle, { clientX: 499, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     fireEvent.pointerCancel(handle, { pointerId: 1 });
@@ -521,7 +521,7 @@ describe('WorkstreamSidebar', () => {
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '400');
     act(() => { width = 700; resized(); });
-    expect(handle).toHaveAttribute('aria-valuenow', '96');
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });

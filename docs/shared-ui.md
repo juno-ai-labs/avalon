@@ -130,18 +130,25 @@ component test runner is needed for the same implementations.
 **What changed:** The Space, Channel, and Breakout sidebars now compose one
 shared `ResizableSidebar` shell. Each keeps its own content and remembered
 expanded width, while the shell owns their compact/resizing states, motion
-channel, 96px compact width, 240–400px expanded range, 210/220px collapse
+channel, 88px compact width, 240–400px expanded range, 210/220px collapse
 hysteresis, grip, drag guide, tooltip, keyboard controls, and double-click
 toggle. `SidebarHeader`, `SidebarTitle`, `SidebarRow`, `SidebarScroll`, and
 `SidebarHorizontalLine` now provide the geometry inside that shell. A
-`SidebarHeader` is itself a 54px `SidebarRow` followed by a
-`SidebarHorizontalLine`, so header marks and the rows beneath them share the
-same expanded and compact alignment instead of approximating it with a border;
+`SidebarHeader` is a 43px specialization of `SidebarRow` followed by a
+`SidebarHorizontalLine`, matching the message feed's 44px titlebar as a whole.
+`SidebarTitleHeader` owns the title and its shared 28px compact icon as one
+substitution, so header marks stay smaller than the 36px navigation-row marks
+beneath them;
 `SidebarScroll` gives every rail the same 8px divider-to-first-row gap and the
 same compact gutters. The desktop and browser hosts consume these primitives.
 Space, Channel, and Breakout rows also pass their icon, title, optional detail,
 and host-owned interaction through `SidebarNavigationRowContent`, so their icon
 slot, copy sizing, clipping, and compact motion cannot diverge in local CSS.
+The leftmost Space rail intentionally leaves the shared header title empty so
+the macOS window controls and trailing create action have a clear titlebar.
+The 88px compact width centers the native traffic-light group: its first button
+starts 18px from the left and its last button ends 18px from the right. The
+Channel and Breakout rails consume that same width.
 Before the first
 rail expands or resizes, the desktop shell now caps it to the width left after
 the protected conversation and compact Channel and Breakout rails.
