@@ -74,7 +74,19 @@ export function SiteResourceDetail({
   surface,
 }: SiteResourceDetailProps): React.JSX.Element {
   const paneRef = React.useRef<HTMLDivElement | null>(null);
-  const [access, setAccess] = React.useState<SiteArtifactAccess | null>(null);
+  const initialAccessRef = React.useRef<{
+    resourceId: string;
+    openArtifact: SiteResourceDetailProps['openArtifact'];
+    promise: Promise<SiteArtifactAccess>;
+  } | null>(null);
+  const previewAccessRef = React.useRef<SiteArtifactAccess | null>(null);
+  const [loadedAccess, setLoadedAccess] = React.useState<{
+    resourceId: string;
+    value: SiteArtifactAccess;
+  } | null>(null);
+  // A prop switch renders before passive-effect cleanup can reset state. Never
+  // let the previous resource's access participate in that intermediate render.
+  const access = loadedAccess?.resourceId === resourceId ? loadedAccess.value : null;
   const [accessError, setAccessError] = React.useState<string | null>(null);
   /**
    * Tri-state on purpose: `null` means the view has not been asked for yet.
@@ -108,12 +120,13 @@ export function SiteResourceDetail({
     [openArtifact, resourceId],
   );
 
-  // Once per artifact, for what the detail renders from — the canonical URL,
-  // the mode, and whether it keeps data. The code this also mints is not the
-  // one any navigation uses; `mintAccess` gets a fresh one at the click.
+  // Once per artifact, for both the initial preview navigation and the metadata
+  // the detail renders. Later navigations mint their own code because this
+  // response's code is spent by the preview.
   React.useEffect(() => {
     let cancelled = false;
-    setAccess(null);
+    previewAccessRef.current = null;
+    setLoadedAccess(null);
     setAccessError(null);
     setPreviewShown(null);
     // The data view goes with it. This element is not keyed on the resource, so
@@ -123,8 +136,17 @@ export function SiteResourceDetail({
     // with no way back to the page.
     setShowingData(false);
 
-    void openArtifact(resourceId)
-      .then((result) => { if (!cancelled) setAccess(result); })
+    let request = initialAccessRef.current;
+    if (request?.resourceId !== resourceId || request.openArtifact !== openArtifact) {
+      request = { resourceId, openArtifact, promise: openArtifact(resourceId) };
+      initialAccessRef.current = request;
+    }
+    void request.promise
+      .then((result) => {
+        if (cancelled) return;
+        previewAccessRef.current = result;
+        setLoadedAccess({ resourceId, value: result });
+      })
       .catch((error: unknown) => {
         if (!cancelled) setAccessError(error instanceof Error ? error.message : 'Could not open this site.');
       });
@@ -178,11 +200,14 @@ export function SiteResourceDetail({
     const bounds = measure();
     if (!bounds) return undefined;
     let cancelled = false;
-    void mintAccess()
+    const initialNavigation = previewAccessRef.current === access;
+    const navigation = initialNavigation ? Promise.resolve(access) : mintAccess();
+    if (initialNavigation) previewAccessRef.current = null;
+    void navigation
       .then(async (navigation) => {
-        // Minting crosses the API and can finish after a work-stream switch has
-        // unmounted this detail. Its cleanup has already closed the native view
-        // by then, so presenting here would resurrect an ownerless old preview.
+        // Opening or minting can finish after a Channel switch has unmounted
+        // this detail. Its cleanup has already closed the native view by then,
+        // so presenting here would resurrect an ownerless old preview.
         if (cancelled) return false;
         return await surface.present({
           artifactId: navigation.artifactId,
