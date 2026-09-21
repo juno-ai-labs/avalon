@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import { SpaceColorKeySchema, SpaceIconKeySchema, SpaceIdSchema } from "./spaces";
 
 /** Guest is a workspace relationship, never a different kind of user identity. */
 export const WorkspaceAccessClassSchema = z.enum(["member", "guest"]);
@@ -181,13 +182,37 @@ export const SharedWorkstreamRequestSchema = z.strictObject({
 });
 export const SharedWorkstreamSchema = z.strictObject({
   parentId: IdSchema,
-  // Main supplies the parent title; a child-only share does not expose it.
+  // The Channel is the navigation parent even when only one Breakout is shared.
   title: z.string().nullable(),
   appearance: WorkstreamAppearanceSchema.optional(),
   archived: z.boolean().optional(),
   conversations: z.array(z.strictObject({ substreamId: SubstreamIdSchema, title: z.string(), archived: z.boolean() })),
 });
 export const SharedDirectorySchema = z.strictObject({ workstreams: z.array(SharedWorkstreamSchema) });
+
+/** The smallest Space projection needed to place shared Channels in browser navigation. */
+export const SharedNavigationSpaceSchema = z.strictObject({
+  id: SpaceIdSchema,
+  name: z.string().trim().min(1),
+  iconKey: SpaceIconKeySchema,
+  colorKey: SpaceColorKeySchema,
+  workstreamIds: z.array(IdSchema),
+});
+export type SharedNavigationSpace = z.infer<typeof SharedNavigationSpaceSchema>;
+
+/** Versioned separately from SharedDirectorySchema so strict older clients keep parsing. */
+export const SharedNavigationDirectorySchema = z.strictObject({
+  spaces: z.array(SharedNavigationSpaceSchema),
+  workstreams: z.array(SharedWorkstreamSchema),
+});
+export type SharedNavigationDirectory = z.infer<typeof SharedNavigationDirectorySchema>;
+
+export const SharedNavigationSpacesRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  userId: UserIdSchema,
+  membershipIncarnation: z.string().min(1),
+  workstreamIds: z.array(IdSchema),
+});
 
 
 export const ListScopeInvitationsSchema = z.strictObject({

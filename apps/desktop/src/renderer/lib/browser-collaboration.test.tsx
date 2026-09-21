@@ -7,6 +7,7 @@ import BrowserConversation from '../../../../browser/src/conversation';
 const user={id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',email:'guest@example.test',name:'Guest',avatarUrl:null,timezone:'UTC',createdAt:'2026-09-17T00:00:00.000Z'};
 const workspace={id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',name:'Design team',slug:'design',region:'global' as const,accessClass:'guest' as const,role:null,timezone:'UTC',createdAt:'2026-09-17T00:00:00.000Z'};
 const parent='cccccccc-cccc-4ccc-8ccc-cccccccccccc',child='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const otherParent='11111111-1111-4111-8111-111111111111',otherChild='22222222-2222-4222-8222-222222222222';
 const at='2026-09-17T00:00:00.000Z';
 const snapshot={type:'snapshot',reason:'initial',sequence:1,occurredAt:at,workstream:{id:parent,workspaceId:workspace.id,title:'Shared child conversation',objective:'Collaborate in the shared child',createdByUserId:null,harnessStatus:'completed',latestAttentionSequenceNumber:0,readThroughSequenceNumber:0,manualUnreadFromSequenceNumber:null,manualUnreadGeneration:0,hasUnread:false,firstUnreadSequenceNumber:null,lastActivityAt:at,createdAt:at,updatedAt:at,archivedAt:null,participants:[{user,participationReason:'explicit',joinedAt:at}],viewers:[],resources:[],connections:[],openElicitations:[],latestHarnessRunId:null},transcript:{snapshotId:'00000000-0000-7000-8000-000000000777',snapshotThrough:0,eventSequence:0,snapshotAtUtc:at,unreadAnchorSequence:null,unreadReason:'no_unread',ranges:[],activities:[],activeActivities:[],pluginRuns:[],activeTurns:[],pendingInputs:[]},pendingInputChunkCount:0,initialContextChunkCount:0,activeStreams:[],activeCompaction:null};
 
@@ -23,7 +24,12 @@ class BrowserSocket extends EventTarget {
     const frame = JSON.parse(raw) as { type: string };
     this.sent.push(frame);
     if (frame.type === 'subscribe' || frame.type === 'request_snapshot') {
-      this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(snapshot) }));
+      const currentParent = this.url.includes(otherParent) ? otherParent : parent;
+      const currentTitle = currentParent === otherParent ? 'Channel Beta' : snapshot.workstream.title;
+      this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+        ...snapshot,
+        workstream: { ...snapshot.workstream, id: currentParent, title: currentTitle },
+      }) }));
     }
   }
   open() { this.readyState = 1; this.dispatchEvent(new Event('open')); }
@@ -43,7 +49,9 @@ it('keeps the live collaboration socket across a focus session refresh', async (
     if (path.endsWith('/session') || path.endsWith('/session/renew')) return Response.json(metadata);
     if (path.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
     if (path.endsWith('/workspace/select')) { selections++; return Response.json({ ...metadata, workspace }); }
-    if (path.endsWith('/sharing/directory')) return Response.json({ workstreams: [{ parentId: parent, title: 'Shared parent', archived: false,
+    if (path.endsWith('/sharing/navigation')) return Response.json({ spaces: [{
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Guest space', iconKey: 'briefcase', colorKey: 'blue', workstreamIds: [parent],
+    }], workstreams: [{ parentId: parent, title: 'Shared parent', archived: false,
       conversations: [{ substreamId: child, title: 'Shared child conversation', archived: false }] }] });
     if (path.endsWith('/socket')) return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + child, ticket: 'fixture-ticket' });
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
@@ -65,5 +73,47 @@ it('keeps the live collaboration socket across a focus session refresh', async (
     expect(socket.readyState).toBe(BrowserSocket.OPEN);
     expect(BrowserSocket.instances).toHaveLength(1);
     expect(screen.getByRole('heading', { name: 'Shared child conversation' })).toBeInTheDocument();
+  } finally { view.unmount(); history.replaceState(null, '', '/'); }
+});
+
+it('groups a guest’s authorized Channels by Space and opens the shared Breakout', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  BrowserSocket.instances = [];
+  vi.stubGlobal('WebSocket', BrowserSocket);
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/sharing/navigation')) return Response.json({
+      spaces: [
+        { id: '33333333-3333-4333-8333-333333333333', name: 'Product', iconKey: 'rocket', colorKey: 'violet', workstreamIds: [parent] },
+        { id: '44444444-4444-4444-8444-444444444444', name: 'Research', iconKey: 'lightbulb', colorKey: 'teal', workstreamIds: [otherParent] },
+      ],
+      workstreams: [
+        { parentId: parent, title: 'Channel Alpha', archived: false,
+          conversations: [{ substreamId: child, title: 'Breakout Alpha', archived: false }] },
+        { parentId: otherParent, title: 'Channel Beta', archived: false,
+          conversations: [{ substreamId: otherChild, title: 'Breakout Beta', archived: false }] },
+      ],
+    });
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${otherParent}/${otherChild}`, ticket: 'fixture-ticket' });
+    if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
+    if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
+    return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
+  const session = cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+  const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
+  try {
+    expect(await screen.findByRole('button', { name: 'Product' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Channel Beta' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Research' }));
+    expect(await screen.findByRole('link', { name: 'Channel Beta' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Channel Alpha' })).not.toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`);
+
+    await waitFor(() => expect(BrowserSocket.instances.length).toBeGreaterThan(0));
+    await act(async () => { BrowserSocket.instances.at(-1)!.open(); });
+    expect(await screen.findByRole('button', { name: 'Go to breakout: Breakout Beta' })).toHaveAttribute('aria-current', 'page');
   } finally { view.unmount(); history.replaceState(null, '', '/'); }
 });
