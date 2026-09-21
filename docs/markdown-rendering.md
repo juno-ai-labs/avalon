@@ -722,7 +722,7 @@ kind its MIME and filename classify to. A caller holding a raw `resourceType`
 cannot see that a `generated_file` carrying the site manifest is a live site.
 The glyph is then chosen by substrings of that one name, with a published site
 matched whole ahead of the chain — under both `generated_site` and `site` — and
-drawn as a Tabler `rosette-asterisk`. Heading collapse is off unless a host explicitly
+drawn as a Tabler `app-window`. Heading collapse is off unless a host explicitly
 sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
 Its collapse-all control is a sibling in the agent-message header and shares
 section ids with the body through `MarkdownCollapseController`.
