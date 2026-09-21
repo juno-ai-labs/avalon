@@ -1,9 +1,9 @@
 # Public-site telemetry
 
-The request-only landing submits its email solely to `/access/requests`; neither
-email values nor submission bodies enter telemetry. `/download/` deliberately
+The landing links directly to the canonical macOS installer and collects no email.
+The retained access-request client submits only to `/access/requests`; email values and submission bodies never enter telemetry. `/download/` deliberately
 skips telemetry initialization so its bearer fragment cannot reach analytics.
-The former landing download/CTA click listeners were removed with the public hero.
+The macOS Beta action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
 ## Where the code lives
 

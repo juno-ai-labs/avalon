@@ -65,14 +65,17 @@ function unpublishedReleaseFixture(): Record<string, unknown> {
 }
 
 describe('public Rally site', () => {
-  it('offers an email access request instead of a public installer', () => {
+  it('offers the configured canonical installer without a signup dialog or clickable demo artifact', () => {
     const page = readProjectFile('index.html');
-    expect(page).toContain('id="access-request"');
-    expect(page).toContain('type="email"');
-    expect(page).not.toContain('href="#download"');
-    expect(page).not.toContain('rally-desktop-release:start');
-    expect(page).not.toContain('rally-merge');
-    expect(page).toContain('<noscript>');
+    const config = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')));
+    expect(page).toContain(`href="${desktopDmgUrl(config)}" download>macOS Beta</a>`);
+    expect(page).not.toContain('id="access-request"');
+    expect(page).not.toContain('<dialog');
+    expect(page).not.toContain('<details');
+    expect(page).not.toContain('/src/landing.ts');
+    expect(page).toContain('Document · Saved');
+    expect(page).toContain('{{access.headline}}');
+    expect(page).toContain('{{access.description}}');
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -139,10 +142,9 @@ describe('public Rally site', () => {
     };
 
     expect(pages[0]).toContain('class="rally-symbol"');
-    expect(pages[0]).toContain('/brand/rally-mark.svg');
-    // The lime cut at header size belongs to the dark homepage alone; every
-    // light-surfaced page renders the ink cut so the mark keeps its contrast.
-    for (const page of pages.slice(1)) {
+    expect(pages[0]).toContain('/brand/rally-mark-ink.svg');
+    // Every public page uses the ink mark on its light header.
+    for (const page of pages) {
       expect(page).toContain('/brand/rally-mark-ink.svg');
       expect(page).not.toContain('/brand/rally-mark.svg"');
     }
