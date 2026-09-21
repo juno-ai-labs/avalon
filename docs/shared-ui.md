@@ -37,12 +37,14 @@ participants and resources belong to the selected authorized conversation; deskt
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
 
-Every hierarchy sidebar composes `SidebarCollapseFooter`. The primitive owns
-the expand/collapse control, accessible state, constrained state and motion
-destination. A footer with no leading content centers the toggle when compact;
-a footer with an account slot keeps the slot and toggle as one trailing control
-row. Hosts provide labels, persistence and the optional leading content rather
-than rebuilding either layout.
+Every collapsible desktop hierarchy sidebar composes `SidebarCollapseFooter`.
+The primitive owns the expand/collapse control, accessible state, constrained
+state and motion destination. A footer with no leading content centers the
+toggle when compact; a footer with an account slot keeps the slot and toggle as
+one trailing control row. The browser Spaces hierarchy has no collapse control,
+so it composes the lower-level `SidebarFooter` with the same account-slot
+layout. Hosts provide labels, persistence and the optional leading content
+rather than rebuilding either layout.
 
 Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
 marks itself `data-reorder-list`: a host's row finds the slots it is being
@@ -150,7 +152,8 @@ all three owners instead.
 **Consequences:** A hierarchy rail cannot independently choose the compact
 position, icon, disabled behavior or ARIA state of its collapse control. New
 leading content must use the primitive's explicit slot; new sidebar-specific
-footer positioning is not part of the contract.
+footer positioning is not part of the contract. The structural variants retain
+the former 54px leading-content footer and 62px toggle-only footer floors.
 
 ### 2026-09-21 — Hierarchy title headers keep one identity composition
 
