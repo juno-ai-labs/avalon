@@ -1332,6 +1332,28 @@ Large data rewrites use the fleet maintenance/import control plane and resumable
 receipts, never unbounded constructor work. `durable-utils` is intentionally not
 a dependency.
 
+### Run terminalization
+
+Every root-run ending first proves its own authority: a live attempt proves its
+lease, a queued ending proves no attempt ever claimed the run and releases the
+exact loop execution when activation preceded cancellation, stale recovery
+matches the exact expired deadline it scanned on an unlinked legacy receipt,
+and a persistent-loop failure matches the exact execution under a still-live
+loop lease. Once that fence passes,
+`WorkstreamHarnessRunStorage` performs one synchronous terminal commit. It
+writes the terminal lifecycle event and receipt, closes the execution activity
+tree, removes the run's output, compaction, and inference-delay checkpoints,
+settles the Channel state, and requests cancellation of subordinate runs.
+Callers cannot select a subset of those responsibilities.
+
+Persistent-loop release remains part of the caller's authority check, before
+the common commit, because a loop with unsettled provider protocol must stay
+owned for recovery. Regional projection intent remains outside the storage
+class but inside the same outer SQLite transaction. External tool receipts are
+the deliberate exception: they belong to another Durable Object, so the local
+terminal receipt commits first and their existing durable reconciliation marker
+drives retry after a crash.
+
 The runner is *called* from `MigratableDurableObject`, the base every class in
 this hierarchy extends through `ScheduledDurableObject`. A subclass declares its schema
 once, in `migrationPlan()`, and says when it is ready, in `migrationsReady()`;
@@ -1789,6 +1811,41 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-20 — One terminal commit owns every root-run ending
+
+**What changed:** live-attempt terminalization, queued and never-launched
+failure, stale-lease recovery, and the persistent-loop workflow-failure fallback
+now converge on one synchronous commit in `WorkstreamHarnessRunStorage`. That
+commit always writes the run and terminal event, closes active execution
+activities, removes transient presentation checkpoints, settles the Channel,
+and cancels subordinate runs. `recordWorkflowFailed` delegates to it inside the
+existing regional-effect transaction, and a launch that never created a
+Workflow uses the queued no-attempt fence instead of an unguarded fifth recipe.
+The stale-receipt scan now excludes loop-linked runs: their expired attempt
+lease is not authority to split the run from the loop and provider protocol
+that own its recovery. A queued cancellation observed after loop activation
+likewise has to prove and release that exact execution before it may commit the
+terminal receipt. Both the generic stale mutation and persistent-loop release
+prove time at the write boundary: an advisory scan cannot authorize a future
+deadline, and a matching execution identity cannot revive an expired lease.
+
+**Why:** “terminal” had been represented by several overlapping SQL recipes.
+Each new recovery path copied the run and sidebar writes but could omit another
+part of the durable ending: residual receipts on one path, then activity and
+checkpoint closure on another. The repeated omissions were a missing ownership
+boundary, not isolated bugs.
+
+**Considered and rejected:** a new lifecycle framework or configurable cleanup
+flags. The entry paths genuinely have different authority fences, while the
+accepted ending has no valid partial form. Keeping the fences separate and the
+mutation fixed is the smaller primitive.
+
+**Consequences:** adding a root-run ending now requires proving only how it owns
+the transition; it cannot invent another terminal mutation body. Persistent-loop
+protocol repair still precedes release, and external receipt reconciliation
+still follows the local commit, because moving either across that boundary
+would strand recovery rather than make it atomic.
 
 ### 2026-09-20 — Stale-run reaping closes the execution's visible activity
 

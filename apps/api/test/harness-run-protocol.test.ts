@@ -69,7 +69,6 @@ describe("which harness-run operations commit a directory projection", () => {
     expect(HARNESS_RUN_OPERATIONS.filter(mutatesRunState).sort()).toEqual([
       "admitRun",
       "claimAttempt",
-      "failUnlaunchedRun",
       // Not a run-row write, but a transcript one: it can append the final turn
       // or a host notice, either of which moves the sidebar's rendered clocks.
       "publishHostOutcome",

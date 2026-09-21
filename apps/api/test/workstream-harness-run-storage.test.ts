@@ -92,6 +92,59 @@ function seedRun(
   );
 }
 
+function seedTransientCheckpoints(
+  sql: SqlStorage,
+  runId: string,
+  attemptId: string,
+  attemptEpoch: number,
+): void {
+  sql.exec(
+    `INSERT INTO active_output_turns
+       (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
+        durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
+        seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+     VALUES (?, ?, ?, 1, '0', 'streaming', 1, 1, 1, ?, '[]', 0, ?, ?, ?)`,
+    runId,
+    attemptEpoch,
+    `${runId}:turn`,
+    `${runId}:stream`,
+    NOW,
+    NOW,
+    NOW,
+  );
+  sql.exec(
+    `INSERT INTO active_agent_compaction
+       (id, run_id, attempt_id, compaction_index, trigger, started_at, updated_at)
+     VALUES (1, ?, ?, 1, 'auto', ?, ?)`,
+    runId,
+    attemptId,
+    NOW,
+    NOW,
+  );
+  sql.exec(
+    `INSERT INTO inference_delay_status
+       (inference_request_id, run_id, execution_id, root_attempt_id, attempt_id, turn_id, active)
+     VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    `${runId}:inference`,
+    runId,
+    runId,
+    attemptId,
+    attemptId,
+    `${runId}:turn`,
+  );
+}
+
+function expectNoTransientCheckpoints(sql: SqlStorage, runId: string): void {
+  for (const table of [
+    "active_output_turns",
+    "active_agent_compaction",
+    "inference_delay_status",
+  ]) {
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`, runId).one())
+      .toEqual({ count: 0 });
+  }
+}
+
 const fence = { attemptId: "attempt-1", owner: "owner-1", now: NOW };
 
 describe("claiming a run's attempt", () => {
@@ -283,6 +336,7 @@ describe("claiming a run's attempt", () => {
       `${RUN}:turn:1:activity:1`,
       NOW - 900,
     );
+    seedTransientCheckpoints(sql, RUN, fence.attemptId, 1);
     const terminalInput = {
       ...fence,
       runId: RUN,
@@ -384,6 +438,7 @@ describe("claiming a run's attempt", () => {
         revision: 2,
       },
     ]);
+    expectNoTransientCheckpoints(sql, RUN);
   });
 
   it("leaves an already-expired attempt for the stale-run reaper", () => {
@@ -511,6 +566,50 @@ describe("claiming a run's attempt", () => {
 });
 
 describe("reaping a stale root", () => {
+  it("leaves a loop-linked receipt to persistent-loop recovery", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({
+      ...fence,
+      runId: RUN,
+      leaseSeconds: 60,
+      lifecycleEventId: "event-claim",
+    });
+    sql.exec(
+      `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+      RUN,
+    );
+    const loops = new SubstreamLoopStorage(binding);
+    loops.ensureLoop({ loopId: RUN, bindStateRevision: 0, now: NOW });
+    loops.activateExecutionReceipt({
+      runId: RUN,
+      loopId: RUN,
+      executionEpoch: 1,
+      leaseOwner: "loop-owner",
+      leaseExpiresAt: NOW + 60_000,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      now: NOW,
+    });
+
+    expect(storage.staleLeaseRuns({ now: NOW + 60_001, limit: 25 })).toEqual([]);
+    expect(storage.reapStaleRoot({
+      runId: RUN,
+      attemptId: fence.attemptId,
+      leaseExpiresAt: NOW + 60_000,
+      lifecycleEventId: "event-terminal",
+      now: NOW + 60_001,
+    })).toEqual({ outcome: "not_stale" });
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "running",
+      terminalized_at: null,
+    });
+    expect(loops.loop()).toMatchObject({
+      status: "executing",
+      active_execution_id: RUN,
+    });
+  });
+
   it("closes its activity tree and removes its transient presentation checkpoints", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
@@ -697,9 +796,14 @@ describe("reaping a stale root", () => {
     ).one()).toEqual({ run_id: OTHER, attempt_id: "attempt-other" });
   });
 
-  it("leaves activity and checkpoints untouched when the stale fence no longer matches", () => {
+  it("leaves all subordinate state untouched when the stale fence is not authoritative", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
+    seedRun(sql, OTHER, {
+      parentRunId: RUN,
+      parentToolCallId: "tool-child",
+      chainRootRunId: RUN,
+    });
     storage.claimAttempt({
       ...fence,
       runId: RUN,
@@ -716,18 +820,7 @@ describe("reaping a stale root", () => {
       NOW,
       NOW,
     );
-    sql.exec(
-      `INSERT INTO active_output_turns
-         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
-          durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
-          seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
-       VALUES (?, 1, 'turn-1', 1, '0', 'streaming', 1, 1, 1, ?, '[]', 0, ?, ?, ?)`,
-      RUN,
-      RUN,
-      NOW,
-      NOW,
-      NOW,
-    );
+    seedTransientCheckpoints(sql, RUN, fence.attemptId, 1);
 
     expect(storage.reapStaleRoot({
       runId: RUN,
@@ -737,12 +830,33 @@ describe("reaping a stale root", () => {
       now: NOW + 60_001,
     })).toEqual({ outcome: "not_stale" });
 
+    expect(storage.reapStaleRoot({
+      runId: RUN,
+      attemptId: "attempt-1",
+      leaseExpiresAt: NOW + 60_000,
+      lifecycleEventId: "event-terminal-live-deadline",
+      now: NOW + 59_999,
+    })).toEqual({ outcome: "not_stale" });
+
     expect(sql.exec(
       `SELECT lifecycle_state, revision FROM transcript_activities WHERE activity_id = ?`,
       `${RUN}:activity`,
     ).one()).toEqual({ lifecycle_state: "active", revision: 1 });
-    expect(sql.exec(`SELECT status FROM active_output_turns WHERE run_id = ?`, RUN).one())
-      .toEqual({ status: "streaming" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_output_turns WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM active_agent_compaction WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM inference_delay_status WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'terminal'`,
+      RUN,
+    ).one()).toEqual({ count: 0 });
+    expect(storage.run({ runId: OTHER })).toMatchObject({
+      cancellation_requested_at: null,
+      cancellation_reason: null,
+    });
     expect(sql.exec(`SELECT status, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
       .toEqual({ status: "running", lease_expires_at: NOW + 60_000 });
   });
@@ -1241,12 +1355,19 @@ describe("ending a run that was never claimed", () => {
     errorJson: '{"code":"never_started"}',
     memberSafePayloadJson: '{"code":"never_started"}',
     lifecycleEventId: "event-queued",
+    loopExecutionFence: null,
     now: NOW,
   };
 
   it("stamps an attempt so the ending has an owner", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
+    seedRun(sql, OTHER, {
+      parentRunId: RUN,
+      parentToolCallId: "tool-child",
+      chainRootRunId: RUN,
+    });
+    seedTransientCheckpoints(sql, RUN, queued.attemptId, 0);
 
     expect(storage.terminalizeQueuedRun(queued)).toEqual({ outcome: "terminalized" });
     expect(sql.exec(
@@ -1260,6 +1381,78 @@ describe("ending a run that was never claimed", () => {
     });
     expect(sql.exec(`SELECT exact_state FROM workstream WHERE id = 1`).one())
       .toMatchObject({ exact_state: "failed" });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "terminal" }))
+      .toMatchObject({ attempt_id: queued.attemptId, status: "failed" });
+    expectNoTransientCheckpoints(sql, RUN);
+    expect(storage.run({ runId: OTHER })).toMatchObject({
+      cancellation_reason: "parent_terminalized",
+      cancellation_requested_at: NOW,
+    });
+  });
+
+  it("requires and releases the exact loop execution before ending a linked queued run", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    sql.exec(
+      `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+      RUN,
+    );
+    const loops = new SubstreamLoopStorage(binding);
+    loops.ensureLoop({ loopId: RUN, bindStateRevision: 0, now: NOW });
+    loops.activateExecutionReceipt({
+      runId: RUN,
+      loopId: RUN,
+      executionEpoch: 1,
+      leaseOwner: "loop-owner",
+      leaseExpiresAt: NOW + 60_000,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      now: NOW,
+    });
+    const loopExecutionFence = {
+      loopId: RUN,
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: "loop-owner",
+    };
+    const stopped = {
+      ...queued,
+      status: "cancelled" as const,
+      errorJson: null,
+    };
+
+    expect(storage.terminalizeQueuedRun(stopped)).toEqual({ outcome: "ownership_lost" });
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "running",
+      terminalized_at: null,
+    });
+    expect(loops.loop()).toMatchObject({ status: "executing", active_execution_id: RUN });
+
+    sql.exec(`UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`, NOW);
+    expect(storage.terminalizeQueuedRun({ ...stopped, loopExecutionFence }))
+      .toEqual({ outcome: "ownership_lost" });
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "running",
+      terminalized_at: null,
+    });
+
+    sql.exec(`UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`, NOW + 60_000);
+    expect(storage.terminalizeQueuedRun({ ...stopped, loopExecutionFence }))
+      .toEqual({ outcome: "terminalized" });
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "cancelled",
+      terminalized_at: NOW,
+    });
+    expect(loops.loop()).toMatchObject({
+      status: "idle",
+      active_execution_id: null,
+      lease_owner: null,
+    });
+    expect(storage.terminalizeQueuedRun({
+      ...stopped,
+      loopExecutionFence,
+      lifecycleEventId: "event-queued-replay",
+    })).toEqual({ outcome: "already_terminal" });
   });
 
   it("refuses a run an executor has already claimed", () => {

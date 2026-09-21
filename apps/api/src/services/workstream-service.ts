@@ -324,12 +324,20 @@ export async function launchWorkstreamHarness(
     // lives there, and the operation commits the sidebar's projection with the
     // failure rather than as a second statement that could be lost inside this
     // very catch handler.
-    await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
-      .failUnlaunchedRun({
+    const failed = await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+      .terminalizeQueuedRun({
         runId: id,
+        attemptId: `unlaunched:${id}`,
+        status: "failed",
         errorJson: JSON.stringify(memberSafeError),
+        memberSafePayloadJson: JSON.stringify({ code: memberSafeError.code }),
+        lifecycleEventId: newId(),
+        loopExecutionFence: null,
         now: Date.now(),
       });
+    if (failed.outcome === "not_found" || failed.outcome === "ownership_lost") {
+      throw new Error("workstream_unlaunched_run_failure_fenced", { cause: error });
+    }
     emitCorrelatedRunOutcome(executionEnv, {
       workspaceId: input.workspaceId,
       parentId: input.workstreamId,

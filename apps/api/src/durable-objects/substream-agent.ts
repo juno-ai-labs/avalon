@@ -4238,8 +4238,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * `terminalizeHarnessAttempt` settles these as part of terminalizing, and
    * says at length why every terminal status needs it: an open receipt on a
    * terminal run is a card that spins forever, and nothing downstream repairs
-   * it. `recordWorkflowFailed` terminalizes with its own SQL and so never
-   * reached that settlement — the sweep below runs only when a previous
+   * it. `recordWorkflowFailed` now shares the object-local terminal commit,
+   * but external receipts still belong to their own authority — the sweep
+   * below runs only when a previous
    * instance's attempt is being recovered, which on an object whose next run
    * never starts is never. A `web_fetch` on the substream wedged on 2026-09-19
    * was still `executing` a day later for exactly that reason.
@@ -4403,6 +4404,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           { attemptId, owner: attemptOwner },
           stopped.error,
           "stopped",
+          terminalLoopFence,
         );
       }
       return this.persistAgentRunForExternalSettlement(input, stopped);
