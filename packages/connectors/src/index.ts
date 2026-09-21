@@ -5,6 +5,7 @@ export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, ty
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { codeShaped, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import {
   ConnectorManifestSchema,
   NormalizedActivitySchema,
@@ -503,6 +504,57 @@ function googleRejectedArgument(
     if (Object.hasOwn(argumentByParameter, location)) return argumentByParameter[location]!;
   }
   return null;
+}
+
+/**
+ * Google's own failure code, when it sent one that is safe to carry.
+ *
+ * A Docs 403 used to reach the model as `Google API failed (403)` with the
+ * raw provider body stuffed in `details`. The structured-failure allowlist
+ * forwards none of that body, so the diagnosis — Docs API disabled, missing
+ * scope — sat in `error.details[].reason` and never left the adapter. The
+ * provider message also carries a console URL and a project number, which
+ * must not cross; the ErrorInfo `reason` and `error.status` are Google's
+ * own identifiers and may.
+ */
+function googleApiFailureReason(details: unknown): { reason: string; label: string } | null {
+  const label = googleApiFailureLabel(details);
+  if (!label) return null;
+  const reason = codeShaped(label).toLowerCase();
+  return isCodeShaped(reason) ? { reason, label } : null;
+}
+
+function googleApiFailureLabel(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const error = (details as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return null;
+  const record = error as { details?: unknown; status?: unknown };
+  if (Array.isArray(record.details)) {
+    let fallback: string | null = null;
+    for (const entry of record.details) {
+      if (!entry || typeof entry !== "object") continue;
+      const candidate = (entry as { reason?: unknown }).reason;
+      if (typeof candidate !== "string" || !isCodeShaped(codeShaped(candidate))) continue;
+      const type = (entry as { "@type"?: unknown })["@type"];
+      if (typeof type === "string" && type.includes("ErrorInfo")) return candidate;
+      fallback ??= candidate;
+    }
+    if (fallback) return fallback;
+  }
+  if (typeof record.status === "string" && isCodeShaped(codeShaped(record.status))) {
+    return record.status;
+  }
+  return null;
+}
+
+function isGoogleForbiddenFailure(error: unknown): error is ConnectorError {
+  return error instanceof ConnectorError
+    && error.code === "provider_error"
+    && Boolean(
+      error.details
+      && typeof error.details === "object"
+      && (error.details as { status?: unknown }).status === 403
+    );
 }
 
 export const GoogleFileWriteAuthorizationGuidance =
@@ -1504,14 +1556,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const rejectedArgument = response.status === 400
           ? googleRejectedArgument(details, argumentByParameter)
           : null;
+        const googleReason = rejectedArgument ? null : googleApiFailureReason(details);
         throw new ConnectorError(
           "provider_error",
           rejectedArgument
             ? `Google API failed (${response.status}); it rejected the \`${rejectedArgument}\` argument`
-            : `Google API failed (${response.status})`,
+            : googleReason && response.status === 403
+              ? `Google API failed (${response.status}: ${googleReason.label})`
+              : `Google API failed (${response.status})`,
           rejectedArgument
             ? { reason: "invalid_parameter", field: rejectedArgument, payload: details }
-            : details
+            : {
+                ...(googleReason ? { reason: googleReason.reason } : {}),
+                status: response.status,
+                payload: details
+              }
         );
       }
       return response;
@@ -2431,8 +2490,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
 
       if (resourceType === "google_sheet") {
         if (connection.grantedScopes.includes("sheets.read") || connection.grantedScopes.includes("sheets.write")) {
-          const payload = await readGoogleSpreadsheet(api, connection, providerResourceId, signal);
-          return sanitizeGoogleSpreadsheet(payload);
+          try {
+            const payload = await readGoogleSpreadsheet(api, connection, providerResourceId, signal);
+            return sanitizeGoogleSpreadsheet(payload);
+          } catch (error) {
+            if (!isGoogleForbiddenFailure(error) || !connection.grantedScopes.includes("drive.read")) {
+              throw error;
+            }
+          }
         }
         assertGoogleCapability(connection, "drive.read");
         const metadata = await api(connection, googleDriveMetadataUrl(providerResourceId).toString(), { signal })
@@ -4247,11 +4312,58 @@ async function readGoogleDocument(
   documentId: string,
   signal: AbortSignal
 ): Promise<Record<string, unknown>> {
-  const url = new URL(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`);
-  url.searchParams.set("includeTabsContent", "true");
-  return api(connection, url.toString(), { signal }).then((response) =>
-    safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
+  try {
+    const url = new URL(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`);
+    url.searchParams.set("includeTabsContent", "true");
+    return await api(connection, url.toString(), { signal }).then((response) =>
+      safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
+    );
+  } catch (error) {
+    // Docs API 403 with Drive still able to see the file is the production
+    // case: the Docs API is disabled on the connector GCP project while
+    // Drive search and metadata keep working. Exporting through Drive is
+    // the same path hydration already uses when this connection was never
+    // granted docs.read. Any other Docs failure — a 404, a 401, a 500 —
+    // stays the original error so the family hint and reconnect paths
+    // still see it.
+    if (!isGoogleForbiddenFailure(error) || !connection.grantedScopes.includes("drive.read")) {
+      throw error;
+    }
+    return readGoogleDocumentViaDriveExport(api, connection, documentId, signal, error);
+  }
+}
+
+async function readGoogleDocumentViaDriveExport(
+  api: GoogleApiRequester,
+  connection: ConnectorConnectionContext,
+  documentId: string,
+  signal: AbortSignal,
+  docsError: unknown
+): Promise<Record<string, unknown>> {
+  const response = await api(connection, googleDriveMetadataUrl(documentId).toString(), { signal });
+  const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+  // Wrong MIME belongs to `withGoogleFileFamilyHint`, which rewrites the
+  // original Docs failure into `wrong_id_family`. Replacing it here with a
+  // Drive-shaped payload would hide that the caller used the wrong tool.
+  if (readString(metadata, "mimeType") !== GOOGLE_DRIVE_FILE_TYPE_MIME.document) {
+    throw docsError;
+  }
+  const exported = await readDriveTextContent(
+    api,
+    connection,
+    documentId,
+    metadata,
+    signal,
+    GOOGLE_TOOL_TEXT_BYTES
   );
+  const text = exported.textContent ?? "";
+  return {
+    documentId: readString(metadata, "id") ?? documentId,
+    title: readString(metadata, "name"),
+    body: {
+      content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }]
+    }
+  };
 }
 
 async function updateGoogleDocument(

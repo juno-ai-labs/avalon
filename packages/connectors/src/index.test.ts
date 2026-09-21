@@ -2718,6 +2718,160 @@ describe("connectors", () => {
     )).rejects.toMatchObject({ code: "provider_error" });
   });
 
+  it("does not invent a Drive export when the connection cannot read Drive", async () => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      requested.push(url.hostname);
+      return googleJson(googleServiceDisabledError("docs.googleapis.com"), 403);
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "doc-1" },
+      {
+        connection: googleConnection(["docs.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({
+      code: "provider_error",
+      message: "Google API failed (403: SERVICE_DISABLED)",
+      details: { reason: "service_disabled" },
+    });
+    expect(requested).toEqual(["docs.googleapis.com"]);
+  });
+
+  it("reads a Doc through Drive export when the Docs API is forbidden", async () => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      requested.push(`${url.hostname}${url.pathname}`);
+      if (url.hostname === "docs.googleapis.com") {
+        return googleJson(googleServiceDisabledError("docs.googleapis.com"), 403);
+      }
+      if (url.pathname.endsWith("/export")) {
+        return new Response("Launch plan from Drive\n", { headers: { "content-type": "text/plain" } });
+      }
+      return googleJson({
+        id: "doc-1",
+        name: "Launch brief",
+        mimeType: "application/vnd.google-apps.document",
+      });
+    };
+    const document = await googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "doc-1" },
+      {
+        connection: googleConnection(["docs.read", "drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    );
+    expect(document.output).toMatchObject({
+      resourceType: "google_doc",
+      documentId: "doc-1",
+      title: "Launch brief",
+      textContent: "Launch plan from Drive\n",
+    });
+    expect(requested.some((path) => path.includes("/export"))).toBe(true);
+  });
+
+  it("still names the family when Docs is forbidden for a Sheet id", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.google-apps.spreadsheet" });
+      }
+      return googleJson(googleServiceDisabledError("docs.googleapis.com"), 403);
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      {
+        connection: googleConnection(["docs.read", "drive.read", "sheets.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", field: "documentId", expected: "document", actual: "spreadsheet" },
+    });
+  });
+
+  it("names a Google 403's own reason instead of only its status", async () => {
+    const fetcher: typeof fetch = async () => googleJson(googleServiceDisabledError("docs.googleapis.com"), 403);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({
+      code: "provider_error",
+      message: "Google API failed (403: SERVICE_DISABLED)",
+      details: { reason: "service_disabled", status: 403 },
+    });
+  });
+
+  it("hydrates a google_doc through Drive export when the Docs API is forbidden", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "docs.googleapis.com") {
+        return googleJson(googleServiceDisabledError("docs.googleapis.com"), 403);
+      }
+      if (url.pathname.endsWith("/export")) {
+        return new Response("Hydrated through Drive\n", { headers: { "content-type": "text/plain" } });
+      }
+      return googleJson({
+        id: "doc-1",
+        name: "Notes",
+        mimeType: "application/vnd.google-apps.document",
+      });
+    };
+    const hydrated = await googleAdapter(fetcher).hydrateResource!(
+      googleConnection(["docs.read", "drive.read"]),
+      { resourceType: "google_doc", providerResourceId: "doc-1" },
+      neverAborts()
+    );
+    expect(hydrated).toMatchObject({
+      resourceType: "google_doc",
+      documentId: "doc-1",
+      title: "Notes",
+      textContent: "Hydrated through Drive\n",
+    });
+  });
+
+  it("hydrates a google_sheet through Drive export when the Sheets API is forbidden", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "sheets.googleapis.com") {
+        return googleJson(googleServiceDisabledError("sheets.googleapis.com"), 403);
+      }
+      if (url.pathname.endsWith("/export")) {
+        return new Response("Metric,Value\nUsers,42\n", { headers: { "content-type": "text/csv" } });
+      }
+      return googleJson({
+        id: "sheet-1",
+        name: "Metrics",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        webViewLink: "https://docs.google.com/spreadsheets/d/sheet-1/edit",
+      });
+    };
+    const hydrated = await googleAdapter(fetcher).hydrateResource!(
+      googleConnection(["sheets.read", "drive.read"]),
+      { resourceType: "google_sheet", providerResourceId: "sheet-1" },
+      neverAborts()
+    );
+    expect(hydrated).toMatchObject({
+      resourceType: "google_sheet",
+      id: "sheet-1",
+      name: "Metrics",
+      textContent: "Metric,Value\nUsers,42\n",
+    });
+  });
+
   it("hands back an openable address from every Google create", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
@@ -3258,6 +3412,22 @@ function googleJson(value: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" }
   });
+}
+
+function googleServiceDisabledError(service: string): Record<string, unknown> {
+  return {
+    error: {
+      code: 403,
+      message: `Google ${service} has not been used in project 1 before or it is disabled.`,
+      status: "PERMISSION_DENIED",
+      details: [{
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        reason: "SERVICE_DISABLED",
+        domain: "googleapis.com",
+        metadata: { service, consumer: "projects/1" },
+      }],
+    },
+  };
 }
 
 function calendarEvent(id: string, summary: string, etag: string): Record<string, unknown> {

@@ -85,7 +85,10 @@ Cloud OAuth 2.0 *Web application* clients in the same Google Cloud project:
    Sheets connections.
 
 Enable these APIs in the project that owns the connector client: Gmail API, Google
-Calendar API, Google Drive API, Google Docs API, Google Sheets API.
+Calendar API, Google Drive API, Google Docs API, Google Sheets API. A Docs
+*read* can still succeed through Drive export if the Docs API is disabled;
+writes and native Sheets calls cannot, and fail naming `SERVICE_DISABLED` until
+the API is enabled.
 
 Register these exact hosted authorized redirect URIs:
 
