@@ -447,9 +447,8 @@ describe('sidebar layout motion', () => {
     expect(rule('.app-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
-  // The work-stream sidebar restates the interval and travels the same way,
-  // with the substream's two marks stacked in one cell so they can cross-fade
-  // and nothing centred by `justify-content`, which cannot travel.
+  // The work-stream sidebar restates the interval and travels the same way.
+  // Its stable room marks stay stacked in one centered cell while copy moves.
   it('travels the channel sidebar\'s contents on the same interval', () => {
     expect(rule('.workstream-context-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
     expect(rule('.workstream-context-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
@@ -459,16 +458,12 @@ describe('sidebar layout motion', () => {
       '.workstream-context-copy',
       '.workstream-context-section',
       '.workstream-context-section h2',
-      '.workstream-substream-arrow',
-      '.workstream-substream-initial',
       '.workstream-context-sidebar .sidebar-collapse-footer',
     ]) {
       expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
     }
     expect(rule('.workstream-context-mark > *')).toContain('grid-area: 1 / 1;');
-    expect(rule('.workstream-substream-initial')).toContain('visibility: hidden;');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-substream-initial')).toContain('visibility: visible;');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-arrow')).toContain('visibility: hidden;');
+    expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row')).not.toContain('justify-content');
     expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
@@ -510,14 +505,14 @@ describe('sidebar layout motion', () => {
 });
 
 describe('channel context sidebar layout', () => {
-  // The colour is the substance of the mark, not a detail of it: the arrow is
-  // the only thing on a substream row that says the row is a substream, and
+  // The colour is the substance of the mark, not a detail of it: the branch is
+  // the only thing on a Breakout row that says the row is a Breakout, and
   // the 10% sidebar-border token this rule used to carry left it a smudge
   // beside a title drawn in full ink. Naming the rejected token as well as the
   // required one is what makes the revert fail here rather than in a window.
-  it('draws the breakout arrow in muted text rather than the sidebar rule token', () => {
-    expect(rule('.workstream-substream-arrow')).toContain('color: var(--av-sys-color-text-muted);');
-    expect(rule('.workstream-substream-arrow')).not.toContain('var(--av-cmp-sidebar-border)');
+  it('draws the breakout branch in muted text rather than the sidebar rule token', () => {
+    expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
+    expect(rule('.workstream-breakout-icon')).not.toContain('var(--av-cmp-sidebar-border)');
   });
 
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
@@ -862,7 +857,8 @@ describe('GrokBot sidebar header geometry', () => {
     expect(commandbar).toContain('grid-template-rows: 32px 0px;');
     // The list motion draws a removed row's stand-in in this box.
     expect(commandbar).toContain('position: relative;');
-    expect(rule('.app-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-commandbar,\n.app-shell .spaces-sidebar.is-compact .sidebar-commandbar'))
+      .toContain('grid-template-rows: 54px 54px;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
     expect(search).toContain('height: 32px;');
