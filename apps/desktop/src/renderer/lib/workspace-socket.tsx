@@ -13,6 +13,7 @@ import {
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamIdSchema,
   type WorkstreamId,
+  type SpaceDirectory,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -650,14 +651,27 @@ export function WorkspaceSocketProvider({
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
           if (spaceConversations.success) {
-            // A nudge, not a payload: the Space dashboard's page is the one
-            // list on that screen the socket does not carry, so what arrives
-            // is the Spaces to read again and nothing else. The only
+            // The Space dashboard's page is the one list on that screen the
+            // socket does not carry, so the named Spaces are read again. The
+            // count beside each id updates the sidebar without rebuilding the
+            // whole Space directory. The only
             // coalescing is React Query's own in-flight dedupe — a burst of
             // messages in one Space costs one refetch while it is in flight,
             // and there is no timer here to tune.
             for (const spaceId of spaceConversations.data.spaceIds) {
               void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+            }
+            if (spaceConversations.data.attentionCounts.length > 0) {
+              const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
+                entry.spaceId,
+                entry.count,
+              ]));
+              queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+                ...current,
+                items: current.items.map((space) => counts.has(space.id)
+                  ? { ...space, attentionCount: counts.get(space.id)! }
+                  : space),
+              } : current);
             }
             return;
           }

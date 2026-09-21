@@ -1226,6 +1226,32 @@ pre {
   width: 100%;
 }
 .resizable-sidebar.is-compact .sidebar-row { gap: 0; padding: 9px; width: 54px; }
+.sidebar-row-badge {
+  align-items: center;
+  background: var(--av-sys-color-danger-base);
+  border: 0;
+  border-radius: 999px;
+  box-sizing: border-box;
+  color: var(--av-sys-color-danger-on);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  height: 20px;
+  justify-content: center;
+  line-height: 1;
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 4px;
+  z-index: 2;
+}
+.resizable-sidebar.is-compact .sidebar-row-badge {
+  border: 2px solid var(--av-sys-color-surface-default);
+  position: absolute;
+  right: 4px;
+  top: 4px;
+}
 .sidebar-row.sidebar-header {
   border-radius: 0;
   flex-basis: 43px;

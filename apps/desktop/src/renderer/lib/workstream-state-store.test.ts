@@ -391,6 +391,27 @@ describe('patchCachedWorkstreamViewerState', () => {
       .toEqual(['space-a', 'space-b']);
   });
 
+  it('takes a changed Breakout attention total from a duplicate parent version', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary({ breakoutAttentionCount: 2 })]);
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, 1),
+      visible: true,
+      ...workstreamSummaryState(summary({ breakoutAttentionCount: 2 })),
+    });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, 1),
+      visible: true,
+      ...workstreamSummaryState(summary({ breakoutAttentionCount: 0 })),
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.breakoutAttentionCount)
+      .toBe(0);
+  });
+
   it('writes the addressed child entry without changing Main in the list', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);
