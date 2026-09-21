@@ -1888,6 +1888,7 @@ export function Sidebar({
   };
 
   const resizeSidebar = useCallback((requestedWidth: number): void => {
+    if (forcedCompact) return;
     const availableWidth = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
     if (compact) {
       if (requestedWidth < SIDEBAR_EXPAND_DRAG_THRESHOLD || availableWidth < MIN_SIDEBAR_WIDTH) return;
@@ -1901,7 +1902,7 @@ export function Sidebar({
     }
     if (availableWidth < MIN_SIDEBAR_WIDTH) return;
     setSidebarWidth(Math.min(requestedWidth, availableWidth));
-  }, [compact, setSidebarCollapsed, setSidebarWidth]);
+  }, [compact, forcedCompact, setSidebarCollapsed, setSidebarWidth]);
 
   useEffect(() => {
     const toggleCompact = (event: KeyboardEvent): void => {
