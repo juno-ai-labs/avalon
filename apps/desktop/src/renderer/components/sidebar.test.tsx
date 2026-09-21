@@ -1746,6 +1746,101 @@ describe('Sidebar channel markers', () => {
     );
   });
 
+  it('orders the new Channel Space picker like the Space sidebar', async () => {
+    const hiring = space();
+    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            ordering={[{
+              container: { kind: 'organization' },
+              itemIds: [launch.id, hiring.id, general().id],
+            }]}
+            spaces={[general(), hiring, launch]}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('aria-label'));
+    const launcher = screen.getByRole('button', { name: 'New channel' });
+    fireEvent.keyDown(launcher, { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
+    const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
+    expect(spacePicker).toHaveTextContent('Launch');
+    fireEvent.click(spacePicker);
+    expect(screen.getAllByRole('option').map((option) => option.textContent))
+      .toEqual(sidebarOrder);
+  });
+
+  it('keeps Add to space aligned with an in-flight Space reorder', async () => {
+    let finishReorder: (() => void) | undefined;
+    const onReorderContainer = vi.fn(() => new Promise<void>((resolve) => {
+      finishReorder = resolve;
+    }));
+    const hiring = space();
+    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
+    const target = placedIn(
+      workstream('optimistic-menu-spaces', 'Quarterly planning', 'completed'),
+      hiring.id,
+      general().id,
+    );
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onReorderContainer={onReorderContainer}
+            onSignOut={vi.fn()}
+            ordering={[{
+              container: { kind: 'organization' },
+              itemIds: [launch.id, hiring.id, general().id],
+            }]}
+            spaces={[general(), hiring, launch]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: 'Launch' }), {
+      altKey: true,
+      key: 'ArrowDown',
+    });
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
+      container: { kind: 'organization' },
+      itemIds: [hiring.id, launch.id, general().id],
+    }));
+    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('aria-label'));
+    expect(sidebarOrder).toEqual(['Hiring', 'Launch', 'General']);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120,
+      clientY: 90,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add to space' }));
+    expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
+      .toEqual(sidebarOrder);
+
+    finishReorder?.();
+    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
+  });
+
   it('removes a channel from the space whose placement menu was opened', async () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');

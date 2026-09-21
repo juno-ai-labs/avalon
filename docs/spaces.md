@@ -1095,7 +1095,9 @@ its participants may add Channels. Existing placements use checked-item
 semantics, put their checkmark immediately before the Space name, and remain
 keyboard-focusable in the same list. The list uses the reader's stored
 Organization Space order, matching the Space rail rather than the directory's
-arrival order.
+arrival order. While a reorder is being saved, the optimistic order is shared
+by the rail, Channel placement menus, and creation/import selectors so those
+surfaces do not briefly disagree.
 The server still refuses either write by name; the disabled rows explain the
 boundary without pretending that a visible Space disappeared.
 
