@@ -17,6 +17,13 @@ function dataUrl(content: Uint8Array, mimeType: string): string {
   return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
+function safeMimeType(value: string): string {
+  const candidate = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(candidate)
+    ? candidate
+    : 'text/plain';
+}
+
 /**
  * A script-free document for a generated file's authorized preview bytes.
  *
@@ -27,7 +34,7 @@ function dataUrl(content: Uint8Array, mimeType: string): string {
 export function generatedArtifactWindowDocument(
   request: DesktopGeneratedArtifactWindowRequest,
 ): string {
-  const mimeType = request.mimeType.split(';', 1)[0]?.trim().toLowerCase() || 'text/plain';
+  const mimeType = safeMimeType(request.mimeType);
   const title = escapeHtml(request.title);
   let body: string;
   if (mimeType.startsWith('image/')) {

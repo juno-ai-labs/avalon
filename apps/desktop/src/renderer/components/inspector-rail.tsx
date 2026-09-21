@@ -21,7 +21,7 @@ import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
-import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
+import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   ResourceVersion,
@@ -347,6 +347,13 @@ function isSiteResource(resource: WorkstreamResource): boolean {
 function isImageResource(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
   return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'image';
+}
+
+/** Whether the preview route has a representation this artifact surface can render. */
+function hasGeneratedArtifactPreview(resource: WorkstreamResource): boolean {
+  if (!resource.contentAvailable) return false;
+  const kind = classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType });
+  return kind !== 'other' && kind !== 'site';
 }
 
 /**
@@ -742,12 +749,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
 
   const popOutGeneratedArtifact = async (): Promise<void> => {
     if (!resource || resource.direction !== 'artifact' || isSiteResource(resource)
-      || !resource.contentAvailable || !props.loadResourceContent || poppingOut) return;
+      || !hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut) return;
     setPoppingOut(true);
     setPopOutFailed(false);
     try {
-      const content = await props.loadResourceContent(resource.id);
-      await desktopBridge().popOutArtifact({
+      const content = await readResourcePreview(
+        props.loadResourceContent,
+        resource.id,
+        new AbortController().signal,
+        MAX_RESOURCE_PREVIEW_WAIT_MS,
+      );
+      const opened = await desktopBridge().popOutArtifact({
         kind: 'generated',
         resourceId: resource.id,
         version: resource.currentVersion,
@@ -755,6 +767,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         mimeType: content.type || resource.mimeType || 'text/plain',
         title: resource.title,
       });
+      if (!opened) throw new Error('The artifact window was blocked.');
     } catch {
       setPopOutFailed(true);
     } finally {
@@ -831,7 +844,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 <IconButton
                   disabled={isSiteResource(resource)
                     ? !props.siteArtifacts
-                    : !resource.contentAvailable || !props.loadResourceContent}
+                    : !hasGeneratedArtifactPreview(resource) || !props.loadResourceContent}
                   label="Open in a righthand sidebar"
                   onClick={() => props.lightbox?.onOpenSidebar(resource.id)}
                   tooltipSide="top"
@@ -841,7 +854,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               )}
               {resource.direction === 'artifact' && !isSiteResource(resource) && (
                 <IconButton
-                  disabled={!resource.contentAvailable || !props.loadResourceContent || poppingOut}
+                  disabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
                   label="Open in a new window"
                   onClick={() => void popOutGeneratedArtifact()}
                   tooltipSide="top"

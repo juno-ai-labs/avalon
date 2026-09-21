@@ -848,6 +848,7 @@ export function ConversationSurface({
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
   const poppedOutArtifactRefreshes = useRef(new Set<string>());
+  const poppedOutArtifactResourceIds = useRef<string[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
   const [artifactSidebar, setArtifactSidebar] = useState<{ resourceId: string; workstreamScoped?: boolean } | null>(null);
@@ -1076,15 +1077,17 @@ export function ConversationSurface({
     // The socket advances `currentVersion` on the canonical resource. Inline
     // previews observe the same value directly; detached windows report the
     // version they still show so we only authorize and transfer newer bytes.
+    const resources = [
+      ...routedDetail.resources,
+      ...(workstreamContext?.id === id ? workstreamContext.resources : []),
+    ];
+    poppedOutArtifactResourceIds.current = [...new Set(resources.map((resource) => resource.id))];
     void refreshPoppedOutArtifacts({
       bridge: desktopBridge(),
       inFlight: poppedOutArtifactRefreshes.current,
       loadResourceContent,
       ...(siteArtifacts ? { openSiteArtifact: siteArtifacts.openArtifact } : {}),
-      resources: [
-        ...routedDetail.resources,
-        ...(workstreamContext?.id === id ? workstreamContext.resources : []),
-      ],
+      resources,
       signal: controller.signal,
     }).catch(() => {
       // Inline preview failure presentation owns the user-visible state. A
@@ -1093,6 +1096,9 @@ export function ConversationSurface({
     });
     return () => controller.abort();
   }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
+  useEffect(() => () => {
+    void desktopBridge().closePoppedOutArtifacts(poppedOutArtifactResourceIds.current).catch(() => undefined);
+  }, [id]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,

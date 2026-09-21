@@ -45,15 +45,18 @@ export async function refreshPoppedOutArtifacts({
     try {
       if (resource.mimeType === SITE_MANIFEST_MIME_TYPE) {
         if (!openSiteArtifact) return;
-        const navigation = await openSiteArtifact(resource.id);
-        await bridge.updatePoppedOutArtifact({
-          kind: 'site',
-          resourceId: resource.id,
-          version: resource.currentVersion,
-          artifactId: navigation.artifactId,
-          url: navigation.openUrl,
-          title: resource.title,
-        });
+        let stale = true;
+        while (stale) {
+          const navigation = await openSiteArtifact(resource.id);
+          stale = await bridge.updatePoppedOutArtifact({
+            kind: 'site',
+            resourceId: resource.id,
+            version: resource.currentVersion,
+            artifactId: navigation.artifactId,
+            url: navigation.openUrl,
+            title: resource.title,
+          });
+        }
         return;
       }
       const content = await readResourcePreview(
@@ -62,14 +65,18 @@ export async function refreshPoppedOutArtifacts({
         signal,
         MAX_RESOURCE_PREVIEW_WAIT_MS,
       );
-      await bridge.updatePoppedOutArtifact({
-        kind: 'generated',
-        resourceId: resource.id,
-        version: resource.currentVersion,
-        content: new Uint8Array(await content.arrayBuffer()),
-        mimeType: content.type || resource.mimeType || 'text/plain',
-        title: resource.title,
-      });
+      const bytes = new Uint8Array(await content.arrayBuffer());
+      let stale = true;
+      while (stale) {
+        stale = await bridge.updatePoppedOutArtifact({
+          kind: 'generated',
+          resourceId: resource.id,
+          version: resource.currentVersion,
+          content: bytes,
+          mimeType: content.type || resource.mimeType || 'text/plain',
+          title: resource.title,
+        });
+      }
     } finally {
       inFlight.delete(key);
     }

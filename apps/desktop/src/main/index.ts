@@ -2964,7 +2964,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
  * bigger. A generated file instead carries the already-authorized preview
  * bytes; main turns those into a script-free document, never a second read.
  */
-function openArtifactWindow(request: DesktopArtifactWindowRequest): void {
+function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
   const artifactId = request.kind === 'site' ? request.artifactId : request.resourceId;
   const window = new BrowserWindow({
     width: 1_100,
@@ -2997,6 +2997,7 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): void {
   void loadArtifactInitialUrl(() => window.loadURL(url)).then((loaded) => {
     if (!loaded && !window.isDestroyed()) window.close();
   });
+  return true;
 }
 
 function poppedOutArtifactVersions(): Record<string, number> {
@@ -3019,26 +3020,24 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
       && artifact.resourceId === request.resourceId
       && artifact.version < request.version);
   if (windows.length === 0) {
-    return [...poppedOutArtifacts.entries()].some(([window, artifact]) =>
-      !window.isDestroyed() && artifact.resourceId === request.resourceId);
+    return false;
   }
+  const [target, previous] = windows[0]!;
   const url = request.kind === 'site'
     ? request.url
     : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
-  const loaded = await Promise.all(windows.map(async ([window, previous]) => {
-    // Reserve the version before navigation. Two preview reads can finish out
-    // of order; a slower old read must not be allowed to arrive after a newer
-    // publish and navigate the window backwards.
-    poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version });
-    window.setTitle(request.title);
-    const ok = await loadArtifactInitialUrl(() => window.loadURL(url));
-    if (!ok && !window.isDestroyed()
-      && poppedOutArtifacts.get(window)?.version === request.version) {
-      poppedOutArtifacts.set(window, previous);
-    }
-    return ok;
-  }));
-  return loaded.some(Boolean);
+  // One navigation per call: a site URL is single-use, so the renderer must
+  // mint again before advancing a second window for the same resource.
+  poppedOutArtifacts.set(target, { resourceId: request.resourceId, version: request.version });
+  target.setTitle(request.title);
+  const loaded = await loadArtifactInitialUrl(() => target.loadURL(url));
+  if (!loaded && !target.isDestroyed()
+    && poppedOutArtifacts.get(target)?.version === request.version) {
+    poppedOutArtifacts.set(target, previous);
+    return false;
+  }
+  return [...poppedOutArtifacts.entries()].some(([window, artifact]) =>
+    !window.isDestroyed() && artifact.resourceId === request.resourceId && artifact.version < request.version);
 }
 
 function parseArtifactPreviewBounds(raw: unknown): DesktopArtifactPreviewBounds | null {
@@ -3542,12 +3541,20 @@ function registerIpc(): void {
   ipcMain.handle('artifact:pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
     const request = parseArtifactWindowRequest(raw);
-    if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return;
-    openArtifactWindow(request);
+    if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
+    return openArtifactWindow(request);
   });
   ipcMain.handle('artifact:popped-out-versions', async (event) => {
     assertTrustedIpcSender(event);
     return poppedOutArtifactVersions();
+  });
+  ipcMain.handle('artifact:close-pop-outs', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    if (!Array.isArray(raw) || !raw.every((value) => typeof value === 'string')) return;
+    const closing = new Set(raw);
+    for (const [window, artifact] of poppedOutArtifacts) {
+      if (closing.has(artifact.resourceId) && !window.isDestroyed()) window.close();
+    }
   });
   ipcMain.handle('artifact:update-pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);

@@ -718,14 +718,20 @@ resource's canonical `currentVersion`: a mounted lightbox or sidebar re-reads
 its preview when that value advances, while the main process records the
 version in each detached window and reports stale windows back to the renderer.
 The renderer then reads newly authorized preview bytes, or mints a fresh
-single-use live-site navigation, and replaces every detached window for that
-resource. Closed windows leave the registry and therefore cause no background
-content read. Generated-file refreshes share the inline preview's
+single-use live-site navigation for each window, and replaces every detached
+window for that resource. Closed windows leave the registry and therefore cause
+no background content read; navigating the owning conversation closes its
+remaining detached windows because that route is also what owns their realtime
+subscription. Generated-file refreshes share the inline preview's
 `resource_processing` retry contract, and the main process reserves versions
 before navigation so two reads that finish out of order cannot move a detached
-window back to an older publish. The publishing bridge asks the canonical
-conversation object to emit `resource_updated` after a changed file is durable;
-for a generated site it waits until the public artifact pointer also names the
+window back to an older publish. The publishing bridge records the intended
+publication event beside the durable resource swap and asks the canonical
+conversation object to emit `resource_updated` after a changed file is durable.
+Retrying the same publication replays that event, so a crash between the two
+authorities cannot leave every open reader permanently on the previous version;
+duplicate same-version events are intentionally harmless. For a generated site
+it waits until the public artifact pointer also names the
 new version, so every reading surface can refresh immediately without racing
 the previous site.
 
