@@ -4,6 +4,7 @@ import { IconShare2 } from '@tabler/icons-react';
 import { NavigationRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
+  SidebarCollapseFooter,
   SidebarHeader,
   SidebarHorizontalLine,
   SidebarList,
@@ -19,7 +20,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, CreateSpaceRequest, PersonalOrder, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
+import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -2451,8 +2452,15 @@ export function Sidebar({
         {spaces === undefined && <div ref={setSidekickSlot} />}
         {sidekickSlot && sidekickShortcuts && createPortal(sidekickShortcuts, sidekickSlot)}
 
-        <div className="sidebar-collapse-footer">
-        {spaces === undefined && <div className="sidebar-account-slot" ref={setAccountSlot} />}
+        <SidebarCollapseFooter
+          collapseLabel="Collapse navigation"
+          compact={compact}
+          constrained={forcedCompact}
+          constrainedTitle="Widen the window to expand navigation"
+          expandLabel="Expand navigation"
+          leading={spaces === undefined ? <div className="sidebar-account-slot" ref={setAccountSlot} /> : undefined}
+          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
         {accountSlot && createPortal(accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button aria-label="Open account menu" className="account-trigger window-no-drag" type="button">
@@ -2517,10 +2525,6 @@ export function Sidebar({
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>, accountSlot)}
-          <IconButton className="window-no-drag" label={compact ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!compact} disabled={forcedCompact} title={forcedCompact ? 'Widen the window to expand navigation' : undefined} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-            {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </IconButton>
-        </div>
       </ResizableSidebar>
       <Modal
         footer={(

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   useEffect,
   useRef,
@@ -17,7 +17,7 @@ import {
   MIN_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
 } from '../lib/sidebar-geometry';
-import { DragHint } from './primitives';
+import { DragHint, IconButton } from './primitives';
 
 const EDGE_REVEAL_DISTANCE = 20;
 const KEYBOARD_STEP = 16;
@@ -35,6 +35,11 @@ type SidebarScrollProps<Component extends ElementType> = {
 
 type SidebarListProps<Component extends ElementType> = {
   as?: Component;
+} & ComponentPropsWithoutRef<Component>;
+
+type SidebarFooterProps<Component extends ElementType> = {
+  as?: Component;
+  leading?: ReactNode;
 } & ComponentPropsWithoutRef<Component>;
 
 /** One interactive or presentational row in any hierarchy sidebar. */
@@ -103,6 +108,58 @@ export function SidebarTitle({ className, ...props }: ComponentPropsWithoutRef<'
 /** A divider whose appearance can travel between expanded and compact layouts. */
 export function SidebarHorizontalLine({ className, ...props }: ComponentPropsWithoutRef<'div'>): React.JSX.Element {
   return <div aria-hidden="true" className={clsx('sidebar-horizontal-line', className)} {...props} />;
+}
+
+/** The shared bottom row for every hierarchy sidebar. */
+export function SidebarFooter<Component extends ElementType = 'div'>({
+  as,
+  children,
+  className,
+  leading,
+  ...props
+}: SidebarFooterProps<Component>): React.JSX.Element {
+  const Footer: ElementType = as ?? 'div';
+  return <Footer
+    {...props}
+    className={clsx('sidebar-footer', leading ? 'has-leading-content' : 'is-toggle-only', className)}
+  >
+    {leading}
+    {children}
+  </Footer>;
+}
+
+/** The shared trailing controls for every hierarchy sidebar. */
+export function SidebarCollapseFooter({
+  className,
+  collapseLabel,
+  compact,
+  constrained = false,
+  constrainedTitle,
+  expandLabel,
+  leading,
+  onToggle,
+  ...props
+}: Omit<ComponentPropsWithoutRef<'div'>, 'children'> & {
+  collapseLabel: string;
+  compact: boolean;
+  constrained?: boolean;
+  constrainedTitle?: string;
+  expandLabel: string;
+  leading?: ReactNode;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return <SidebarFooter {...props} className={className} leading={leading}>
+    <IconButton
+      aria-expanded={!compact}
+      className="window-no-drag"
+      disabled={constrained}
+      label={compact ? expandLabel : collapseLabel}
+      onClick={onToggle}
+      title={constrained ? constrainedTitle : undefined}
+    >
+      {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+    </IconButton>
+  </SidebarFooter>;
 }
 
 type ResizableSidebarProps = Omit<ComponentPropsWithoutRef<'aside'>, 'children'> & {

@@ -1100,13 +1100,6 @@ pre {
     box-shadow: inset 0 0 0 2px var(--av-sys-color-accent-base);
   }
 }
-.spaces-sidebar-footer {
-  align-items: center;
-  display: flex;
-  flex: 0 0 54px;
-  justify-content: flex-end;
-  padding: 8px 12px;
-}
 .spaces-account-slot,
 .sidebar-account-slot { flex: 1; min-width: 0; }
 .spaces-account-slot .account-trigger,
@@ -1128,7 +1121,6 @@ pre {
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions { margin-left: 0; }
 .spaces-sidebar.is-compact .spaces-sidebar-restore { display: none; }
-.spaces-sidebar.is-compact .spaces-sidebar-footer { justify-content: flex-end; padding-inline: 8px; }
 .spaces-sidebar-preview-surface { min-width: 210px; }
 .channels-space-heading { margin-top: 0 !important; }
 
@@ -7555,21 +7547,20 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
-.sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
-.app-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.app-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.app-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
-/* The work-stream sidebar's toggle is carried to the centre by derived footer
-   padding rather than by `justify-content`, which would jump it at the first
-   frame. */
-.workstream-context-sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px calc((100% - 30px) / 2) 8px 8px; }
+.sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.resizable-sidebar.is-compact .sidebar-footer { gap: 0; }
+.resizable-sidebar.is-compact .sidebar-footer.has-leading-content { padding: 8px; }
+/* A toggle-only footer is the same layout in every hierarchy rail. Derived
+   padding carries its 30px control to the centre through the width animation;
+   changing `justify-content` at the endpoint would make it jump. */
+.resizable-sidebar.is-compact .sidebar-footer.is-toggle-only { padding: 8px calc((100% - 30px) / 2) 8px 8px; }
 /* The avatar is centred by its padding rather than `justify-content`, which
    would jump it at the start of the travel. The floor travels, not a fixed
    height: the row's content is shorter than either floor, so the floor is
    the height, and a taller copy would grow it rather than be clipped. */
-.app-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
-.sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
+.app-shell .sidebar.is-compact .sidebar-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
+.sidebar-footer > .icon-button { flex-shrink: 0; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
 .settings-account-profile { display: grid; gap: 12px; }
