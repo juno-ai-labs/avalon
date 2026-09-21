@@ -138,7 +138,12 @@ numbers are the product owner's, set on 2026-09-19: enough to recognize the
 work, not so much that a long thread arrives in a mailbox. Only turns of type
 `text` are read, so tool output and system notices never leave this way, and
 each turn's whitespace is collapsed so a paragraph break inside a quoted message
-cannot read as the end of the quote.
+cannot read as the end of the quote. Before the quote is composed, its stored
+Markdown passes through the same plain-text reduction used by push and mention
+notifications: a link keeps its visible label, while emphasis, code delimiters,
+Rally targets and other renderer syntax do not leak into the mailbox. Reduction
+happens before the word and byte limits, so a cut cannot strand half a Markdown
+link and the limit measures the words the recipient can actually read.
 
 **Which conversation is the one the invitation opens onto**: the first target,
 which is Main for a work-stream offer and that conversation for a conversation
