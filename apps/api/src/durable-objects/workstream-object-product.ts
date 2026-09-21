@@ -112,8 +112,8 @@ import {
   type PendingInputAttachmentDescriptor,
   type PendingInputDeliveryEffectInput,
   type PreparedParticipantMessage,
-  UnsettledToolBatchError,
 } from "./workstream-transcript-storage";
+import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
 import {
   AdmitExternalMessageInputSchema,
   AnswerExternalElicitationInputSchema,
@@ -5497,7 +5497,7 @@ export class WorkstreamObjectProductService {
     },
   ): Promise<void> {
     await this.objectStore.commitWithRegionalEffects(
-      (sql) => {
+      () => {
         const now = Date.now();
         // A failing run does not get to abandon the provider protocol. Only a
         // live execution can settle an interrupted tool batch — the repair
@@ -5513,60 +5513,19 @@ export class WorkstreamObjectProductService {
         // expires and `claimPersistentLoopExecution` hands it to
         // `recoverInterruptedToolBatch`, the path written for exactly this and
         // reachable only while the run has not terminalized.
-        const withheld = this.transcript.unsettledToolBatchBlockingRelease(execution.loopId);
-        if (withheld) throw new UnsettledToolBatchError(withheld);
-        const changed = sql.exec<{ run_id: string }>(
-          `UPDATE runs SET status = 'failed', terminal_reason = 'failed', error_json = ?,
-                  completed_at = ?, terminalized_at = ?, updated_at = ?
-            WHERE run_id = ? AND status IN ('admitted', 'running')
-              AND substream_loop_id = ?
-              AND loop_execution_id = ? AND loop_execution_epoch = ?
-              AND EXISTS (
-                SELECT 1 FROM substream_loops loop
-                 WHERE loop.id = 1 AND loop.loop_id = ? AND loop.status = 'executing'
-                   AND loop.active_execution_id = ? AND loop.active_execution_epoch = ?
-                   AND loop.lease_owner = ?
-              )
-            RETURNING run_id`,
-          JSON.stringify(error), now, now, now, runId,
-          execution.loopId, execution.executionId, execution.executionEpoch,
-          execution.loopId, execution.executionId, execution.executionEpoch,
-          execution.leaseOwner,
-        );
-        if (changed.toArray().length === 0) throw new Error("workstream_run_failure_fenced");
-        const closedLoop = sql.exec<{
-          loop_id: string;
-        } & Record<string, SqlStorageValue>>(
-          `UPDATE substream_loops
-              SET status = 'idle', active_execution_id = NULL,
-                  active_execution_epoch = NULL, lease_owner = NULL,
-                  lease_expires_at = NULL, stop_requested_at = NULL,
-                  stop_after_step_ordinal = NULL, stop_reason = NULL,
-                  revision = revision + 1, updated_at = ?
-            WHERE id = 1 AND loop_id = ? AND status = 'executing'
-              AND active_execution_id = ? AND active_execution_epoch = ?
-              AND lease_owner = ?
-              AND NOT EXISTS (
-                SELECT 1 FROM assistant_turn_reservations reservation
-                 WHERE reservation.loop_id = substream_loops.loop_id
-                   AND reservation.cycle_ordinal = substream_loops.cycle_ordinal
-                   AND reservation.state IN ('reserved', 'streaming')
-              )
-            RETURNING loop_id`,
-          now,
-          execution.loopId,
-          execution.executionId,
-          execution.executionEpoch,
-          execution.leaseOwner,
-        ).toArray()[0];
-        if (closedLoop?.loop_id !== execution.loopId) {
-          throw new Error("workstream_run_failure_loop_fenced");
+        const outcome = new WorkstreamHarnessRunStorage(this.storage)
+          .terminalizeWorkflowFailureInCurrentTransaction({
+            runId,
+            errorJson: JSON.stringify(error),
+            memberSafePayloadJson: JSON.stringify({ code: error.code }),
+            lifecycleEventId: uuidV7(),
+            stateReasonCode: error.code,
+            loopExecutionFence: execution,
+            now,
+          });
+        if (outcome.outcome === "ownership_lost") {
+          throw new Error("workstream_run_failure_fenced");
         }
-        sql.exec(
-          `UPDATE workstream SET exact_state = 'failed', state_reason_code = ?,
-                  state_changed_at = ?, updated_at = ? WHERE id = 1`,
-          error.code, now, now,
-        );
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
