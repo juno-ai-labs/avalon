@@ -46,16 +46,16 @@ describe('default channel landing', () => {
     socket.state = 'connecting';
   });
 
-  it('waits for the directory and opens the first pin, not the newest arrival', async () => {
+  it('waits for the directory and opens the most recent Channel even if cached legacy pins remain', async () => {
     const view = render(<Router />);
     expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
     expect(screen.queryByTestId('destination')).toBeNull();
     directory.data = [stream('recent', null, '2026-09-05'), stream('second-pin', 1, '2026-09-04'), stream('first-pin', 0, '2026-08-01')];
     view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/first-pin');
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
     directory.data = [stream('different-pin', 0, '2026-09-06')];
     view.rerender(<Router />);
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workstreams/first-pin');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workstreams/recent');
   });
 
   it('uses sidebar recency order when there are no pins', async () => {
@@ -82,7 +82,7 @@ describe('default channel landing', () => {
   it('passes over the rows a leaving screen names, whatever their rank', async () => {
     // The row that was just archived or marked unread is still in the
     // directory — the tombstone or refetch has not landed — and it is the
-    // first pin or the most recent row precisely because it was just open.
+    // most recent row precisely because it was just open.
     directory.data = [stream('archived-pin', 0, '2026-09-06'), stream('unread', null, '2026-09-05'), stream('next', null, '2026-08-01')];
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['archived-pin', 'unread'] } }} />);
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/next');

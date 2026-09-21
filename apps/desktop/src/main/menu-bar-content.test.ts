@@ -157,6 +157,19 @@ describe('menu bar content', () => {
     expect(subject.store.content().pinned).toEqual([]);
   });
 
+  it('breaks equal-recency ties by Channel id like the sidebar and server', async () => {
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([
+        { id: 'b', title: 'Bravo', lastActivityAt: LAST_ACTIVITY },
+        { id: 'a', title: 'Alpha', lastActivityAt: LAST_ACTIVITY },
+      ]),
+    });
+
+    await subject.store.refresh();
+
+    expect(subject.store.content().recents.map((entry) => entry.id)).toEqual(['a', 'b']);
+  });
+
   it('names a channel Rally has not finished titling', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([{ id: 'a', title: 'placeholder', titleStatus: 'naming' }]),

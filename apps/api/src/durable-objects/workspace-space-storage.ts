@@ -2026,6 +2026,14 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
         request.workstreamId,
       );
+      // The same transaction removes the placement and every viewer's pin for
+      // it. Directory pages carry both `spaceIds` and `spacePins`, so their
+      // waterline must move with that deletion rather than after it.
+      this.storage.sql.exec(
+        `UPDATE workspace_directory_state
+            SET waterline = waterline + 1, updated_at = ? WHERE id = 1`,
+        now,
+      );
       this.advanceWaterline(now);
       return this.space(request.spaceId, request.userId);
     });

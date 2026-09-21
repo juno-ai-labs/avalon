@@ -78,6 +78,7 @@ import {
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
+  MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   workstreamParticipantPreview,
   WorkspaceIdSchema,
@@ -646,6 +647,7 @@ import {
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
+  spaceVisibleToViewerSql,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WorkspaceSpaceStorage,
 } from "./workspace-space-storage";
@@ -1068,7 +1070,6 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
   claimed_at: number | null;
 }
 
-const MAX_WORKSPACE_PINS_PER_USER = 1_000;
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 // Queue consumers have a 15-minute platform wall-time limit. This expiry is
 // only for Queue claims. A retiring Workflow can retry multiple 15-minute
@@ -4019,9 +4020,22 @@ function loadSpacePins(
       space_id: string;
       position: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT workstream_id, space_id, position FROM workspace_workstream_pins
-        WHERE user_id = ? AND workstream_id IN (${ids.map(() => "?").join(", ")})
-        ORDER BY workstream_id, space_id, position`,
+      `SELECT pin.workstream_id, pin.space_id, pin.position
+         FROM workspace_workstream_pins pin
+         JOIN space_channel_memberships membership
+           ON membership.space_id = pin.space_id
+          AND membership.workstream_id = pin.workstream_id
+          AND membership.state = 'active'
+         JOIN workspace_space_directory space ON space.space_id = pin.space_id
+         LEFT JOIN workspace_space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ? AND viewer.is_participant = 1
+        WHERE pin.user_id = ? AND space.archived_at IS NULL
+          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND pin.workstream_id IN (${ids.map(() => "?").join(", ")})
+        ORDER BY pin.workstream_id, pin.space_id, pin.position`,
+      userId,
+      userId,
       userId,
       ...ids,
     ).toArray();
@@ -6543,6 +6557,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
     });
+    await this.publishDirectorySync(request.workspaceId);
     await this.publishWorkstreamState(request.workstreamId);
     await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
@@ -8618,6 +8633,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
           AND (? IS NULL OR ${recency} >= ?)
           AND (? IS NULL OR ${recency} < ?)
+          AND (? IS NULL OR EXISTS (
+            SELECT 1
+              FROM space_channel_memberships membership
+              JOIN workspace_space_directory space ON space.space_id = membership.space_id
+              LEFT JOIN workspace_space_viewers space_viewer
+                ON space_viewer.space_id = space.space_id
+               AND space_viewer.user_id = ?1 AND space_viewer.is_participant = 1
+             WHERE membership.space_id = ?
+               AND membership.workstream_id = directory.workstream_id
+               AND membership.state = 'active'
+               AND space.archived_at IS NULL
+               AND ${spaceVisibleToViewerSql("space", "space_viewer")}
+          ))
           AND (? IS NULL
             OR (? = 1 AND EXISTS (
               SELECT 1 FROM workspace_workstream_pins pin
@@ -8634,6 +8662,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       atOrAfter ? Date.parse(atOrAfter) : 0,
       before ?? null,
       before ? Date.parse(before) : 0,
+      filter.spaceId ?? null,
+      filter.spaceId ?? "",
+      userId,
       pinned === undefined ? null : Number(pinned),
       Number(pinned ?? false),
       filter.spaceId ?? "",
@@ -10348,7 +10379,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `SELECT COUNT(*) AS count FROM workspace_workstream_pins WHERE user_id = ?`,
           request.userId,
         ).one().count;
-        if (count >= MAX_WORKSPACE_PINS_PER_USER) throw new Error("workstream_pin_limit_reached");
+        if (count >= MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER) throw new Error("workstream_pin_limit_reached");
       }
       const inserted = this.state.storage.sql.exec<{ workstream_id: string }>(
         `INSERT OR IGNORE INTO workspace_workstream_pins

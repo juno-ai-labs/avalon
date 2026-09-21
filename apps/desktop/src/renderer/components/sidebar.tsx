@@ -1605,7 +1605,8 @@ export function Sidebar({
 
   const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
     if (selectedSpaceId === null) return;
-    motionMoveIntent.current = { id: workstream.id, pinned };
+    const motionIntent = { id: workstream.id, pinned };
+    motionMoveIntent.current = motionIntent;
     setPinPendingWorkstreamId(workstream.id);
     try {
       // The row has just moved to a different section, which is off screen
@@ -1620,7 +1621,7 @@ export function Sidebar({
       if (await onPinWorkstream(workstream, selectedSpaceId, pinned)) {
         setReveal({ id: workstream.id, pinned });
         setTimeout(() => {
-          if (motionMoveIntent.current?.id === workstream.id) motionMoveIntent.current = null;
+          if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
         }, 0);
         reportTelemetryProductIntent({
           kind: 'workstream_action_completed',
@@ -1630,9 +1631,11 @@ export function Sidebar({
           origin: workstream.systemKind ? 'system' : 'ad_hoc',
           pinned,
         });
+      } else if (motionMoveIntent.current === motionIntent) {
+        motionMoveIntent.current = null;
       }
     } catch {
-      motionMoveIntent.current = null;
+      if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
       setMenuFailure(pinned ? 'pin' : 'unpin');
     } finally {
       setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
@@ -1661,7 +1664,7 @@ export function Sidebar({
       // Search only reorders the visible slots; hidden pins keep their place.
       const visibleIds = new Set(order);
       let nextVisible = 0;
-      const completeOrder = orderPinnedWorkstreams(workstreams, null).map((pinned) => (
+      const completeOrder = orderPinnedWorkstreams(visibleWorkstreams, null).map((pinned) => (
         visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
       ));
       await onReorderPinnedWorkstreams(selectedSpaceId, completeOrder);

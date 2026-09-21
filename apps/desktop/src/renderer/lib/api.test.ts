@@ -754,7 +754,7 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls.map((call) => ({
       url: String(call[0]),
       method: call[1]?.method,
-      body: JSON.parse(String(call[1]?.body)),
+      ...(call[1]?.body === undefined ? {} : { body: JSON.parse(String(call[1].body)) }),
     }))).toEqual([
       {
         url: `https://api.rally.test/workstreams/${workstreamId}/pin`,
@@ -762,9 +762,8 @@ describe('Rally API wire adapter', () => {
         body: { spaceId },
       },
       {
-        url: `https://api.rally.test/workstreams/${workstreamId}/pin`,
+        url: `https://api.rally.test/workstreams/${workstreamId}/pin?spaceId=${spaceId}`,
         method: 'DELETE',
-        body: { spaceId },
       },
       {
         url: 'https://api.rally.test/workstreams/pins',

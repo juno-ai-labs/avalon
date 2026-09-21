@@ -1812,6 +1812,33 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-21 — Channel pins follow their Space placements
+
+**What changed:** WorkspaceDO now keys each person's Channel pin by Space and
+Channel, validates the active placement on writes, filters pin projections
+through the same Space visibility predicate as placement ids, and advances and
+publishes the workstream-directory waterline when placement removal deletes its
+pins. Migration 66 rebuilds the table and clears legacy Organization-wide rows
+that carry no Space identity.
+
+**Why:** A Channel may be placed in several Spaces, and a pin in one is not a
+navigation choice about the others. Keeping a global row made those placements
+share state accidentally; deleting a placement without a directory invalidation
+also let a connected client retain and later resurrect the removed choice.
+
+**Considered and rejected:** Copying each legacy pin to every placement or
+assigning it to one arbitrary Space. Both invent user intent. Folding pins into
+generic container ordering was also rejected because ordering arranges an
+existing membership set, while a pin owns shortlist membership as well as its
+position.
+
+**Consequences:** Every pin command names a Space, a person may pin the same
+Channel independently in several Spaces, and Space-less clients cannot project
+or mutate pins. Placement removal must keep pin deletion and the directory
+waterline in one transaction, then publish the directory invalidation after the
+commit. Any future pin read must remain no wider than the corresponding
+viewer-scoped placement read.
+
 ### 2026-09-20 — One terminal commit owns every root-run ending
 
 **What changed:** live-attempt terminalization, queued and never-launched

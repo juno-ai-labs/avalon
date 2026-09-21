@@ -3096,6 +3096,30 @@ describe("Durable Objects in the Workers runtime", () => {
         ],
       }),
     ]);
+    await stub.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-000000000289",
+      statements: [{
+        sql: "UPDATE workspace_space_directory SET archived_at = ?, updated_at = ? WHERE space_id = ?",
+        params: [now + 1, now + 1, OTHER_SPACE_ID],
+      }],
+    });
+    await expect(stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 20,
+      includeSystem: false,
+    })).resolves.toMatchObject({
+      items: [
+        { id: workstreamIds[0], spaceIds: [SPACE_ID], spacePins: [] },
+        { id: workstreamIds[1], spaceIds: [SPACE_ID], spacePins: [] },
+        {
+          id: workstreamIds[2],
+          spaceIds: [SPACE_ID],
+          spacePins: [{ spaceId: SPACE_ID, position: 0 }],
+        },
+      ],
+    });
     await expect(stub.unpinWorkstream({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,

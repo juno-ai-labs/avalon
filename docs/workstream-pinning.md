@@ -40,7 +40,7 @@ end of that Space's list. The end rather than the top: the
 list is arranged by hand, and appending is the only placement that disturbs none
 of that arrangement.
 
-Unpinning issues `DELETE /workstreams/:id/pin` with the same `spaceId`, removes
+Unpinning issues `DELETE /workstreams/:id/pin?spaceId=...`, removes
 only that placement's row, and rewrites that Space's survivors so the positions
 stay a dense `0..n-1` run.
 
@@ -443,7 +443,8 @@ the legacy scalar null and carries `spacePins`; a client must have a selected
 Space before it can mutate or display a pin. Any future non-Space surface that
 wants pins must first define which Space it represents. A batch filter that
 distinguishes pinned from unpinned rows also names its Space, so a Channel pinned
-elsewhere remains unpinned in the selected Space's recency group.
+elsewhere remains unpinned in the selected Space's recency group, while a Channel
+without an active viewer-visible placement there is outside both groups.
 
 ### 2026-09-18 — Sidebar actions own their failure copy
 

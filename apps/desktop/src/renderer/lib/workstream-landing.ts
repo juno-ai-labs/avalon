@@ -1,4 +1,3 @@
-import { orderPinnedWorkstreams } from '../components/sidebar';
 import { compareWorkstreamRecency } from './format';
 import type { WorkstreamSummary } from './types';
 import { useCallback } from 'react';
@@ -66,8 +65,7 @@ export function openWorkstreamId(pathname: string): string | null {
   }
 }
 
-/** Shared by startup warming and the root route; pin order wins over recency. */
+/** Shared by startup warming and the Space-less root route; recency is its only order. */
 export function firstLandingWorkstream(workstreams: WorkstreamSummary[]): WorkstreamSummary | undefined {
-  return orderPinnedWorkstreams(workstreams, null)[0]
-    ?? [...workstreams].sort(compareWorkstreamRecency)[0];
+  return [...workstreams].sort(compareWorkstreamRecency)[0];
 }
