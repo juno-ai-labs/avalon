@@ -1,4 +1,5 @@
 import { ExternalActorSchema } from "@rally/contracts";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import type { Env } from "../env";
 import { createMessageObjectPort } from "../runtime/message-port";
 
@@ -36,6 +37,9 @@ const AGENT_AUTHOR = "Rally";
 
 /** Someone whose profile row is gone or nameless. Never their email: a preview says who spoke, not how to reach them. */
 const UNKNOWN_AUTHOR = "A teammate";
+
+/** A real said turn whose Markdown has no words, kept visible so the preview remains a contiguous suffix. */
+const FORMATTING_ONLY_MESSAGE = "Formatting-only message.";
 
 export interface ConversationPreviewTurn {
   author: string;
@@ -75,11 +79,20 @@ export async function readConversationPreview(env: Env, input: {
   const names = await authorNames(env, rows.flatMap((row) => row.author_type === "human" && row.author_user_id ? [row.author_user_id] : []));
   return {
     earlier: Math.max(0, said - rows.length),
-    turns: rows.map((row) => ({
-      author: row.author_type === "human" ? names.get(row.author_user_id ?? "") ?? UNKNOWN_AUTHOR
-        : row.author_type === "external" ? externalName(row.external_actor_json) : AGENT_AUTHOR,
-      ...truncateTurn(row.text_content, input.words, input.bytes),
-    })),
+    turns: rows.map((row) => {
+      // Outside-product previews have no Rally Markdown renderer. Reduce the
+      // complete turn before truncating it so a cut can never split link syntax
+      // into a fragment that would leak into the recipient's mailbox.
+      const plainText = rewriteMessageAsPlainText(row.text_content, { sources: "none" });
+      return {
+        author: row.author_type === "human" ? names.get(row.author_user_id ?? "") ?? UNKNOWN_AUTHOR
+          : row.author_type === "external" ? externalName(row.external_actor_json) : AGENT_AUTHOR,
+        // Dropping an empty reduction and backfilling an older turn would make
+        // `earlier` cease to mean that every omitted message came before this
+        // contiguous suffix. Keep the real turn and say why it has no words.
+        ...truncateTurn(plainText.trim() ? plainText : FORMATTING_ONLY_MESSAGE, input.words, input.bytes),
+      };
+    }),
   };
 }
 

@@ -138,7 +138,15 @@ numbers are the product owner's, set on 2026-09-19: enough to recognize the
 work, not so much that a long thread arrives in a mailbox. Only turns of type
 `text` are read, so tool output and system notices never leave this way, and
 each turn's whitespace is collapsed so a paragraph break inside a quoted message
-cannot read as the end of the quote.
+cannot read as the end of the quote. Before the quote is composed, its stored
+Markdown passes through the same plain-text reduction used by push and mention
+notifications: a link keeps its visible label, while emphasis, code delimiters,
+Rally targets and other renderer syntax do not leak into the mailbox. Reduction
+happens before the word and byte limits, so a cut cannot strand half a Markdown
+link and the limit measures the words the recipient can actually read. A real
+turn made only of formatting becomes “Formatting-only message.” rather than an
+empty author row; it stays in place so the preview remains a contiguous suffix
+and “earlier messages” still means every omitted turn came before it.
 
 **Which conversation is the one the invitation opens onto**: the first target,
 which is Main for a work-stream offer and that conversation for a conversation
@@ -405,6 +413,34 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-09-21 — Make outside-product conversation previews plain text before sizing
+
+**What changed.** Conversation previews now reduce each complete stored turn to
+plain text before applying their word and byte budgets. Links keep their visible
+labels and renderer-only syntax stays out of both invitation email parts. A
+turn whose Markdown has no plain-text content keeps its place as
+“Formatting-only message.”
+
+**Why.** The invitation email quoted canonical Markdown into a client that has
+no Rally renderer, exposing destinations and delimiters such as
+`[PR #838](https://github.com/…)`. Reducing after truncation was insufficient:
+a word cut could split a link first and leave syntax that the reducer could no
+longer recognize.
+
+**Considered and rejected.** Dropping empty reductions and fetching older prose
+would show more words, but it would stop the preview being a contiguous suffix;
+the “earlier messages” count could then describe a newer omitted turn as
+earlier than the rows below it. Keeping the real turn with explicit copy
+preserves ordering and exact count semantics without leaking its Markdown.
+
+**Consequences.** Any future consumer of `ConversationPreview` receives plain
+text already bounded for display and must preserve reduction-before-sizing.
+Formatting-only turns remain visible placeholders rather than disappearing, so
+new renderers must treat the preview as complete presentation text rather than
+canonical transcript Markdown.
+
+PR: [#890](https://github.com/juno-ai-labs/avalon/pull/890).
 
 ### 2026-09-19 — Put the emailed link behind one token, and say what the invitation is for
 
