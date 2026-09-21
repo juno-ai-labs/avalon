@@ -1504,6 +1504,24 @@ describe('Organization settings', () => {
     expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
   });
 
+  // The other half of the console list: with only Granola and Fireflies asserted
+  // absent, an empty or mis-exported list would take Ashby's window away and
+  // leave every one of those assertions green.
+  it('keeps the events console on an Ashby organization connection', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue(['ashby']);
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000022', connectorType: 'ashby', scope: 'workspace',
+      displayName: 'Ashby organization events', capabilities: ['ashby.workspace.events'], status: 'healthy',
+    }]);
+    api.connectorInstallation.mockResolvedValue({ installation: null });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage events for Ashby organization events' }));
+    expect(await screen.findByRole('dialog', { name: 'Organization events' })).toBeVisible();
+    await waitFor(() => expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000022'));
+  });
+
   it('offers Fireflies to a person and never to the organization', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue(['fireflies']);
     api.getConnections.mockResolvedValue([{
