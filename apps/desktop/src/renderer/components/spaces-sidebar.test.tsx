@@ -101,6 +101,29 @@ describe('SpacesSidebar', () => {
     expect(onAddChannel).not.toHaveBeenCalled();
   });
 
+  it('marks a Channel placement drop as a copy rather than a source reorder', () => {
+    renderSidebar();
+    const row = screen.getByRole('link', { name: 'Launch' });
+    const transfer = {
+      dropEffect: 'none',
+      types: ['application/x-rally-workstream-id'],
+    };
+    const over = new Event('dragover', { bubbles: true, cancelable: true });
+    Object.defineProperty(over, 'dataTransfer', { value: transfer });
+
+    row.dispatchEvent(over);
+
+    expect(over.defaultPrevented).toBe(true);
+    expect(transfer.dropEffect).toBe('copy');
+  });
+
+  it('shows placeholder rows instead of an empty directory while loading', () => {
+    renderSidebar({ loading: true, spaces: [] });
+
+    expect(screen.queryByText('No spaces yet')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.spaces-sidebar .skeleton-row')).toHaveLength(4);
+  });
+
   it('keeps the square Space marks when compact and can be expanded again', () => {
     const { onCollapsedChange } = renderSidebar({ collapsed: true });
     const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
