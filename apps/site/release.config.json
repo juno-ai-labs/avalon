@@ -1,41 +1,41 @@
 {
   "published": true,
-  "version": "1.420.0",
-  "commit": "f9efc870ce3e17573bed45beea860fed6d866e14",
+  "version": "1.421.0",
+  "commit": "5ac6b7b5fe18be53dadde9b677308dfb5cb6bf64",
   "platform": "macOS",
   "architecture": "Apple silicon",
   "downloadBaseUrl": "https://downloads.rallywith.ai",
   "bucket": "avalon-desktop-releases",
   "prefix": "stable/darwin/arm64",
   "files": {
-    "dmg": "Rally-1.420.0-mac-arm64.dmg",
+    "dmg": "Rally-1.421.0-mac-arm64.dmg",
     "canonicalDmg": "Rally.dmg",
-    "zip": "Rally-1.420.0-mac-arm64.zip",
+    "zip": "Rally-1.421.0-mac-arm64.zip",
     "blockmaps": [
-      "Rally-1.420.0-mac-arm64.dmg.blockmap",
-      "Rally-1.420.0-mac-arm64.zip.blockmap"
+      "Rally-1.421.0-mac-arm64.dmg.blockmap",
+      "Rally-1.421.0-mac-arm64.zip.blockmap"
     ],
     "checksums": "SHA256SUMS",
     "latest": "latest-mac.yml"
   },
   "objects": {
-    "dmg": "stable/darwin/arm64/Rally-1.420.0-mac-arm64.dmg",
+    "dmg": "stable/darwin/arm64/Rally-1.421.0-mac-arm64.dmg",
     "canonicalDmg": "stable/darwin/arm64/Rally.dmg",
-    "zip": "stable/darwin/arm64/Rally-1.420.0-mac-arm64.zip",
+    "zip": "stable/darwin/arm64/Rally-1.421.0-mac-arm64.zip",
     "blockmaps": [
-      "stable/darwin/arm64/Rally-1.420.0-mac-arm64.dmg.blockmap",
-      "stable/darwin/arm64/Rally-1.420.0-mac-arm64.zip.blockmap"
+      "stable/darwin/arm64/Rally-1.421.0-mac-arm64.dmg.blockmap",
+      "stable/darwin/arm64/Rally-1.421.0-mac-arm64.zip.blockmap"
     ],
-    "checksums": "stable/darwin/arm64/1.420.0/SHA256SUMS",
+    "checksums": "stable/darwin/arm64/1.421.0/SHA256SUMS",
     "latest": "stable/darwin/arm64/latest-mac.yml"
   },
   "sha256": {
-    "Rally-1.420.0-mac-arm64.dmg": "d7f1d9096a23ebaacfc8df5d0bbc46b3d1910ba10f1169032f42057d68974923",
-    "Rally-1.420.0-mac-arm64.dmg.blockmap": "8db67900515e550fb12d613b441ded747cc5d6da60008d74f689175dbb1462a9",
-    "Rally-1.420.0-mac-arm64.zip": "b5fe33a2208c91dec6cc5b0a192aa7d3157f1bf04756ae237ae3e9fb3ad79388",
-    "Rally-1.420.0-mac-arm64.zip.blockmap": "5becd630f355b62bd0888e33d3c6bdcf68eb758d766ff4521dd5d8d4d5257d32",
-    "SHA256SUMS": "e8f42b3e39fb9304853cfb4a8c50e09a4f297f3d6b8dfb8d136f103e4825942c",
-    "Rally.dmg": "d7f1d9096a23ebaacfc8df5d0bbc46b3d1910ba10f1169032f42057d68974923"
+    "Rally-1.421.0-mac-arm64.dmg": "50cccbc085cb3f0734b5da0f8b1ef41970869036795c5781752129915cc30f26",
+    "Rally-1.421.0-mac-arm64.dmg.blockmap": "b4ae3c75e1e7eadd236a3b52c414cd0dd9b06d9d104460f688100b8c6e59f79f",
+    "Rally-1.421.0-mac-arm64.zip": "38d9ed9e018ac514b3c69f36670a0b164de0f09e37dcd7ae029c8effa3d9effc",
+    "Rally-1.421.0-mac-arm64.zip.blockmap": "0a1d1b248e9649bde853c094c08b4381546ce46f7d1b7cd2dc867fb32e3a30ee",
+    "SHA256SUMS": "6cc8d5bc9409fa1f49d9172a10700523dd5824d5e63df4bfa70d2e8dfd45355c",
+    "Rally.dmg": "50cccbc085cb3f0734b5da0f8b1ef41970869036795c5781752129915cc30f26"
   },
-  "publishedAt": "2026-09-21T21:47:58.677Z"
+  "publishedAt": "2026-09-21T23:05:30.040Z"
 }
