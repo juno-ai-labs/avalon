@@ -211,6 +211,19 @@ it("reduces Markdown before applying the visible-word limit", async () => {
   });
 });
 
+it("keeps formatting-only turns visible without breaking the contiguous preview", async () => {
+  seed(["Readable context.", "***"]);
+  expect(await readConversationPreview(environment(), {
+    workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
+  })).toEqual({
+    earlier: 0,
+    turns: [
+      { author: "Priya Shah", text: "Readable context.", truncated: false },
+      { author: "Rally", text: "Formatting-only message.", truncated: false },
+    ],
+  });
+});
+
 it("reads the end of the conversation, in reading order, with the rest counted", async () => {
   seed(["one", "two", "three", "four", "five", "six", "seven"]);
   expect(await readConversationPreview(environment(), {
