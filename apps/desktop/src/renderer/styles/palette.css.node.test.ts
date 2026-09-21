@@ -256,14 +256,15 @@ describe('project palette', () => {
     expect(app).toContain(`.appearance-picker-colors { grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, minmax(0, 1fr)); }`);
   });
 
-  it('given an accent, when onboarding.css is read, then it colours marks and controls but fills no row', () => {
+  it('given an accent, when onboarding.css is read, then it does not redefine persistent row selection', () => {
     // The accent may re-point what it likes in `sys.color.accent.*`; what it
-    // may not re-point is `cmp.row.background-selected`. That token is a fill,
-    // and only about half its readers are selections — the rest are an inline
-    // mention chip, a resting dictation button, two hovers and the letter
-    // beside an option, none of which anybody chose to paint in a reader's
-    // colour. A future accent that wants a row back should give that row a
-    // token of its own rather than re-point the one everything shares.
+    // may not re-point is `cmp.row.background-selected`. That token is a
+    // persistent selection fill, and only about half its readers are
+    // selections — the rest are an inline mention chip, a resting dictation
+    // button, two hovers and the letter beside an option, none of which anybody
+    // chose to paint in a reader's colour. A deliberately personal transient
+    // state can still read `sys.color.accent.*` directly without turning every
+    // selected row personal.
     //
     // Matched as a *declaration*, with comments stripped first. Asserting on
     // the file text passed only because the comment beside the deleted line

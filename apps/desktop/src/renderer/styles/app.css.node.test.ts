@@ -1534,6 +1534,15 @@ describe('option keycaps', () => {
   });
 });
 
+describe('elicitation option hover', () => {
+  it('layers a reader-accent tint over the option instead of replacing its surface', () => {
+    const hover = rule('.app-shell .elicitation-option:hover');
+    expect(hover).toContain('background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%);');
+    expect(hover).not.toMatch(/(?:^|[;{\s])background:/u);
+    expect(hover).not.toContain('var(--hover-layer)');
+  });
+});
+
 /**
  * The feed's spacing is one scale. A literal that slips back into a feed rule
  * renders correctly and stays invisible until somebody moves `ref.space.unit`
