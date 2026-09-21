@@ -8430,7 +8430,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.membershipIncarnation,
     ));
     const admittedIds = request.workstreamIds.filter((workstreamId) => candidates.has(workstreamId));
-    return this.spaceStorage().sharedNavigationSpaces(admittedIds).map((space) =>
+    return this.spaceStorage().sharedNavigationSpaces(request.userId, admittedIds).map((space) =>
       SharedNavigationSpaceSchema.parse(space));
   }
 

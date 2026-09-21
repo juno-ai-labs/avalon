@@ -21,6 +21,8 @@ import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/sp
 import { ConversationSurface } from '../../desktop/src/renderer/screens/conversation-surface';
 import '@rally/ui/styles/app.css';
 
+const SHARED_CHANNELS_SPACE_ID = 'shared-channels';
+
 function SharedConversationRoute({ onShowNavigation }: { onShowNavigation: () => void }): React.JSX.Element {
   const { parentId, substreamId = '0' } = useParams();
   return <SharedConversation key={`${parentId}:${substreamId}`} onShowNavigation={onShowNavigation} />;
@@ -94,17 +96,35 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
-  useEffect(() => {
+  const navigationSpaces = useMemo(() => {
     const spaces = directory.data?.spaces ?? [];
-    if (routeParentId) {
-      const routeSpace = spaces.find((space) => space.workstreamIds.includes(routeParentId));
-      if (routeSpace) { setSelectedSpaceId(routeSpace.id); return; }
-    }
-    setSelectedSpaceId((current) => spaces.some((space) => space.id === current) ? current : spaces[0]?.id ?? null);
-  }, [directory.data?.spaces, routeParentId]);
+    const placedWorkstreamIds = new Set(spaces.flatMap((space) => space.workstreamIds));
+    const unplacedWorkstreamIds = (directory.data?.workstreams ?? [])
+      .map((workstream) => workstream.parentId)
+      .filter((parentId) => !placedWorkstreamIds.has(parentId));
+    return unplacedWorkstreamIds.length === 0 ? spaces : [...spaces, {
+      id: SHARED_CHANNELS_SPACE_ID,
+      name: 'Shared channels',
+      iconKey: 'users' as const,
+      colorKey: 'blue' as const,
+      workstreamIds: unplacedWorkstreamIds,
+    }];
+  }, [directory.data]);
+  useEffect(() => {
+    setSelectedSpaceId((current) => {
+      if (routeParentId) {
+        const currentSpace = navigationSpaces.find((space) =>
+          space.id === current && space.workstreamIds.includes(routeParentId));
+        if (currentSpace) return currentSpace.id;
+        const routeSpace = navigationSpaces.find((space) => space.workstreamIds.includes(routeParentId));
+        if (routeSpace) return routeSpace.id;
+      }
+      return navigationSpaces.some((space) => space.id === current) ? current : navigationSpaces[0]?.id ?? null;
+    });
+  }, [navigationSpaces, routeParentId]);
   if (!session) return <></>;
   const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
-  const selectedSpace = directory.data?.spaces.find((space) => space.id === selectedSpaceId) ?? directory.data?.spaces[0];
+  const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
   const openWorkstream = (parentId: string) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
@@ -115,9 +135,14 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   };
   const selectSpace = (spaceId: string) => {
     setSelectedSpaceId(spaceId);
-    const space = directory.data?.spaces.find((item) => item.id === spaceId);
-    const firstParentId = space?.workstreamIds.find((id) => directory.data?.workstreams.some((item) => item.parentId === id));
-    if (firstParentId) openWorkstream(firstParentId);
+    const space = navigationSpaces.find((item) => item.id === spaceId);
+    const containedWorkstreams = space?.workstreamIds
+      .map((id) => directory.data?.workstreams.find((item) => item.parentId === id))
+      .filter((item) => item !== undefined) ?? [];
+    const firstActive = containedWorkstreams.find((workstream) =>
+      !workstream.archived && workstream.conversations.some((conversation) => !conversation.archived));
+    const target = firstActive ?? containedWorkstreams[0];
+    if (target) openWorkstream(target.parentId);
   };
   return <>
     <aside aria-label="Spaces sidebar" className={`spaces-sidebar browser-spaces-sidebar${open ? ' is-mobile-open' : ''}`}>
@@ -125,8 +150,9 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
       <nav aria-label="Shared spaces" className="spaces-sidebar-scroll">
         {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
         {directory.isPending && <p className="spaces-sidebar-empty">Loading spaces…</p>}
-        {directory.data?.spaces.length === 0 && <p className="spaces-sidebar-empty">No shared spaces yet.</p>}
-        {directory.data?.spaces.map((space) => <button aria-label={space.name}
+        {directory.data && navigationSpaces.length === 0 && <p className="spaces-sidebar-empty">No shared spaces yet.</p>}
+        {navigationSpaces.map((space) => <button aria-label={space.name}
+          aria-pressed={space.id === selectedSpace?.id}
           className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
           key={space.id} onClick={() => selectSpace(space.id)} type="button">
           <span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>

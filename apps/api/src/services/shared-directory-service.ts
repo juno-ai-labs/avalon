@@ -28,7 +28,10 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
     }));
     return item;
   }));
-  const workstreams = items.filter((item) => item !== null);
+  const workstreams = items.filter((item) => item !== null).map((item) =>
+    item.conversations.some((conversation) => conversation.substreamId === "0")
+      ? item
+      : { ...item, title: null });
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (current?.status !== "active" || current.incarnation !== relationship.incarnation
     || current.revision !== relationship.revision) return SharedDirectorySchema.parse({ workstreams: [] });
