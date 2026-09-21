@@ -333,8 +333,11 @@ describe('Sidebar channel markers', () => {
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
-    fireEvent.doubleClick(screen.getByRole('separator', { name: 'Resize navigation' }));
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
+    fireEvent.doubleClick(resizer);
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+    expect(useUiStore.getState().sidebarWidth).toBe(300);
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBe('false');
   });
 
