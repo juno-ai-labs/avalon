@@ -544,8 +544,11 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 **What changed:** The desktop uses the first artifact-open response for its
 initial preview instead of discarding that response's code and minting a second
 one. Pop-out, browser, and a preview reopened after showing stored data still
-mint fresh single-use codes. The open service overlaps its independent profile,
-placement, and authorization reads. Once the resulting viewer session is
+mint fresh single-use codes. Access state is bound to its resource so an in-place
+Channel switch cannot combine the previous result with the next opener. The open
+service overlaps its independent profile, placement, and authorization reads,
+while preserving the concealed authorization response when an auxiliary read
+fails. Once the resulting viewer session is
 redeemed, artifact requests validate that durable session locally rather than
 re-running canonical resource authorization for the document and every asset.
 

@@ -25,7 +25,7 @@ import {
 } from "@rally/contracts";
 
 import { artifactHostDOName } from "../durable-objects/names";
-import type { AuthContext, Env } from "../env";
+import type { AuthContext, Env, RequestMembershipObservation } from "../env";
 import { AuthorizationService, requireAuthorizedRead } from "./authorization-service";
 import { ApiError } from "../lib/api-error";
 import { ensureArtifactHostname } from "./artifact-hostname";
@@ -58,7 +58,11 @@ export class ArtifactOpenService {
    * `users` is not a workspace-local table, so the display-name read still
    * takes the regional fallthrough on the same handle.
    */
-  constructor(env: Env, private readonly auth: AuthContext) {
+  constructor(
+    env: Env,
+    private readonly auth: AuthContext,
+    private readonly requestMembership?: RequestMembershipObservation,
+  ) {
     this.regionalEnv = env;
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
   }
@@ -87,12 +91,15 @@ export class ArtifactOpenService {
     if (!row) throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
 
     const workspace = asWorkspaceId(workspaceId);
-    const [affinity, decisions] = await Promise.all([
-      workspacePlacementAffinity(this.env, workspaceId),
-      new AuthorizationService(this.env, this.auth).checkMany({
-        workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
-      }, [{ kind: "resource", workspaceId: workspace, resourceId }]),
-    ]);
+    // Observe an auxiliary rejection immediately, but authorize first so a
+    // placement failure cannot reveal whether a concealed artifact exists.
+    const affinityResult = workspacePlacementAffinity(this.env, workspaceId).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    const decisions = await new AuthorizationService(this.env, this.requestMembership).checkMany({
+      workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
+    }, [{ kind: "resource", workspaceId: workspace, resourceId }]);
     const [decision] = decisions;
     if (!decision || decision.status === "unavailable") {
       if (decision) requireAuthorizedRead(decision);
@@ -101,12 +108,14 @@ export class ArtifactOpenService {
     if (decision.status !== "allowed") {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
     }
+    const affinity = await affinityResult;
+    if (!affinity.ok) throw affinity.error;
 
     const host = durableObjectStubForArtifact(
       this.env,
       this.env.ARTIFACT_HOSTS,
       artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
-      affinity,
+      affinity.value,
     );
     return { row, host };
   }
@@ -120,10 +129,15 @@ export class ArtifactOpenService {
    * will redeem.
    */
   async open(resourceId: string): Promise<ArtifactOpenResult> {
-    const [{ row, host }, displayName] = await Promise.all([
-      this.resolveAuthorized(resourceId),
-      this.displayName(),
-    ]);
+    // The profile read overlaps authorization, but its failure is observed and
+    // deferred so it cannot replace the concealed authorization response.
+    const displayNameResult = this.displayName().then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    const { row, host } = await this.resolveAuthorized(resourceId);
+    const displayName = await displayNameResult;
+    if (!displayName.ok) throw displayName.error;
     const workspaceId = this.auth.workspaceId;
     // Pre-stub artifacts are migrated lazily, but only after the ordinary
     // visibility check. The platform-D1 reservation is durable before the
@@ -149,7 +163,7 @@ export class ArtifactOpenService {
       // Read here rather than carried on the auth context: the artifact needs a
       // name to attribute a vote to, and the session that authorized the open
       // carries only the identity, not the profile.
-      displayName,
+      displayName: displayName.value,
     });
 
     const origin = artifactOrigin(

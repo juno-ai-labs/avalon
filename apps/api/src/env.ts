@@ -344,11 +344,21 @@ export interface AuthContext extends IdentityAuthContext {
   role: "owner" | "admin" | "member" | null;
 }
 
+/** Active membership observed by this HTTP request's authentication boundary. */
+export interface RequestMembershipObservation {
+  workspaceId: WorkspaceId;
+  userId: UserId;
+  accessClass: "member" | "guest";
+  validatedAt: number;
+}
+
 export interface AppVariables {
   requestId: string;
   /** Worker-entry wall clock, captured before auth, parsing, or validation. */
   requestReceivedAt: number;
   auth: IdentityAuthContext | undefined;
+  /** Set only by request middleware after current workspace membership is proven. */
+  requestMembership: RequestMembershipObservation | undefined;
   operator: TelemetryOperatorPrincipal | undefined;
   /**
    * How long authentication took, in milliseconds.

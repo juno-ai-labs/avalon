@@ -80,7 +80,13 @@ export function SiteResourceDetail({
     promise: Promise<SiteArtifactAccess>;
   } | null>(null);
   const previewAccessRef = React.useRef<SiteArtifactAccess | null>(null);
-  const [access, setAccess] = React.useState<SiteArtifactAccess | null>(null);
+  const [loadedAccess, setLoadedAccess] = React.useState<{
+    resourceId: string;
+    value: SiteArtifactAccess;
+  } | null>(null);
+  // A prop switch renders before passive-effect cleanup can reset state. Never
+  // let the previous resource's access participate in that intermediate render.
+  const access = loadedAccess?.resourceId === resourceId ? loadedAccess.value : null;
   const [accessError, setAccessError] = React.useState<string | null>(null);
   /**
    * Tri-state on purpose: `null` means the view has not been asked for yet.
@@ -120,7 +126,7 @@ export function SiteResourceDetail({
   React.useEffect(() => {
     let cancelled = false;
     previewAccessRef.current = null;
-    setAccess(null);
+    setLoadedAccess(null);
     setAccessError(null);
     setPreviewShown(null);
     // The data view goes with it. This element is not keyed on the resource, so
@@ -139,7 +145,7 @@ export function SiteResourceDetail({
       .then((result) => {
         if (cancelled) return;
         previewAccessRef.current = result;
-        setAccess(result);
+        setLoadedAccess({ resourceId, value: result });
       })
       .catch((error: unknown) => {
         if (!cancelled) setAccessError(error instanceof Error ? error.message : 'Could not open this site.');
