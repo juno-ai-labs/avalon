@@ -12,11 +12,13 @@ import {
   SidebarHeader,
   SidebarHorizontalLine,
   SidebarRow,
+  SidebarScroll,
   SidebarTitle,
 } from './resizable-sidebar';
 export const PENDING_SUBSTREAM_DRAFT_ID = 'new';
 import { ResourceIcon } from './resource-icon';
 import { WorkstreamMark } from './workstream-glyph';
+import { SidebarNavigationRowContent } from './navigation';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
@@ -215,11 +217,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
     >
       <SidebarHeader className="workstream-context-toolbar window-drag">
         <SidebarTitle title={workstream.title}>{workstream.title}</SidebarTitle>
-        <span aria-hidden="true" className="workstream-context-toolbar-mark">
+        <span aria-hidden="true" className="sidebar-header-mark workstream-context-toolbar-mark">
           <WorkstreamMark appearance={workstream.appearance} id={workstream.id} />
         </span>
       </SidebarHeader>
-      <div className="workstream-context-scroll">
+      <SidebarScroll className="workstream-context-scroll">
         {mainVisible && <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>
           <SidebarRow
@@ -230,8 +232,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             type="button"
             onClick={() => { saveCollapsed(true); onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
-            <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
-            <span className="workstream-context-copy"><span>{workstream.title}</span></span>
+            <SidebarNavigationRowContent
+              icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
+              title={workstream.title}
+            />
           </SidebarRow>
         </ConversationRowMenu>}
         <div
@@ -313,10 +317,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 title={child.title}
                 type="button"
               >
-                <span aria-hidden="true" className="workstream-context-mark">
-                  <WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />
-                </span>
-                <span className="workstream-context-copy"><span>{child.title}</span></span>
+                <SidebarNavigationRowContent
+                  icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />}
+                  title={child.title}
+                />
               </SidebarRow>
             );
             return substreamActions
@@ -342,9 +346,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               )}
               title="Rally is creating this breakout"
             >
-              <span aria-hidden="true" className="workstream-context-mark">
-                <GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />
-              </span>
+              <SidebarNavigationRowContent
+                icon={<GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />}
+                title={<span aria-hidden="true"><TitleSkeleton /></span>}
+              />
               {/* The row's name, and outside the copy below on purpose: compact
                   hides that element with `visibility: hidden`, which takes
                   everything inside it out of the accessibility tree as well as
@@ -352,12 +357,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   is an `aria-label` on the button; this one has no button to
                   carry one, so the text sits on the row itself. */}
               <span className="sr-only">Rally is creating this breakout</span>
-              {/* Decorative from here: a pulsing bar standing in for a title
-                  nothing has chosen yet, with the skeleton's own label
-                  suppressed so the row is not announced twice. */}
-              <span aria-hidden="true" className="workstream-context-copy">
-                <TitleSkeleton />
-              </span>
             </SidebarRow>
           )}
           {onNewSubstream && (
@@ -377,8 +376,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
               title="New breakout"
               type="button"
             >
-              <span aria-hidden="true" className="workstream-context-mark"><IconCornerDownRight className="workstream-new-breakout-icon" size={21} stroke={1.7} /></span>
-              <span className="workstream-context-copy"><span>New breakout</span></span>
+              <SidebarNavigationRowContent
+                icon={<IconCornerDownRight className="workstream-new-breakout-icon" size={21} stroke={1.7} />}
+                title="New breakout"
+              />
             </SidebarRow>
           )}
         </div>
@@ -399,7 +400,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             working in this room. */}
         <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
         {addSidekick}
-      </div>
+      </SidebarScroll>
       <div className="sidebar-collapse-footer">
         <IconButton
           className="window-no-drag"
@@ -423,8 +424,11 @@ function ResourceSection({ label, resources, onOpen }: { label: string; resource
         never appears for someone reaching the row with the keyboard. */}
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
       <SidebarRow className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
-        <span className="workstream-context-resource-icon"><ResourceIcon resource={resource} /></span>
-        <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
+        <SidebarNavigationRowContent
+          description={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
+          icon={<ResourceIcon resource={resource} />}
+          title={resource.title}
+        />
       </SidebarRow></Tip>)}
   </section>;
 }

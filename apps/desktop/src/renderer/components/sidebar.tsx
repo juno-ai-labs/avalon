@@ -7,6 +7,7 @@ import {
   SidebarHeader,
   SidebarHorizontalLine,
   SidebarRow,
+  SidebarScroll,
   SidebarTitle,
 } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
@@ -2081,7 +2082,7 @@ export function Sidebar({
         <SidebarHeader className={clsx('sidebar-titlebar window-drag', spaces !== undefined && 'channels-sidebar-titlebar')}>
           {selectedSpace && <>
             <SidebarTitle className="channels-sidebar-title">{selectedSpace.name}</SidebarTitle>
-            <span aria-hidden="true" className="channels-sidebar-toolbar-mark">
+            <span aria-hidden="true" className="sidebar-header-mark channels-sidebar-toolbar-mark">
               <SpaceIcon size={22} space={selectedSpace} />
             </span>
           </>}
@@ -2152,11 +2153,12 @@ export function Sidebar({
         </div>
         }
 
-        <nav
-          className="sidebar-scroll"
+        <SidebarScroll
+          as="nav"
+          aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
           onClick={() => setSidebarOpen(false)}
           onScroll={loadMoreWhenNearBottom}
-          ref={scrollRef}
+          scrollRef={scrollRef}
         >
           {spaces === undefined && !conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NewWorkstreamMenu
@@ -2399,7 +2401,7 @@ export function Sidebar({
 
           </section>
           )}
-        </nav>
+        </SidebarScroll>
 
         {/*
           OnboardingChecklist is disabled: it was left over from a demo and

@@ -54,6 +54,7 @@ describe('WorkstreamSidebar', () => {
     expect(header).toHaveClass('sidebar-row');
     expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
     expect(sidebar.querySelector('.sidebar-horizontal-line')).not.toBeNull();
+    expect(sidebar.querySelector('.workstream-context-scroll')).toHaveClass('sidebar-scroll');
     expect(sidebar.querySelector('.workstream-context-toolbar-mark')).not.toBeNull();
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
@@ -163,7 +164,7 @@ describe('WorkstreamSidebar', () => {
     const child = screen.getByRole('button', { name: /Launch risks/ });
     // A Breakout derives its own stable icon and colour from its identity, in
     // the same icon slot Main uses. It does not borrow the Channel's mark.
-    expect(child.querySelector('.workstream-context-mark > .workstream-mark')).not.toBeNull();
+    expect(child.querySelector('.sidebar-row-icon > .workstream-mark')).not.toBeNull();
     expect(child.querySelector('.tabler-icon-border-corner-pill')).toBeNull();
     expect(child.querySelector('.avatar')).toBeNull();
     expect(child.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-rose)' });
@@ -175,7 +176,7 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar.querySelectorAll('.lucide-git-branch')).toHaveLength(0);
     // The blue enter mark starts a Breakout; the generic plus is no longer
     // used in this hierarchy rail.
-    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.sidebar-row-icon > .tabler-icon-corner-down-right')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'New breakout' }).querySelector('.tabler-icon-plus')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
@@ -237,7 +238,7 @@ describe('WorkstreamSidebar', () => {
     ]);
     const pending = sidebar.querySelector('.workstream-pending-substream');
     expect(pending).toHaveAttribute('aria-current', 'page');
-    expect(pending?.querySelector('.workstream-context-mark > .lucide-git-branch')).not.toBeNull();
+    expect(pending?.querySelector('.sidebar-row-icon > .lucide-git-branch')).not.toBeNull();
     expect(pending?.querySelector('.title-skeleton')).not.toBeNull();
     expect(within(sidebar).getByText('Rally is creating this breakout')).toBeInTheDocument();
     // Nothing to click: the reader is already on the surface this row stands
@@ -251,7 +252,7 @@ describe('WorkstreamSidebar', () => {
     const create = screen.getByRole('button', { name: 'New breakout' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
-    // Compact hides `.workstream-context-copy` with `visibility: hidden`, which
+    // Compact hides `.sidebar-row-main` with `visibility: hidden`, which
     // takes everything inside it out of the accessibility tree — so the row's
     // only name must not live there. Every other row survives the collapse on
     // its button's `aria-label`; this one has no button, so the text is on the
@@ -261,8 +262,8 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar).toHaveClass('is-compact');
     const name = within(sidebar).getByText('Rally is creating this breakout');
     expect(name.closest('.workstream-pending-substream')).toBe(pending);
-    expect(name.closest('.workstream-context-copy')).toBeNull();
-    expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
+    expect(name.closest('.sidebar-row-main')).toBeNull();
+    expect(pending?.querySelector('.sidebar-row-main')).not.toBeNull();
   });
 
   it('yields the creating row the moment the child it reserved is published', () => {
