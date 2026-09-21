@@ -1,4 +1,5 @@
 import { ExternalActorSchema } from "@rally/contracts";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import type { Env } from "../env";
 import { createMessageObjectPort } from "../runtime/message-port";
 
@@ -78,7 +79,10 @@ export async function readConversationPreview(env: Env, input: {
     turns: rows.map((row) => ({
       author: row.author_type === "human" ? names.get(row.author_user_id ?? "") ?? UNKNOWN_AUTHOR
         : row.author_type === "external" ? externalName(row.external_actor_json) : AGENT_AUTHOR,
-      ...truncateTurn(row.text_content, input.words, input.bytes),
+      // Outside-product previews have no Rally Markdown renderer. Reduce the
+      // complete turn before truncating it so a cut can never split link syntax
+      // into a fragment that would leak into the recipient's mailbox.
+      ...truncateTurn(rewriteMessageAsPlainText(row.text_content, { sources: "none" }), input.words, input.bytes),
     })),
   };
 }
