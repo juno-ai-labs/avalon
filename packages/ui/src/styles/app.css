@@ -885,9 +885,9 @@ pre {
 .sidebar-context-menu .menu-item svg { flex: 0 0 auto; stroke-width: 1.8; }
 .nested-menu-trigger .nested-menu-arrow { margin-left: auto; }
 .nested-menu-content { min-width: 205px; }
-.nested-menu-option { display: grid; font-size: 13px; gap: 10px; grid-template-columns: 16px minmax(0, 1fr) 16px; min-height: 34px; }
+.nested-menu-option { display: grid; font-size: 13px; gap: 10px; grid-template-columns: 16px minmax(0, 1fr); min-height: 34px; }
 .nested-menu-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nested-menu-check { color: var(--av-sys-color-text-default); justify-self: end; }
+.nested-menu-check { color: var(--av-sys-color-text-default); }
 
 /* Application shell and sidebar */
 
