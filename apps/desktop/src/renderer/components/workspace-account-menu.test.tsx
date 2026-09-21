@@ -75,13 +75,18 @@ describe('organization account menu', () => {
     const items = within(menu).getAllByRole('menuitem');
     expect(items).toHaveLength(enabled ? 6 : 3);
     expect(items[0]).toHaveAccessibleName('Sidekicks');
+    expect(within(menu).getByRole('menuitem', { name: 'Sidekicks' }).querySelector('.tabler-icon-hexagons'))
+      .toBeInTheDocument();
     expect(items[1]).toHaveAccessibleName('Settings');
+    expect(within(menu).getByRole('menuitem', { name: 'Settings' }).querySelector('.tabler-icon-settings'))
+      .toBeInTheDocument();
     if (enabled) {
       expect(items[2]).toHaveAccessibleName(/Global Studio.*Current/u);
       expect(items[3]).toHaveAccessibleName(/Europe Studio/u);
       expect(items[4]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
     }
     const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
+    expect(logout.querySelector('.tabler-icon-logout')).toBeInTheDocument();
     expect(items.at(-1)).toBe(logout);
     expect(menu.lastElementChild).toBe(logout);
     expect(within(menu).getAllByRole('separator')).toEqual([logout.previousElementSibling]);
@@ -197,8 +202,12 @@ describe('organization account menu', () => {
 
     expect(screen.queryByText('Organizations')).not.toBeInTheDocument();
     expect(screen.getByText('ada@example.com')).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Settings…' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+    const settings = screen.getByRole('menuitem', { name: 'Settings…' });
+    const signOut = screen.getByRole('menuitem', { name: 'Sign out' });
+    expect(settings).toBeVisible();
+    expect(settings.querySelector('.tabler-icon-settings')).toBeInTheDocument();
+    expect(signOut).toBeVisible();
+    expect(signOut.querySelector('.tabler-icon-logout')).toBeInTheDocument();
   });
 
   it('names the active organization\'s data region by deployment identifier under the account, and offers no reconnect item', () => {

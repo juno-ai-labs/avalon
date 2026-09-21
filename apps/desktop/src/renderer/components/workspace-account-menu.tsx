@@ -1,9 +1,10 @@
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import type { WorkspaceAttention } from '@rally/contracts';
-import { Check, LoaderCircle, LogOut, Plus, Settings, Sparkles } from 'lucide-react';
+import { Check, LoaderCircle, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { DesktopPendingWorkspaceInvitation, DesktopWorkspaceSummary, RallyRegion } from '../../common/desktop';
@@ -216,11 +217,11 @@ export function WorkspaceAccountMenu({
             {presentation === 'grok' && (
               <>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
-                  <Sparkles aria-hidden="true" />
+                  <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
                 </DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
-                  <Settings aria-hidden="true" />
+                  <IconSettings aria-hidden="true" />
                   <span>Settings</span>
                 </DropdownMenu.Item>
               </>
@@ -330,7 +331,7 @@ export function WorkspaceAccountMenu({
               <>
                 <DropdownMenu.Separator className="menu-separator account-menu-separator" />
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
-                  <LogOut aria-hidden="true" />
+                  <IconLogout aria-hidden="true" />
                   <span>Log out</span>
                 </DropdownMenu.Item>
               </>
@@ -346,10 +347,10 @@ export function WorkspaceAccountMenu({
                   <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
                 </DropdownMenu.Item>
                 <DropdownMenu.Item asChild className="menu-item">
-                  <button onClick={onOpenSettings} type="button"><Settings size={14} /> Settings…</button>
+                  <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
-                  <LogOut size={14} /> Sign out
+                  <IconLogout size={14} /> Sign out
                 </DropdownMenu.Item>
               </>
             )}
