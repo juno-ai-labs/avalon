@@ -404,14 +404,15 @@ SQL joins.
   carries no `CHECK` enumerating the ids: the selectable set is a product decision
   that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
   which lets a model be retired without a migration.
-- `workspace_workstream_pins` in WorkspaceDO is one person's pinned work streams
-  and the order they arranged them in. It belongs beside the authoritative
-  workspace directory because it is a cross-work-stream ordering owned by one
-  user. The corresponding read/mention waterlines live in the
-  owning object's `member_attention`; a pin is one person's opinion
-  about a shared row, so it cannot be a column on `workstreams` without imposing
-  one member's arrangement on the workspace. `position` is unique and ascending
-  per person and is rewritten as a dense run by every unpin and reorder, because a
+- `workspace_workstream_pins` in WorkspaceDO is one person's pinned Channels in
+  one Space and the order they arranged them in. Its primary key is
+  `(user_id, space_id, workstream_id)`. It belongs beside the authoritative
+  workspace and Space directories because it is a cross-Channel ordering owned
+  by one user. The corresponding read/mention waterlines live in the
+  owning object's `member_attention`; a pin is one person's opinion about one
+  placement of a shared row, so it cannot be a column on `workstreams` without
+  imposing one member's arrangement on the workspace and every Space. `position`
+  is unique and ascending per person and Space and is rewritten as a dense run by every unpin and reorder, because a
   tie leaves "what order is this list in" without a single answer; a new pin takes
   `MAX(position) + 1` rather than the row count, so two pins made at once — or one
   made after a cascade delete left a hole — cannot land on the same number. It is
@@ -419,7 +420,10 @@ SQL joins.
   collides with itself. A pin is never broadcast — it changes nothing anyone else
   can see — and it never widens what its owner may read: every pinned read still
   applies the visibility rule above, so a pin left behind by a work stream that was
-  removed from their audience cannot make it visible again.
+  removed from their audience cannot make it visible again. Removing a Channel
+  from one Space cascades only that placement's pin. Migration 66 intentionally
+  drops every legacy Organization-wide pin before creating this key, because
+  the old row cannot identify which of several Spaces should own it.
   An archived or narrowed work stream contributes no row while remaining
   removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
 - **WorkspaceDO migration 64 drops the eight Project tables** — `projects`,
@@ -1189,6 +1193,15 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-09-21 — Scope Channel pins to Space placements
+
+WorkspaceDO migration 66 replaces the per-person Channel pin key with
+`(user_id, space_id, workstream_id)` and intentionally copies no legacy rows.
+The old records had no authoritative Space identity, so preserving them would
+either pin every placement or choose one arbitrarily. Pin order and dense
+rewrites are per person and Space; the existing per-person cap still bounds the
+combined first-page supplement across all Spaces.
 
 ### 2026-09-20 — Remove the completed WorkspaceDO cutover ledger
 

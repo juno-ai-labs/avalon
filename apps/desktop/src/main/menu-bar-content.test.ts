@@ -138,48 +138,36 @@ describe('menu bar content', () => {
     ]);
   });
 
-  it('splits the one page into the recent list and the pinned arrangement', async () => {
-    // `GET /workstreams` leaves pins out of the recency order and appends the
-    // whole pinned list to the first page, in no contractually fixed order.
+  it('treats every row as recent because the menu has no selected Space', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([
-        { id: 'r1', title: 'Quarterly report' },
-        { id: 'r2', title: 'Investigate ENG-142' },
-        { id: 'p2', title: 'Board deck', pinPosition: 1 },
-        { id: 'p1', title: 'Acme renewal', pinPosition: 0 },
+        { id: 'older', title: 'Quarterly report', lastActivityAt: '2026-09-09T18:00:00.000Z' },
+        // A rolling-deploy response may still carry the retired scalar. It
+        // cannot pick a Space for this surface, so it remains a recent row.
+        { id: 'legacy-pin', title: 'Board deck', pinPosition: 0, lastActivityAt: LAST_ACTIVITY },
       ]),
     });
 
     await subject.store.refresh();
 
     expect(subject.store.content().recents).toEqual([
-      entry('r1', 'Quarterly report'),
-      entry('r2', 'Investigate ENG-142'),
+      entry('legacy-pin', 'Board deck'),
+      entry('older', 'Quarterly report', '2026-09-09T18:00:00.000Z'),
     ]);
-    expect(subject.store.content().pinned).toEqual([
-      entry('p1', 'Acme renewal'),
-      entry('p2', 'Board deck'),
-    ]);
+    expect(subject.store.content().pinned).toEqual([]);
   });
 
-  it('shows at most five pins without capping how many exist', async () => {
+  it('breaks equal-recency ties by Channel id like the sidebar and server', async () => {
     respond(subject.requestJson, {
-      '/workstreams': workstreamPage(
-        Array.from({ length: 9 }, (_value, index) => ({
-          id: `p${index}`,
-          title: `Pinned ${index}`,
-          pinPosition: 8 - index,
-        })),
-      ),
+      '/workstreams': workstreamPage([
+        { id: 'b', title: 'Bravo', lastActivityAt: LAST_ACTIVITY },
+        { id: 'a', title: 'Alpha', lastActivityAt: LAST_ACTIVITY },
+      ]),
     });
 
     await subject.store.refresh();
 
-    // The top of the arrangement, by position — not the first five the server
-    // happened to append.
-    expect(subject.store.content().pinned.map((workstream) => workstream.title))
-      .toEqual(['Pinned 8', 'Pinned 7', 'Pinned 6', 'Pinned 5', 'Pinned 4']);
-    expect(subject.store.content().recents).toEqual([]);
+    expect(subject.store.content().recents.map((entry) => entry.id)).toEqual(['a', 'b']);
   });
 
   it('names a channel Rally has not finished titling', async () => {

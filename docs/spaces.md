@@ -391,9 +391,13 @@ is a different feature from arranging one the client holds whole — the client
 could only ever order the page in front of it, and the stored ids would name
 Channels no page had fetched. It keeps its server order.
 
-The per-person pinned Channel order (`workspace_workstream_pins`) is a separate
-table and stays one; [`workstream-pinning.md`](workstream-pinning.md) records
-what folding it in would need.
+The per-person pinned Channel order (`workspace_workstream_pins`) is also scoped
+to this container: one row identifies a person, Space, and Channel. It remains a
+separate table because pin membership and pin order are one fact, while
+`workspace_container_order` only arranges the membership another authority
+already owns. Removing a Channel from a Space deletes only that placement's pin;
+the same Channel's pin in another Space survives. See
+[`workstream-pinning.md`](workstream-pinning.md).
 
 ### Defaults
 
@@ -1868,6 +1872,25 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-21 — Pin state follows the Space placement
+
+**What changed:** A Channel pin is now keyed by person and Space as well as
+Channel. Space membership removal deletes the pin for that placement, and a
+Channel shared by two Spaces can be pinned independently in either one.
+
+**Why:** The sidebar presents Channels inside the selected Space. A global pin
+made one placement's navigation choice leak into every other container that
+happened to include the same Channel.
+
+**Considered and rejected:** Treating pinning as another
+`workspace_container_order` kind. That primitive arranges members but does not
+own membership; a pin row deliberately owns both “included in the shortlist”
+and its position.
+
+**Consequences:** Migration 66 clears legacy pins because they carry no Space
+identity. A placement removal must keep deleting its pin in the same
+WorkspaceDO transaction, while other placements remain untouched.
 
 ### 2026-09-21 — Place guest browser Channels in visible Spaces
 

@@ -71,6 +71,7 @@ const workspace: Workspace = {
   timezone: 'America/Los_Angeles',
   currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
 };
+const TEST_SPACE_ID = '00000000-0000-7000-8000-0000000000f2';
 
 const defaultActions = {
   onArchiveWorkstream: async (): Promise<void> => undefined,
@@ -127,7 +128,12 @@ function workstream(
 
 /** The same work stream, pinned by the viewer at `position`. */
 function pinned(workstream: WorkstreamSummary, position: number): WorkstreamSummary {
-  return { ...workstream, pinPosition: position };
+  return {
+    ...workstream,
+    pinPosition: position,
+    spaceIds: [TEST_SPACE_ID],
+    spacePins: [{ spaceId: TEST_SPACE_ID, position }],
+  };
 }
 
 function space(
@@ -1222,7 +1228,6 @@ describe('Sidebar channel markers', () => {
       new RegExp(`20 channels.*will be ${resultCopy}`, 'u'),
     ));
     expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
-      pinned: false,
       includeSystem: false,
       lastActivityAt: expect.objectContaining({ atOrAfter: expect.any(String) }),
     }));
@@ -1230,7 +1235,7 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ pinned: false, includeSystem: false }),
+      expect.objectContaining({ includeSystem: false }),
       { kind: updateKind },
     ));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
@@ -2231,7 +2236,7 @@ describe('Sidebar channel markers', () => {
     const row = screen.getByRole('link', { name: /Quarterly planning/u });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
 
-    expect(await screen.findByRole('menuitem', { name: 'Pin' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Pin' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toHaveClass('menu-item-danger');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
     await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
@@ -2558,8 +2563,8 @@ describe('pinned channels', () => {
   function renderWith(
     streams: WorkstreamSummary[],
     actions: Partial<{
-      onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<boolean>;
-      onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
+      onPinWorkstream: (workstream: WorkstreamSummary, spaceId: string, pinned: boolean) => Promise<boolean>;
+      onReorderPinnedWorkstreams: (spaceId: string, workstreamIds: string[]) => Promise<void>;
     }> = {},
   ): void {
     render(
@@ -2569,9 +2574,10 @@ describe('pinned channels', () => {
             {...defaultActions}
             {...actions}
             automations={[]}
+            spaces={[space(undefined, undefined, { channelCount: streams.length })]}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={streams}
+            workstreams={streams.map((stream) => placedIn(stream, TEST_SPACE_ID))}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -2615,12 +2621,14 @@ describe('pinned channels', () => {
     // Once, not twice: the recent list keeps only what is not pinned.
     expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
     expect(within(section).queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Pinned and unpinned channels' })).toBeVisible();
   });
 
   it('shows no Pinned section until something is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
     expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
   });
 
   it('renders pinned rows in their stored order rather than by activity', () => {
@@ -2630,6 +2638,7 @@ describe('pinned channels', () => {
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
   });
 
   it('does not navigate behind an open modal dialog', async () => {
@@ -2661,12 +2670,12 @@ describe('pinned channels', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     await waitFor(() => expect(onPinWorkstream)
-      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-recent' }), true));
+      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-recent' }), TEST_SPACE_ID, true));
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch tracking/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
     await waitFor(() => expect(onPinWorkstream)
-      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-pinned' }), false));
+      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-pinned' }), TEST_SPACE_ID, false));
   });
 
   it('reorders under the pointer during a drag and sends the whole arrangement on drop', async () => {
@@ -2692,7 +2701,24 @@ describe('pinned channels', () => {
     ]);
 
     fireEvent.dragEnd(dragTarget(/Charlie/u), { dataTransfer: dataTransfer('move') });
-    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-a', 'ws-b']));
+    await waitFor(() => expect(onReorderPinnedWorkstreams)
+      .toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-c', 'ws-a', 'ws-b']));
+  });
+
+  it('reorders the full selected-Space arrangement from server-style space pins', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        { ...pinned(workstream('ws-a', 'Alpha', 'completed'), 0), pinPosition: null },
+        { ...pinned(workstream('ws-b', 'Bravo', 'completed'), 1), pinPosition: null },
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    await waitFor(() => expect(onReorderPinnedWorkstreams)
+      .toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-b', 'ws-a']));
   });
 
   it('sends nothing when a drag ends where it started', () => {
@@ -2750,7 +2776,7 @@ describe('pinned channels', () => {
     // the wrapper around it and only ever sees the event by bubbling.
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
     await waitFor(
-      () => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']),
+      () => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(TEST_SPACE_ID, ['ws-b', 'ws-a']),
     );
 
     // Observing the async save is not the same as observing its `finally`.
@@ -2790,8 +2816,8 @@ describe('pinned channels', () => {
 
     fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
     fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
-    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(1, ['ws-a', 'ws-c', 'ws-b']);
-    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(2, ['ws-c', 'ws-a', 'ws-b']);
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(1, TEST_SPACE_ID, ['ws-a', 'ws-c', 'ws-b']);
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(2, TEST_SPACE_ID, ['ws-c', 'ws-a', 'ws-b']);
 
     await act(async () => {
       settle[0]?.();
@@ -2806,6 +2832,50 @@ describe('pinned channels', () => {
 
     await act(async () => {
       settle[1]?.();
+    });
+  });
+
+  it('keeps an in-flight pin order scoped to the Space that owns it', async () => {
+    const launch = space(TEST_SPACE_ID, 'Launch');
+    const hiring = space('00000000-0000-7000-8000-0000000000f3', 'Hiring');
+    const settle: (() => void)[] = [];
+    const onReorderPinnedWorkstreams = vi.fn(
+      () => new Promise<void>((resolve) => settle.push(resolve)),
+    );
+    const alpha = placedIn(workstream('ws-a', 'Alpha', 'completed'), launch.id, hiring.id);
+    const bravo = placedIn(workstream('ws-b', 'Bravo', 'completed'), launch.id, hiring.id);
+    render(
+      <MemoryRouter><Tooltip.Provider>
+        <Sidebar
+          {...defaultActions}
+          automations={[]}
+          onReorderPinnedWorkstreams={onReorderPinnedWorkstreams}
+          onSignOut={vi.fn()}
+          spaces={[launch, hiring]}
+          workspace={workspace}
+          workstreams={[
+            { ...alpha, spacePins: [{ spaceId: launch.id, position: 0 }, { spaceId: hiring.id, position: 0 }] },
+            { ...bravo, spacePins: [{ spaceId: launch.id, position: 1 }, { spaceId: hiring.id, position: 1 }] },
+          ]}
+        />
+      </Tooltip.Provider></MemoryRouter>,
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(launch.id, ['ws-b', 'ws-a']);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(pinnedRowTitles()).toEqual([
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo'),
+    ]);
+
+    onReorderPinnedWorkstreams.mockClear();
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(hiring.id, ['ws-b', 'ws-a']);
+
+    await act(async () => {
+      for (const resolve of settle) resolve();
     });
   });
 
@@ -2858,20 +2928,23 @@ describe('pinned channels', () => {
   function renderPinnable(streams: WorkstreamSummary[]): { pins: string[] } {
     const pins: string[] = [];
     function Harness(): React.JSX.Element {
-      const [workstreams, setWorkstreams] = useState(streams);
+      const [workstreams, setWorkstreams] = useState(
+        streams.map((stream) => placedIn(stream, TEST_SPACE_ID)),
+      );
       return (
         <Sidebar
           {...defaultActions}
           automations={[]}
-          onPinWorkstream={async (workstream, pinned) => {
+          onPinWorkstream={async (workstream, spaceId, pinned) => {
             pins.push(`${pinned ? 'pin' : 'unpin'}:${workstream.id}`);
             await Promise.resolve();
             setWorkstreams((current) => current.map((item) => item.id === workstream.id
-              ? { ...item, pinPosition: pinned ? 0 : null }
+              ? { ...item, spacePins: pinned ? [{ spaceId, position: 0 }] : [] }
               : item));
             return true;
           }}
           onSignOut={vi.fn()}
+          spaces={[space(TEST_SPACE_ID, 'Hiring', { channelCount: workstreams.length })]}
           workspace={workspace}
           workstreams={workstreams}
         />
@@ -2945,17 +3018,16 @@ describe('pinned channels', () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // starts from the slot the recent list showed it in — one slot further
-      // down, the headings counting as slots here: the list went from
-      // [heading, first, recent] to [Pinned, recent, heading, first].
+      // leaves and returns even though the Space layout gives its old and new
+      // rows the same vertical slot: the Pinned heading replaces the selected
+      // Space's list heading above it.
       const moved = playedOn('workstream:ws-recent');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
-      // The row it passed, and that row's heading, shift down rather than
-      // being moved: the column travels together.
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 0px)' }));
+      // The row it passed shifts down rather than being moved. A selected
+      // Space has no recency heading of its own.
       expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
-      expect(playedOn('heading:Yesterday')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
@@ -3257,17 +3329,23 @@ describe('pinned channels', () => {
     // request's response carried it. Without that the reveal would simply never
     // match and the test would pass whatever the code did.
     function Superseded(): React.JSX.Element {
-      const [streams, setStreams] = useState([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+      const [streams, setStreams] = useState([
+        placedIn(workstream('ws-recent', 'Quarterly planning', 'completed'), TEST_SPACE_ID),
+      ]);
       return (
         <Sidebar
           {...defaultActions}
           automations={[]}
           onPinWorkstream={async () => {
             await Promise.resolve();
-            setStreams((current) => current.map((item) => ({ ...item, pinPosition: 0 })));
+            setStreams((current) => current.map((item) => ({
+              ...item,
+              spacePins: [{ spaceId: TEST_SPACE_ID, position: 0 }],
+            })));
             return false;
           }}
           onSignOut={vi.fn()}
+          spaces={[space(TEST_SPACE_ID, 'Hiring', { channelCount: streams.length })]}
           workspace={workspace}
           workstreams={streams}
         />
@@ -3280,18 +3358,23 @@ describe('pinned channels', () => {
 
     await screen.findByRole('region', { name: 'Pinned' });
     expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /Quarterly planning/u }).closest('[data-motion-key]'))
+      .not.toHaveAttribute('data-motion-move');
   });
 
   // Arming the reveal for a row the list does not carry would leave it waiting
   // indefinitely, ready to seize the viewport whenever that work stream
   // reappeared — seconds later, on an unrelated poll.
   it('does not stay armed for a row that leaves the list', async () => {
-    const row = workstream('ws-gone', 'Quarterly planning', 'completed');
+    const row = placedIn(workstream('ws-gone', 'Quarterly planning', 'completed'), TEST_SPACE_ID);
     function Vanishing(): React.JSX.Element {
       const [streams, setStreams] = useState([row]);
       return (
         <>
-          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Bring it back</button>
+          <button onClick={() => setStreams([{
+            ...row,
+            spacePins: [{ spaceId: TEST_SPACE_ID, position: 0 }],
+          }])} type="button">Bring it back</button>
           <Sidebar
             {...defaultActions}
             automations={[]}
@@ -3301,6 +3384,7 @@ describe('pinned channels', () => {
               return true;
             }}
             onSignOut={vi.fn()}
+            spaces={[space(TEST_SPACE_ID, 'Hiring', { channelCount: streams.length })]}
             workspace={workspace}
             workstreams={streams}
           />
@@ -3325,12 +3409,15 @@ describe('pinned channels', () => {
   // the sidebar under somebody who pinned something a minute ago.
   it('gives up on a reveal the list never honours', async () => {
     const revealTimers = vi.spyOn(window, 'setTimeout');
-    const row = workstream('ws-slow', 'Quarterly planning', 'completed');
+    const row = placedIn(workstream('ws-slow', 'Quarterly planning', 'completed'), TEST_SPACE_ID);
     function Slow(): React.JSX.Element {
       const [streams, setStreams] = useState([row]);
       return (
         <>
-          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Let it land</button>
+          <button onClick={() => setStreams([{
+            ...row,
+            spacePins: [{ spaceId: TEST_SPACE_ID, position: 0 }],
+          }])} type="button">Let it land</button>
           <Sidebar
             {...defaultActions}
             automations={[]}
@@ -3338,6 +3425,7 @@ describe('pinned channels', () => {
             // response overtaken by a change from another device.
             onPinWorkstream={async () => true}
             onSignOut={vi.fn()}
+            spaces={[space(TEST_SPACE_ID, 'Hiring', { channelCount: streams.length })]}
             workspace={workspace}
             workstreams={streams}
           />
@@ -3717,7 +3805,7 @@ describe('the sidebar without a recency list', () => {
   // was under.
   it('given an impossible unplaced pinned channel after opening, then it is not mixed into the selected Space', () => {
     const hiring = space();
-    const unplaced = pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0);
+    const unplaced = { ...pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0), spaceIds: [] };
     renderSidebar({ spaces: [hiring], workstreams: [unplaced] });
 
     expect(screen.queryByRole('link', { name: /Launch tracking/u })).not.toBeInTheDocument();

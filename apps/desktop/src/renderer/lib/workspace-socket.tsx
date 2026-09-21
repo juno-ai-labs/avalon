@@ -239,6 +239,7 @@ function applyDirectoryPage(
     });
     applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
       pinPosition: workstream.pinPosition,
+      spacePins: workstream.spacePins,
       lastAccessedAt: workstream.lastAccessedAt,
     }, page.directoryWaterline);
     return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)

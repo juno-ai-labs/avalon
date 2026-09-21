@@ -20,6 +20,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  asSpaceId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -41,6 +42,8 @@ import { workspaceDOName } from "../src/durable-objects/names";
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
 
 const OWNER = asUserId("00000000-0000-7000-8000-0000000008a1");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000008a6");
+const OTHER_SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000008a7");
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
 const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
 const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
@@ -142,6 +145,35 @@ async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
   return workstreamId;
 }
 
+async function seedSpacePlacements(
+  placements: ReadonlyArray<readonly [typeof SPACE_ID, readonly WorkstreamId[]]>,
+): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    for (const [spaceId, workstreamIds] of placements) {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_space_directory
+           (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+            system_role, authority_generation, source_version, payload_hash, revision,
+            created_at, updated_at, source_created_at, source_updated_at)
+         VALUES (?, 'Batch test', 'workspace', NULL, NULL, ?, NULL, 1, 1,
+                 ?, 1, 1, 1, 1, 1)`,
+        spaceId,
+        OWNER,
+        `batch-space-${spaceId}`,
+      );
+      for (const workstreamId of workstreamIds) {
+        state.storage.sql.exec(
+          `INSERT INTO space_channel_memberships
+             (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+           VALUES (?, ?, 'active', 1, 1, 1, NULL)`,
+          spaceId,
+          workstreamId,
+        );
+      }
+    }
+  });
+}
+
 /**
  * Re-established before every test, not once in `beforeAll`.
  *
@@ -215,12 +247,21 @@ describe("what the workspace object answers about its work streams", () => {
         title: "Pinned",
         lastActivityAt: "2020-03-13T12:00:00.000Z",
       });
+      const otherSpace = await seedWorkstream({
+        title: "Only in another Space",
+        lastActivityAt: "2020-03-14T12:00:00.000Z",
+      });
+      await seedSpacePlacements([
+        [SPACE_ID, [included, pinned]],
+        [OTHER_SPACE_ID, [otherSpace]],
+      ]);
       await runInDurableObject(workspace(), (_instance, state) => {
         state.storage.sql.exec(
           `INSERT INTO workspace_workstream_pins
-             (user_id, workstream_id, position, created_at, updated_at)
-           VALUES (?, ?, 0, 1, 1)`,
+             (user_id, space_id, workstream_id, position, created_at, updated_at)
+           VALUES (?, ?, ?, 0, 1, 1)`,
           OWNER,
+          SPACE_ID,
           pinned,
         );
       });
@@ -255,12 +296,14 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2020-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
       });
 
       expect(result.items).toEqual([included]);
       expect(result.items).not.toContain(pinned);
+      expect(result.items).not.toContain(otherSpace);
       // The note half of the same answer, empty here because this suite seeds
       // no notes. It is asserted so that a filter resolution which stopped
       // reporting notes at all would fail here rather than silently leave a
@@ -284,10 +327,13 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2010-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
         update: { kind: "mark_read" },
       } as const;
+
+      await seedSpacePlacements([[SPACE_ID, [included]]]);
 
       await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
         items: [included],
@@ -326,6 +372,7 @@ describe("what the workspace object answers about its work streams", () => {
           lastActivityAt: "2009-03-12T12:00:00.000Z",
         }));
       }
+      await seedSpacePlacements([[SPACE_ID, included]]);
       const request = {
         workspaceId: WORKSPACE_ID,
         userId: OWNER,
@@ -337,6 +384,7 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2009-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
         update: { kind: "mark_read" },

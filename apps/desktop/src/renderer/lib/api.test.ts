@@ -1,4 +1,4 @@
-import { WorkstreamSchema } from '@rally/contracts';
+import { asSpaceId, WorkstreamSchema } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import "../../../../../tests/isolated-region";
@@ -62,6 +62,7 @@ const detail = {
   modelOverride: null,
   nextPendingWakeup: null,
   pinPosition: null,
+  spacePins: [],
   participantUserIds: [],
   participantExtraCount: 0,
   spaceIds: [],
@@ -736,6 +737,42 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ archived: true });
   });
 
+  it('scopes pin, unpin, and reorder requests to one Space', async () => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    const otherWorkstreamId = '00000000-0000-7000-8000-0000000000f3';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({ items: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.pinWorkstream(workstreamId, spaceId);
+    await api.unpinWorkstream(workstreamId, spaceId);
+    await api.reorderWorkstreamPins(spaceId, [otherWorkstreamId, workstreamId]);
+
+    expect(fetchMock.mock.calls.map((call) => ({
+      url: String(call[0]),
+      method: call[1]?.method,
+      ...(call[1]?.body === undefined ? {} : { body: JSON.parse(String(call[1].body)) }),
+    }))).toEqual([
+      {
+        url: `https://api.rally.test/workstreams/${workstreamId}/pin`,
+        method: 'PUT',
+        body: { spaceId },
+      },
+      {
+        url: `https://api.rally.test/workstreams/${workstreamId}/pin?spaceId=${spaceId}`,
+        method: 'DELETE',
+      },
+      {
+        url: 'https://api.rally.test/workstreams/pins',
+        method: 'PUT',
+        body: { spaceId, workstreamIds: [otherWorkstreamId, workstreamId] },
+      },
+    ]);
+  });
+
   it('previews and enqueues a generic filtered channel batch update', async () => {
     const operationId = '00000000-0000-7000-8000-000000000099';
     const filter = {
@@ -744,6 +781,7 @@ describe('Rally API wire adapter', () => {
         before: '2026-08-08T00:00:00.000Z',
       },
       pinned: false,
+      spaceId: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
       includeSystem: false,
     } as const;
     const fetchMock = vi.fn()

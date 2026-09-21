@@ -94,11 +94,18 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${WORKSTREAM}', '${PARTICIPANT}', '${PARTICIPANT}', 'creator', '${at}');
   `);
-  // Every test's database gets the WorkspaceDO pin table: the product `get`
-  // that the authority tests drive reads the viewer's pin through the
-  // workspace database, and the object ledger is its shape. Harmless to the
-  // socket tests — nothing asserts on its absence.
-  createWorkspaceObjectTable(database, "workspace_workstream_pins");
+  // Every test's database gets the WorkspaceDO tables traversed by the product
+  // `get`: pin metadata is no wider than its active, readable Space placement.
+  // The object ledger supplies their real shape. Harmless to the socket tests
+  // — nothing asserts on their absence.
+  for (const table of [
+    "workspace_space_directory",
+    "workspace_space_viewers",
+    "space_channel_memberships",
+    "workspace_workstream_directory",
+    "workspace_workstream_viewers",
+    "workspace_workstream_pins",
+  ]) createWorkspaceObjectTable(database, table);
   if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database, at);
   return database;
 }
@@ -561,6 +568,61 @@ describe("what authority the product API accepts", () => {
 
     expect(result.status).toBe(200);
     expect(rpcResultBody(result)).toMatchObject({ id: WORKSTREAM });
+  });
+
+  it("returns pins only for active, readable Space placements", async () => {
+    const database = seededDatabase();
+    const visibleSpace = "00000000-0000-7000-8000-0000000000d1";
+    const archivedSpace = "00000000-0000-7000-8000-0000000000d2";
+    const privateSpace = "00000000-0000-7000-8000-0000000000d3";
+    const inactiveSpace = "00000000-0000-7000-8000-0000000000d4";
+    database.prepare(
+      `INSERT INTO workspace_workstream_directory
+         (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+          title, description, preview, scope, exact_state, system_kind, last_activity_at,
+          completed_at, archived_at, email_address, origin_type, origin_label,
+          created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+          title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+          next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+          source_created_at, source_updated_at, projected_at)
+       VALUES (?, 1, 1, 'pin-projection-event', 'pin-projection-hash',
+               'Compensation review', '', '', 'personal', 'idle', NULL, 1,
+               NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+               'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+    ).run(WORKSTREAM, PARTICIPANT);
+    for (const [spaceId, scope, archivedAt, membershipState] of [
+      [visibleSpace, "workspace", null, "active"],
+      [archivedSpace, "workspace", 1, "active"],
+      [privateSpace, "personal", null, "active"],
+      [inactiveSpace, "workspace", null, "removed"],
+    ] as const) {
+      database.prepare(
+        `INSERT INTO workspace_space_directory
+           (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+            system_role, authority_generation, source_version, payload_hash, revision,
+            created_at, updated_at, source_created_at, source_updated_at)
+         VALUES (?, 'Pin projection', ?, NULL, ?, ?, NULL, 1, 1, ?, 1, 1, 1, 1, 1)`,
+      ).run(spaceId, scope, archivedAt, PARTICIPANT, `pin-projection-${spaceId}`);
+      database.prepare(
+        `INSERT INTO space_channel_memberships
+           (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+         VALUES (?, ?, ?, 1, 1, 1, NULL)`,
+      ).run(spaceId, WORKSTREAM, membershipState);
+      database.prepare(
+        `INSERT INTO workspace_workstream_pins
+           (user_id, space_id, workstream_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 1, 1)`,
+      ).run(PARTICIPANT, spaceId, WORKSTREAM);
+    }
+
+    const result = await roomFor(database)
+      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+
+    expect(result.status).toBe(200);
+    expect(rpcResultBody(result)).toMatchObject({
+      id: WORKSTREAM,
+      spacePins: [{ spaceId: visibleSpace, position: 0 }],
+    });
   });
 
   it("refuses a connector principal for somebody who is not an active member", async () => {

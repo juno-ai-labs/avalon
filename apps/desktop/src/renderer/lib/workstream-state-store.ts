@@ -299,7 +299,7 @@ function supersededViewerState(
 export function applyWorkspaceWorkstreamFields(
   queryClient: QueryClient,
   workstreamId: string,
-  patch: Pick<WorkstreamSummary, 'pinPosition' | 'lastAccessedAt'>,
+  patch: Pick<WorkstreamSummary, 'pinPosition' | 'spacePins' | 'lastAccessedAt'>,
   directoryWaterline: number,
 ): boolean {
   const waterlines = queryClient.getQueryData<Record<string, number>>(
