@@ -1521,7 +1521,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/components/space-sidebar-section.test.tsx` | The section: General as an ordinary row, placements, drag, reorder, a drag backed out of saving nothing, an expanded Space short of its Channels asking for the next page while pages remain and not once they are gone, removal of both local plus controls, restore, loading, a failed refresh, the Organization-opening state, route-derived expansion, and that a Channel dragged out of a Space does not reorder Spaces. |
 | `apps/desktop/src/renderer/components/spaces-sidebar.test.tsx` | The dedicated Space rail: selection, compact marks, opening and stale states, Organization-level Search and New Channel controls, and the inverse expanded/compact Create handoff. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The Channels section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
+| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the guest shell's unchanged recency list, stored personal order, drag-to-Space placement, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
@@ -1934,9 +1934,9 @@ Shipped in #876.
 ### 2026-09-20 — The Space landing page is about Channels
 
 **What changed:** The desktop Space landing page no longer renders Resources or
-Sidekicks sections, their add/remove controls, or their pickers. The Channels
-section also no longer offers **Add channel** or the adjacent new-Channel plus
-control, and Channel rows no longer offer **Remove**. The unused shared list
+Sidekicks sections, their add/remove controls, or their pickers. The **Needs
+attention** section also no longer offers **Add channel** or the adjacent
+new-Channel plus control, and Channel rows no longer offer **Remove**. The unused shared list
 components and desktop default API wrappers left behind by those controls were
 removed too. The underlying default inheritance and Channel-placement authority
 remain unchanged.
