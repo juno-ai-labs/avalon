@@ -32,7 +32,11 @@ const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
 const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
 const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
 
-function activateRealtimeExecution(storage: DurableObjectStorage, now: number): void {
+function activateRealtimeExecution(
+  storage: DurableObjectStorage,
+  now: number,
+  options: { linkPersistentLoop?: boolean } = {},
+): void {
   const runs = new WorkstreamHarnessRunStorage(storage);
   expect(runs.admitRun({
     runId: RUN_ID,
@@ -58,19 +62,21 @@ function activateRealtimeExecution(storage: DurableObjectStorage, now: number): 
     `UPDATE runs SET execution_context_json = '{"kind":"realtime_test"}' WHERE run_id = ?`,
     RUN_ID,
   );
-  const loops = new SubstreamLoopStorage(storage);
-  const loopId = substreamLoopId(WORKSTREAM_ID);
-  loops.ensureLoop({ loopId, bindStateRevision: 0, now });
-  expect(loops.activateExecutionReceipt({
-    runId: RUN_ID,
-    loopId,
-    expectedLoopRevision: loops.loop()!.revision,
-    expectedBindStateRevision: 0,
-    executionEpoch: 1,
-    leaseOwner: "realtime-test-owner",
-    leaseExpiresAt: now + 60_000,
-    now,
-  }).outcome).toBe("activated");
+  if (options.linkPersistentLoop !== false) {
+    const loops = new SubstreamLoopStorage(storage);
+    const loopId = substreamLoopId(WORKSTREAM_ID);
+    loops.ensureLoop({ loopId, bindStateRevision: 0, now });
+    expect(loops.activateExecutionReceipt({
+      runId: RUN_ID,
+      loopId,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      executionEpoch: 1,
+      leaseOwner: "realtime-test-owner",
+      leaseExpiresAt: now + 60_000,
+      now,
+    }).outcome).toBe("activated");
+  }
 }
 
 const EXPECTED_TABLES = [
@@ -1312,7 +1318,7 @@ describe("the Workstream Durable Object relational schema", () => {
       store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
       const now = Date.now();
       const at = new Date(now).toISOString();
-      activateRealtimeExecution(storage, now);
+      activateRealtimeExecution(storage, now, { linkPersistentLoop: false });
       expect(new WorkstreamHarnessRunStorage(storage).reapStaleRoot({
         runId: RUN_ID,
         attemptId: ATTEMPT_ID,
