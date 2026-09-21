@@ -79,7 +79,7 @@
     "cmp.marker.slot": "12px",
     "cmp.marker.inset-block": "9px",
     "cmp.row.height": "46px",
-    "cmp.row.padding": "9px 10px",
+    "cmp.row.padding": "8px",
     "cmp.row.leading": "1.55",
     "cmp.row.hint-gap": "7px",
     "cmp.row.height-dense": "44px",

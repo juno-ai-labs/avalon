@@ -987,9 +987,6 @@ pre {
   transition: --sidebar-compact var(--sidebar-layout-motion);
 }
 .resizable-sidebar.is-compact { --sidebar-compact: 1; }
-.sidebar-header {
-  border-radius: 0;
-}
 .resizable-sidebar.is-compact .sidebar-header { margin-inline: auto; }
 .sidebar-title {
   flex: 1;
@@ -1255,6 +1252,14 @@ pre {
   width: 100%;
 }
 .resizable-sidebar.is-compact .sidebar-row { gap: 0; padding: 9px; width: 54px; }
+.sidebar-row.sidebar-header {
+  border-radius: 0;
+  padding: 0 16px;
+}
+.sidebar-row.sidebar-header:hover { background-image: none; }
+.sidebar-row.spaces-sidebar-titlebar { padding: 0 12px 0 var(--window-controls-inset, 12px); }
+.sidebar-row.channels-sidebar-titlebar { padding: 0 20px; }
+.resizable-sidebar.is-compact .sidebar-row.sidebar-header { padding: 9px; }
 
 .sidebar-action {
   background: transparent;
@@ -4815,7 +4820,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    entries above carry the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.channels-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
 .workspace-shell:has(.spaces-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width, --workstream-sidebar-width; }
 .workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
