@@ -159,15 +159,15 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.Im
 
 def social_card() -> Image.Image:
     width, height = 1200, 630
-    result = Image.new("RGBA", (width, height), (240, 239, 232, 255))
+    result = Image.new("RGBA", (width, height), (245, 248, 242, 255))
     draw = ImageDraw.Draw(result)
-    draw.ellipse((-175, -190, 315, 300), fill=SECONDARY)
-    draw.ellipse((825, -210, 1315, 280), fill=(255, 99, 55, 255))
-    draw.polygon(((0, 480), (325, 480), (405, 630), (0, 630)), fill=(255, 99, 55, 255))
-    draw.polygon(((1140, 390), (1200, 390), (1200, 630), (1060, 630)), fill=SECONDARY)
-    draw.text((62, 145), "rally", font=font(210, bold=True), fill=DARK_CANVAS)
-    draw.text((68, 376), "AI is multiplayer now.", font=font(38, bold=True), fill=DARK_CANVAS)
-    result.alpha_composite(mark(420), (590, 210))
+    result.alpha_composite(mark(64, DARK_CANVAS), (511, 57))
+    draw.text((582, 64), "rally", font=font(46, bold=True), fill=DARK_CANVAS)
+    for y, line in ((220, "Stop copy-pasting"), (307, "between Claude and Slack.")):
+        draw.text((width / 2, y), line, anchor="mt", font=font(76), fill=DARK_CANVAS)
+    for y, line in ((439, "Rally gives you, your (human) coworkers, and AI"),
+                    (481, "a single place to get work done together.")):
+        draw.text((width / 2, y), line, anchor="mt", font=font(30), fill=DARK_CANVAS)
     return result
 
 
@@ -245,6 +245,7 @@ def main() -> None:
     if SOCIAL_CARD_FONT.exists():
         social = social_card()
         save_social_card(social, ROOT / "apps" / "site" / "public" / "rally-social.jpg")
+        save_social_card(social, ROOT / "apps" / "site" / "public" / "rally-social-v01.jpg")
         save_social_card(social, ROOT / "apps" / "site" / "public" / "og-2026.jpg")
     else:
         print(f"Skipped the social card: {SOCIAL_CARD_FONT} is only present on macOS")
