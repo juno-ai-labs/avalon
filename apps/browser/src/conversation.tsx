@@ -176,7 +176,7 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
     <NavigationFrame className={`channels-sidebar browser-channels-sidebar${open ? ' is-mobile-open' : ''}`}>
       {selectedSpace ? <SidebarTitleHeader
         className="sidebar-titlebar channels-sidebar-titlebar window-drag"
-        icon={<SpaceIcon size={22} space={selectedSpace} />}
+        icon={<SpaceIcon size={20} space={selectedSpace} />}
         title={selectedSpace.name}
         titleClassName="channels-sidebar-title"
       >
