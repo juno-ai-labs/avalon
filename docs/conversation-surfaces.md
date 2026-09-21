@@ -683,6 +683,23 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
+### 2026-09-21 — Expanded hierarchy headers keep their identity marks
+
+**What changed:** The shared Space and Channel title header now renders its
+20px identity mark — the same size used by the conversation header — to the
+left of its name while expanded. Compact mode keeps the same mark and hides
+only the name, so collapsing a rail no longer swaps between two different
+header compositions.
+
+**Why:** The adjacent hierarchy rails named their current Space and Channel but
+withheld the visual identity already used by their rows. Keeping the icon in one
+stable leading slot makes the header match the navigation object it represents
+and lets the expanded and compact states share one composition.
+
+**Considered and rejected:** Adding separate icon markup to the desktop Space
+and Channel rails. Both already use `SidebarTitleHeader`, as does the browser
+surface, so local copies would let the hierarchy headers drift again.
+
 ### 2026-09-19 — The capsule composer clips rather than hides
 
 **What changed:** The message capsule takes `overflow: clip` in place of

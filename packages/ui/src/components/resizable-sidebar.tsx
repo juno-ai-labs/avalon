@@ -82,15 +82,15 @@ export function SidebarHeader({ className, ...props }: ComponentPropsWithoutRef<
   </>;
 }
 
-/** A hierarchy titlebar that swaps its title for one smaller icon when compact. */
+/** A hierarchy titlebar that keeps its icon beside the title, then hides only the title when compact. */
 export function SidebarTitleHeader({ children, className, icon, title, titleClassName, ...props }: Omit<ComponentPropsWithoutRef<'div'>, 'title'> & {
   icon: ReactNode;
   title: ReactNode;
   titleClassName?: string;
 }): React.JSX.Element {
   return <SidebarHeader className={className} {...props}>
-    <SidebarTitle className={titleClassName}>{title}</SidebarTitle>
     <span aria-hidden="true" className="sidebar-title-header-icon">{icon}</span>
+    <SidebarTitle className={titleClassName}>{title}</SidebarTitle>
     {children}
   </SidebarHeader>;
 }
