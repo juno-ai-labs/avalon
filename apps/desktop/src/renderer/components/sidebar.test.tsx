@@ -1683,9 +1683,7 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  // The neighbours are asserted alongside it because an absence on its own also
-  // holds when the menu never opened, which would pass whatever the menu says.
-  it('given a channel already in a space, when the row menu opens, then only the other spaces are offered', async () => {
+  it('shows an existing placement as a disabled choice and explains why', async () => {
     const hiring = space();
     const target = placedIn(workstream('menu-spaces', 'Quarterly planning', 'completed'), hiring.id);
     render(
@@ -1711,9 +1709,18 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
-    expect(await screen.findByRole('menuitem', { name: 'General' })).toBeVisible();
-    // Already a placement there: adding it again is not on offer.
-    expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
+    expect(existing).toHaveAttribute('data-disabled');
+    expect(existing).toHaveAttribute('aria-disabled', 'true');
+    expect(existing).toHaveAttribute('aria-checked', 'true');
+
+    act(() => generalOption.focus());
+    fireEvent.keyDown(generalOption, { key: 'ArrowDown' });
+    await waitFor(() => expect(existing).toHaveFocus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'This channel is already in Hiring.',
+    );
   });
 
   it('removes a channel from the space whose placement menu was opened', async () => {
@@ -1831,16 +1838,16 @@ describe('Sidebar channel markers', () => {
     )).toBeVisible();
   });
 
-  // A Space this reader reaches only through a Channel in it is a row they can
-  // see and nothing they can write on. Placing a Channel there is refused by
-  // name, so it is not offered — the same rule the plus on its row is under.
-  it('given a space reached through a channel, when the row menu opens, then it is not offered', async () => {
+  // A Space this reader reaches only through a Channel in it is visible and
+  // read-only. The menu keeps the visible row and explains why it cannot be a
+  // destination instead of looking like a second, incomplete Space directory.
+  it('shows a space reached through a channel as disabled and explains why', async () => {
     const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', {
       reach: 'through_channel',
       participants: [],
       channelCount: 1,
     });
-    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), reached.id);
+    const target = placedIn(workstream('menu-reach', 'Quarterly planning', 'completed'), general().id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1848,7 +1855,7 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            spaces={[reached]}
+            spaces={[general(), reached]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1856,14 +1863,24 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Theirs' }));
+    fireEvent.click(screen.getByRole('link', { name: 'General' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
-    // The submenu is drawn at all, which is what makes the absence below a
-    // decision about this Space rather than an empty menu.
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Remove from space' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
+
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const readOnly = screen.getByRole('menuitemcheckbox', { name: 'Theirs' });
+    expect(readOnly).toHaveAttribute('data-disabled');
+    expect(readOnly).toHaveAttribute('aria-disabled', 'true');
+    expect(readOnly).toHaveAttribute('aria-checked', 'false');
+
+    act(() => generalOption.focus());
+    fireEvent.keyDown(generalOption, { key: 'ArrowDown' });
+    await waitFor(() => expect(readOnly).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'You can view Theirs through a channel, but only Theirs participants can add channels.',
+    ));
   });
 
   // A system Channel is not a product Channel: the subsystem that writes it
