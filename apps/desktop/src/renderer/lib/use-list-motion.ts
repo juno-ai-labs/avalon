@@ -285,6 +285,11 @@ function leaveThrough(container: HTMLElement, seen: Seen, leaving: Set<Animation
   standIn.setAttribute('data-motion-stand-in', '');
   Object.assign(standIn.style, {
     position: 'absolute',
+    // A cloned grid item keeps the placement declared by its classes. An
+    // absolutely positioned grid child then resolves top/left from that grid
+    // area rather than the container padding box, applying the measured row
+    // offset twice. Stand-ins are positioned only by the measurements below.
+    gridArea: 'auto',
     top: `${seen.top}px`,
     left: `${seen.left}px`,
     width: `${seen.width}px`,

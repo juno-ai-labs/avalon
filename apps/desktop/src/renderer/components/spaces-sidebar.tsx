@@ -91,10 +91,9 @@ export function SpacesSidebar({
   const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
-  // The compact Create control is a row inserted beneath Search. The shared
-  // list-motion primitive draws both its leftward entrance and its leftward
-  // stand-in exit; the titlebar control travels through the opposite edge in
-  // CSS over the same sidebar interval.
+  // The compact Create control is a row inserted above Search. Search keeps
+  // its second grid track while the first track opens; list motion draws the
+  // Create control's leftward entrance and stand-in exit independently.
   useListMotion(commandRef, collapsed);
   const storedSpaces = useMemo(() => orderByStoredIds(
     spaces,
@@ -185,7 +184,6 @@ export function SpacesSidebar({
           </div>
         </div>
         {ready && <div className="sidebar-commandbar spaces-sidebar-commandbar window-no-drag" ref={commandRef}>
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
           {collapsed && <NewWorkstreamMenu
             tooltipSide="right"
             canCreateSpace
@@ -204,6 +202,7 @@ export function SpacesSidebar({
               <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
             </button>
           </NewWorkstreamMenu>}
+          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
         </div>}
         {ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.

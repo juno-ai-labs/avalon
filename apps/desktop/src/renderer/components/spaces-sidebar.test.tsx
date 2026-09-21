@@ -211,7 +211,9 @@ describe('SpacesSidebar', () => {
     </Tooltip.Provider></MemoryRouter>);
 
     const compactCreate = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel' });
+    const compactSearch = within(commandbar as HTMLElement).getByRole('button', { name: 'Search organization' });
     expect(compactCreate).toHaveAttribute('data-motion-insert');
+    expect(compactCreate.compareDocumentPosition(compactSearch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(titlebar?.querySelector('.sidebar-new-button')).toHaveAttribute('aria-hidden', 'true');
     expect(within(titlebar as HTMLElement).queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
   });

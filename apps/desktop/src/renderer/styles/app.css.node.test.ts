@@ -854,14 +854,17 @@ describe('GrokBot sidebar header geometry', () => {
     expect(scroll).not.toBeNull();
     expect(scrollbar).not.toBeNull();
     expect(titlebar).toContain('height: 44px;');
-    // Two numeric tracks — the search row and the rail's New work stream slot — so
-    // the slot can open and close over the layout motion.
+    expect(rule('.spaces-sidebar')).toContain('--sidebar-layout-motion: var(--spaces-sidebar-motion);');
+    // Stable numeric tracks keep creation above Search while the first row
+    // opens and closes over the layout motion.
     expect(commandbar).toContain('display: grid;');
-    expect(commandbar).toContain('grid-template-rows: 32px 0px;');
+    expect(commandbar).toContain('grid-template-rows: 0px 32px;');
     // The list motion draws a removed row's stand-in in this box.
     expect(commandbar).toContain('position: relative;');
     expect(rule('.app-shell .sidebar.is-compact .sidebar-commandbar,\n.app-shell .spaces-sidebar.is-compact .sidebar-commandbar'))
       .toContain('grid-template-rows: 54px 54px;');
+    expect(rule('.sidebar-commandbar .sidebar-search')).toContain('grid-row: 2;');
+    expect(rule('.sidebar-rail-new-button')).toContain('grid-row: 1;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
     expect(search).toContain('height: 32px;');
