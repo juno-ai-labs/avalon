@@ -3,7 +3,7 @@
 The request-only landing submits its email solely to `/access/requests`; neither
 email values nor submission bodies enter telemetry. `/download/` deliberately
 skips telemetry initialization so its bearer fragment cannot reach analytics.
-The former landing download/CTA click listeners were removed with the public hero.
+The landing’s macOS Beta button opens the private-access dialog locally; it does not navigate to an installer or emit form content.
 
 ## Where the code lives
 

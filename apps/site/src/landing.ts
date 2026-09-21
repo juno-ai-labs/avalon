@@ -1,6 +1,9 @@
 import { accessChallenge } from './access-challenge';
 import { accessCopy } from './access-copy';
 
+const betaDialog = document.querySelector<HTMLDialogElement>('#beta-dialog');
+document.querySelector<HTMLButtonElement>('#beta-open')?.addEventListener('click', () => betaDialog?.showModal());
+
 const form = document.querySelector<HTMLFormElement>('#access-request');
 const email = document.querySelector<HTMLInputElement>('#access-email');
 const button = document.querySelector<HTMLButtonElement>('#access-submit');
