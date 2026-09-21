@@ -1501,6 +1501,14 @@ describe('option keycaps', () => {
   });
 });
 
+describe('elicitation option hover', () => {
+  it('takes its wash from the reader accent instead of the neutral product hover', () => {
+    const hover = rule('.app-shell .elicitation-option:hover');
+    expect(hover).toContain('background: var(--av-sys-color-accent-wash);');
+    expect(hover).not.toContain('var(--hover-layer)');
+  });
+});
+
 /**
  * The feed's spacing is one scale. A literal that slips back into a feed rule
  * renders correctly and stays invisible until somebody moves `ref.space.unit`
