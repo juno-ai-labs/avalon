@@ -78,6 +78,14 @@ describe('public Rally site', () => {
     expect(page).toContain('{{access.description}}');
   });
 
+  it("paints Leonardo's demo bubble in white ink on the blue fill", () => {
+    const css = readProjectFile('src/landing.css');
+    // Shared `.bubble` ink is near-black so Alan's yellow and Grace's green
+    // stay readable. Leonardo's blue is the one fill that needs the other ink.
+    expect(css).toMatch(/\.bubble\{[^}]*color:#08111a/u);
+    expect(css).toMatch(/\.leonardo \.bubble\{[^}]*color:#fff(?:;|\})/u);
+  });
+
   it('defines responsive behavior for every public surface', () => {
     const publicPages = [
       'index.html',
