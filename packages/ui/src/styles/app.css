@@ -47,7 +47,6 @@
      beside it makes room over the same span because it is measured from the
      same custom property. */
   --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
-  --sidebar-collapsed-width: 88px;
 }
 
 * {
@@ -3239,7 +3238,7 @@ pre {
    would start, and the `.is-resizing *` rule beside the navigation's for the
    ones already running. */
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
-.workstream-context-sidebar.is-compact { flex-basis: var(--sidebar-collapsed-width); }
+.workstream-context-sidebar.is-compact { flex-basis: 88px; }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
