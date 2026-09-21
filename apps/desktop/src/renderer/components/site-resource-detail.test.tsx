@@ -168,6 +168,28 @@ describe('showing a live artifact in the rail', () => {
     expect(openArtifact).toHaveBeenCalledOnce();
   });
 
+  it('opens a resource switched into the mounted detail only once', async () => {
+    const switchedArtifact = '3f2504e0-4f89-41d3-9a0c-0305e82c3398';
+    const switchedOpen = vi.fn(async (): Promise<SiteArtifactAccess> => ({
+      openUrl: `https://${switchedArtifact}-g.rallyusercontent.test/__rally/open#switched-code`,
+      canonicalUrl: `https://${switchedArtifact}-g.rallyusercontent.test`,
+      artifactId: switchedArtifact,
+      mode: 'active',
+      stateful: false,
+    }));
+    const { props, rerender } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledOnce());
+
+    rerender(<Harness props={{ ...props, resourceId: OTHER_RESOURCE, openArtifact: switchedOpen }} />);
+
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+    expect(switchedOpen).toHaveBeenCalledOnce();
+    expect(props.surface.present).toHaveBeenLastCalledWith(expect.objectContaining({
+      artifactId: switchedArtifact,
+      url: expect.stringContaining('#switched-code'),
+    }));
+  });
+
   it('shows the unavailable state when the preview cannot be presented at all', async () => {
     // A rejected mint or a main process that cannot composite leaves the
     // tri-state at `null` unless this path sets it — an empty bordered box

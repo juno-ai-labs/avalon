@@ -2,6 +2,8 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
+import { AccessContext } from "../src/services/authorization-policy";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { unlistedResourceMetadata } from "../src/services/resource-listing";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
@@ -26,7 +28,7 @@ const auth: AuthContext = {
 };
 
 describe("resource listing", () => {
-  it("reuses the active membership established by request authentication", async ({ onTestFinished }) => {
+  it("reuses an explicit request-membership observation", async ({ onTestFinished }) => {
     const regional = new DatabaseSync(':memory:');
     const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
     seedMember(regional);
@@ -36,12 +38,22 @@ describe("resource listing", () => {
       VALUES (?, ?, 'document', 'fixture', 'One membership read', '{}', 'attached', ?, ?)`)
       .run(firstResourceId, workspaceId, '2026-09-21T12:00:00.000Z', '2026-09-21T12:00:00.000Z');
     let membershipReads = 0;
-    const service = new ResourceService(createTestEnv({
+    const env = createTestEnv({
       DB: sqliteD1(regional, (sql) => { if (sql.includes('workspace_members')) membershipReads += 1; }),
       APP_ENV: 'test',
       AVALON_REGION: 'global',
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'authorizationResourceFacts']),
-    }), auth);
+    });
+    const access = new AccessContext(
+      { workspaceId, userId, delegation: null },
+      new AuthorizationService(env, {
+        workspaceId,
+        userId,
+        accessClass: 'member',
+        validatedAt: Date.now(),
+      }),
+    );
+    const service = new ResourceService(env, auth, undefined, access);
 
     await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId });
     expect(membershipReads).toBe(0);
