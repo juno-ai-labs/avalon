@@ -1659,6 +1659,29 @@ describe("work-stream transcript on workerd SQLite", () => {
           startedAt: Date.now(),
           settledAt: null,
         });
+        const terminalizedAtFloor = Date.now();
+        state.storage.sql.exec(
+          `INSERT INTO active_output_turns
+             (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
+              durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
+              seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+           VALUES (?, 1, 'failure-turn', 1, '0', 'streaming', 1, 1, 1,
+                   'failure-stream', '[]', 0, ?, ?, ?)`,
+          RUN_ID,
+          terminalizedAtFloor,
+          terminalizedAtFloor,
+          terminalizedAtFloor,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO inference_delay_status
+             (inference_request_id, run_id, execution_id, root_attempt_id,
+              attempt_id, turn_id, active)
+           VALUES ('failure-inference', ?, ?, ?, ?, 'failure-turn', 1)`,
+          RUN_ID,
+          RUN_ID,
+          ATTEMPT_ID,
+          ATTEMPT_ID,
+        );
 
         const resident = instance as unknown as {
           product: {
@@ -1681,11 +1704,31 @@ describe("work-stream transcript on workerd SQLite", () => {
           { loopId: LOOP_ID, executionId: RUN_ID, executionEpoch: 1, leaseOwner: OWNER },
         );
 
-        // `recordWorkflowFailed` terminalizes with its own SQL, so it writes no
-        // settlement marker and closes nothing. This is the gap.
+        // The object-local terminal commit cannot settle an external receipt.
+        // Its absent marker keeps this run eligible for the durable sweep.
         expect(state.storage.sql.exec<{ status: string } & Record<string, SqlStorageValue>>(
           `SELECT status FROM tool_effects WHERE effect_intent_id = 'open-effect'`,
         ).one().status).toBe("executing");
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM active_output_turns WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toEqual({ count: 0 });
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM inference_delay_status WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toEqual({ count: 0 });
+        expect(state.storage.sql.exec<{
+          status: string;
+          terminal_reason: string | null;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT status, terminal_reason FROM runs WHERE run_id = ?`,
+          RUN_ID,
+        ).one()).toEqual({ status: "failed", terminal_reason: "failed" });
+        expect(state.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM run_lifecycle_events
+            WHERE run_id = ? AND event_key = 'terminal'`,
+          RUN_ID,
+        ).one()).toEqual({ count: 1 });
 
         await resident.settleResidualReceiptsAfterFailure(workflowInput);
 

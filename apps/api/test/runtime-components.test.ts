@@ -505,6 +505,18 @@ describe("runtime component invariants", () => {
       leaseExpiresAt: now + 60_000,
       now,
     });
+    sql.exec(
+      `INSERT INTO active_output_turns
+         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status,
+          durable_event_seq, durable_through_frame_seq, next_chunk_index, stream_id,
+          seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+       VALUES (?, 0, 'failure-turn', 1, '0', 'streaming', 1, 1, 1,
+               'failure-stream', '[]', 0, ?, ?, ?)`,
+      runId,
+      now,
+      now,
+      now,
+    );
     const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
 
     await expect(product.recordWorkflowFailed(
@@ -524,9 +536,25 @@ describe("runtime component invariants", () => {
       { code: "provider_failed", message: "Provider failed" },
       { loopId, executionId: runId, executionEpoch: 1, leaseOwner },
     )).resolves.toBeUndefined();
-    expect(sql.exec<{ status: string }>(
-      `SELECT status FROM runs WHERE run_id = ?`, runId,
-    ).toArray()[0]).toEqual({ status: "failed" });
+    expect(sql.exec<{ status: string; terminal_reason: string; legacy_attempt_id: string }>(
+      `SELECT status, terminal_reason, legacy_attempt_id FROM runs WHERE run_id = ?`, runId,
+    ).toArray()[0]).toEqual({
+      status: "failed",
+      terminal_reason: "failed",
+      legacy_attempt_id: `workflow-failure:${runId}`,
+    });
+    expect(sql.exec<{ status: string; attempt_id: string }>(
+      `SELECT status, attempt_id FROM run_lifecycle_events
+        WHERE run_id = ? AND event_key = 'terminal'`,
+      runId,
+    ).toArray()[0]).toEqual({
+      status: "failed",
+      attempt_id: `workflow-failure:${runId}`,
+    });
+    expect(sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM active_output_turns WHERE run_id = ?`,
+      runId,
+    ).toArray()[0]).toEqual({ count: 0 });
     expect(sql.exec<{ exact_state: string }>(
       `SELECT exact_state FROM workstream WHERE id = 1`,
     ).toArray()[0]).toEqual({ exact_state: "failed" });

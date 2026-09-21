@@ -377,9 +377,14 @@ describe("firing a digest occurrence", () => {
         expectedLatestRunId: null,
         now,
       });
-      await runs.failUnlaunchedRun({
+      await runs.terminalizeQueuedRun({
         runId,
+        attemptId: `unlaunched:${runId}`,
+        status: "failed",
         errorJson: '{"code":"activation_receipt_recorded"}',
+        memberSafePayloadJson: '{"code":"activation_receipt_recorded"}',
+        lifecycleEventId: "activation-receipt-recorded",
+        loopExecutionFence: null,
         now: now + 1,
       });
       throw harnessActivationReceiptRecordedError();

@@ -19,7 +19,8 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 type LocalOnlyHarnessRunOperation =
   | "prepareHostOutcome"
   | "publishPreparedHostOutcome"
-  | "launchRun";
+  | "launchRun"
+  | "terminalizeWorkflowFailureInCurrentTransaction";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;
 
 export type HarnessRunObjectPort = ObjectPortOf<Pick<WorkstreamHarnessRunStorage, HarnessRunOperation>>;
@@ -53,7 +54,6 @@ const DISPATCHED_OPERATIONS = [
   "toolTerminalTelemetry",
   "runIsActive",
   "triggerPartId",
-  "failUnlaunchedRun",
   "residualRepairCandidates",
   "staleLeaseRuns",
   "reapStaleRoot",
@@ -93,7 +93,6 @@ const RUN_STATE_WRITES = new Set<HarnessRunOperation>([
   "admitRun",
   "terminalizeAttempt",
   "terminalizeQueuedRun",
-  "failUnlaunchedRun",
   "reapStaleRoot",
   "publishHostOutcome",
 ]);
