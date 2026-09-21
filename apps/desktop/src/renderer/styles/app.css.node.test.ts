@@ -426,16 +426,18 @@ describe('sidebar layout motion', () => {
   it('gives every hierarchy sidebar the same structural geometry', () => {
     expect(rule('.sidebar-row.sidebar-header')).toContain('border-radius: 0;');
     expect(rule('.sidebar-row.sidebar-header')).toContain('padding: 0 20px;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('height: 43px;');
     expect(rule('.sidebar-row.sidebar-header:hover')).toContain('background-image: none;');
     expect(rule('.resizable-sidebar.is-compact .sidebar-header')).toContain('margin-inline: auto;');
-    expect(rule('.resizable-sidebar.is-compact .sidebar-header-mark')).toContain('display: grid;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-title-header-icon')).toContain('display: grid;');
+    expect(rule('.sidebar-title-header-icon')).toContain('height: 28px;');
     expect(rule('.sidebar-title')).toContain('var(--sidebar-layout-motion)');
     expect(rule('.sidebar-row')).toContain('height: 54px;');
     expect(rule('.sidebar-row')).toContain('padding: var(--av-cmp-row-padding);');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row')).toContain('width: 54px;');
     expect(rule('.sidebar-horizontal-line')).toContain('height: var(--av-sys-size-border-hairline);');
     expect(rule('.sidebar-scroll')).toContain('padding: 8px 12px 16px;');
-    expect(rule('.resizable-sidebar.is-compact .sidebar-scroll')).toContain('padding-inline: 20.5px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-scroll')).toContain('padding-inline: calc((100% - 54px) / 2);');
     expect(stylesheet).not.toContain('.app-shell .sidebar-scroll { padding-top: 0; }');
   });
 
@@ -511,7 +513,7 @@ describe('sidebar layout motion', () => {
     expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row-main')).not.toContain('display: none');
     expect(rule('.resizable-sidebar.is-compact .sidebar-row')).not.toContain('justify-content');
-    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
+    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('calc((100% - 30px) / 2)');
   });
 
   // The strip stays a horizontally scrolling row in the rail: a column inside
@@ -565,7 +567,7 @@ describe('channel context sidebar layout', () => {
     expect(rule('.conversation-layout > .workstream-screen')).toContain('flex: 1');
     expect(rule('.resizable-sidebar')).toContain('position: relative');
     expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
-    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 96px');
+    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: var(--sidebar-collapsed-width)');
     expect(rule('.sidebar-scroll')).toContain('overflow-y: auto');
     expect(rule('.sidebar-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
   });

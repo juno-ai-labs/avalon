@@ -9,11 +9,10 @@ import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_
 import { AvatarStack, IconButton, Tip, TitleSkeleton } from './primitives';
 import {
   ResizableSidebar,
-  SidebarHeader,
   SidebarHorizontalLine,
   SidebarRow,
   SidebarScroll,
-  SidebarTitle,
+  SidebarTitleHeader,
 } from './resizable-sidebar';
 export const PENDING_SUBSTREAM_DRAFT_ID = 'new';
 import { ResourceIcon } from './resource-icon';
@@ -215,12 +214,11 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
       style={{ flexBasis: effectiveWidth }}
       width={effectiveWidth}
     >
-      <SidebarHeader className="workstream-context-toolbar window-drag">
-        <SidebarTitle title={workstream.title}>{workstream.title}</SidebarTitle>
-        <span aria-hidden="true" className="sidebar-header-mark workstream-context-toolbar-mark">
-          <WorkstreamMark appearance={workstream.appearance} id={workstream.id} />
-        </span>
-      </SidebarHeader>
+      <SidebarTitleHeader
+        className="workstream-context-toolbar window-drag"
+        icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
+        title={workstream.title}
+      />
       <SidebarScroll className="workstream-context-scroll">
         {mainVisible && <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>

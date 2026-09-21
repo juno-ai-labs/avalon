@@ -47,6 +47,7 @@
      beside it makes room over the same span because it is measured from the
      same custom property. */
   --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
+  --sidebar-collapsed-width: 88px;
 }
 
 * {
@@ -1050,8 +1051,6 @@ pre {
   z-index: 31;
 }
 .spaces-sidebar-titlebar {
-  gap: 8px;
-  justify-content: space-between;
   overflow: hidden;
 }
 .spaces-sidebar-titlebar-actions { align-items: center; display: flex; gap: 4px; margin-left: auto; }
@@ -1103,7 +1102,7 @@ pre {
 }
 .spaces-sidebar.is-compact .spaces-account-slot .account-copy { display: none; }
 .spaces-sidekick-slot { flex: 0 0 auto; min-width: 0; overflow: hidden; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile { gap: 0; padding: 9px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-glyph { height: 36px; width: 36px; }
@@ -1151,13 +1150,13 @@ pre {
 .channels-sidebar-titlebar {
   min-width: 0;
 }
-.sidebar-header-mark {
+.sidebar-title-header-icon {
   display: none;
-  height: 36px;
+  height: 28px;
   place-items: center;
-  width: 36px;
+  width: 28px;
 }
-.resizable-sidebar.is-compact .sidebar-header-mark { display: grid; }
+.resizable-sidebar.is-compact .sidebar-title-header-icon { display: grid; }
 /* Hidden by the attribute in the rail, and faded rather than cut: `display`
    transitions discretely, holding the element until the fade is over, and the
    starting style fades it back in when the sidebar expands. */
@@ -1220,7 +1219,10 @@ pre {
 .resizable-sidebar.is-compact .sidebar-row { gap: 0; padding: 9px; width: 54px; }
 .sidebar-row.sidebar-header {
   border-radius: 0;
+  flex-basis: 43px;
+  height: 43px;
   justify-content: flex-start;
+  min-height: 43px;
   min-width: 0;
   padding: 0 20px;
 }
@@ -3237,7 +3239,7 @@ pre {
    would start, and the `.is-resizing *` rule beside the navigation's for the
    ones already running. */
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
-.workstream-context-sidebar.is-compact { flex-basis: 96px; }
+.workstream-context-sidebar.is-compact { flex-basis: var(--sidebar-collapsed-width); }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
@@ -6050,7 +6052,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar-group-menu-trigger { display: none; }
 
 /* GrokBot's sidebar does not become a drawer when the conversation gets
-   narrow. It becomes a 96px icon rail, either because the saved compact
+   narrow. It becomes an 88px icon rail, either because the saved compact
    preference is on or because the conversation needs its protected 424px.
    The component owns that calculation; this block owns the resulting rail.
 
@@ -6068,11 +6070,11 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    and a rule that reaches for one is a rule that cuts. The one exception is
    `.sidebar-empty`, which only ever shows over an empty list. */
 .app-shell .sidebar.is-compact .sidebar-empty { display: none; }
-.resizable-sidebar.is-compact .sidebar-scroll { padding-inline: 20.5px; }
+.resizable-sidebar.is-compact .sidebar-scroll { padding-inline: calc((100% - 54px) / 2); }
 .app-shell .sidebar.is-compact .sidebar-commandbar,
 .app-shell .spaces-sidebar.is-compact .sidebar-commandbar {
   grid-template-rows: 54px 54px;
-  padding: 4px 20.5px 0;
+  padding: 4px calc((100% - 54px) / 2) 0;
 }
 .app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search,
 .app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search {
@@ -7459,7 +7461,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    tile centred when there is one, and the next showing past the padding when
    there are more. The tiles shed their captions and shrink to the rows'
    54px square as the sidebar narrows. */
-.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
 .app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
 .app-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
 .app-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
@@ -7544,12 +7546,11 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
-/* The work-stream sidebar's toggle is carried to the centre by the footer's
-   padding — 32.5px on the right leaves a 30px button centred in the 95px
-   inside the rail's border — rather than by `justify-content`, which would
-   jump it there at the first frame. */
+/* The work-stream sidebar's toggle is carried to the centre by derived footer
+   padding rather than by `justify-content`, which would jump it at the first
+   frame. */
 .workstream-context-sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px 32.5px 8px 8px; }
+.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px calc((100% - 30px) / 2) 8px 8px; }
 /* The avatar is centred by its padding rather than `justify-content`, which
    would jump it at the start of the travel. The floor travels, not a fixed
    height: the row's content is shorter than either floor, so the floor is
