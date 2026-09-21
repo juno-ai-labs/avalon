@@ -1092,7 +1092,10 @@ refusal to name. **Add to space** is the exception in presentation, not in
 authority: its submenu is the visible Space directory, so this Space remains in
 the list as a keyboard-focusable disabled choice whose tooltip says that only
 its participants may add Channels. Existing placements use checked-item
-semantics and remain keyboard-focusable in the same list.
+semantics, put their checkmark immediately before the Space name, and remain
+keyboard-focusable in the same list. The list uses the reader's stored
+Organization Space order, matching the Space rail rather than the directory's
+arrival order.
 The server still refuses either write by name; the disabled rows explain the
 boundary without pretending that a visible Space disappeared.
 

@@ -1408,11 +1408,14 @@ export function Sidebar({
    * below decides what to draw by asking whether a Channel's Spaces are among
    * these, so a section that disagreed with the hierarchy about which Spaces
    * exist would leave every placed Channel in neither list.
+   * Keep this collection in the Organization's saved order too, so every
+   * placement chooser presents the same sequence as the Space rail.
    */
-  const placementSpaces = useMemo(
-    () => (spaces !== undefined && spacesReady ? spaces : []),
-    [spaces, spacesReady],
-  );
+  const placementSpaces = useMemo(() => orderByStoredIds(
+    spaces !== undefined && spacesReady ? spaces : [],
+    storedOrderFor(ordering, { kind: 'organization' }),
+    (space) => space.id,
+  ), [ordering, spaces, spacesReady]);
   /**
    * Channels this reader can open that none of their visible Spaces holds.
    *

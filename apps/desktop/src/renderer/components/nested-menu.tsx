@@ -26,7 +26,7 @@ function TriggerContents({ icon, label }: Pick<NestedMenuProps, 'icon' | 'label'
 }
 
 function OptionContents({ option }: { option: NestedMenuOption }): React.JSX.Element {
-  return <>{option.icon ?? <span />}<span>{option.label}</span>{option.selected ? <Check aria-hidden="true" className="nested-menu-check" size={15} /> : <span />}</>;
+  return <>{option.selected ? <Check aria-hidden="true" className="nested-menu-check" size={15} /> : option.icon ?? <span />}<span>{option.label}</span></>;
 }
 
 /** Keep a disabled choice visible while putting the reason on the choice itself. */

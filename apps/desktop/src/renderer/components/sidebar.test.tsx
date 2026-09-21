@@ -1683,9 +1683,14 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  it('shows an existing placement as a disabled choice and explains why', async () => {
+  it('shows the current and other existing placements as checked choices', async () => {
     const hiring = space();
-    const target = placedIn(workstream('menu-spaces', 'Quarterly planning', 'completed'), hiring.id);
+    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
+    const target = placedIn(
+      workstream('menu-spaces', 'Quarterly planning', 'completed'),
+      hiring.id,
+      general().id,
+    );
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1693,13 +1698,22 @@ describe('Sidebar channel markers', () => {
             {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
-            spaces={[general(), hiring]}
+            ordering={[{
+              container: { kind: 'organization' },
+              itemIds: [launch.id, hiring.id, general().id],
+            }]}
+            spaces={[general(), hiring, launch]}
             workspace={workspace}
             workstreams={[target]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
+
+    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('aria-label'));
+    expect(sidebarOrder).toEqual(['Launch', 'Hiring', 'General']);
 
     // The row lives under the Space that holds it; there is no second, flat
     // list of the same Channel to reach it through.
@@ -1711,12 +1725,21 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
     const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
     const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
+    const available = screen.getByRole('menuitemcheckbox', { name: 'Launch' });
+    expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
+      .toEqual(sidebarOrder);
+    expect(generalOption).toHaveAttribute('aria-checked', 'true');
+    expect(generalOption.firstElementChild).toHaveClass('nested-menu-check');
     expect(existing).toHaveAttribute('data-disabled');
     expect(existing).toHaveAttribute('aria-disabled', 'true');
     expect(existing).toHaveAttribute('aria-checked', 'true');
+    expect(existing.firstElementChild).toHaveClass('nested-menu-check');
+    expect(existing.children[1]).toHaveTextContent('Hiring');
+    expect(available).toHaveAttribute('aria-checked', 'false');
+    expect(available.firstElementChild).not.toHaveClass('nested-menu-check');
 
-    act(() => generalOption.focus());
-    fireEvent.keyDown(generalOption, { key: 'ArrowDown' });
+    act(() => available.focus());
+    fireEvent.keyDown(available, { key: 'ArrowDown' });
     await waitFor(() => expect(existing).toHaveFocus());
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'This channel is already in Hiring.',
