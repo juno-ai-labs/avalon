@@ -2835,6 +2835,50 @@ describe('pinned channels', () => {
     });
   });
 
+  it('keeps an in-flight pin order scoped to the Space that owns it', async () => {
+    const launch = space(TEST_SPACE_ID, 'Launch');
+    const hiring = space('00000000-0000-7000-8000-0000000000f3', 'Hiring');
+    const settle: (() => void)[] = [];
+    const onReorderPinnedWorkstreams = vi.fn(
+      () => new Promise<void>((resolve) => settle.push(resolve)),
+    );
+    const alpha = placedIn(workstream('ws-a', 'Alpha', 'completed'), launch.id, hiring.id);
+    const bravo = placedIn(workstream('ws-b', 'Bravo', 'completed'), launch.id, hiring.id);
+    render(
+      <MemoryRouter><Tooltip.Provider>
+        <Sidebar
+          {...defaultActions}
+          automations={[]}
+          onReorderPinnedWorkstreams={onReorderPinnedWorkstreams}
+          onSignOut={vi.fn()}
+          spaces={[launch, hiring]}
+          workspace={workspace}
+          workstreams={[
+            { ...alpha, spacePins: [{ spaceId: launch.id, position: 0 }, { spaceId: hiring.id, position: 0 }] },
+            { ...bravo, spacePins: [{ spaceId: launch.id, position: 1 }, { spaceId: hiring.id, position: 1 }] },
+          ]}
+        />
+      </Tooltip.Provider></MemoryRouter>,
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(launch.id, ['ws-b', 'ws-a']);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(pinnedRowTitles()).toEqual([
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo'),
+    ]);
+
+    onReorderPinnedWorkstreams.mockClear();
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(hiring.id, ['ws-b', 'ws-a']);
+
+    await act(async () => {
+      for (const resolve of settle) resolve();
+    });
+  });
+
   // A release over the heading is a release inside the list the reader is
   // arranging. Leaving it uncovered would read as a cancellation and throw the
   // arrangement away a few pixels above the first row.

@@ -444,7 +444,9 @@ Space before it can mutate or display a pin. Any future non-Space surface that
 wants pins must first define which Space it represents. A batch filter that
 distinguishes pinned from unpinned rows also names its Space, so a Channel pinned
 elsewhere remains unpinned in the selected Space's recency group, while a Channel
-without an active viewer-visible placement there is outside both groups.
+without an active viewer-visible placement there is outside both groups. An
+optimistic reorder carries that same Space identity until its request settles,
+so switching Spaces cannot apply or persist another Space's preview.
 
 ### 2026-09-18 — Sidebar actions own their failure copy
 
