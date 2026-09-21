@@ -46,13 +46,17 @@ import {
   type TranscriptOverlay,
 } from './transcript';
 import { requestSocketTicket } from './socket-ticket-request';
+import type * as WorkstreamControlSocketModule from './use-workstream-control-socket';
 
 function overlayMessages(queryClient: QueryClient, workstreamId: string): Message[] {
   return (queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId)) ?? [])
     .map((overlay) => overlay.message);
 }
 
-vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
+vi.mock('./use-workstream-control-socket', async (importOriginal) => ({
+  ...await importOriginal<typeof WorkstreamControlSocketModule>(),
+  useWorkstreamControlSocket: vi.fn(),
+}));
 
 import type * as TelemetryModule from './telemetry';
 import {
@@ -1534,6 +1538,18 @@ describe('useWorkstreamSocket', () => {
       };
     });
     const api = socketApiWith({ getSocketTicket });
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [workstreamSummary({
+      id: workstreamId,
+      appearance: { icon: 'atom', color: 'gray' },
+    })]);
+    queryClient.setQueryData(['workstream-children', workstreamId], {
+      privateChildren: [{ substreamId, title: 'Private child' }],
+    });
+    queryClient.setQueryData(['substream-workstream', workstreamId, substreamId], workstreamDetail({
+      id: workstreamId,
+      appearance: { icon: 'orbit', color: 'green' },
+    }));
     const { result } = renderHook(() => useWorkstreamSocket(
       api,
       workstreamId,
@@ -1543,7 +1559,7 @@ describe('useWorkstreamSocket', () => {
       undefined,
       true,
       substreamId,
-    ), { wrapper: createWrapper() });
+    ), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
     expect(getSocketTicket).toHaveBeenCalledWith(
@@ -1614,6 +1630,44 @@ describe('useWorkstreamSocket', () => {
       harnessRunId: retryRunId,
     }));
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
+
+    const appearance = result.current.setAppearance({ color: 'purple' });
+    await flushPromises();
+    const appearanceCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'set_workstream_appearance';
+    }> => frame.type === 'set_workstream_appearance')!;
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'set_workstream_appearance',
+      operationId: appearanceCommand.operationId,
+    }));
+    await expect(appearance).resolves.toBeUndefined();
+    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
+      ['workstream-children', workstreamId],
+    )?.privateChildren[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
+      .toEqual({ icon: 'atom', color: 'gray' });
+
+    const lateAppearance = result.current.setAppearance({ icon: 'rocket' });
+    await flushPromises();
+    const lateAppearanceCommand = sentFrames(second).filter((frame): frame is Extract<ClientSocketEvent, {
+      type: 'set_workstream_appearance';
+    }> => frame.type === 'set_workstream_appearance').at(-1)!;
+    // Another authoritative parent projection lands while this receipt is in
+    // flight. The receipt only confirms the older command and must not regress
+    // the newer row.
+    queryClient.setQueryData(['workstream-children', workstreamId], {
+      privateChildren: [{ substreamId, title: 'Private child', appearance: { icon: 'heart', color: 'blue' } }],
+    });
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'set_workstream_appearance',
+      operationId: lateAppearanceCommand.operationId,
+    }));
+    await expect(lateAppearance).resolves.toBeUndefined();
+    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
+      ['workstream-children', workstreamId],
+    )?.privateChildren[0]?.appearance).toEqual({ icon: 'heart', color: 'blue' });
   });
 
   it('rejects failed and mismatched private command receipts', async () => {

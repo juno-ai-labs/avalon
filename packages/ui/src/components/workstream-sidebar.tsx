@@ -304,7 +304,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 type="button"
               >
                 <span aria-hidden="true" className="workstream-context-mark">
-                  <GitBranch className="workstream-breakout-icon" size={20} strokeWidth={1.7} />
+                  <WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />
                 </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
               </button>

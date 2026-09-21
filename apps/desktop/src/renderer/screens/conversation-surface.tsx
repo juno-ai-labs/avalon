@@ -75,6 +75,7 @@ import {
   substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
+  type WorkstreamSocketConnection,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
@@ -730,6 +731,7 @@ export interface ConversationHeaderContext {
   openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
   rename: (title: string) => Promise<void>;
+  setAppearance: WorkstreamSocketConnection['setAppearance'];
 }
 
 export interface ConversationSubstreamLaunch {
@@ -2166,6 +2168,7 @@ export function ConversationSurface({
         openResource: sidebarScope === 'workstream' ? openWorkstreamResourceDetails : openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
+        setAppearance: socketConnection.setAppearance,
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
@@ -2220,6 +2223,7 @@ export function ConversationSurface({
         openResource: openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
+        setAppearance: socketConnection.setAppearance,
       })}
       {/* Focusable so the transcript can be scrolled from the keyboard at all.
           Chromium gives Page Up, Home, and the arrows to a scroller only when it

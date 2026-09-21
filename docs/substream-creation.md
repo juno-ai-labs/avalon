@@ -33,7 +33,7 @@ execution independently. See [prepared conversations](session-import.md).
 | `apps/api/src/services/substream-context.ts` | Static strategy, selector, transform and membership registries; platform policies; validation and hashes. |
 | `apps/api/src/services/substream-context-summary.ts` | Structured Gemini summary through the shared inference gateway. |
 | `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination, and the model pin confirmation writes onto the child. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory and authoritative private membership. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory (including projected appearance) and authoritative private membership. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
@@ -54,15 +54,12 @@ The middle sidebar puts the main conversation first, then one full-width row per
 child — including, while one is being created, the child that does not exist
 yet — then **New substream**. Every row is the navigation sidebar's work-stream
 row — borderless, one 36px leading mark slot — and the mark is what tells them
-apart: the work stream's own tinted icon for the main conversation, a Tabler
-`corner-down-right` arrow for a child, and a Tabler `plus` for creation. The
-arrow is the same shape the main feed's **New substream** control draws as a
-text `↳`, but the rail and the feed no longer mean the same thing by it: in the
-rail it says *is* a substream, on a turn it says *start* one. The launch
-banner draws that same `corner-down-right` arrow, in the feed's sense of it.
-Compact hides the titles and swaps a child's arrow for the first character
-of its title. It retains the existing sidebar colors, row sizing, drag width and
-icon-only collapse. A completed
+apart: the Channel's own tinted icon for Main, each Breakout's own stored or
+ID-derived tinted icon, and the blue enter mark for creation. Selecting a
+Breakout exposes the shared appearance picker in that Breakout's title bar;
+the choice is stored by the child and projected into the parent-owned row.
+Compact hides the titles but keeps those same marks. It retains the existing
+sidebar colors, row sizing, drag width and icon-only collapse. A completed
 main-feed message also offers **New substream** with that message as the cutoff:
 last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
 a row of its own under any person's bubble — the reader's own turn and a
@@ -565,6 +562,25 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-21 — Breakouts carry their own chosen identity
+
+**What changed:** Ready-child directory rows now include the appearance from
+the child's common projection. The selected Breakout title bar uses that
+Breakout's icon and colour, and its existing conversation socket saves picker
+choices back to the addressed child. Main continues to show and mutate only
+the Channel appearance.
+
+**Why:** A generated icon distinguished sibling rows, but a Breakout could not
+be made recognizable in the deliberate way a Channel can. The child's product
+row already stores and publishes the shared appearance contract; exposing that
+authority avoids a new parent-side identity table and keeps access filtered by
+the existing private-child roster.
+
+**What a future change has to respect:** child appearance travels with the
+child common projection and the roster-filtered directory. Do not copy it into
+Main, infer access from the appearance projection, or make the parent a second
+writer.
 
 ### 2026-09-19 — The launch surface draws the substream, from the keystroke
 

@@ -60,6 +60,10 @@ export function ConversationHeader({
   // The ref lets an in-flight rename recognize that it is no longer the one on
   // screen: the promise it is waiting on outlives the navigation.
   const conversationKey = `${workstream.id}:${substreamId}`;
+  const appearanceId = substreamId === '0' ? workstream.id : substreamId;
+  const appearanceLabel = substreamId === '0'
+    ? 'Change channel icon and color'
+    : 'Change breakout icon and color';
   const shownWorkstreamId = useRef({ key: conversationKey, visit: 0 });
   if (shownWorkstreamId.current.key !== conversationKey) {
     shownWorkstreamId.current = { key: conversationKey, visit: shownWorkstreamId.current.visit + 1 };
@@ -230,7 +234,7 @@ export function ConversationHeader({
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
           <div className="grokbot-conversation-title">
-              {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change channel icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
+              {onAppearanceChange ? <AppearancePicker key={appearanceId} id={appearanceId} appearance={workstream.appearance} label={appearanceLabel} onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={appearanceId} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={appearanceId} appearance={workstream.appearance} size={20} />}
               {titleContent}
               {renameFailed && <InlineError>That channel couldn’t be renamed. Try again.</InlineError>}
           </div>
@@ -274,7 +278,7 @@ export function ConversationHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => onShowNavigation()}><Menu size={16} /></IconButton>
-        {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change channel icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={30} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
+        {onAppearanceChange ? <AppearancePicker key={appearanceId} id={appearanceId} appearance={workstream.appearance} label={appearanceLabel} onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={appearanceId} appearance={appearance} size={30} />} /> : <WorkstreamGlyph id={appearanceId} appearance={workstream.appearance} size={30} />}
         <div className="workstream-title-block">
           {/* The one place a title arriving on its own is worth announcing. A
               work stream created a second ago is named while its author is

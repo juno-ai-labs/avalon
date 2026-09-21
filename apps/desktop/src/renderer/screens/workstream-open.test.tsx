@@ -167,6 +167,7 @@ describe('socket-first channel open', () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
+      setAppearance: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
       sendReady: false,
@@ -763,7 +764,7 @@ describe('socket-first channel open', () => {
     expect(screen.getByRole('heading', { name: 'Renamed while open' })).toBeInTheDocument();
   });
 
-  it('keeps parent participants in the sidebar while the title bar manages the selected conversation', async () => {
+  it('keeps parent inventory in the sidebar while the title bar uses the selected breakout appearance', async () => {
     const childId = '00000000-0000-7000-8000-000000000660';
     const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Parent member', email: 'parent@example.test', timezone: 'UTC' };
     const newcomer = { ...member, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
@@ -772,7 +773,7 @@ describe('socket-first channel open', () => {
       direction: 'artifact', relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
     };
     const parent = recoveryBoot({ participants: [member], resources: [artifact], appearance: { icon: 'rocket', color: 'purple' } });
-    const child = recoveryBoot({ title: 'Private child', participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
+    const child = recoveryBoot({ title: 'Private child', appearance: { icon: 'orbit', color: 'green' }, participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
     api.getWorkspaceMembers.mockResolvedValue([member, newcomer]);
     api.addParticipant.mockResolvedValue({ ...parent, participants: [member, newcomer] });
     const client = renderScreen((cache) => {
@@ -784,9 +785,9 @@ describe('socket-first channel open', () => {
     expect(await screen.findByRole('button', { name: 'Manage breakout participants' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Parent member');
     expect(screen.getByRole('heading', { name: 'Private child' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Change breakout icon and color' }).querySelector('.lucide-orbit')).not.toBeNull();
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-heart')).not.toBeNull());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Change breakout icon and color' }).querySelector('.lucide-orbit')).not.toBeNull());
     expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
@@ -800,6 +801,43 @@ describe('socket-first channel open', () => {
       screen.getAllByRole('button', { hidden: true, name: 'Manage channel participants' })[0],
     ).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
+  });
+
+  it('saves the selected breakout appearance through that breakout connection', async () => {
+    const childId = '00000000-0000-7000-8000-000000000665';
+    const mainAppearance = vi.fn().mockResolvedValue(undefined);
+    const childAppearance = vi.fn().mockResolvedValue(undefined);
+    retainedSocket.mockImplementation((_api, _id, _enabled, _kind, substreamId) => ({
+      activeCompaction: null,
+      activeInferenceDelays: [],
+      createMessage: vi.fn(),
+      setAppearance: substreamId === childId ? childAppearance : mainAppearance,
+      requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
+      sendReady: true,
+      state: 'connected',
+      workspaceSocketState: 'connected',
+    }));
+    const parent = recoveryBoot({ appearance: { icon: 'rocket', color: 'blue' } });
+    const child = recoveryBoot({ title: 'Private child', appearance: { icon: 'orbit', color: 'green' } });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [{
+        substreamId: childId,
+        title: child.title,
+        appearance: child.appearance,
+        createdByUserId: null,
+        createdAt: child.createdAt,
+        updatedAt: child.createdAt,
+      }] });
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Change breakout icon and color' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
+    await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ color: 'purple' }));
+    expect(mainAppearance).not.toHaveBeenCalled();
   });
 
   it('marks the rail with the parent appearance and follows the sidebar row a receipt just moved', async () => {
@@ -820,15 +858,18 @@ describe('socket-first channel open', () => {
     const mark = (): Element | null => rail.querySelector('.workstream-mark');
     expect(mark()).toHaveClass('lucide-megaphone');
     expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
-    // The header stays on the detail, which the projection alone may move.
-    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+    // The Breakout header owns its own deterministic fallback, not the
+    // Channel appearance carried by the parent row.
+    const breakoutTrigger = screen.getByRole('button', { name: 'Change breakout icon and color' });
+    const breakoutIconClass = breakoutTrigger.querySelector('svg')?.getAttribute('class');
+    expect(breakoutTrigger.querySelector('.lucide-rocket')).toBeNull();
 
     // The receipt-time writer itself, not a hand-rolled cache poke: it writes
     // the row and deliberately leaves the detail alone.
     act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
     await waitFor(() => expect(mark()).toHaveClass('lucide-heart'));
     expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-blue)' });
-    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+    expect(breakoutTrigger.querySelector('svg')).toHaveAttribute('class', breakoutIconClass);
   });
 
   it('manages the selected breakout roster without changing parent participants', async () => {

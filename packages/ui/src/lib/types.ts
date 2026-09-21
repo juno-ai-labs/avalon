@@ -29,5 +29,5 @@ export interface SidebarPresentation {
   id: string; title: string; appearance?: WorkstreamAppearance;
   participants: WorkspaceMember[];
   resources: { id: string; title: string; resourceType: string; mimeType?: string | null; direction: string; currentVersion: number }[];
-  privateChildren?: { substreamId: string; title: string; status?: string; createdByUserId?: string; createdAt?: string; updatedAt?: string; participantUserIds?: string[] }[];
+  privateChildren?: { substreamId: string; title: string; appearance?: WorkstreamAppearance; status?: string; createdByUserId?: string; createdAt?: string; updatedAt?: string; participantUserIds?: string[] }[];
 }
