@@ -1173,6 +1173,9 @@ export function Sidebar({
   const [uncontrolledSpacesCollapsed, setUncontrolledSpacesCollapsed] = useState(false);
   const spacesCollapsed = controlledSpacesCollapsed ?? uncontrolledSpacesCollapsed;
   const spacesCompact = spacesCollapsed || spacesConstrained;
+  const displayedSpacesSidebarWidth = spacesCompact
+    ? COLLAPSED_SIDEBAR_WIDTH
+    : Math.min(spacesSidebarWidth, spacesAvailableWidth);
   const setSpacesCollapsed = useCallback((collapsed: boolean): void => {
     if (controlledSpacesCollapsed === undefined) setUncontrolledSpacesCollapsed(collapsed);
     onSpacesCollapsedChange?.(collapsed);
@@ -1207,9 +1210,9 @@ export function Sidebar({
   useLayoutEffect(() => {
     const shell = panel.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return;
-    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : spacesCompact ? `${COLLAPSED_SIDEBAR_WIDTH}px` : `${spacesSidebarWidth}px`);
+    shell.style.setProperty('--spaces-sidebar-width', spaces === undefined ? '0px' : `${displayedSpacesSidebarWidth}px`);
     return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
-  }, [spaces, spacesCompact, spacesSidebarWidth]);
+  }, [displayedSpacesSidebarWidth, spaces]);
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
@@ -2033,7 +2036,7 @@ export function Sidebar({
         sidekickSlotRef={setSidekickSlot}
         collapsed={spacesCompact}
         constrained={spacesConstrained}
-        width={spacesSidebarWidth}
+        width={displayedSpacesSidebarWidth}
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
         loading={loading}
