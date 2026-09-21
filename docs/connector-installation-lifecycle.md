@@ -38,8 +38,10 @@ idempotent retries do not count as new setups. Verified provider delivery remain
 the installation status, not the setup telemetry result.
 
 If setup reserves an installation but its response is lost, Settings reloads the
-workspace connections and opens the saved installation. It does not change the
-attempt identity and submit corrected inputs against that reservation. A failed
+workspace connections and settles on the reservation it finds: for Ashby it
+opens that installation's window, and for Granola, which has none, it closes
+setup and leaves the refreshed row. Either way it does not change the attempt
+identity and submit corrected inputs against that reservation. A failed
 recovery lookup blocks further setup until Find existing installation succeeds.
 The main management window shows plain connection status, the last event, and
 explicit Test; trouble states offer Get help. Technical diagnostics, provider IDs,
