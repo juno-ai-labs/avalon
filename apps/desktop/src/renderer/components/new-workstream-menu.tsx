@@ -14,6 +14,7 @@ export function NewWorkstreamMenu({
   onCreateChannel,
   onCreateSpace,
   onImportChannel,
+  tooltipLabel = 'New channel',
   tooltipSide = 'bottom',
 }: {
   children: ReactElement;
@@ -23,6 +24,7 @@ export function NewWorkstreamMenu({
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
   onImportChannel: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
+  tooltipLabel?: string;
 }): React.JSX.Element {
   const formId = useId();
   const [kind, setKind] = useState<CreationKind | null>(null);
@@ -95,7 +97,7 @@ export function NewWorkstreamMenu({
 
   return <>
     <DropdownMenu.Root>
-      <Tip describesTrigger={false} label="New channel" side={tooltipSide}>
+      <Tip describesTrigger={false} label={tooltipLabel} side={tooltipSide}>
         <DropdownMenu.Trigger asChild disabled={!canCreateSpace && selectableSpaces.length === 0}>{children}</DropdownMenu.Trigger>
       </Tip>
       <DropdownMenu.Portal>
