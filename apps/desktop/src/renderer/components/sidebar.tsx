@@ -132,6 +132,7 @@ interface SidebarProps {
   onImportChannel?: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
+  onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   /**
    * Every list this person has arranged by hand, and the one way to change one.
@@ -808,6 +809,9 @@ function WorkstreamRow({
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', workstream.id);
               event.dataTransfer.setData('application/x-rally-workstream-id', workstream.id);
+              if (removablePlacement && placementSpaceId !== undefined) {
+                event.dataTransfer.setData('application/x-rally-channel-source-space-id', placementSpaceId);
+              }
               drag?.onDragStart(workstream);
             }}
           onDrop={drag
@@ -1142,6 +1146,7 @@ export function Sidebar({
     throw new Error('Space creation is unavailable.');
   },
   onAddChannelToSpace = async () => undefined,
+  onMoveChannelToSpace = async () => undefined,
   onRemoveChannelFromSpace = async () => undefined,
   ordering = [],
   onReorderContainer = async () => undefined,
@@ -1316,7 +1321,7 @@ export function Sidebar({
   // SpacesSidebar owns the gesture, but every destination picker owns the
   // promise's optimistic result with it so no sibling surface lags the rail.
   const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
-  const draggingWorkstreamId = useRef<string | null>(null);
+  const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const placementDrag = useRef<{ workstreamId: string; dropped: boolean; spaceId: string } | null>(null);
@@ -1692,18 +1697,18 @@ export function Sidebar({
   };
 
   const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): WorkstreamRowDrag => ({
-    dragging: draggingWorkstreamId.current === workstream.id && activeDragOrder !== null,
+    dragging: pinnedDrag.current?.workstreamId === workstream.id && activeDragOrder !== null,
     position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}.`,
     onDragStart: (target) => {
       if (selectedSpaceId === null) return;
-      draggingWorkstreamId.current = target.id;
+      pinnedDrag.current = { dropped: false, workstreamId: target.id };
       setDragOrder({
         spaceId: selectedSpaceId,
         itemIds: pinnedWorkstreams.map((pinned) => pinned.id),
       });
     },
     onDragOver: (targetId) => {
-      const draggingId = draggingWorkstreamId.current;
+      const draggingId = pinnedDrag.current?.workstreamId ?? null;
       if (draggingId === null || draggingId === targetId) return;
       setDragOrder((current) => {
         if (selectedSpaceId === null) return current;
@@ -1716,8 +1721,9 @@ export function Sidebar({
       });
     },
     onDragEnd: (cancelled) => {
+      const current = pinnedDrag.current;
       const order = activeDragOrder;
-      draggingWorkstreamId.current = null;
+      pinnedDrag.current = null;
       if (order === null) return;
       // `dragend` fires whatever ended the drag, and `committedOrder` holds the
       // three questions every list here asks at that moment: was it backed out
@@ -1725,7 +1731,9 @@ export function Sidebar({
       // wrong — moved *relative to what the server last confirmed*, which is
       // `storedPinnedWorkstreams` rather than the list on screen.
       const committed = committedOrder(
-        order, storedPinnedWorkstreams.map((pinned) => pinned.id), cancelled,
+        order,
+        storedPinnedWorkstreams.map((pinned) => pinned.id),
+        cancelled || current?.dropped !== true,
       );
       if (committed === null) {
         setDragOrder(null);
@@ -1740,9 +1748,13 @@ export function Sidebar({
       if (from < 0 || to < 0 || to >= order.length) return;
       void commitPinnedOrder(moveWithin(order, target.id, to));
     },
-    // Nothing above this list wants a release inside it; saying so is what
-    // keeps that true if something ever sits above it.
-    onDrop: () => true,
+    // A cross-rail Space handles its own drop without marking this list. Only
+    // this callback proves the pinned arrangement itself accepted the release.
+    onDrop: () => {
+      if (!pinnedDrag.current) return false;
+      pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
+      return true;
+    },
   });
 
   const addToSpace = (workstream: WorkstreamSummary, spaceId: string): void => {
@@ -2049,7 +2061,7 @@ export function Sidebar({
         onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
         onOrderPreviewChange={setSpaceOrderPreview}
-        onAddChannel={onAddChannelToSpace}
+        onMoveChannel={onMoveChannelToSpace}
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
         onRestore={onRestoreSpace}
@@ -2231,7 +2243,10 @@ export function Sidebar({
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
               }}
-              onDrop={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (pinnedDrag.current) pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
+              }}
             >
               {/* Held: a heading travels with the rows under it and is never
                   the thing seen to leave. See `useListMotion`. */}
