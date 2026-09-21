@@ -5,7 +5,6 @@ import {
   menuBarLabel,
   menuBarMenuTemplate,
   supportsSectionHeaders,
-  MENU_BAR_PINNED_LIMIT,
   MENU_BAR_RECENT_LIMIT,
   type MenuBarActions,
   type MenuBarContent,
@@ -69,10 +68,6 @@ const workstreams = Array.from({ length: 12 }, (_value, index) => ({
   lastActivityAt: at(index * 30 * MINUTE),
 }));
 
-function pinnedStream(id: string, title: string): { id: string; title: string; lastActivityAt: string } {
-  return { id, title, lastActivityAt: at(2 * DAY) };
-}
-
 describe('menu bar menu', () => {
   it('starts nothing: the menu opens straight on its first section', () => {
     // Every row that started something is gone — a meeting or note, a work
@@ -85,7 +80,7 @@ describe('menu bar menu', () => {
     }
     // Nothing precedes the first header, so the leading rule has to be
     // suppressed rather than drawn against nothing.
-    expect(drawn.at(0)).toBe('Pinned');
+    expect(drawn.at(0)).toBe('Last hour');
   });
 
   it('offers nothing to do with suggested work', () => {
@@ -106,16 +101,11 @@ describe('menu bar menu', () => {
         { id: 'recent-e', title: 'Offsite plan', lastActivityAt: at(7 * DAY) },
         { id: 'recent-f', title: 'Series A memo', lastActivityAt: at(200 * DAY) },
       ],
-      pinned: [pinnedStream('pinned-a', 'Acme renewal'), pinnedStream('pinned-b', 'Board deck')],
     });
 
-    // Pinned above Recent, and the recent list under the sidebar's own headings
-    // rather than one flat "Recent" block.
+    // The recent list uses the sidebar's own headings rather than one flat
+    // "Recent" block. This surface has no selected Space, so it has no pins.
     expect(labels(items)).toEqual([
-      'Pinned',
-      'Acme renewal',
-      'Board deck',
-      '—',
       'Last hour',
       'Renewal thread',
       '—',
@@ -139,14 +129,6 @@ describe('menu bar menu', () => {
     ]);
   });
 
-  it('puts Pinned above the recent list', () => {
-    const drawn = labels(template({ recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] }));
-
-    // A pin is a standing choice, and the recent list is ten rows: a section
-    // underneath one that long is a section nobody scans to.
-    expect(drawn.indexOf('Pinned')).toBeLessThan(drawn.indexOf('Channel 0'));
-  });
-
   it('groups the recent channels the way the sidebar groups them', () => {
     const items = template({
       recents: [
@@ -157,9 +139,6 @@ describe('menu bar menu', () => {
     });
 
     expect(labels(items)).toEqual([
-      'Pinned',
-      'Pin a channel to see it here',
-      '—',
       'Last hour',
       'Just now',
       '—',
@@ -185,29 +164,7 @@ describe('menu bar menu', () => {
       .toEqual(['Newest', 'Middle', 'Oldest']);
   });
 
-  it('shows the top five of the reader’s own pinned arrangement, in that order', () => {
-    const pinned = Array.from({ length: 8 }, (_value, index) => pinnedStream(`pinned-${index}`, `Pinned ${index}`));
-    const items = template({ pinned });
-    const pinnedLabels = labels(items).filter((label) => label?.startsWith('Pinned '));
-
-    // Sliced, never re-sorted or regrouped: the arrangement is the person's,
-    // and the store hands it over already ordered.
-    expect(pinnedLabels).toEqual(['Pinned 0', 'Pinned 1', 'Pinned 2', 'Pinned 3', 'Pinned 4']);
-    expect(pinnedLabels).toHaveLength(MENU_BAR_PINNED_LIMIT);
-  });
-
-  it('says how the Pinned section gets filled rather than hiding it', () => {
-    const items = template({ recents: workstreams });
-    const empty = items.find((item) => item.label === 'Pin a channel to see it here');
-
-    // A section that is simply absent teaches nobody about a feature they have
-    // not found yet.
-    expect(items.some((item) => item.label === 'Pinned')).toBe(true);
-    expect(empty?.enabled).toBe(false);
-    expect(empty?.click).toBeUndefined();
-  });
-
-  it('drops Pinned entirely when nobody is signed in', () => {
+  it('shows the signed-out empty state', () => {
     const items = template(emptyMenuBarContent, { signedIn: false });
 
     // It has nothing to say to a stranger, and the one message that state needs
@@ -219,14 +176,6 @@ describe('menu bar menu', () => {
       'Open Rally',
       'Quit Rally',
     ]);
-  });
-
-  it('opens a pinned row the same way a recent one opens', () => {
-    const menuActions = actions();
-    const items = template({ pinned: [pinnedStream('pinned-a', 'Acme renewal')] }, { actions: menuActions });
-    activate(items.find((item) => item.label === 'Acme renewal'));
-
-    expect(menuActions.openWorkstream).toHaveBeenCalledWith('pinned-a');
   });
 
   it('shows no more than ten recent channels', () => {
@@ -254,8 +203,6 @@ describe('menu bar menu', () => {
     for (const content of [
       emptyMenuBarContent,
       { recents: workstreams },
-      { pinned: [pinnedStream('p', 'Acme renewal')] },
-      { recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] },
     ]) {
       for (const overrides of [{}, { signedIn: false }]) {
         const items = template(content, overrides);
@@ -273,13 +220,8 @@ describe('menu bar menu', () => {
   it('heads every group, and puts each empty state directly under its header', () => {
     const items = template(emptyMenuBarContent);
 
-    for (const [title, empty] of [
-      ['Pinned', 'Pin a channel to see it here'],
-      ['Recent', 'No recent channels'],
-    ]) {
-      expect(items.find((item) => item.label === title)?.type).toBe('header');
-      expect(labels(items).indexOf(title!)).toBe(labels(items).indexOf(empty!) - 1);
-    }
+    expect(items.find((item) => item.label === 'Recent')?.type).toBe('header');
+    expect(labels(items).indexOf('Recent')).toBe(labels(items).indexOf('No recent channels') - 1);
   });
 
   it('heads every recency group it draws', () => {
@@ -293,7 +235,7 @@ describe('menu bar menu', () => {
   it('falls back to a disabled row where macOS has no section headers', () => {
     const items = template({ recents: workstreams }, { sectionHeaders: false });
 
-    for (const label of ['Pinned', 'Last hour']) {
+    for (const label of ['Last hour']) {
       const header = items.find((item) => item.label === label);
       expect(header?.type).toBeUndefined();
       // Still unclickable: a header that could be activated is a menu row that
@@ -307,8 +249,6 @@ describe('menu bar menu', () => {
     for (const content of [
       emptyMenuBarContent,
       { recents: workstreams },
-      { pinned: [pinnedStream('p', 'Acme renewal')] },
-      { recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] },
       { recents: [{ id: 'a', title: 'Old', lastActivityAt: at(400 * DAY) }] },
     ]) {
       for (const overrides of [{}, { signedIn: false }]) {
@@ -342,7 +282,6 @@ describe('menu bar menu', () => {
     const items = template(
       {
         recents: [{ id: 'workstream-0', title: 'Renewal thread', lastActivityAt: at(MINUTE) }],
-        pinned: [pinnedStream('pinned-a', 'Acme renewal')],
       },
       { actions: menuActions },
     );
@@ -350,13 +289,11 @@ describe('menu bar menu', () => {
 
     // Headers carry no handler, so activating everything must not produce a
     // stray call.
-    expect(items.filter((item) => item.click).length).toBe(4);
-    expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(1, 'pinned-a');
-    expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(2, 'workstream-0');
+    expect(items.filter((item) => item.click).length).toBe(3);
+    expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
     expect(menuActions.openRally).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
-      'pinned_workstream',
       'recent_workstream',
       'open_rally',
       'quit_rally',

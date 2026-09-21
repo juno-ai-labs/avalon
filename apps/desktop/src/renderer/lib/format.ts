@@ -1,4 +1,4 @@
-import type { WorkstreamBatchFilter } from '@rally/contracts';
+import { asSpaceId, type WorkstreamBatchFilter } from '@rally/contracts';
 
 import { groupActivityItems, hourInMilliseconds, workstreamRecencyAt, type RecencyGroup } from '../../common/recency-groups';
 
@@ -162,6 +162,7 @@ export function workstreamMarkerStatus(
 export function recencyGroupBatchFilter(
   label: RecencyGroup,
   now = new Date(),
+  spaceId?: string,
 ): WorkstreamBatchFilter {
   const nowTimestamp = now.getTime();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -194,7 +195,11 @@ export function recencyGroupBatchFilter(
       case 'Before this month': return { before: new Date(startOfMonth).toISOString() };
     }
   })();
-  return { lastActivityAt: range, pinned: false, includeSystem: false };
+  return {
+    lastActivityAt: range,
+    ...(spaceId === undefined ? {} : { pinned: false, spaceId: asSpaceId(spaceId) }),
+    includeSystem: false,
+  };
 }
 
 export function groupWorkstreams(

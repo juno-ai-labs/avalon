@@ -973,7 +973,7 @@ export function ConversationSurface({
       visibility: telemetryVisibility(detail.scope),
       navigation: workstreamNavigation(detail.id),
       origin: detail.systemKind ? 'system' : 'ad_hoc',
-      pinned: detail.pinPosition !== null,
+      pinned: (detail.spacePins?.length ?? 0) > 0,
     });
   }, [id, parentKind, workstream.data]);
   const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(

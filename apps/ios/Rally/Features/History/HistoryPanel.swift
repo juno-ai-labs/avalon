@@ -116,12 +116,6 @@ struct WorkstreamListScreen: View {
             } label: {
                 Label("Unread", systemImage: "envelope.badge")
             }
-            Button {
-                Task { await model.pin(item) }
-            } label: {
-                Label(item.isPinned ? "Unpin" : "Pin", systemImage: item.isPinned ? "pin.slash" : "pin")
-            }
-            .tint(.yellow)
         }
         .contextMenu {
             Button {
@@ -134,11 +128,6 @@ struct WorkstreamListScreen: View {
                 Task { await model.setScope(item, scope: item.scope == "workspace" ? "personal" : "workspace") }
             } label: {
                 Label(item.scope == "workspace" ? "Make private" : "Make public to organization", systemImage: item.scope == "workspace" ? "lock" : "globe")
-            }
-            Button {
-                Task { await model.pin(item) }
-            } label: {
-                Label(item.isPinned ? "Unpin" : "Pin", systemImage: "pin")
             }
             Button {
                 Task { await model.markUnread(item) }
@@ -186,10 +175,6 @@ struct WorkstreamRow: View {
                             .font(RallyType.bodySmall())
                             .foregroundStyle(colors.textSecondary)
                             .lineLimit(2)
-                    } else if item.isPinned {
-                        Text("Pinned")
-                            .font(RallyType.bodySmall())
-                            .foregroundStyle(colors.textSecondary)
                     }
                 }
             }

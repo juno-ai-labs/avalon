@@ -2017,6 +2017,15 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
         request.workstreamId,
       );
+      // A pin belongs to this placement, not to the Channel in every Space.
+      // Once the placement is gone, retaining it would let a later re-add
+      // resurrect a choice the person made about an earlier membership.
+      this.storage.sql.exec(
+        `DELETE FROM workspace_workstream_pins
+          WHERE space_id = ? AND workstream_id = ?`,
+        request.spaceId,
+        request.workstreamId,
+      );
       this.advanceWaterline(now);
       return this.space(request.spaceId, request.userId);
     });

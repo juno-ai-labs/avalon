@@ -63,6 +63,8 @@ export interface ListMotionRow {
    * and re-entering, and it takes no part in deciding which rows moved.
    */
   hold?: boolean;
+  /** This row is the action's subject and must travel rather than win the LIS tie. */
+  move?: boolean;
 }
 
 /** A row the reader last saw somewhere else. */
@@ -147,7 +149,7 @@ export function planListMotion(
   const kept = new Set<string>();
   const scopes = new Map<string, typeof shared>();
   for (const entry of shared) {
-    if (entry.row.hold) continue;
+    if (entry.row.hold || entry.row.move) continue;
     const scope = entry.row.scope ?? '';
     scopes.set(scope, [...(scopes.get(scope) ?? []), entry]);
   }

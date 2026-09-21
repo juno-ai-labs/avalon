@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { workstreamRecencyAt } from '../common/recency-groups';
 import {
   emptyMenuBarContent,
-  MENU_BAR_PINNED_LIMIT,
   MENU_BAR_RECENT_LIMIT,
   type MenuBarContent,
   type MenuBarWorkstream,
@@ -19,9 +18,6 @@ const MenuBarWorkstreamPageSchema = z.object({
     id: z.string().min(1),
     title: z.string(),
     titleStatus: z.enum(['naming', 'automatic', 'settled']).default('settled'),
-    // The reader's own place for this work stream in their arrangement, or null
-    // if they have not pinned it. See `workstream-pinning.md`.
-    pinPosition: z.number().int().nonnegative().nullable().default(null),
     // What the recency headings are computed from. `lastAccessedAt` is absent
     // on a server too old to report visits and null when nobody has visited;
     // `workstreamRecencyAt` owns the difference, and the sidebar reads the same
@@ -121,10 +117,9 @@ export class MenuBarContentStore {
   }
 
   private async refreshNow(generation: number): Promise<void> {
-    // One request answers both sections. `GET /workstreams` leaves pins out of
-    // the recency order and appends every one of them to the first page, so a
-    // page of ten carries the ten most recent *unpinned* streams and the whole
-    // pinned list behind them.
+    // The menu has no selected Space, so it cannot project a placement-scoped
+    // pin. It asks only for recent Channels and sorts the returned first page by
+    // the same viewer recency used in the sidebar.
     const page = await this.load(
       'recent channels',
       `/workstreams?limit=${MENU_BAR_RECENT_LIMIT}`,
@@ -135,28 +130,17 @@ export class MenuBarContentStore {
     // that no longer exists.
     if (generation !== this.generation) return;
     const workstreams = page.items.map((workstream) => ({
-      pinPosition: workstream.pinPosition,
-      entry: {
         id: workstream.id,
         title: workstream.titleStatus === 'naming' || workstream.title.trim().length === 0
           ? UNNAMED_WORKSTREAM_LABEL
           : workstream.title,
         lastActivityAt: workstreamRecencyAt(workstream),
-      } satisfies MenuBarWorkstream,
-    }));
+      } satisfies MenuBarWorkstream));
     this.cached = {
       recents: workstreams
-        .filter((workstream) => workstream.pinPosition === null)
-        .slice(0, MENU_BAR_RECENT_LIMIT)
-        .map((workstream) => workstream.entry),
-      // The arrangement is the person's own, so the menu takes the top of it
-      // rather than re-sorting. Sorted here because the append is by position
-      // already but the order of an appended block is not part of the contract.
-      pinned: workstreams
-        .filter((workstream) => workstream.pinPosition !== null)
-        .sort((left, right) => left.pinPosition! - right.pinPosition!)
-        .slice(0, MENU_BAR_PINNED_LIMIT)
-        .map((workstream) => workstream.entry),
+        .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt))
+        .slice(0, MENU_BAR_RECENT_LIMIT),
+      pinned: [],
     };
     this.dependencies.onChange(this.cached);
   }

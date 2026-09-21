@@ -20,6 +20,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  asSpaceId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -41,6 +42,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
 
 const OWNER = asUserId("00000000-0000-7000-8000-0000000008a1");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000008a6");
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
 const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
 const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
@@ -217,10 +219,21 @@ describe("what the workspace object answers about its work streams", () => {
       });
       await runInDurableObject(workspace(), (_instance, state) => {
         state.storage.sql.exec(
-          `INSERT INTO workspace_workstream_pins
-             (user_id, workstream_id, position, created_at, updated_at)
-           VALUES (?, ?, 0, 1, 1)`,
+          `INSERT INTO workspace_space_directory
+             (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
+              system_role, authority_generation, source_version, payload_hash, revision,
+              created_at, updated_at, source_created_at, source_updated_at)
+           VALUES (?, 'Batch test', 'workspace', NULL, NULL, ?, NULL, 1, 1,
+                   'batch-space', 1, 1, 1, 1, 1)`,
+          SPACE_ID,
           OWNER,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_pins
+             (user_id, space_id, workstream_id, position, created_at, updated_at)
+           VALUES (?, ?, ?, 0, 1, 1)`,
+          OWNER,
+          SPACE_ID,
           pinned,
         );
       });
@@ -255,6 +268,7 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2020-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
       });
@@ -284,6 +298,7 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2010-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
         update: { kind: "mark_read" },
@@ -337,6 +352,7 @@ describe("what the workspace object answers about its work streams", () => {
             before: "2009-03-20T00:00:00.000Z",
           },
           pinned: false,
+          spaceId: SPACE_ID,
           includeSystem: false,
         },
         update: { kind: "mark_read" },

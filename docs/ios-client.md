@@ -75,10 +75,11 @@ Ready state is the tab shell. **Work streams** opens on the work-stream list (Gr
 Bot's directory: the circular account avatar opens Settings). The chip paints
 stored initials and personal color from `GET /onboarding/account` on Global
 identity; a missing presentation falls back to two letters of the name and
-`blue`. The list uses the same order as the Mac sidebar: **Pinned** in
-`pinPosition` order, then recency groups (**Last hour**, **Today**,
+`blue`. The list uses recency groups (**Last hour**, **Today**,
 **Yesterday**, **This week**, **This month**, **Before this month**) by this
-viewer's last access. Selecting a work stream pushes the
+viewer's last access. It has no pin actions or pinned section because the
+current iOS history has no selected Space; placement-scoped pins cannot be
+projected without one. Selecting a work stream pushes the
 substream list on that tap, without a navigation animation: Main and **New substream** paint at once; children
 fill when the parent control socket has the directory. Selecting a substream
 pushes the feed on that tap, before the ticket and without waiting for a zoom:
@@ -304,7 +305,7 @@ it.
 | Suite | Command | What it can prove |
 | --- | --- | --- |
 | Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
-| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), Apple push payload parse and PUT body, transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream pin/recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
+| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), Apple push payload parse and PUT body, transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
 | UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. `testLocalDevelopmentAccountReachesChats` is skipped unless `RALLY_LOCAL_UI=1` and a local Worker is up — CI never sets that. Needs a simulator. |
 
 This sandbox cannot run `xcodebuild`. The packaging test is the gate that CI
@@ -343,6 +344,14 @@ pointed at the wrong team.
   have a phone-sized UI and, for capture, an iOS audio path.
 
 ## Changelog
+
+### 2026-09-21 — Remove global pin controls from Space-less history
+
+The iOS history list no longer displays, pins, or unpins Channels. Pin state is
+now scoped to a Channel's placement in a selected Space, and this surface has no
+Space selection. Treating “pinned anywhere” as one list was rejected because it
+would merge independent Space arrangements back into a global pin. A future iOS
+Space surface can restore the controls with an explicit `spaceId`.
 
 ### 2026-09-11 — Native SwiftUI client, Grok IA, desktop PKCE
 

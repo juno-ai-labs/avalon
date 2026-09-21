@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSpaceId, asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
@@ -15,6 +15,7 @@ import {
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000102");
+const SPACE_ID = asSpaceId("00000000-0000-7000-8000-000000000104");
 const OPERATION_ID = "00000000-0000-7000-8000-000000000103";
 
 const auth: AuthContext = {
@@ -82,6 +83,7 @@ describe("generic work-stream batch updates", () => {
         before: "2026-08-08T00:00:00.000Z",
       },
       pinned: false,
+      spaceId: SPACE_ID,
       includeSystem: false,
     } as const;
 
@@ -115,7 +117,7 @@ describe("generic work-stream batch updates", () => {
     const { beginWorkstreamBatchDispatch, env, sent } = environment(targets, 1);
     const request = {
       operationId: OPERATION_ID,
-      filter: { pinned: false, includeSystem: false },
+      filter: { pinned: false, spaceId: SPACE_ID, includeSystem: false },
       update: { kind: "mark_read" as const },
     };
     const service = new WorkstreamBatchUpdateService(env, auth);
@@ -138,7 +140,7 @@ describe("generic work-stream batch updates", () => {
     const { batchUpdateTargets, env, sent } = environment(
       [workstreamId(1), workstreamId(2)],
     );
-    const filter = { pinned: false, includeSystem: false };
+    const filter = { pinned: false, spaceId: SPACE_ID, includeSystem: false };
 
     await expect(new WorkstreamBatchUpdateService(env, auth).preview(filter))
       .resolves.toEqual({ matchedCount: 2, matchedNoteCount: 0 });

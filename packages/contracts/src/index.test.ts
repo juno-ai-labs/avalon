@@ -38,6 +38,8 @@ import {
   SpaceChannelPageSchema,
   SpaceConversationSchema,
   WorkstreamSchema,
+  WorkstreamBatchFilterSchema,
+  ReorderWorkstreamPinsRequestSchema,
   WorkstreamResourceSchema,
   TimestampSchema,
   WorkstreamSocketCommandResultSchema,
@@ -1543,6 +1545,47 @@ describe("resource version provenance", () => {
     // screen branches on `kind` for the destination, and a defaulted "channel"
     // would send every breakout to its parent Channel's main conversation.
     expect(SpaceConversationSchema.safeParse(workstream).success).toBe(false);
+  });
+});
+
+describe("Space-scoped Channel pins", () => {
+  const spaceId = "00000000-0000-7000-8000-0000000000f1";
+
+  it("requires one Space for pin reorders and pin-state batch filters", () => {
+    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
+      spaceId,
+      workstreamIds: ["00000000-0000-7000-8000-0000000000f2"],
+    }).success).toBe(true);
+    expect(ReorderWorkstreamPinsRequestSchema.safeParse({ workstreamIds: [] }).success).toBe(false);
+    expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false }).success).toBe(false);
+    expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false, spaceId }).success).toBe(true);
+  });
+
+  it("rejects two positions for the same Space on one Channel", () => {
+    const base = WorkstreamSchema.parse({
+      id: "00000000-0000-7000-8000-0000000000f3",
+      workspaceId: "00000000-0000-7000-8000-0000000000f4",
+      title: "Shared Channel",
+      objective: "",
+      emailAddress: null,
+      createdByUserId: null,
+      harnessStatus: "idle",
+      latestAttentionSequenceNumber: 0,
+      readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+      lastActivityAt: "2026-09-21T00:00:00.000Z",
+      createdAt: "2026-09-21T00:00:00.000Z",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      archivedAt: null,
+      scope: "workspace",
+    });
+    expect(WorkstreamSchema.safeParse({
+      ...base,
+      spacePins: [{ spaceId, position: 0 }, { spaceId, position: 1 }],
+    }).success).toBe(false);
   });
 });
 

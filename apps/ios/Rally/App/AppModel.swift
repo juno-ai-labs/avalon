@@ -1322,19 +1322,6 @@ final class AppModel {
         await signOut()
     }
 
-    func pin(_ workstream: RallyWorkstream) async {
-        do {
-            if workstream.isPinned {
-                try await client.unpinWorkstream(id: workstream.id)
-            } else {
-                try await client.pinWorkstream(id: workstream.id)
-            }
-            await loadWorkspaceContent()
-        } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t update the pin."
-        }
-    }
-
     func markUnread(_ workstream: RallyWorkstream) async {
         do {
             try await client.markWorkstreamUnread(id: workstream.id)

@@ -6210,15 +6210,13 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar .sidebar-scroll > .sidebar-section:first-child { margin-top: 0; }
 .app-shell .sidebar.is-compact .sidebar-section,
 .app-shell .sidebar.is-compact .sidebar-group { margin-top: 0; }
-.app-shell .sidebar .pinned-section {
-  border-bottom: 0 solid var(--av-cmp-sidebar-border);
-  transition: border-bottom-width var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
+.sidebar-section-divider {
+  border: 0;
+  border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  height: 0;
+  margin: calc(var(--av-sys-space-group-gap) / 2) 0 calc(var(--av-sys-space-group-gap) / -2);
 }
-.app-shell .sidebar.is-compact .pinned-section {
-  border-bottom-width: var(--av-sys-size-border-hairline);
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-}
+.app-shell .sidebar.is-compact .sidebar-section-divider { margin: 12px 0; }
 .app-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
 .app-shell .sidebar.is-compact .sidebar-list { gap: 0; }
 /* A row narrows to its 54px mark: the wrapper's width travels, the row's

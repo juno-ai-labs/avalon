@@ -18,25 +18,13 @@ struct RallyWorkstreamSection: Equatable, Identifiable, Sendable {
     var id: String { title }
 }
 
-/// Pinned in server pin order, then recency groups by this viewer's last access.
+/// Recency groups by this viewer's last access. iOS has no selected Space, so
+/// it cannot project placement-scoped pins.
 enum RallyWorkstreamDirectory {
     static let hour: TimeInterval = 3_600
 
     static func sections(from items: [RallyWorkstream], now: Date = Date()) -> [RallyWorkstreamSection] {
-        let pinned = items
-            .filter { $0.pinPosition != nil }
-            .sorted { left, right in
-                let position = (left.pinPosition ?? 0) - (right.pinPosition ?? 0)
-                if position != 0 { return position < 0 }
-                return left.id < right.id
-            }
-        let unpinned = items.filter { $0.pinPosition == nil }
-        var result: [RallyWorkstreamSection] = []
-        if !pinned.isEmpty {
-            result.append(RallyWorkstreamSection(title: "Pinned", items: pinned))
-        }
-        result.append(contentsOf: recencyGroups(from: unpinned, now: now))
-        return result
+        recencyGroups(from: items, now: now)
     }
 
     static func recencyGroups(from items: [RallyWorkstream], now: Date) -> [RallyWorkstreamSection] {
@@ -91,7 +79,7 @@ enum RallyWorkstreamDirectory {
         ) ?? now.addingTimeInterval(hour)
         var next = startOfTomorrow.timeIntervalSince1970
         let nowTimestamp = now.timeIntervalSince1970
-        for item in items where item.pinPosition == nil {
+        for item in items {
             let leavesLastHour = recencyTimestamp(item) + hour
             if leavesLastHour.isFinite, leavesLastHour > nowTimestamp {
                 next = min(next, leavesLastHour)
