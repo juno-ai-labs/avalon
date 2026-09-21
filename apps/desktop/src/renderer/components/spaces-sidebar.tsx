@@ -33,6 +33,7 @@ interface SpacesSidebarProps {
   onCreateSpace: (name: string) => Promise<void>;
   onImportChannel: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
   onOpenSearch?: () => void;
+  onOrderPreviewChange: (order: string[] | null) => void;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   onAddChannel: (spaceId: string, workstreamId: string) => Promise<void>;
   onReorder: (order: ContainerOrder) => Promise<void>;
@@ -70,6 +71,7 @@ export function SpacesSidebar({
   onCreateSpace,
   onImportChannel,
   onOpenSearch,
+  onOrderPreviewChange,
   onArchive,
   onAddChannel,
   onReorder,
@@ -83,6 +85,7 @@ export function SpacesSidebar({
   const onNewChannelRoute = currentPath === '/workstreams/new';
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  const dragOrderRef = useRef<string[] | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const draggingSpaceId = useRef<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<SpaceSummary | null>(null);
@@ -119,15 +122,21 @@ export function SpacesSidebar({
         ? 'This space is no longer available to archive.'
         : null;
 
+  const previewOrder = (order: string[] | null): void => {
+    dragOrderRef.current = order;
+    setDragOrder(order);
+    onOrderPreviewChange(order);
+  };
+
   const commitOrder = async (ids: string[]): Promise<void> => {
-    setDragOrder(ids);
+    previewOrder(ids);
     setFailure(null);
     try {
       await onReorder({ container: { kind: 'organization' }, itemIds: ids });
     } catch {
       setFailure('Spaces couldn\u2019t be reordered.');
     } finally {
-      setDragOrder((current) => current === ids ? null : current);
+      if (dragOrderRef.current === ids) previewOrder(null);
     }
   };
 
@@ -238,14 +247,18 @@ export function SpacesSidebar({
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
                     draggingSpaceId.current = null;
                     if (next) void commitOrder(next);
-                    else setDragOrder(null);
+                    else previewOrder(null);
                   }}
                   onDragEnter={(event) => {
                     if (!event.dataTransfer.types.includes(SPACE_DRAG_TYPE)) return;
                     event.preventDefault();
                     const dragged = draggingSpaceId.current;
                     if (!dragged || dragged === space.id) return;
-                    setDragOrder((current) => moveWithin(current ?? orderedSpaces.map((item) => item.id), dragged, index));
+                    previewOrder(moveWithin(
+                      dragOrderRef.current ?? orderedSpaces.map((item) => item.id),
+                      dragged,
+                      index,
+                    ));
                   }}
                   onDragOver={(event) => {
                     const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
@@ -257,7 +270,7 @@ export function SpacesSidebar({
                   }}
                   onDragStart={(event) => {
                     draggingSpaceId.current = space.id;
-                    setDragOrder(orderedSpaces.map((item) => item.id));
+                    previewOrder(orderedSpaces.map((item) => item.id));
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData(SPACE_DRAG_TYPE, space.id);
                   }}
