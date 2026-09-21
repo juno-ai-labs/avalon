@@ -218,22 +218,19 @@ pre {
 
 /* The lines both rails clip. They are listed here rather than each carrying the
    three declarations at its own rule because the set is one decision: a rail
-   fades what it cannot fit. Anonymous children are matched by shape — a
-   `.workstream-context-copy` line is a bare `<span>` or `<small>` written at
-   five call sites — so a row added to either rail tomorrow inherits the fade
-   instead of quietly reintroducing the hard cut. */
+   fades what it cannot fit, and every hierarchy row uses the shared title and
+   hint classes. */
 .account-copy span,
 .account-copy strong,
 .automation-tile-name,
 .space-row-link > span,
 .sidebar-row-hint-text,
 .sidebar-row-title,
-.sidebar-row-title-copy,
-.workstream-context-copy > small,
-.workstream-context-copy > span {
+.sidebar-row-title-copy {
   animation: clipped-line-fade linear both;
   animation-duration: auto;
   animation-timeline: scroll(self inline);
+  overflow: hidden;
 }
 
 /* The same fade, at the edges of a rail that clips its items rather than a
@@ -977,28 +974,55 @@ pre {
   inherits: false;
   initial-value: 0;
 }
-.sidebar {
-  /* How long everything inside the sidebar spends travelling between its two
-     layouts: the box's own collapse motion, so the rows arrive with the edge.
-     Stated once here and spent by every rule below that changes shape with
-     the layout, so that a drag — which snaps the edge to the pointer — can
-     turn all of them off with one override. */
+.resizable-sidebar {
+  /* One motion channel for all hierarchy sidebars. Each sidebar's content
+     spends this interval on its own shape changes, while the shared shell
+     publishes the compact transition and cancels every channel during a drag. */
   --sidebar-layout-motion: var(--sidebar-collapse-motion);
   --sidebar-compact: 0;
+  position: relative;
+  transition: --sidebar-compact var(--sidebar-layout-motion);
+}
+.resizable-sidebar.is-compact { --sidebar-compact: 1; }
+.resizable-sidebar.is-compact .sidebar-header { margin-inline: auto; }
+.sidebar-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  line-height: 18px;
+  margin: 0;
+  max-width: 100%;
+  min-width: 0;
+  opacity: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: flex-grow var(--sidebar-layout-motion), max-width var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+  white-space: nowrap;
+}
+.resizable-sidebar.is-compact .sidebar-title {
+  flex-grow: 0;
+  max-width: 0;
+  opacity: 0;
+  visibility: hidden;
+}
+.sidebar-horizontal-line {
+  background: var(--av-cmp-sidebar-border);
+  flex: 0 0 auto;
+  height: var(--av-sys-size-border-hairline);
+  min-height: 0;
+  transition: height var(--sidebar-layout-motion), margin var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion);
+}
+.sidebar {
   bottom: 0;
   display: flex;
   flex-direction: column;
   left: 0;
   position: fixed;
   top: 0;
-  /* Declared here as well as on the shell's rule below, so the signal fires
-     wherever the sidebar is rendered; the shell's rule restates it beside the
-     workspace-switch fade because `transition` is a shorthand. */
-  transition: --sidebar-compact var(--sidebar-layout-motion);
   width: var(--av-cmp-sidebar-width);
   z-index: 30;
 }
-.sidebar.is-compact { --sidebar-compact: 1; }
 
 /* The Organization hierarchy is three adjacent navigation levels. Spaces own
    the first rail, Channels keep the established navigation rail, and the open
@@ -1011,8 +1035,6 @@ pre {
   margin-left: calc(var(--spaces-sidebar-width) + var(--av-cmp-sidebar-width));
 }
 .spaces-sidebar {
-  --spaces-sidebar-motion: var(--sidebar-collapse-motion);
-  --sidebar-layout-motion: var(--spaces-sidebar-motion);
   background: var(--av-cmp-sidebar-background);
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
   bottom: 0;
@@ -1028,27 +1050,13 @@ pre {
   z-index: 31;
 }
 .spaces-sidebar-titlebar {
-  align-items: center;
-  display: flex;
-  flex: 0 0 44px;
-  gap: 8px;
-  justify-content: space-between;
   overflow: hidden;
-  padding: 0 12px 0 var(--window-controls-inset, 12px);
-}
-.spaces-sidebar-titlebar > span {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .spaces-sidebar-titlebar-actions { align-items: center; display: flex; gap: 4px; margin-left: auto; }
 .spaces-sidebar-titlebar-actions > .sidebar-new-button {
   opacity: 1;
   transform: translateX(0);
-  transition: color 120ms ease, background 120ms ease, opacity var(--spaces-sidebar-motion), transform var(--spaces-sidebar-motion), visibility var(--spaces-sidebar-motion);
+  transition: color 120ms ease, background 120ms ease, opacity var(--sidebar-layout-motion), transform var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
   visibility: visible;
 }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions > .sidebar-new-button {
@@ -1063,25 +1071,7 @@ pre {
   flex: 1;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 8px 12px 16px;
 }
-.spaces-sidebar-row {
-  align-items: center;
-  border-radius: 10px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  flex: 0 0 54px;
-  gap: 10px;
-  min-width: 0;
-  padding: 8px;
-  text-decoration: none;
-}
-.spaces-sidebar-row:hover { background-image: var(--hover-layer); }
-.spaces-sidebar-row.is-active { background: var(--av-cmp-row-background-selected); }
-.spaces-sidebar-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .spaces-sidebar-mark {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -1092,14 +1082,8 @@ pre {
   height: 36px;
   justify-content: center;
 }
-.spaces-sidebar-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.spaces-sidebar-copy strong,
-.spaces-sidebar-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spaces-sidebar-copy strong { font-size: 14px; font-weight: 550; line-height: 20px; }
-.spaces-sidebar-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; line-height: 16px; }
 .spaces-sidebar-footer {
   align-items: center;
-  border-top: 1px solid var(--av-cmp-sidebar-border);
   display: flex;
   flex: 0 0 54px;
   justify-content: flex-end;
@@ -1117,19 +1101,15 @@ pre {
 }
 .spaces-sidebar.is-compact .spaces-account-slot .account-copy { display: none; }
 .spaces-sidekick-slot { flex: 0 0 auto; min-width: 0; overflow: hidden; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile { gap: 0; padding: 9px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-glyph { height: 36px; width: 36px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
 .spaces-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 12px; padding: 8px; }
-.spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; padding: 0; }
-.spaces-sidebar.is-compact .spaces-sidebar-titlebar > span { display: none; }
+.spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions { margin-left: 0; }
 .spaces-sidebar.is-compact .spaces-sidebar-restore { display: none; }
-.spaces-sidebar.is-compact .spaces-sidebar-scroll { align-items: center; padding-inline: 20.5px; }
-.spaces-sidebar.is-compact .spaces-sidebar-row { flex-basis: 54px; gap: 0; padding: 9px; width: 54px; }
-.spaces-sidebar.is-compact .spaces-sidebar-copy { display: none; }
 .spaces-sidebar.is-compact .spaces-sidebar-footer { justify-content: flex-end; padding-inline: 8px; }
 .spaces-sidebar-preview-surface { min-width: 210px; }
 .channels-space-heading { margin-top: 0 !important; }
@@ -1142,9 +1122,8 @@ pre {
    the second rule takes the property off everything under either sidebar for
    as long as the drag lasts, `!important` because it has to beat every
    travelling rule below whatever that rule's specificity. */
-.sidebar.is-resizing { --sidebar-layout-motion: 0s; user-select: none; }
-.sidebar.is-resizing *,
-.workstream-context-sidebar.is-resizing * { transition-property: none !important; }
+.resizable-sidebar.is-resizing { --sidebar-layout-motion: 0s; transition: none; user-select: none; }
+.resizable-sidebar.is-resizing * { transition-property: none !important; }
 /* The navigation's grab handle is the sidebar's, standing in the gap outside its
    trailing edge — the same width as the right sidebar's, and starting below the
    title bar so the window stays draggable by its top edge. How near the pointer
@@ -1154,52 +1133,29 @@ pre {
   bottom: 0;
   position: absolute;
   right: -6px;
-  top: 44px;
+  top: 55px;
   width: 12px;
   z-index: 3;
 }
 .sidebar-resizer > span { opacity: 0; }
 .sidebar-resizer.is-near > span,
 .sidebar-resizer:focus-visible > span,
-.sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
+.sidebar-resizer.is-resizing > span { opacity: 1; }
 
 .sidebar-titlebar {
-  align-items: center;
-  display: flex;
-  height: 44px;
   justify-content: flex-end;
   padding: 0 16px;
 }
 .channels-sidebar-titlebar {
-  justify-content: flex-start;
   min-width: 0;
-  padding: 0 20px;
-  transition: border-color var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
-.channels-sidebar-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .02em;
-  margin: 0;
-  min-width: 0;
-  opacity: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-  white-space: nowrap;
-}
-.channels-sidebar-toolbar-mark {
+.sidebar-title-header-icon {
   display: none;
-  height: 36px;
+  height: 28px;
   place-items: center;
-  width: 36px;
+  width: 28px;
 }
-.sidebar.is-compact .channels-sidebar-titlebar {
-  border-bottom: 1px solid var(--av-cmp-sidebar-border);
-  padding: 0 30px;
-}
-.sidebar.is-compact .channels-sidebar-title { display: none; opacity: 0; visibility: hidden; }
-.sidebar.is-compact .channels-sidebar-toolbar-mark { display: grid; }
+.resizable-sidebar.is-compact .sidebar-title-header-icon { display: grid; }
 /* Hidden by the attribute in the rail, and faded rather than cut: `display`
    transitions discretely, holding the element until the fade is over, and the
    starting style fades it back in when the sidebar expands. */
@@ -1217,24 +1173,18 @@ pre {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 12px 18px;
+  padding: 8px 12px 16px;
   /* GrokBot keeps this rail visually quiet and lets wheel, trackpad, and
      keyboard scrolling move it without exposing a width-taking scrollbar. */
   scrollbar-gutter: auto;
   transition: padding var(--sidebar-layout-motion);
 }
 
-/* The adjacent Main/Breakouts rail begins its expanded list 8px below the
-   shared 44px header. Give the Channel rail the same header-to-row interval;
-   compact mode keeps its divider flush with the icon rail instead. */
-.channels-sidebar:not(.is-compact) .sidebar-scroll { padding-top: 8px; }
-
 .sidebar-scroll::-webkit-scrollbar { width: 0; }
 
 .sidebar-primary-actions { display: grid; gap: var(--av-sys-space-row-gap); margin-bottom: var(--av-sys-space-group-gap); }
 
-.sidebar-action,
-.sidebar-row {
+.sidebar-action {
   align-items: center;
   border-radius: var(--av-sys-size-radius-sm);
   color: var(--av-ref-color-neutral-11);
@@ -1243,6 +1193,40 @@ pre {
   min-width: 0;
   text-decoration: none;
 }
+
+.sidebar-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  flex: 0 0 54px;
+  font: inherit;
+  font-size: var(--av-sys-font-size-row);
+  gap: 8px;
+  height: 54px;
+  min-height: 54px;
+  min-width: 0;
+  padding: var(--av-cmp-row-padding);
+  position: relative;
+  text-align: left;
+  text-decoration: none;
+  transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion);
+  width: 100%;
+}
+.resizable-sidebar.is-compact .sidebar-row { gap: 0; padding: 9px; width: 54px; }
+.sidebar-row.sidebar-header {
+  border-radius: 0;
+  flex-basis: 43px;
+  height: 43px;
+  justify-content: flex-start;
+  min-height: 43px;
+  min-width: 0;
+  padding: 0 20px;
+}
+.sidebar-row.sidebar-header:hover { background-image: none; }
+.resizable-sidebar.is-compact .sidebar-row.sidebar-header { padding: 9px; }
 
 .sidebar-action {
   background: transparent;
@@ -1315,7 +1299,6 @@ pre {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 0;
-  min-height: var(--av-cmp-row-height-dense);
 }
 .space-accordion-control {
   align-items: center;
@@ -1524,24 +1507,20 @@ pre {
   background: var(--av-sys-color-surface-subtle);
 }
 
-.sidebar-row {
-  --sidebar-row-background: var(--av-cmp-sidebar-background-solid);
-  font-size: var(--av-sys-font-size-row);
-  gap: 5px;
-  padding: var(--av-cmp-row-padding);
-  position: relative;
-}
-
-.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }
-.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }
+.sidebar-row:hover { background-image: var(--hover-layer); }
+.sidebar-row:is(.is-active, .is-current) { background: var(--av-cmp-row-background-selected); }
+.sidebar-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 
 
 .sidebar-row-icon {
   align-items: center;
   color: var(--av-ref-color-neutral-9);
   display: flex;
-  flex: 0 0 18px;
+  flex: 0 0 36px;
+  height: 36px;
   justify-content: center;
+  position: relative;
+  width: 36px;
 }
 
 .sidebar-note-marker {
@@ -1592,7 +1571,10 @@ pre {
   flex-direction: column;
   line-height: var(--av-cmp-row-leading);
   min-width: 0;
+  overflow: hidden;
+  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
+.resizable-sidebar.is-compact .sidebar-row-main { opacity: 0; visibility: hidden; }
 
 .sidebar-row-title,
 .sidebar-row-hint {
@@ -3250,49 +3232,20 @@ pre {
    A mark is centred by the row's padding, and content of no fixed width by a
    transform of `calc(18px - 50%)`, half the 36px content box less half the
    content's own width. */
-.workstream-context-sidebar { --sidebar-layout-motion: var(--sidebar-collapse-motion); background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
+.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; transition: flex-basis var(--sidebar-layout-motion), --sidebar-compact var(--sidebar-layout-motion); }
 /* As above: a drag tracks the pointer, so the gesture opts its own width out,
    and its contents snap with the edge — the interval for transitions the drag
    would start, and the `.is-resizing *` rule beside the navigation's for the
    ones already running. */
-.workstream-context-sidebar.is-resizing { --sidebar-layout-motion: 0s; transition: none; }
-.workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
-.workstream-context-sidebar.is-compact { flex-basis: 96px; }
-.workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: flex-start; min-width: 0; padding: 0 20px; transition: border-color var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.workstream-context-toolbar h2 {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .02em;
-  margin: 0;
-  opacity: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-  white-space: nowrap;
-}
-.workstream-context-sidebar.is-compact .workstream-context-toolbar h2 { opacity: 0; visibility: hidden; }
-.workstream-context-toolbar-mark { display: none; height: 36px; place-items: center; width: 36px; }
-.workstream-context-sidebar.is-compact .workstream-context-toolbar {
-  border-bottom: 1px solid var(--av-cmp-sidebar-border);
-  padding: 0 30px;
-}
-.workstream-context-sidebar.is-compact .workstream-context-toolbar h2 { display: none; }
-.workstream-context-sidebar.is-compact .workstream-context-toolbar-mark { display: grid; }
+.workstream-context-sidebar.is-compact { flex-basis: 88px; }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-.workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; transition: padding var(--sidebar-layout-motion); }
-.workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
-.workstream-context-row:hover { background-image: var(--hover-layer); }
-.workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
    differs — Main and each Breakout have their own stable tinted symbol, while
    the blue enter mark belongs to the row that starts a new Breakout. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
-/* A grid keeps every room mark centered in the same square slot. */
-.workstream-context-mark { display: grid; flex: 0 0 36px; height: 36px; place-items: center; }
-.workstream-context-mark > * { grid-area: 1 / 1; }
 /* A not-yet-reserved Breakout has no id from which to derive its stable mark,
    so its pending row temporarily uses a readable branch rather than the
    sidebar's hairline colour. */
@@ -3307,24 +3260,15 @@ pre {
 .workstream-pending-substream { cursor: default; }
 .workstream-pending-substream:hover { background: transparent; }
 .workstream-pending-substream.is-current:hover { background: var(--av-cmp-row-background-selected); }
-.workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
-.workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-/* The navigation sidebar's row title, so the two rails read as one list. */
-.workstream-conversation-row .workstream-context-copy > span,
-.workstream-new-substream .workstream-context-copy > span { font-size: 14px; font-weight: 500; line-height: 20px; }
-.workstream-context-copy > span,
-.workstream-context-copy > small { overflow: hidden; white-space: nowrap; }
-.workstream-context-copy > small { color: var(--av-sys-color-text-muted); font-size: 13px; line-height: 18px; }
-.workstream-context-resource-icon { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }
-.workstream-context-resource-icon > svg { height: 20px; width: 20px; }
-.workstream-context-section { border-top: 0 solid var(--av-cmp-sidebar-border); margin-top: 20px; transition: border-top-width var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-top var(--sidebar-layout-motion); }
+.workstream-context-section { margin-top: 20px; transition: margin-top var(--sidebar-layout-motion); }
+.workstream-context-section > .sidebar-horizontal-line { height: 0; margin-bottom: 0; opacity: 0; }
 .workstream-context-section h2 { margin: 0 8px 6px; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
 /* Copy and headings close to nothing and fade; the section rule and its
    spacing arrive over the same interval. */
-.workstream-context-sidebar.is-compact .workstream-context-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
 .workstream-context-sidebar.is-compact .workstream-context-section h2 { height: 0; margin-bottom: 0; opacity: 0; visibility: hidden; }
-.workstream-context-sidebar.is-compact .workstream-context-section { border-top-width: 1px; margin-top: 14px; padding-top: 14px; }
+.workstream-context-sidebar.is-compact .workstream-context-section { margin-top: 14px; }
+.workstream-context-sidebar.is-compact .workstream-context-section > .sidebar-horizontal-line { height: var(--av-sys-size-border-hairline); margin-bottom: 14px; opacity: 1; }
 /* Content of no fixed width — the participants' avatars — is carried to the
    centre of the 36px content box by a transform that travels, not by
    `justify-content`, which cannot. */
@@ -4827,6 +4771,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
 .workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
+.workspace-shell:has(.spaces-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width, --workstream-sidebar-width; }
 .workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
@@ -4850,6 +4795,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   box-shadow: var(--av-sys-elevation-shadow-md);
   color: var(--av-sys-color-text-muted);
   display: flex;
+  flex-shrink: 0;
   height: 28px;
   justify-content: center;
   transition: background 100ms ease, border-color 100ms ease, color 100ms ease, opacity 100ms ease, transform 100ms ease;
@@ -4859,18 +4805,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidebar-resizer:focus-visible { outline: 0; }
 .sidebar-resizer.is-near > .sidebar-resizer-handle,
 .sidebar-resizer:focus-visible > .sidebar-resizer-handle,
-.sidebar.is-resizing .sidebar-resizer > .sidebar-resizer-handle {
+.sidebar-resizer.is-resizing > .sidebar-resizer-handle {
   background: var(--av-sys-color-surface-raised-hover);
   border-color: var(--av-sys-color-border-strong);
   color: var(--av-sys-color-text-default);
   transform: scale(1.06);
 }
-/* The sidebar uses a real grip rather than the rail's bare line. It stays
-   centered over the divider, appearing only when the generous pointer sensor
-   in the component says the edge is close enough to grab. */
-.sidebar-resizer.is-near > span,
-.sidebar-resizer:focus-visible > span,
-.sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
 /* Kept separate from the sidebar grip so the right rail retains its longer
    brand-colored resize pill. */
 .rail-resizer:hover > span,
@@ -5996,15 +5936,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 
 .workstream-row {
   align-items: center;
-  border-radius: 8px;
+  border-radius: 10px;
   display: grid;
-  gap: 6px;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  min-height: 44px;
-  padding: 3px 7px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
 }
 
-.workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 30px; justify-content: center; position: relative; width: 30px; }
 .workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
 .workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
 .workstream-row .workstream-row-status .status-dot {
@@ -6020,7 +5956,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .settings-navigation-group button,
 .settings-search-results > button,
 .workstream-row .sidebar-row-title { color: var(--av-sys-color-text-default); }
-.workstream-row .sidebar-row-title { align-items: baseline; display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
+.workstream-row .sidebar-row-title { align-items: baseline; display: flex; font-size: 14px; font-weight: 500; gap: 6px; justify-content: space-between; line-height: 20px; width: 100%; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 
@@ -6089,24 +6025,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   letter-spacing: 0;
   line-height: var(--av-sys-font-leading-base);
 }
-.app-shell .workstream-row {
-  border-radius: 10px;
-  gap: 8px;
-  /* The track has to carry the icon this shell actually draws. Left at the
-     base 30px it under-measures the 36px slot below, so the glyph overflowed
-     into the gap and the title started six pixels earlier than the mark's own
-     width puts it — which is where this row and the work-stream rail's,
-     built from the same numbers, came apart. */
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  height: 54px;
-  min-height: 54px;
-  padding: 8px;
-}
-.app-shell .workstream-row .sidebar-row-icon {
-  flex: 0 0 36px;
-  height: 36px;
-  width: 36px;
-}
 .app-shell .workstream-row-status {
   bottom: 0;
   right: 0;
@@ -6120,14 +6038,8 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   width: 8px;
 }
 .app-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
-.app-shell .sidebar-scroll { padding-top: 0; }
 .app-shell .sidebar-group:first-child { margin-top: 0; }
 .app-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
-.app-shell .workstream-row .sidebar-row-title {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-}
 .app-shell .sidebar-group h3 {
   color: var(--av-sys-color-text-muted);
   font-size: 12px;
@@ -6139,7 +6051,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar-group-menu-trigger { display: none; }
 
 /* GrokBot's sidebar does not become a drawer when the conversation gets
-   narrow. It becomes a 96px icon rail, either because the saved compact
+   narrow. It becomes an 88px icon rail, either because the saved compact
    preference is on or because the conversation needs its protected 424px.
    The component owns that calculation; this block owns the resulting rail.
 
@@ -6157,11 +6069,11 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    and a rule that reaches for one is a rule that cuts. The one exception is
    `.sidebar-empty`, which only ever shows over an empty list. */
 .app-shell .sidebar.is-compact .sidebar-empty { display: none; }
-.app-shell .sidebar.is-compact .sidebar-scroll { padding: 0 20.5px 12px; }
+.resizable-sidebar.is-compact .sidebar-scroll { padding-inline: calc((100% - 54px) / 2); }
 .app-shell .sidebar.is-compact .sidebar-commandbar,
 .app-shell .spaces-sidebar.is-compact .sidebar-commandbar {
   grid-template-rows: 54px 54px;
-  padding: 4px 20.5px 0;
+  padding: 4px calc((100% - 54px) / 2) 0;
 }
 .app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search,
 .app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search {
@@ -6217,6 +6129,15 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   margin: calc(var(--av-sys-space-group-gap) / 2) 0 calc(var(--av-sys-space-group-gap) / -2);
 }
 .app-shell .sidebar.is-compact .sidebar-section-divider { margin: 12px 0; }
+.app-shell .sidebar .pinned-section {
+  transition: margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
+}
+.app-shell .sidebar .pinned-section-line { height: 0; margin-top: 0; opacity: 0; }
+.app-shell .sidebar.is-compact .pinned-section {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+.app-shell .sidebar.is-compact .pinned-section-line { height: var(--av-sys-size-border-hairline); margin-top: var(--av-sys-space-group-gap); opacity: 1; }
 .app-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
 .app-shell .sidebar.is-compact .sidebar-list { gap: 0; }
 /* A row narrows to its 54px mark: the wrapper's width travels, the row's
@@ -6233,11 +6154,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   gap: 0;
   padding: 9px;
 }
-.app-shell .sidebar .workstream-row .sidebar-row-main {
-  overflow: hidden;
-  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-}
-.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main { opacity: 0; visibility: hidden; }
 .app-shell .sidebar .sidebar-workstream-timer {
   overflow: hidden;
   transition: margin-left var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion);
@@ -7500,7 +7416,10 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   border-radius: 10px;
   color: var(--av-sys-color-text-default);
   flex-direction: column;
+  flex-basis: auto;
   gap: 6px;
+  height: auto;
+  min-height: 0;
   padding: 6px 4px 4px;
   text-align: center;
   transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
@@ -7541,7 +7460,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    tile centred when there is one, and the next showing past the padding when
    there are more. The tiles shed their captions and shrink to the rows'
    54px square as the sidebar narrows. */
-.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
 .app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
 .app-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
 .app-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
@@ -7612,9 +7531,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .sidekick-section-list > li { align-items: center; display: flex; }
 .sidekick-section-list > li > .workstream-context-row { min-width: 0; }
 
-/* The two navigation rails share square controls and symmetric gutters. */
-.workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }
-.workstream-context-sidebar.is-compact .workstream-context-row { width: 54px; height: 54px; padding: 9px; gap: 0; }
 /* The avatars shrink into the square with their overlap; the presence
    border's own fade is restated so the size rule does not replace it. */
 .workstream-context-sidebar .avatar-stack .avatar { transition: border-color 180ms ease, font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
@@ -7629,12 +7545,11 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
-/* The work-stream sidebar's toggle is carried to the centre by the footer's
-   padding — 32.5px on the right leaves a 30px button centred in the 95px
-   inside the rail's border — rather than by `justify-content`, which would
-   jump it there at the first frame. */
+/* The work-stream sidebar's toggle is carried to the centre by derived footer
+   padding rather than by `justify-content`, which would jump it at the first
+   frame. */
 .workstream-context-sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px 32.5px 8px 8px; }
+.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px calc((100% - 30px) / 2) 8px 8px; }
 /* The avatar is centred by its padding rather than `justify-content`, which
    would jump it at the start of the travel. The floor travels, not a fixed
    height: the row's content is shorter than either floor, so the floor is

@@ -14,6 +14,7 @@ interface UiState {
   sidebarOpen: boolean;
   sidebarCollapsed: boolean;
   sidebarWidth: number;
+  spacesSidebarWidth: number;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -23,6 +24,7 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
+  setSpacesSidebarWidth: (width: number) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -40,10 +42,11 @@ interface UiState {
 export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
-export { COLLAPSED_SIDEBAR_WIDTH, EXPANDED_SPACES_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
+export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
 import { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
+const SPACES_SIDEBAR_WIDTH_STORAGE_KEY = 'rally.spaces-sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 
 function clampSidebarWidth(width: number): number {
@@ -102,6 +105,25 @@ function saveSidebarWidth(width: number): void {
   }
 }
 
+function loadSpacesSidebarWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_SIDEBAR_WIDTH;
+  try {
+    const storedWidth = Number.parseFloat(window.localStorage.getItem(SPACES_SIDEBAR_WIDTH_STORAGE_KEY) ?? '');
+    return Number.isFinite(storedWidth) ? clampSidebarWidth(storedWidth) : DEFAULT_SIDEBAR_WIDTH;
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
+
+function saveSpacesSidebarWidth(width: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SPACES_SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // Local persistence is best-effort; resizing should still work when storage is unavailable.
+  }
+}
+
 function loadSidebarCollapsed(): boolean {
   if (typeof window === 'undefined') return false;
 
@@ -126,6 +148,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
+  spacesSidebarWidth: loadSpacesSidebarWidth(),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -141,6 +164,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     const sidebarWidth = clampSidebarWidth(width);
     saveSidebarWidth(sidebarWidth);
     set({ sidebarWidth });
+  },
+  setSpacesSidebarWidth: (width) => {
+    const spacesSidebarWidth = clampSidebarWidth(width);
+    saveSpacesSidebarWidth(spacesSidebarWidth);
+    set({ spacesSidebarWidth });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it

@@ -352,6 +352,30 @@ describe('secondary surface focus and layout', () => {
  * transition left on during a drag is a sidebar that trails the pointer.
  */
 describe('sidebar collapse motion', () => {
+  it('gives every hierarchy sidebar one exact resize-handle appearance', () => {
+    const hitArea = rule('.sidebar-resizer');
+    expect(hitArea).toContain('right: -6px;');
+    expect(hitArea).toContain('top: 55px;');
+    expect(hitArea).toContain('width: 12px;');
+    const alignment = rule('.rail-resizer,\n.sidebar-resizer');
+    expect(alignment).toContain('align-items: center;');
+    expect(alignment).toContain('justify-content: center;');
+
+    const handle = rule('.sidebar-resizer > .sidebar-resizer-handle');
+    expect(handle).toContain('background: var(--av-sys-color-surface-raised);');
+    expect(handle).toContain('border: 1px solid var(--av-sys-color-border-default);');
+    expect(handle).toContain('border-radius: var(--av-sys-size-radius-pill);');
+    expect(handle).toContain('color: var(--av-sys-color-text-muted);');
+    expect(handle).toContain('flex-shrink: 0;');
+    expect(handle).toContain('height: 28px;');
+    expect(handle).toContain('width: 16px;');
+
+    const sidebarSpecificOverrides = [...stylesheet.matchAll(/([^{}]+)\{[^{}]*\}/gu)]
+      .map(([, selector = '']) => selector.trim())
+      .filter((selector) => /(?:spaces-sidebar|channels-sidebar|workstream-context-sidebar).*sidebar-resizer/u.test(selector));
+    expect(sidebarSpecificOverrides).toEqual([]);
+  });
+
   it('transitions the navigation width alongside the rail, and drops it for a drag', () => {
     // Interpolating a custom property at all requires the syntax be declared;
     // an unregistered one switches over at the halfway point.
@@ -370,6 +394,8 @@ describe('sidebar collapse motion', () => {
     // a rail closing on its own, from moving.
     expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
       .toBe(' transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; ');
+    expect(rule('.workspace-shell:has(.spaces-sidebar.is-resizing)'))
+      .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width, --workstream-sidebar-width; ');
     expect(rule('.workspace-shell:has(.workstream-context-sidebar.is-resizing)'))
       .toBe(' transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; ');
     expect(rule('.spaces-sidebar')).not.toContain('transition: width');
@@ -377,8 +403,8 @@ describe('sidebar collapse motion', () => {
 
   it('transitions the channel sidebar on the one property that sizes it', () => {
     expect(rule('.workstream-context-sidebar'))
-      .toContain('transition: flex-basis var(--sidebar-collapse-motion)');
-    expect(rule('.workstream-context-sidebar.is-resizing')).toContain('transition: none');
+      .toContain('transition: flex-basis var(--sidebar-layout-motion)');
+    expect(rule('.resizable-sidebar.is-resizing')).toContain('transition: none');
   });
 
   // `--rail-max-slot` spends the width this sidebar publishes, so the published
@@ -397,15 +423,33 @@ describe('sidebar collapse motion', () => {
 });
 
 describe('sidebar layout motion', () => {
+  it('gives every hierarchy sidebar the same structural geometry', () => {
+    expect(rule('.sidebar-row.sidebar-header')).toContain('border-radius: 0;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('padding: 0 20px;');
+    expect(rule('.sidebar-row.sidebar-header')).toContain('height: 43px;');
+    expect(rule('.sidebar-row.sidebar-header:hover')).toContain('background-image: none;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-header')).toContain('margin-inline: auto;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-title-header-icon')).toContain('display: grid;');
+    expect(rule('.sidebar-title-header-icon')).toContain('height: 28px;');
+    expect(rule('.sidebar-title')).toContain('var(--sidebar-layout-motion)');
+    expect(rule('.sidebar-row')).toContain('height: 54px;');
+    expect(rule('.sidebar-row')).toContain('padding: var(--av-cmp-row-padding);');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row')).toContain('width: 54px;');
+    expect(rule('.sidebar-horizontal-line')).toContain('height: var(--av-sys-size-border-hairline);');
+    expect(rule('.sidebar-scroll')).toContain('padding: 8px 12px 16px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-scroll')).toContain('padding-inline: calc((100% - 54px) / 2);');
+    expect(stylesheet).not.toContain('.app-shell .sidebar-scroll { padding-top: 0; }');
+  });
+
   // The rows travel on the box's own interval, restated once on the sidebar so
   // a drag — which snaps the edge to the pointer — turns every one of them off
   // with one override rather than a rule per shape.
   it('spends the collapse motion on the rows, and none of it under a drag', () => {
-    expect(rule('.sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
-    expect(rule('.sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
+    expect(rule('.resizable-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
+    expect(rule('.resizable-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
     // A zero interval only stops transitions the drag would start; the ones
     // already running keep their duration unless they lose their property.
-    expect(rule('.sidebar.is-resizing *,\n.workstream-context-sidebar.is-resizing *')).toContain('transition-property: none !important;');
+    expect(rule('.resizable-sidebar.is-resizing *')).toContain('transition-property: none !important;');
     for (const selector of [
       '.app-shell .sidebar .sidebar-list > .sidebar-context-target',
       '.app-shell .sidebar .workstream-row',
@@ -426,11 +470,11 @@ describe('sidebar layout motion', () => {
     // inherited number would recompute every row's style each frame.
     expect(rule('@property --sidebar-compact')).toContain('inherits: false;');
     expect(rule('@property --sidebar-compact')).toContain('initial-value: 0;');
-    expect(rule('.sidebar')).toContain('--sidebar-compact: 0;');
+    expect(rule('.resizable-sidebar')).toContain('--sidebar-compact: 0;');
     // On the sidebar itself, so the signal fires wherever it is rendered, and
     // restated on the shell's rule beside the workspace-switch fade.
-    expect(rule('.sidebar')).toContain('transition: --sidebar-compact var(--sidebar-layout-motion);');
-    expect(rule('.sidebar.is-compact')).toContain('--sidebar-compact: 1;');
+    expect(rule('.resizable-sidebar')).toContain('transition: --sidebar-compact var(--sidebar-layout-motion);');
+    expect(rule('.resizable-sidebar.is-compact')).toContain('--sidebar-compact: 1;');
     expect(rule('.workspace-shell .sidebar')).toContain('--sidebar-compact var(--sidebar-layout-motion)');
     // Under reduced motion the fade goes and the channel stays — as the whole
     // shorthand, since `transition-property` alone would pair the channel
@@ -443,33 +487,33 @@ describe('sidebar layout motion', () => {
   // `visibility` on the same interval is what takes them out of the
   // accessibility tree when the fade ends.
   it('keeps the rail\'s hidden copy in layout and takes it out of the tree by visibility', () => {
-    const title = rule('.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
+    const title = rule('.resizable-sidebar.is-compact .sidebar-row-main');
     expect(title).toContain('opacity: 0;');
     expect(title).toContain('visibility: hidden;');
     expect(title).not.toContain('display: none');
-    expect(rule('.app-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
+    expect(rule('.sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
   // The work-stream sidebar restates the interval and travels the same way.
   // Its stable room marks stay stacked in one centered cell while copy moves.
   it('travels the channel sidebar\'s contents on the same interval', () => {
-    expect(rule('.workstream-context-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
-    expect(rule('.workstream-context-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
+    expect(rule('.resizable-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
+    expect(rule('.resizable-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
     for (const selector of [
-      '.workstream-context-scroll',
-      '.workstream-context-row',
-      '.workstream-context-copy',
+      '.sidebar-scroll',
+      '.sidebar-row',
+      '.sidebar-row-main',
       '.workstream-context-section',
       '.workstream-context-section h2',
       '.workstream-context-sidebar .sidebar-collapse-footer',
     ]) {
       expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
     }
-    expect(rule('.workstream-context-mark > *')).toContain('grid-area: 1 / 1;');
+    expect(rule('.sidebar-row-icon')).toContain('width: 36px;');
     expect(rule('.workstream-breakout-icon')).toContain('color: var(--av-sys-color-text-muted);');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row')).not.toContain('justify-content');
-    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row-main')).not.toContain('display: none');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row')).not.toContain('justify-content');
+    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('calc((100% - 30px) / 2)');
   });
 
   // The strip stays a horizontally scrolling row in the rail: a column inside
@@ -521,11 +565,11 @@ describe('channel context sidebar layout', () => {
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
     expect(rule('.conversation-layout')).toContain('display: flex');
     expect(rule('.conversation-layout > .workstream-screen')).toContain('flex: 1');
-    expect(rule('.workstream-context-sidebar')).toContain('position: relative');
+    expect(rule('.resizable-sidebar')).toContain('position: relative');
     expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
-    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 96px');
-    expect(rule('.workstream-context-scroll')).toContain('overflow-y: auto');
-    expect(rule('.workstream-context-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
+    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 88px');
+    expect(rule('.sidebar-scroll')).toContain('overflow-y: auto');
+    expect(rule('.sidebar-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
   });
 });
 
@@ -552,8 +596,6 @@ describe('clipped lines in both navigation rails', () => {
     '.sidebar-row-hint-text',
     '.sidebar-row-title',
     '.sidebar-row-title-copy',
-    '.workstream-context-copy > small',
-    '.workstream-context-copy > span',
   ];
 
   it('fades a line from its own inline scroller, so a line that fits keeps its last characters', () => {
@@ -592,7 +634,6 @@ describe('clipped lines in both navigation rails', () => {
     ['.automation-tile-name'],
     ['.account-copy strong'],
     ['.account-copy span'],
-    ['.workstream-context-copy > span,\n.workstream-context-copy > small'],
   ])('clips %s without an ellipsis to fade out', (selector) => {
     const declarations = rule(selector);
 
@@ -853,8 +894,7 @@ describe('GrokBot sidebar header geometry', () => {
     expect(search).not.toBeNull();
     expect(scroll).not.toBeNull();
     expect(scrollbar).not.toBeNull();
-    expect(titlebar).toContain('height: 44px;');
-    expect(rule('.spaces-sidebar')).toContain('--sidebar-layout-motion: var(--spaces-sidebar-motion);');
+    expect(rule('.sidebar-row')).toContain('height: 54px;');
     // Stable numeric tracks keep creation above Search while the first row
     // opens and closes over the layout motion.
     expect(commandbar).toContain('display: grid;');
@@ -1311,10 +1351,10 @@ describe('sidebar space rows', () => {
 
   it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
     expect(stylesheet).toContain(
-      '.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-state-hover); }',
+      '.sidebar-row:hover { background-image: var(--hover-layer); }',
     );
     expect(stylesheet).toContain(
-      '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
+      '.sidebar-row:is(.is-active, .is-current) { background: var(--av-cmp-row-background-selected); }',
     );
   });
 });
