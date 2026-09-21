@@ -77,7 +77,7 @@ describe('WorkstreamSidebar', () => {
     expect(titleIcon?.nextElementSibling).toBe(within(sidebar).getByRole('heading', { name: 'Launch preparation' }));
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel sidebar',
+      'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage channel participants', 'Collapse channel',
     ]);
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Breakouts')).not.toBeInTheDocument();
@@ -150,16 +150,16 @@ describe('WorkstreamSidebar', () => {
 
   it('persists an independent icon-mode preference and restores expanded mode', () => {
     const view = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
     expect(screen.getByRole('complementary').querySelector('.sidebar-title-header-icon .workstream-mark')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
     setup();
-    expect(screen.getByRole('button', { name: 'Expand channel sidebar' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Expand channel' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('button', { name: 'Open Launch draft.md' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand channel sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand channel' }));
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
   });
 
@@ -210,6 +210,49 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
+  });
+
+  it('uses sidebar preview cards for the main conversation and each breakout', async () => {
+    setup({ ...workstream, privateChildren: [{
+      substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks',
+      createdByUserId: asUserId(person.id),
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+    }] });
+
+    const main = screen.getByRole('button', { name: 'Go to conversation: Launch preparation' });
+    expect(main).not.toHaveAttribute('title');
+    fireEvent.focus(main);
+    let tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveClass('sidebar-workstream-preview-surface');
+    expect(tip).toHaveTextContent('Launch preparation');
+    fireEvent.blur(main);
+
+    const breakout = screen.getByRole('button', { name: 'Go to breakout: Launch risks' });
+    expect(breakout).not.toHaveAttribute('title');
+    fireEvent.focus(breakout);
+    tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveClass('sidebar-workstream-preview-surface');
+    expect(tip).toHaveTextContent('Launch risks');
+  });
+
+  it('labels the new Breakout and participant tooltips', async () => {
+    const onNewSubstream = vi.fn();
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={workstream}
+      presentUserIds={[]}
+      onNewSubstream={onNewSubstream}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+
+    const create = screen.getByRole('button', { name: 'New breakout' });
+    fireEvent.focus(create);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('New breakout');
+    fireEvent.blur(create);
+
+    fireEvent.focus(screen.getByRole('button', { name: 'Manage channel participants' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants');
   });
 
   it('gives each breakout its own stable generated mark', () => {
@@ -278,7 +321,7 @@ describe('WorkstreamSidebar', () => {
     // its button's `aria-label`; this one has no button, so the text is on the
     // row. jsdom applies no stylesheet, so the assertion is where the text sits
     // rather than whether it computed to hidden.
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel' }));
     expect(sidebar).toHaveClass('is-compact');
     const name = within(sidebar).getByText('Rally is creating this breakout');
     expect(name.closest('.workstream-pending-substream')).toBe(pending);
@@ -328,7 +371,7 @@ describe('WorkstreamSidebar', () => {
       onFocusTranscript={vi.fn()}
     /></Tooltip.Provider>);
     const sidebar = screen.getByRole('complementary');
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channel' }));
     expect(sidebar).toHaveClass('is-compact');
     // A lone space is wire-legal, and an empty mark square says nothing at all.
     expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
@@ -339,7 +382,7 @@ describe('WorkstreamSidebar', () => {
     setup();
     act(() => { width = 703; resized(); });
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    const toggle = screen.getByRole('button', { name: 'Expand channel sidebar' });
+    const toggle = screen.getByRole('button', { name: 'Expand channel' });
     expect(toggle).toBeDisabled();
     expect(toggle).not.toHaveAttribute('title');
     expect(toggle.parentElement).toHaveClass('sidebar-collapse-footer-toggle');
