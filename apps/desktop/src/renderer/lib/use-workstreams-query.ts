@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { WORKSTREAM_STATE_WATERLINES_KEY } from './workstream-state-store';
 import type { WorkstreamAppearance } from '@rally/contracts';
 import type { WorkstreamSummary } from './types';
 
@@ -18,11 +19,30 @@ import type { WorkstreamSummary } from './types';
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
+const activeRowsBySource = new WeakMap<WorkstreamSummary[], WorkstreamSummary[]>();
+
+/** Preserve the raw archived marker for ordering while every directory reader sees only active rows. */
+function activeWorkstreams(rows: WorkstreamSummary[]): WorkstreamSummary[];
+function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined;
+function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined {
+  if (!rows) return undefined;
+  const observed = activeRowsBySource.get(rows);
+  if (observed) return observed;
+  const active = rows.filter((workstream) => !workstream.archivedAt);
+  activeRowsBySource.set(rows, active);
+  return active;
+}
+
+const selectActiveWorkstreams = (rows: WorkstreamSummary[]): WorkstreamSummary[] =>
+  activeWorkstreams(rows);
+
 /** Observe directory pushes without registering another pager or query function. */
 export function useCachedWorkstreams(): WorkstreamSummary[] | undefined {
   const client = useQueryClient();
   const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe(onChange), [client]);
-  const snapshot = useCallback(() => client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY), [client]);
+  const snapshot = useCallback(() => activeWorkstreams(
+    client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY),
+  ), [client]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
@@ -109,7 +129,22 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       pagesLoaded.current = walked;
       nextCursor.current = cursor ?? null;
       setHasMore(cursor != null);
-      return mergeWorkstreams([], items);
+      const merged = mergeWorkstreams([], items);
+      const resident = new Map(
+        (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+          .map((workstream) => [workstream.id, workstream]),
+      );
+      const visibility = queryClient.getQueryData<Record<string, { visible: boolean }>>(
+        WORKSTREAM_STATE_WATERLINES_KEY,
+      ) ?? {};
+      // Every page was fenced when it arrived, but an earlier page remains in
+      // this local accumulator while later pages are awaited. Reconcile once
+      // more at publication so an archive marker or tombstone that landed in
+      // that interval cannot be overwritten by the stale accumulated object.
+      return merged.flatMap((workstream) => {
+        if (visibility[workstream.id]?.visible === false) return [];
+        return [resident.get(workstream.id) ?? workstream];
+      });
     },
     // Not fetched on mount: the first page arrives unasked with the connect
     // payload, and asking for it as well is the round trip that payload exists
@@ -118,6 +153,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
     // something explicitly invalidates, which is the debug toggle or a pin.
     enabled: sidebarConnect !== null,
     staleTime: Number.POSITIVE_INFINITY,
+    select: selectActiveWorkstreams,
   });
 
   // Paging is the client's own position and the payload knows nothing about it.

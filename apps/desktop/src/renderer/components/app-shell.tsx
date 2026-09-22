@@ -33,6 +33,7 @@ import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-land
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
+  holdCachedWorkstreamArchive,
   patchCachedWorkstream,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
@@ -768,27 +769,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           // WorkstreamDO commits the loop stop request and archive together;
           // there is no separate child command to race against lost access.
-          await api.archiveWorkstream(workstream.id);
-          // No list invalidation and no cache patch: WorkstreamDO answers this
-          // write with a directory tombstone, and `applyVersionedWorkstreamState`
-          // drops both the sidebar row and the `['workstream', id]` detail entry
-          // off the back of it — the same path an archive from another window
-          // takes, and the one that has the waterline to order it against
-          // whatever else is in flight for this row.
+          const archived = await api.archiveWorkstream(workstream.id);
+          // No list invalidation: WorkstreamDO answers this write with a
+          // directory tombstone. Until it arrives, retain the response as a
+          // hidden row so an older directory page already in flight has no
+          // empty slot to seed. The versioned tombstone removes that marker and
+          // is still the authority that orders the removal against every other
+          // producer.
           //
           // Leaving the screen is this handler's, though. The socket removes the
           // query but not the route, so the reader would be left on a work stream
-          // the API no longer serves. The eviction below has already dropped the
-          // row from the list the landing reads, so naming it to the landing as
-          // well covers only the frame in which a directory page re-delivers it
-          // ahead of the tombstone; the row would be the most recent one there.
-          // The one thing that cannot wait for the tombstone. With the socket
-          // down the PATCH still succeeds, so the row stays until reconnect and
-          // clicking it would serve this cached transcript for a work stream the
-          // API now refuses. Idempotent with the tombstone, which removes the
-          // same key, and safe against a later frame: the state store only
-          // merges a detail entry `if (detail)`.
-          evictCachedWorkstream(queryClient, workstream.id);
+          // the API no longer serves. The hidden marker has already removed the
+          // row from every directory reader; naming it to the landing remains a
+          // route-level fence as well. Detail and transcript data cannot wait
+          // for the tombstone: the PATCH may succeed while the socket is down.
+          holdCachedWorkstreamArchive(queryClient, archived);
           if (openWorkstreamId(location.pathname) === workstream.id) {
             openFirstWorkstream([workstream.id]);
           }

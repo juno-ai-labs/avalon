@@ -12,7 +12,7 @@ import {
 export const WORKSTREAM_STATE_WATERLINES_KEY = ['workstream-state-waterlines'] as const;
 export const WORKSPACE_DIRECTORY_WATERLINES_KEY = ['workspace-directory-waterlines'] as const;
 
-type StoredWaterlines = WorkstreamStateVersion;
+type StoredWaterlines = WorkstreamStateVersion & { visible: boolean };
 
 type WorkstreamPatch = Partial<WorkstreamSummary>;
 
@@ -29,6 +29,8 @@ export interface VersionedWorkstreamState {
 export interface WorkstreamStateApplyResult {
   commonApplied: boolean;
   viewerApplied: boolean;
+  /** The newest accepted listability, including a tombstone whose row is no longer cached. */
+  visible: boolean;
 }
 
 export function workstreamSummaryState(workstream: WorkstreamSummary): {
@@ -167,6 +169,16 @@ export function applyVersionedWorkstreamState(
     || input.stateVersion.commonWaterline > current.commonWaterline);
   const viewerApplied = !staleGeneration && (newerGeneration
     || input.stateVersion.viewerWaterline > current.viewerWaterline);
+  const visibilityApplied = !staleGeneration && (newerGeneration || !current || (
+    input.stateVersion.commonWaterline >= current.commonWaterline
+    && input.stateVersion.viewerWaterline >= current.viewerWaterline
+  ));
+  // A tombstone is listability authority, so none of the equal-version
+  // exceptions below may turn its missing row into an empty cache slot to
+  // seed. They repair fields on a visible row; they never restore one.
+  if (!commonApplied && !viewerApplied && current?.visible === false) {
+    return { commonApplied, viewerApplied, visible: false };
+  }
   const incomingIds = input.common.participantUserIds;
   // A control seed can claim an empty pile at a waterline the later
   // directory page shares. That page then looks like a duplicate and would
@@ -178,8 +190,15 @@ export function applyVersionedWorkstreamState(
   if (!commonApplied && !viewerApplied && !canFillEmptyPile
     && !carriesNewPlacements(queryClient, input, staleGeneration === true)
     && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)) {
-    return { commonApplied, viewerApplied };
+    return { commonApplied, viewerApplied, visible: current?.visible ?? input.visible };
   }
+
+  // `visible` is a composite of the common row's archive/scope and the viewer
+  // row's participation. Accept it only when neither half of the snapshot is
+  // behind the half already accepted locally. Either waterline may advance on
+  // its own while the other remains equal; what is unsafe is a snapshot that
+  // combines one newer half with one stale half.
+  const visible = visibilityApplied ? input.visible : current?.visible ?? input.visible;
 
   queryClient.setQueryData<Record<string, StoredWaterlines>>(
     WORKSTREAM_STATE_WATERLINES_KEY,
@@ -199,19 +218,48 @@ export function applyVersionedWorkstreamState(
         viewerWaterline: viewerApplied
           ? input.stateVersion.viewerWaterline
           : stored[input.workstreamId]?.viewerWaterline ?? 0,
+        visible,
       },
     }),
   );
 
-  if (!input.visible) {
+  if (!visible) {
     evictCachedWorkstream(queryClient, input.workstreamId);
-    return { commonApplied, viewerApplied };
+    return { commonApplied, viewerApplied, visible };
   }
 
+  // A successful REST archive is held as a hidden row until the versioned
+  // tombstone arrives. A directory page already in flight may carry a newer
+  // version than this window had seen before the click, but it still predates
+  // the archive response and must not clear that confirmed local fact.
+  const heldArchive = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+    ?.find((item) => item.id === input.workstreamId)?.archivedAt;
+  const restoresHeldArchive = heldArchive
+    && visibilityApplied
+    && Object.hasOwn(input.common, 'archivedAt')
+    && input.common.archivedAt === undefined
+    && typeof input.common.updatedAt === 'string'
+    && input.common.updatedAt > heldArchive;
+  if (heldArchive && !restoresHeldArchive) return { commonApplied, viewerApplied, visible };
+
   const merge = <T extends WorkstreamSummary>(value: T): T => {
+    const {
+      archivedAt: incomingArchivedAt,
+      scope: incomingScope,
+      ...nonVisibilityCommon
+    } = input.common;
     const patched = {
       ...value,
-      ...(commonApplied ? input.common : {}),
+      ...(commonApplied ? nonVisibilityCommon : {}),
+      // Scope and archive state participate in the composite listability
+      // decision above. Do not let one fresh common half change how the row is
+      // filtered while its paired viewer half is stale; take these fields as
+      // soon as a snapshot contains two current halves, even if the common
+      // waterline itself was accepted from an earlier delivery.
+      ...(visibilityApplied && Object.hasOwn(input.common, 'archivedAt')
+        ? { archivedAt: incomingArchivedAt }
+        : {}),
+      ...(visibilityApplied && incomingScope !== undefined ? { scope: incomingScope } : {}),
       ...(viewerApplied ? input.viewer : {}),
     };
     // Control-socket seeds claim an empty pile at a waterline the later
@@ -257,7 +305,7 @@ export function applyVersionedWorkstreamState(
   queryClient.setQueryData<WorkstreamDetail>(['workstream', input.workstreamId], (detail) => (
     detail ? merge(detail) : detail
   ));
-  return { commonApplied, viewerApplied };
+  return { commonApplied, viewerApplied, visible };
 }
 
 /**

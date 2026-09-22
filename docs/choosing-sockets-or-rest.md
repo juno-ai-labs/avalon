@@ -451,6 +451,12 @@ The predicate it applies, exactly:
 - Whichever halves applied are written back to the ledger, and the halves that
   did not are left at their stored values. A payload can therefore be
   half-applied, which is the correct outcome when one half is behind the other.
+- The ledger retains the accepted listability beside those waterlines. A
+  directory page rejected as stale cannot use its wire row as a fallback after
+  a newer tombstone removed the cached row. After a successful local archive,
+  the REST response remains as a hidden directory marker until that tombstone
+  arrives; this closes the earlier window in which an in-flight page made the
+  Channel disappear, reappear, and disappear again.
 
 A useful test when adding a sender: if the new call site needs its own "have I
 seen this?" check, the receiver is in the wrong place. Move the comparison, not
