@@ -3656,7 +3656,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 69,
   description: "preserve breakout appearance in workspace projections",
   statements: [
-    "ALTER TABLE workspace_breakout_directory ADD COLUMN appearance_json TEXT",
+    "ALTER TABLE workspace_breakout_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))",
   ],
 }];
 

@@ -5523,7 +5523,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
   .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
-  .waiting-workstream-row { grid-template-columns: auto minmax(0, 1fr) 15px; }
+  .waiting-workstream-row { grid-template-columns: auto auto minmax(0, 1fr) 15px; }
+  .waiting-workstream-row > svg { grid-column: 4; }
   .waiting-workstream-source,
   .waiting-workstream-row time,
   .waiting-workstream-copy > span { display: none; }

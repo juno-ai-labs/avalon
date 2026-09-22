@@ -1948,31 +1948,22 @@ afterwards.
 **What changed:** Every Needs attention row now puts its conversation identity
 before the name. A Channel is its icon inside the shared pebble. A Breakout is
 its parent Channel pebble, the `chevrons-right` mark, and its own bare icon.
-In this table the Channel pebble is 17px, the Breakout mark is 11px, and the
-chevrons are 16px. Each Channel and Breakout icon opens the same identity
-tooltip used by the Channel rail. Breakout projections now preserve their own
-selected appearance, and the Space page joins the parent Channel's selected
-appearance into the Breakout row. WorkspaceDO migration 69 adds the nullable
-projection column; rows from before the migration keep the existing
-deterministic id-derived fallback until their next projection arrives.
+Each icon opens the same identity tooltip used by the Channel rail. Breakout
+projections now preserve their selected appearance, and the Space page joins
+the parent Channel's appearance into the Breakout row. WorkspaceDO migration
+69 adds the nullable projection column; older rows use the id-derived fallback
+until their next projection arrives.
 
-**Why:** A Breakout name alone did not make the hierarchy scannable, and the
-textual `in Channel` line made readers parse words to recover a relationship
-the product already has stable visual identities for. Reusing the pebble, bare
-mark and conversation identity tooltip keeps the row consistent with the two
-navigation rails. Carrying the saved appearances through the projection avoids
-the worse outcome where the new icons are present but disagree with the icons
-the same Channel and Breakout show after opening them.
+**Why:** The icons make a Breakout's relationship to its Channel scannable
+alongside the existing `in Channel` text. Reusing the rail's marks and tooltip
+keeps the identity consistent, while projecting saved appearances prevents the
+table from disagreeing with the conversation after it opens.
 
 **Considered and rejected:** Deriving both marks from ids only. That would have
 needed no projection change, but a person who had customized either appearance
 would see a different identity in Needs attention. A new one-line tooltip was
 also rejected because Channel and Breakout marks already have a purpose-built
 identity card.
-
-**Consequences:** A compact conversation identity must use the saved appearance
-when the projection has one. Older Breakout rows continue to use the stable
-id-derived mark until their next directory projection arrives.
 
 PR #941. Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
