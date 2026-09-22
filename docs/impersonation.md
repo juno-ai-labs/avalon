@@ -66,8 +66,10 @@ release-tooling tests before claiming an Apple Silicon runner. That runner
 imports the existing Developer ID identity, builds the arm64 app with hardened
 runtime, notarizes and staples the application and DMG, verifies both ZIP and
 DMG contents, and retains the exact release directory as a GitHub artifact for
-30 days. A manual dispatch uses the same planner and is the retry path for an
-untagged failed release; release versions are no longer bumped by hand.
+30 days. When shared contracts changed, distribution waits for the successful
+API deployment associated with the newest contract commit. A manual dispatch
+uses the same planner and is the retry path for an untagged failed release;
+release versions are no longer bumped by hand.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
@@ -77,7 +79,8 @@ an interrupted build can be replaced by its retry. Only
 purged and hash-verified after upload. The manifest moves last, after the
 versioned payloads and canonical installer are publicly verified, so a retry
 after commit verifies that the live manifest is byte-identical to the local
-release before it finishes the release tag.
+release before it finishes the release tag. Both the version-stamping job and
+the final publication boundary refuse a candidate tag that already exists.
 The embedded generic-provider URL points
 only at that prefix. A signed release build on packaged Apple Silicon checks it
 at launch and every three hours, downloads in the background, and offers to
@@ -185,6 +188,9 @@ existing `rallywithai:` deep link for the main app.
 shared UI and contracts, workspace build inputs, and shared desktop release
 helpers. A queued planner uses the last Sideline tag as a watermark, advances an
 independent patch version, and skips stale runs whose inputs were already built.
+Contract-driven builds wait for the API deployment produced by the newest
+contract commit, and candidate tags are checked again immediately before R2
+publication.
 
 **Why:** Sideline already had an isolated R2 update channel, but its manual-only
 workflow could leave installed copies behind changes that had merged to the
@@ -196,7 +202,8 @@ Rally's version or release record would couple two independent update channels.
 
 **Consequences:** A relevant merge can claim the signed macOS release lane and
 publish an update without a human version bump. The release tag remains the
-durable build watermark, and failed untagged versions remain resumable.
+durable build watermark, failed untagged versions remain resumable, and a
+client built from new shared contracts cannot publish ahead of their API.
 
 ### 2026-09-21 — One platform relationship feeds the first represented-action surface
 

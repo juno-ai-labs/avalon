@@ -76,6 +76,17 @@ test('the release workflow rebuilds Sideline when an installed-app input changes
   assert.match(workflow, /^[ ]{2}queue: single$/mu);
   assert.match(workflow, /node apps\/sideline\/scripts\/plan-release\.mjs/u);
   assert.match(workflow, /node apps\/sideline\/scripts\/apply-release-version\.mjs/u);
+  assert.match(workflow, /--workflow deploy-api\.yml/u);
+  assert.match(workflow, /gh run watch "\$run_id".*--exit-status/u);
+  assert.ok(
+    workflow.indexOf('already exists; refusing')
+      < workflow.indexOf('node apps/sideline/scripts/apply-release-version.mjs'),
+    'every version-stamping attempt must reject an existing remote tag first',
+  );
+  assert.ok(
+    workflow.lastIndexOf('already exists; refusing') < workflow.indexOf('release:publish'),
+    'the remote tag must be checked immediately before publication',
+  );
 });
 
 test('same-version publication recovery binds the tag to the locally built bytes', async () => {

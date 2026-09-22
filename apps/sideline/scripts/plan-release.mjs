@@ -63,14 +63,22 @@ export function parseSidelineTag(tag) {
   return stableVersion(tag.slice('sideline-v'.length));
 }
 
-export function planSidelineRelease({ headSha, manifestVersion, latestTag, changedPaths }) {
+export function planSidelineRelease({
+  headSha,
+  manifestVersion,
+  latestTag,
+  changedPaths,
+  apiDeploymentRef = headSha,
+}) {
   stableVersion(manifestVersion);
   const base = { ref: headSha };
-  const release = (version, reason) => ({
+  const release = (version, reason, requiresApiDeploy) => ({
     ...base,
     shouldRelease: true,
     version,
     tag: `sideline-v${version}`,
+    requiresApiDeploy,
+    apiDeploymentRef: requiresApiDeploy ? apiDeploymentRef : '',
     reason,
   });
   const skip = (reason) => ({
@@ -78,11 +86,17 @@ export function planSidelineRelease({ headSha, manifestVersion, latestTag, chang
     shouldRelease: false,
     version: manifestVersion,
     tag: `sideline-v${manifestVersion}`,
+    requiresApiDeploy: false,
+    apiDeploymentRef: '',
     reason,
   });
 
   if (!latestTag) {
-    return release(manifestVersion, `no Sideline release tag exists, so ${manifestVersion} ships the current tree`);
+    return release(
+      manifestVersion,
+      `no Sideline release tag exists, so ${manifestVersion} ships the current tree`,
+      true,
+    );
   }
 
   const releasedVersion = parseSidelineTag(latestTag);
@@ -97,6 +111,7 @@ export function planSidelineRelease({ headSha, manifestVersion, latestTag, chang
     return release(
       manifestVersion === candidate ? manifestVersion : candidate,
       `the ${latestTag} watermark could not be read, so the planner fails open`,
+      true,
     );
   }
 
@@ -106,7 +121,11 @@ export function planSidelineRelease({ headSha, manifestVersion, latestTag, chang
   }
 
   const version = manifestVersion === candidate ? manifestVersion : candidate;
-  return release(version, `${inputs.length} Sideline release input(s) changed: ${inputs.slice(0, 5).join(', ')}`);
+  return release(
+    version,
+    `${inputs.length} Sideline release input(s) changed: ${inputs.slice(0, 5).join(', ')}`,
+    inputs.some((path) => path.startsWith('packages/contracts/')),
+  );
 }
 
 function gitOutput(args) {
@@ -149,6 +168,10 @@ function changedPathsSince(tag, headSha) {
   }
 }
 
+function latestContractCommit(headSha) {
+  return gitOutput(['log', '-1', '--format=%H', headSha, '--', 'packages/contracts']);
+}
+
 function report(plan) {
   console.log(`Sideline release plan: ${plan.shouldRelease ? 'release' : 'skip'} — ${plan.reason}`);
   const outputs = [
@@ -156,6 +179,8 @@ function report(plan) {
     `version=${plan.version}`,
     `tag=${plan.tag}`,
     `ref=${plan.ref}`,
+    `requires_api_deploy=${plan.requiresApiDeploy}`,
+    `api_deployment_ref=${plan.apiDeploymentRef}`,
   ];
   if (process.env.GITHUB_OUTPUT) {
     return import('node:fs/promises')
@@ -174,6 +199,7 @@ async function main() {
     manifestVersion: manifest.version,
     latestTag,
     changedPaths: latestTag ? changedPathsSince(latestTag, headSha) : [],
+    apiDeploymentRef: latestContractCommit(headSha),
   }));
 }
 
