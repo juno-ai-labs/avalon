@@ -34,6 +34,7 @@ import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
+import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
   reportTelemetryProductIntent,
@@ -945,10 +946,11 @@ export function ConversationSurface({
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
   const conversationAddress = `${id}:${substreamId}`;
+  const artifactPanelKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `artifact-panel:${conversationAddress}`);
+  const restoredPanelKey = useRef<string | null>(null);
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
   const poppedOutArtifactRefreshes = useRef(new Set<string>());
-  const poppedOutArtifactResourceIds = useRef<string[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
   const [artifactSidebar, setArtifactSidebar] = useState<{ resourceId: string; workstreamScoped?: boolean } | null>(null);
@@ -994,15 +996,19 @@ export function ConversationSurface({
   useLayoutEffect(() => {
     setAttachmentPreview(null);
     setResourcePreview(null);
-    setArtifactSidebar(null);
+    const savedPanel = readArtifactPanel(artifactPanelKey);
+    setArtifactSidebar(savedPanel);
     setResourceDialogOpen(false);
     setRailScope(id);
+    if (savedPanel) useUiStore.getState().openRail('context');
+    restoredPanelKey.current = artifactPanelKey;
     return () => {
+      restoredPanelKey.current = null;
       closeRail();
       inspect(null);
       setRailScope(null);
     };
-  }, [closeRail, id, inspect, setRailScope]);
+  }, [artifactPanelKey, closeRail, id, inspect, setRailScope]);
 
   useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
@@ -1172,6 +1178,15 @@ export function ConversationSurface({
     };
   }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
   useEffect(() => {
+    if (!artifactSidebar) return;
+    const resourceOwner = artifactSidebar.workstreamScoped
+      ? workstreamContext?.id === id ? workstreamContext : null
+      : routedDetail;
+    if (!resourceOwner || resourceOwner.resources.some((resource) => resource.id === artifactSidebar.resourceId)) return;
+    setArtifactSidebar(null);
+    closeRail();
+  }, [artifactSidebar, closeRail, id, routedDetail, workstreamContext]);
+  useEffect(() => {
     if (!routedDetail) return;
     const controller = new AbortController();
     // The socket advances `currentVersion` on the canonical resource. Inline
@@ -1181,7 +1196,6 @@ export function ConversationSurface({
       ...routedDetail.resources,
       ...(workstreamContext?.id === id ? workstreamContext.resources : []),
     ];
-    poppedOutArtifactResourceIds.current = [...new Set(resources.map((resource) => resource.id))];
     void refreshPoppedOutArtifacts({
       bridge: desktopBridge(),
       inFlight: poppedOutArtifactRefreshes.current,
@@ -1196,9 +1210,6 @@ export function ConversationSurface({
     });
     return () => controller.abort();
   }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
-  useEffect(() => () => {
-    void desktopBridge().closePoppedOutArtifacts(poppedOutArtifactResourceIds.current).catch(() => undefined);
-  }, [id]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -1224,6 +1235,12 @@ export function ConversationSurface({
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
   const railOpen = Boolean(artifactSidebar) && storeRailOpen && railScope === id;
+  useEffect(() => {
+    if (restoredPanelKey.current !== artifactPanelKey) return;
+    writeLayout(artifactPanelKey, railOpen && artifactSidebar
+      ? JSON.stringify({ resourceId: artifactSidebar.resourceId,
+        workstreamScoped: artifactSidebar.workstreamScoped === true }) : null);
+  }, [artifactPanelKey, artifactSidebar, railOpen]);
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
