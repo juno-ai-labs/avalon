@@ -192,14 +192,23 @@ export function holdCachedWorkstreamArchive(
     evictCachedWorkstream(queryClient, archived.id);
     return;
   }
+  let archiveApplied = false;
   setCachedWorkstreams(queryClient, (current) => {
+    const resident = current?.find((workstream) => workstream.id === archived.id);
+    if (resident?.updatedAt && archived.updatedAt && resident.updatedAt > archived.updatedAt) {
+      // Another client restored the Channel while this archive request was in
+      // flight. Its newer committed row wins; hiding it here would consume the
+      // already-delivered restore and leave no later event to reveal it again.
+      return current;
+    }
+    archiveApplied = true;
     if (!current) return [archived];
     if (!current.some((workstream) => workstream.id === archived.id)) return [...current, archived];
     return current.map((workstream) => workstream.id === archived.id
       ? { ...workstream, archivedAt: archived.archivedAt, updatedAt: archived.updatedAt }
       : workstream);
   });
-  evictCachedWorkstreamContent(queryClient, archived.id);
+  if (archiveApplied) evictCachedWorkstreamContent(queryClient, archived.id);
 }
 
 function evictCachedWorkstreamContent(

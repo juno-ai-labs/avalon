@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { WORKSTREAM_STATE_WATERLINES_KEY } from './workstream-state-store';
 import type { WorkstreamAppearance } from '@rally/contracts';
 import type { WorkstreamSummary } from './types';
 
@@ -128,7 +129,22 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       pagesLoaded.current = walked;
       nextCursor.current = cursor ?? null;
       setHasMore(cursor != null);
-      return mergeWorkstreams([], items);
+      const merged = mergeWorkstreams([], items);
+      const resident = new Map(
+        (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+          .map((workstream) => [workstream.id, workstream]),
+      );
+      const visibility = queryClient.getQueryData<Record<string, { visible: boolean }>>(
+        WORKSTREAM_STATE_WATERLINES_KEY,
+      ) ?? {};
+      // Every page was fenced when it arrived, but an earlier page remains in
+      // this local accumulator while later pages are awaited. Reconcile once
+      // more at publication so an archive marker or tombstone that landed in
+      // that interval cannot be overwritten by the stale accumulated object.
+      return merged.flatMap((workstream) => {
+        if (visibility[workstream.id]?.visible === false) return [];
+        return [resident.get(workstream.id) ?? workstream];
+      });
     },
     // Not fetched on mount: the first page arrives unasked with the connect
     // payload, and asking for it as well is the round trip that payload exists
