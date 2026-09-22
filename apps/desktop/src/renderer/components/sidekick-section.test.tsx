@@ -79,12 +79,12 @@ describe('SidekickSection', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from this breakout' })).toBeNull();
   });
 
-  it('leaves no heading behind for an empty answer or a pending one, then offers refresh after a failed read', () => {
+  it('keeps the heading for an empty answer and a pending one, then offers refresh after a failed read', () => {
     const onRefresh = vi.fn();
     const { rerender } = renderSection({ items: [] });
-    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
     rerender(<Tooltip.Provider><SidekickSection /></Tooltip.Provider>);
-    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
     rerender(<Tooltip.Provider><SidekickSection items={[]} failure="load" onRefresh={onRefresh} /></Tooltip.Provider>);
     expect(screen.queryByText('Sidekicks couldn’t be loaded.')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));

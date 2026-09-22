@@ -164,12 +164,12 @@ recommendation reads before updating the selected conversation's cache and
 invalidating sibling recommendation queries. Removal state is
 keyed by conversation, so navigation cannot carry an error into another substream.
 A merged row takes its lifecycle from the owned summary and its availability
-from the attachment, because each list knows one of them. The section is absent
-entirely — heading included — for a room with none and while the answer is
-still on its way, as the artifact section beside it is. A failed read keeps
-whichever rows did arrive and adds a normal **Refresh** row; if none arrived,
-the heading and Refresh row are the recovery path without a warning-only
-section. Refresh retries the owned, attached, and recommended sources while
+from the attachment, because each list knows one of them. The section keeps its
+heading for a room with none and while the answer is still on its way; rows
+appear only for Sidekicks themselves. A failed read keeps whichever rows did
+arrive and adds a normal **Refresh** row; if none arrived, the heading and
+Refresh row are the recovery path without a warning-only section. Refresh
+retries the owned, attached, and recommended sources while
 guests continue to skip the member-only owned directory. Read and action
 failures remain distinct: refused local removal, recommendation, and recommendation
 removal each name the action that failed and stay visible until the next
@@ -927,6 +927,25 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-22 — Empty rooms keep the Sidekicks heading
+
+**What changed:** Both room rails now retain the shared **Sidekicks** heading
+while the merged owned, attached, and recommended lists are pending or empty.
+Existing rows and the failed-read **Refresh** action are unchanged.
+
+**Why:** Sidekicks are a standing collaborator category beside Participants,
+not a section whose identity should appear only after its first row. Keeping the
+heading stable also prevents the rail from shifting between loading, empty, and
+populated answers.
+
+**Considered and rejected:** An empty-state row was unnecessary; the persistent
+heading supplies the requested structure without spending more rail space or
+inventing copy.
+
+**Consequences:** `SidekickSection` always renders its section shell. Its callers
+must still distinguish `undefined` from `[]` even though neither state renders a
+row, because only the latter is an authoritative empty answer.
 
 ### 2026-09-21 — Stale Sidekick reads recover through a row
 
