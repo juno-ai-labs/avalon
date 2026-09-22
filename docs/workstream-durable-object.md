@@ -1314,8 +1314,9 @@ example:
 3. compare the deterministic implementation hash of every applied version;
 4. apply each normal group of versions and its receipts in one
    `transactionSync` transaction;
-5. reject an object whose schema is ahead of the Worker or whose historical SQL
-   was edited;
+5. reject an object whose schema is ahead of the Worker, warn and continue when
+   an applied version's implementation hash changed, and let concrete SQL or
+   integrity failures reject construction;
 6. run `PRAGMA foreign_key_check`, then `PRAGMA optimize` after changes.
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
@@ -1440,7 +1441,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 
 | Condition | Behavior |
 | --- | --- |
-| Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
+| Migration hash mismatch | Construction emits a structured warning with both implementation hashes and continues; the stored receipt stays unchanged. |
+| Schema ahead/foreign-key violation or migration SQL failure | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
 | Workspace socket hibernates | Runtime restores attachments, including explicit foreground presence; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
@@ -1811,6 +1813,26 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-21 — Migration fingerprint drift no longer blocks an authority
+
+**What changed:** Every work-stream hierarchy object now inherits the shared
+runner behavior that logs migration fingerprint drift and continues construction.
+Concrete schema-ahead, SQL, and foreign-key failures remain constructor-fatal.
+
+**Why:** A comment-only migration edit took a separate Durable Object class
+offline despite leaving its schema usable. The same shared runner sat beneath
+this hierarchy, so leaving the fatal checksum proxy here would preserve the same
+outage mechanism for Channels, Breakouts, Organizations, and Sidekicks.
+
+**Considered and rejected:** Keeping fail-closed behavior for these authorities
+or maintaining per-class equivalent-hash lists. Both make the next unexpected
+receipt difference an outage before anybody can classify it.
+
+**Consequences:** Hash drift is diagnosed in Workers Logs using the component,
+version, worker version, and both hashes. Append-only migrations remain the only
+way to converge real schema changes; concrete incompatibilities still fail at
+the SQL or integrity boundary that names them.
 
 ### 2026-09-21 — Channel pins follow their Space placements
 

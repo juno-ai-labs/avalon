@@ -4,12 +4,6 @@ export interface DurableObjectSqliteMigration {
   description: string;
   statements: readonly string[];
   /**
-   * Exact receipts emitted by a released build whose SQL is known to be
-   * schema-equivalent to this migration. This is an escape hatch for a
-   * historical fingerprint mistake, not permission to edit released SQL.
-   */
-  compatibleImplementationHashes?: readonly string[];
-  /**
    * SQLite's documented table-rebuild procedure requires foreign keys to be
    * disabled before its transaction begins. Use only for a released migration
    * whose SQL depends on that legacy execution environment.
@@ -56,8 +50,8 @@ const BOOTSTRAP_MIGRATIONS_TABLE = `
  *
  * This input shape is already persisted by the original WorkstreamRoom
  * migration runner. Keep it stable: descriptions are operator metadata, while
- * changing this algorithm would strand existing object databases even when
- * their applied SQL is exactly the published history.
+ * changing this algorithm would report drift against every existing object and
+ * make the persisted receipts incomparable with the published history.
  */
 export function durableObjectMigrationHash(migration: DurableObjectSqliteMigration): string {
   // The suffix is absent for every migration shipped before execution modes
@@ -153,12 +147,21 @@ export function applyDurableObjectSqliteMigrations(
     const byVersion = new Map(applied.map((row) => [row.version, row.implementation_hash]));
     for (const migration of options.migrations) {
       const existingHash = byVersion.get(migration.version);
-      const isCompatibleHistoricalReceipt = existingHash !== undefined
-        && migration.compatibleImplementationHashes?.includes(existingHash) === true;
-      if (existingHash !== undefined
-        && existingHash !== durableObjectMigrationHash(migration)
-        && !isCompatibleHistoricalReceipt) {
-        throw new Error(`${options.component}_schema_hash_mismatch:${migration.version}`);
+      const currentHash = durableObjectMigrationHash(migration);
+      if (existingHash !== undefined && existingHash !== currentHash) {
+        // A fingerprint disagreement is diagnostic evidence, not grounds to
+        // make an otherwise usable object unavailable. Keep the persisted
+        // receipt truthful and let subsequent SQL surface a real incompatibility.
+        /* eslint-disable-next-line no-console */
+        console.warn({
+          event: "durable_object_schema_hash_mismatch",
+          message: `${options.component}_schema_hash_mismatch:${migration.version}`,
+          component: options.component,
+          version: migration.version,
+          workerVersionId: options.workerVersionId,
+          recordedImplementationHash: existingHash,
+          currentImplementationHash: currentHash,
+        });
       }
     }
     return byVersion;

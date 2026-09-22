@@ -4,10 +4,11 @@
  * Every object in this Worker runs its migration history in its constructor and
  * then never mentions it again. That is fine until the day a deploy half-lands:
  * some objects are on the new version, some are still hibernating on the old
- * one, and one is throwing `component_schema_hash_mismatch` on every wake with
- * nowhere to say so. Nothing in the account can answer "which objects are
- * behind, and which are broken" — a Durable Object namespace can be enumerated
- * for IDs, but an ID does not carry a schema version.
+ * one, and one is failing concrete migration SQL on every wake with nowhere to
+ * say so. Nothing in the account can answer "which objects are behind, and
+ * which are broken" — a Durable Object namespace can be enumerated for IDs,
+ * but an ID does not carry a schema version. Implementation-hash drift is a
+ * non-blocking Workers Log warning owned by the runner, not a failed outcome.
  *
  * So the object says it itself, on the one occasion it knows the answer. This
  * module wraps the migration call, and afterwards decides whether the tracker

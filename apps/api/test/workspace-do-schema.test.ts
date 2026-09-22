@@ -91,8 +91,8 @@ describe("the WorkspaceDO alarm migrations", () => {
     apply(database, SCHEDULE_ALARM_VERSION, SCHEDULE_ALARM_VERSION - 1);
 
     // Version 4 is released. Adding a statement to it changes the hash every
-    // deployed object recorded, and each one then throws
-    // `workspace_do_schema_hash_mismatch:4` in its constructor — for good.
+    // deployed object recorded and emits `workspace_do_schema_hash_mismatch:4`;
+    // it still cannot make an old schema gain the new statement.
     expect(bootstrapEntries(database)).toEqual([]);
   });
 });

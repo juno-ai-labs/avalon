@@ -3,7 +3,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { ServerSocketEventSchema } from "@rally/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
   applyWorkstreamObjectSchema,
@@ -173,6 +173,16 @@ function objectStorage(
 }
 
 describe("the Workstream Durable Object relational schema", () => {
+  let warn: MockInstance;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
   it("keeps every shipped migration fingerprint through v32 immutable", () => {
     expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS
       .filter((migration) => migration.version <= 32)
@@ -1088,7 +1098,7 @@ describe("the Workstream Durable Object relational schema", () => {
   // there is no longer a projection to test — the run's own status is what a
   // reader sees.
 
-  it("refuses a changed implementation under an already-applied schema version", () => {
+  it("warns but remains available for a changed implementation receipt", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
     try {
@@ -1097,8 +1107,13 @@ describe("the Workstream Durable Object relational schema", () => {
         `UPDATE _sql_schema_migrations SET implementation_hash = 'changed' WHERE version = 1`,
       ).run();
 
-      expect(() => applyWorkstreamObjectSchema(storage, "worker-two"))
-        .toThrow("substream_agent_do_schema_hash_mismatch:1");
+      expect(() => applyWorkstreamObjectSchema(storage, "worker-two")).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        event: "durable_object_schema_hash_mismatch",
+        message: "substream_agent_do_schema_hash_mismatch:1",
+        version: 1,
+        recordedImplementationHash: "changed",
+      }));
     } finally {
       database.close();
     }

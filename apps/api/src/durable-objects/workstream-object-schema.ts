@@ -1321,11 +1321,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "drop the four tables the cutover left without a reader or writer",
     statements: [
       // v1 still creates these, and it must: its statements are hashed into
-      // `_sql_schema_migrations`, so editing them strands every deployed
-      // object on `substream_agent_do_schema_hash_mismatch:1`. A new object
-      // therefore creates them and drops them again in the same bootstrap
-      // transaction, which is the cost of an append-only history and is paid
-      // once.
+      // `_sql_schema_migrations`, so editing them warns with
+      // `substream_agent_do_schema_hash_mismatch:1` without converging existing
+      // schemas. A new object therefore creates them and drops them in the same
+      // bootstrap transaction, which is the cost of an append-only history and
+      // is paid once.
       //
       // `terminal_commands` was provisioned for per-command receipts during
       // the D1 retirement, but the Terminal runtime settles every command
