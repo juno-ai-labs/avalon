@@ -86,6 +86,21 @@ describe('public Rally site', () => {
     expect(css).toMatch(/\.leonardo \.bubble\{[^}]*color:#fff(?:;|\})/u);
   });
 
+  it('vertically centers the Rally mark to the first line of each landing response', () => {
+    const landing = readProjectFile('src/landing.css');
+    // The mark sits in the first grid row of the body, not the whole (taller)
+    // response — centering the grid item itself would drop it beside the
+    // artifact on the last Rally turn.
+    expect(landing).toMatch(/\.ai\{[^}]*align-items:start/u);
+    expect(landing).toMatch(/\.message\{[^}]*line-height:1\.5/u);
+    // The art is square; 25×29 stretched it below the 1.5 line box. The top
+    // margin is half the leftover of that line box, so the mark stays centered
+    // on the first line when --body moves.
+    expect(landing).toMatch(
+      /\.ai-mark\{width:25px;height:25px;object-fit:contain;flex-shrink:0;margin-top:calc\(\(1\.5em - 25px\)\/2\)\}/u,
+    );
+  });
+
   it('defines responsive behavior for every public surface', () => {
     const publicPages = [
       'index.html',
