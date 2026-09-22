@@ -7,14 +7,25 @@ import {
 } from "@rally/contracts";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
-import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell, type IpcMainInvokeEvent } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  MenuItem,
+  net,
+  safeStorage,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
 import { randomBytes, createHash } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
-import { initializeSidelineUpdater } from "./updater";
+import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
 
 const API_BASE_URL = (
   process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
@@ -297,7 +308,7 @@ else {
     app.setAsDefaultProtocolClient("sideline");
     session = VISUAL_STATE ? null : await loadSession();
     mainWindow = createWindow();
-    initializeSidelineUpdater({
+    const updateHandle = initializeSidelineUpdater({
       isPackaged: app.isPackaged,
       isReleaseBuild: process.env.SIDELINE_RELEASE_BUILD === "true",
       platform: process.platform,
@@ -306,6 +317,20 @@ else {
         ? dialog.showMessageBox(mainWindow, options)
         : dialog.showMessageBox(options),
     });
+    if (process.platform === "darwin") {
+      const menu = Menu.getApplicationMenu() ?? Menu.buildFromTemplate([
+        { role: "appMenu" },
+        { role: "fileMenu" },
+        { role: "editMenu" },
+        { role: "viewMenu" },
+        { role: "windowMenu" },
+      ]);
+      const appMenu = menu.items[0]?.submenu;
+      if (appMenu && !appMenu.getMenuItemById("sideline-check-for-updates")) {
+        appMenu.insert(Math.min(1, appMenu.items.length), new MenuItem(sidelineUpdateMenuItem(updateHandle)));
+        Menu.setApplicationMenu(menu);
+      }
+    }
   });
 }
 
