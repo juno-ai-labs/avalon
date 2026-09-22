@@ -32,23 +32,26 @@ const SLACK_HEADER_LIMIT = 150;
 const SLACK_MARKDOWN_LITERAL_ESCAPE = /([\\`*_[\]()<>&#|!~+])/gu;
 
 /**
- * A name or title, flattened to one line and escaped so Slack renders it as
- * the characters the person typed.
+ * A name, title, or quoted body, escaped so Slack renders it as the characters
+ * the person typed.
  *
- * Control and line-separator characters become spaces first, because a newline
- * plus `#` or a fence is how a title would start a new block in the middle of
- * the intro. The remaining markers are backslash-escaped. A leading `1.` is
- * broken separately: author names sit at the start of the markdown block, and
- * CommonMark would still treat that as a list after flattening.
+ * Control characters become spaces. The remaining markers are backslash-escaped.
+ * A leading `1.` is broken separately: CommonMark would still treat that as a
+ * list. Names default to one line, because a newline plus `#` is how a title
+ * would start a new block in the intro. Quoted bodies pass `{ multiline: true }`
+ * so paragraph breaks survive while the same punctuation stays inert.
  */
-export function slackMarkdownLiteral(value: string): string {
-  const flattened = value
-    // eslint-disable-next-line no-control-regex -- titles may carry C0, DEL, NEL, or Unicode line separators
-    .replace(/[\u0000-\u001F\u007F\u0085\u2028\u2029]/gu, " ")
-    .replace(/ {2,}/gu, " ")
-    .trim();
+export function slackMarkdownLiteral(value: string, options: { multiline?: boolean } = {}): string {
+  const flattened = options.multiline
+    // eslint-disable-next-line no-control-regex -- quoted bodies may carry C0 or DEL; newlines stay
+    ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0085]/gu, " ")
+    : value
+      // eslint-disable-next-line no-control-regex -- titles may carry C0, DEL, NEL, or Unicode line separators
+      .replace(/[\u0000-\u001F\u007F\u0085\u2028\u2029]/gu, " ")
+      .replace(/ {2,}/gu, " ")
+      .trim();
   const escaped = flattened.replace(SLACK_MARKDOWN_LITERAL_ESCAPE, "\\$1");
-  return escaped.replace(/^(\d+)\./u, "$1\\.");
+  return escaped.replace(options.multiline ? /^(\d+)\./gmu : /^(\d+)\./u, "$1\\.");
 }
 
 /**

@@ -146,6 +146,11 @@ describe("slackMarkdownLiteral", () => {
   it("turns angle-bracket autolinks into ordinary characters", () => {
     expect(slackMarkdownLiteral("<https://example.test>")).toBe("\\<https://example.test\\>");
   });
+
+  it("keeps paragraph breaks in a quoted body while still escaping links", () => {
+    expect(slackMarkdownLiteral("[Open in Rally](https://evil.test)\n\n1. next", { multiline: true }))
+      .toBe("\\[Open in Rally\\]\\(https://evil.test\\)\n\n1\\. next");
+  });
 });
 
 describe("Slack notification fallback", () => {

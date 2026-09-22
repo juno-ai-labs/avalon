@@ -5,6 +5,7 @@ import {
   slackApi,
   slackMarkdownLiteral,
   slackMarkdownMessages,
+  slackNotificationText,
   type SlackMarkdownMessage,
 } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
@@ -545,8 +546,9 @@ async function workspaceBotToken(
  * reduction.
  *
  * The quoted body is still the plain shape: person-notification copy is not
- * agent markdown, and the intro that *does* need a link is authored here as a
- * Slack markdown `[title](url)` rather than left for this rewriter to invent.
+ * agent markdown. After this reduction it goes through `slackMarkdownLiteral`
+ * so inline-code leftovers and ordinary punctuation cannot re-enter Slack's
+ * markdown dialect next to the authored destination link.
  */
 function humanReadableMessage(value: string): string {
   return rewriteMessageAsPlainText(value, { sources: "plain" });
@@ -574,59 +576,77 @@ function slackMentionChunks(input: WorkstreamSlackMention, target: string): Slac
 
 /**
  * The Agent Messages tab renders Block Kit, not `chat.postMessage` `text`.
- *
- * A trailing `<url|Open in Rally>` in that fallback field is how these DMs
- * used to carry the destination, and it is also why a recipient looking at
- * the Rally Agent DM could not open the channel or breakout the notice was
- * about: Slack's Agent view does not turn that markup into a link. Task
- * results already posted an `actions` button; this is the same contract for
- * the two things Rally tells one person about a work stream.
- *
- * The button and the title link live on the first message on purpose. A long
- * body still chunks, but the destination must not wait until the last reply
- * in the thread — that is the message a reader expanding the DM does not see.
+ * The destination is a markdown title link and an Open in Rally button on
+ * that payload. Production mention text is capped at 8k, so a real notice
+ * is one message; the chunker remains for anything that still exceeds
+ * Slack's markdown-block limit.
  */
 function slackNotificationMessages(
-  intro: string,
+  intro: { markdown: string; fallback: string },
   body: string,
   target: string,
 ): SlackMarkdownMessage[] {
-  const messages = slackMarkdownMessages(body ? `${intro}\n\n${body}` : intro);
+  const quoted = slackMarkdownLiteral(body, { multiline: true });
+  const messages = slackMarkdownMessages(quoted ? `${intro.markdown}\n\n${quoted}` : intro.markdown);
   const first = messages[0];
   if (!first) throw new ConnectorError("provider_error", "Slack notification produced no message");
+  const fallback = body ? `${intro.fallback}\n\n${body}` : intro.fallback;
   return [
     {
-      text: `${first.text}\n\nOpen in Rally: ${target}`,
+      text: `${escapeSlackMrkdwn(slackNotificationText(fallback))}\n\nOpen in Rally: ${target}`,
       blocks: [...first.blocks, openInRallyButton(target)],
     },
     ...messages.slice(1),
   ];
 }
 
-function slackMentionIntro(input: WorkstreamSlackMention, target: string): string {
-  const kind = destinationKind(input.substreamId);
-  const title = slackMarkdownLink(input.workstreamTitle.trim() || `Untitled ${kind}`, target);
-  return `${slackMarkdownProse(input.authorName)} mentioned you in the ${kind} ${title} in ${slackMarkdownProse(input.workspaceName)}.`;
+function slackMentionIntro(input: WorkstreamSlackMention, target: string): { markdown: string; fallback: string } {
+  const child = Boolean(input.substreamId);
+  const title = input.workstreamTitle.trim() || "Untitled channel";
+  const room = slackDestinationRoom(title, target, child);
+  return {
+    markdown: `${slackMarkdownProse(input.authorName)} mentioned you in ${room.markdown} in ${slackMarkdownProse(input.workspaceName)}.`,
+    fallback: `${slackFallbackLine(input.authorName)} mentioned you in ${room.fallback} in ${slackFallbackLine(input.workspaceName)}.`,
+  };
 }
 
-function slackParticipantAddedIntro(input: WorkstreamSlackParticipantAdded, target: string): string {
-  const kind = destinationKind(input.substreamId);
-  const actor = slackMarkdownProse(input.actorName);
-  const workspace = slackMarkdownProse(input.workspaceName);
+function slackParticipantAddedIntro(
+  input: WorkstreamSlackParticipantAdded,
+  target: string,
+): { markdown: string; fallback: string } {
+  const child = Boolean(input.substreamId);
+  const actor = { markdown: slackMarkdownProse(input.actorName), fallback: slackFallbackLine(input.actorName) };
+  const workspace = {
+    markdown: slackMarkdownProse(input.workspaceName),
+    fallback: slackFallbackLine(input.workspaceName),
+  };
   // A work stream created from the composer has no name yet: quoting its
   // placeholder title names the room by a fragment of the opening message, and
   // then prints the same words again below. See `participant-email-service.ts`.
   // The destination word itself is the link, so the DM still has somewhere to
-  // tap.
+  // tap. The title snapshot is always the parent channel's title, so a child
+  // is "a breakout of" that channel rather than named as if it were the child.
   if (input.titleIsProvisional) {
-    return `${actor} started a ${slackMarkdownLink(kind, target)} with you in ${workspace}.`;
+    const kind = child ? "breakout" : "channel";
+    return {
+      markdown: `${actor.markdown} started a ${slackMarkdownLink(kind, target)} with you in ${workspace.markdown}.`,
+      fallback: `${actor.fallback} started a ${kind} with you in ${workspace.fallback}.`,
+    };
   }
-  const title = slackMarkdownLink(input.workstreamTitle.trim() || `Untitled ${kind}`, target);
-  return `${actor} added you to the ${kind} ${title} in ${workspace}.`;
+  const title = input.workstreamTitle.trim() || "Untitled channel";
+  const room = slackDestinationRoom(title, target, child);
+  return {
+    markdown: `${actor.markdown} added you to ${room.markdown} in ${workspace.markdown}.`,
+    fallback: `${actor.fallback} added you to ${room.fallback} in ${workspace.fallback}.`,
+  };
 }
 
-function destinationKind(substreamId?: string): "channel" | "breakout" {
-  return substreamId ? "breakout" : "channel";
+function slackDestinationRoom(title: string, target: string, child: boolean): { markdown: string; fallback: string } {
+  const label = slackMarkdownLink(title, target);
+  const plain = slackFallbackLine(title);
+  return child
+    ? { markdown: `a breakout of ${label}`, fallback: `a breakout of ${plain}` }
+    : { markdown: `the channel ${label}`, fallback: `the channel ${plain}` };
 }
 
 function slackMarkdownLink(label: string, url: string): string {
@@ -635,6 +655,15 @@ function slackMarkdownLink(label: string, url: string): string {
 
 function slackMarkdownProse(value: string): string {
   return slackMarkdownLiteral(value);
+}
+
+function slackFallbackLine(value: string): string {
+  return slackMarkdownLiteral(value).replace(/\\(.)/gu, "$1");
+}
+
+/** The three characters Slack's `text` mrkdwn reads as markup. */
+function escapeSlackMrkdwn(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function openInRallyButton(url: string): Record<string, unknown> {
