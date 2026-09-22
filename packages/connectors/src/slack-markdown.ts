@@ -21,6 +21,36 @@ export const SLACK_MARKDOWN_BLOCK_LIMIT = 12_000;
 const SLACK_HEADER_LIMIT = 150;
 
 /**
+ * Punctuation Slack's `markdown` block treats as syntax rather than text.
+ *
+ * Person-notification intros interpolate a name or a title into that dialect.
+ * Leaving any of these live lets a work-stream title open a second link, a
+ * heading, or emphasis, which is the opposite of a notice whose one job is to
+ * point at a canonical Rally URL. Agent output does not go through this: it is
+ * authored markdown and is supposed to render.
+ */
+const SLACK_MARKDOWN_LITERAL_ESCAPE = /([\\`*_[\]()<>&#|!~+])/gu;
+
+/**
+ * A name or title, flattened to one line and escaped so Slack renders it as
+ * the characters the person typed.
+ *
+ * Control and line-separator characters become spaces first, because a newline
+ * plus `#` or a fence is how a title would start a new block in the middle of
+ * the intro. The remaining markers are backslash-escaped. A leading `1.` is
+ * broken separately: author names sit at the start of the markdown block, and
+ * CommonMark would still treat that as a list after flattening.
+ */
+export function slackMarkdownLiteral(value: string): string {
+  const flattened = value
+    .replace(/[\u0000-\u001F\u007F\u0085\u2028\u2029]/gu, " ")
+    .replace(/ {2,}/gu, " ")
+    .trim();
+  const escaped = flattened.replace(SLACK_MARKDOWN_LITERAL_ESCAPE, "\\$1");
+  return escaped.replace(/^(\d+)\./u, "$1\\.");
+}
+
+/**
  * How much stripped-down prose accompanies a message as its notification and
  * screen-reader fallback. Slack accepts far more, but this text is read aloud
  * and shown in a push notification, so length past a few lines is noise.

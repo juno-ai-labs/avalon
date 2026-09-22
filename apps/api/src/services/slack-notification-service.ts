@@ -3,6 +3,7 @@ import {
   ConnectorError,
   connectorRetryAfterMs,
   slackApi,
+  slackMarkdownLiteral,
   slackMarkdownMessages,
   type SlackMarkdownMessage,
 } from "@rally/connectors";
@@ -629,11 +630,11 @@ function destinationKind(substreamId?: string): "channel" | "breakout" {
 }
 
 function slackMarkdownLink(label: string, url: string): string {
-  return `[${label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]")}](${url})`;
+  return `[${slackMarkdownLiteral(label)}](${url})`;
 }
 
 function slackMarkdownProse(value: string): string {
-  return value.replace(/([\\`*_[\]()])/g, "\\$1");
+  return slackMarkdownLiteral(value);
 }
 
 function openInRallyButton(url: string): Record<string, unknown> {

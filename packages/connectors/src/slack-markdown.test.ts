@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   slackDeliveryMarkdown,
+  slackMarkdownLiteral,
   slackMarkdownMessages,
   slackNotificationText,
   splitSlackMarkdown,
@@ -120,6 +121,30 @@ describe("splitting Slack markdown", () => {
     const rejoined = splitSlackMarkdown(source, 1_500).join("\n").replace(/\n+/gu, " ");
     expect(rejoined).toContain("tail");
     expect(rejoined.match(/paragraph body here/gu)?.length).toBe(500);
+  });
+});
+
+describe("slackMarkdownLiteral", () => {
+  it("escapes punctuation Slack would treat as markdown syntax", () => {
+    expect(slackMarkdownLiteral("Release `candidate` [v1](https://example.test)"))
+      .toBe("Release \\`candidate\\` \\[v1\\]\\(https://example.test\\)");
+  });
+
+  it("flattens control characters so a title cannot open a new block", () => {
+    expect(slackMarkdownLiteral("Release\n# candidate")).toBe("Release \\# candidate");
+    expect(slackMarkdownLiteral("Release\u2028```js")).toBe("Release \\`\\`\\`js");
+  });
+
+  it("breaks a leading numbered list so an author name cannot open one", () => {
+    expect(slackMarkdownLiteral("1. Alice")).toBe("1\\. Alice");
+  });
+
+  it("collapses runs of spaces after flattening", () => {
+    expect(slackMarkdownLiteral("  Alice\n\nBob  ")).toBe("Alice Bob");
+  });
+
+  it("turns angle-bracket autolinks into ordinary characters", () => {
+    expect(slackMarkdownLiteral("<https://example.test>")).toBe("\\<https://example.test\\>");
   });
 });
 

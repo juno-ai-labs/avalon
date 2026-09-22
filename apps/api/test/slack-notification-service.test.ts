@@ -133,6 +133,26 @@ describe("workspace Slack mention delivery", () => {
     expect(openInRallyButton(posted?.blocks)).toMatchObject({ url: destination });
   });
 
+  it("escapes a hostile title so only the canonical Rally URL stays a markdown link", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
+
+    await expect(sendWorkstreamMentionSlack(env, {
+      ...mention(),
+      authorName: "1. [Ada](https://evil.test)",
+      workstreamTitle: "Release `candidate`\n<https://example.test>](https://evil.test)",
+      messageText: "Need a look.",
+    }, slackApiFixture(calls))).resolves.toBe("sent");
+
+    const markdown = markdownBlocks(calls.find((call) => call.method === "chat.postMessage")?.body.blocks).join("");
+    expect(markdownLinkTargets(markdown)).toEqual([destination]);
+    expect(markdown).toContain("1\\. \\[Ada\\]\\(https://evil.test\\)");
+    expect(markdown).toContain("Release \\`candidate\\` \\<https://example.test\\>\\]\\(https://evil.test\\)");
+  });
+
   it("prefers a confirmed Slack identity and does not perform email lookup", async () => {
     const database = migratedDatabase();
     const env = environment(database);
@@ -553,6 +573,10 @@ function migratedDatabase(): DatabaseSync {
   const database = legacyProductSqliteDatabase();
   databases.push(database);
   return database;
+}
+
+function markdownLinkTargets(markdown: string): string[] {
+  return [...markdown.matchAll(/\]\(([^)]+)\)/gu)].map((match) => match[1]!);
 }
 
 function markdownBlocks(blocks: unknown): string[] {

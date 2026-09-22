@@ -445,10 +445,10 @@ As a Rally member, when I mention an active teammate in a channel or breakout, R
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
 Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
 linking the accounts. The first message identifies the author, workspace, and channel or
-breakout — the title is a markdown link to the canonical work-stream URL — quotes the complete
-mention text, and carries an **Open in Rally** button. Being added to a channel or breakout
-uses the same shape. If Slack cannot resolve or deliver it, Rally sends the existing mention
-email instead.
+breakout — the title is a markdown link to the canonical work-stream URL, with the title and
+author name escaped as literals — quotes the complete mention text, and carries an **Open in
+Rally** button. Being added to a channel or breakout uses the same shape. If Slack cannot
+resolve or deliver it, Rally sends the existing mention email instead.
 
 #### Morning Gmail briefing
 
@@ -706,12 +706,12 @@ not own:
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
 | `packages/connectors/src/slack.test.ts` | The two authorization flows kept apart, the personal identity resolved from `auth.test` when the OAuth body names nobody, that a body which does name one spends no extra call, and the stage each callback failure is attributed to. |
 | `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and the rotation's wrap. |
-| `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
+| `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, every split rule including the reopened fence, and the literal escaper for names and titles. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
 | `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
 | `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
-| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and its email fallback. |
+| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path, its email fallback, and that a hostile title leaves only the canonical Rally URL as a markdown link. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
@@ -800,13 +800,13 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ### 2026-09-22 — Person-notification DMs carry the destination as Block Kit
 
-**What changed:** Mention and "added you" Agent DMs now post through `slackMarkdownMessages`: the first message's markdown names the channel or breakout and links its title to the canonical work-stream URL, and an **Open in Rally** button sits on that same first message. Later chunks of a long body no longer wait to mention the destination. `unfurl_links` is off so Slack does not stack a generic site card on the same URL.
+**What changed:** Mention and "added you" Agent DMs now post through `slackMarkdownMessages`: the first message's markdown names the channel or breakout and links its title to the canonical work-stream URL, and an **Open in Rally** button sits on that same first message. Later chunks of a long body no longer wait to mention the destination. `unfurl_links` is off so Slack does not stack a generic site card on the same URL. Names and titles go through `slackMarkdownLiteral` so punctuation in a work-stream title cannot open a second link or a new block.
 
-**Why:** The previous payload put `<url|Open in Rally>` only in `chat.postMessage`'s `text` field, at the end of the quoted body. The Agent Messages tab renders Block Kit, not that fallback, so a recipient looking at the Rally DM had no way to open the channel or breakout the notice was about. Task results already used an `actions` button; these two notices did not.
+**Why:** The previous payload put `<url|Open in Rally>` only in `chat.postMessage`'s `text` field, at the end of the quoted body. The Agent Messages tab renders Block Kit, not that fallback, so a recipient looking at the Rally DM had no way to open the channel or breakout the notice was about. Task results already used an `actions` button; these two notices did not. Interpolating a title into Slack's markdown block with only the old mrkdwn escapes left `[label](url)`, autolinks, and a leading `1.` live, which would steal the destination the notice exists to point at.
 
-**Considered and rejected:** Keeping the mrkdwn fallback as the only link and adding a `link_shared` unfurl. Slack does not send `link_shared` for URLs the app itself posts, so the unfurl card would never attach. Putting the button on the last chunk was rejected because that is the message a reader of the root DM does not see.
+**Considered and rejected:** Keeping the mrkdwn fallback as the only link and adding a `link_shared` unfurl. Slack does not send `link_shared` for URLs the app itself posts, so the unfurl card would never attach. Putting the button on the last chunk was rejected because that is the message a reader of the root DM does not see. Escaping only `[` `]` `\` on the link label was rejected because a title of `<https://example.test>` or ``Release `candidate` `` is still syntax in this dialect.
 
-**What a future change has to respect:** A person-notification DM owes a destination on its first message, as a markdown title link and as a URL button, minted by `workstreamCanonicalUrl`. Do not return this path to text-only mrkdwn because the Agent view will hide it again.
+**What a future change has to respect:** A person-notification DM owes a destination on its first message, as a markdown title link and as a URL button, minted by `workstreamCanonicalUrl`. Do not return this path to text-only mrkdwn because the Agent view will hide it again. Names and titles interpolated into that markdown go through `slackMarkdownLiteral`; agent-authored bodies do not.
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
