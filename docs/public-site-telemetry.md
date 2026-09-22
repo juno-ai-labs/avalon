@@ -130,6 +130,24 @@ that reports. Events are sent immediately in batches bounded by the shared
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
+### 2026-09-21 — Retire acquisition-form telemetry ownership
+
+**What changed:** Removed the retired acquisition-form browser client from this
+module's code ownership and kept the homepage on its existing bounded page
+telemetry only.
+
+**Why:** The homepage now links directly to the canonical installer and no
+longer collects an email or initializes Turnstile. Keeping the deleted client in
+the module contract described a telemetry boundary that no production page used.
+
+**Considered and rejected:** Retaining the form client as dormant site
+scaffolding would preserve dead code, its browser dependency, and unrelated
+deployment configuration without providing an active acquisition path.
+
+**Consequences:** A future public intake UI must introduce and document its own
+client and telemetry boundary explicitly. The token-download page remains
+excluded from telemetry so bearer fragments cannot enter analytics.
+
 ### 2026-09-21 — Match link previews to the landing page
 
 **What changed:** The social card uses the static pale landing design and collaboration headline. Open Graph and Twitter metadata reference `rally-social-v01.jpg`.
