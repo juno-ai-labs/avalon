@@ -3997,8 +3997,14 @@ describe('reordering the channels inside a space', () => {
       const probeLocation = useLocation();
       const probeNavigate = useNavigate();
       return <>
-        <output aria-label="Current route">{probeLocation.pathname}</output>
+        <output aria-label="Current route">
+          {probeLocation.pathname}{probeLocation.search}{probeLocation.hash}
+        </output>
         <button type="button" onClick={() => void probeNavigate(-1)}>Test back</button>
+        <button
+          type="button"
+          onClick={() => void probeNavigate(`${probeLocation.pathname}?panel=details#note`, { replace: true })}
+        >Test query change</button>
       </>;
     }
     render(
@@ -4110,7 +4116,7 @@ describe('reordering the channels inside a space', () => {
       onMoveChannelToSpace: () => new Promise<void>((_, reject) => {
         refuseMove = reject;
       }),
-    });
+    }, [`/workstreams/${alpha.id}?panel=details#note`]);
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
@@ -4120,7 +4126,29 @@ describe('reordering the channels inside a space', () => {
 
     await act(async () => refuseMove?.(new Error('space_access_denied')));
     await waitFor(() => expect(document.querySelector('output[aria-label="Current route"]'))
-      .toHaveTextContent(`/workstreams/${alpha.id}`));
+      .toHaveTextContent(`/workstreams/${alpha.id}?panel=details#note`));
+  });
+
+  it('does not overwrite a newer query or hash when the move is refused', async () => {
+    let refuseMove: ((cause: Error) => void) | undefined;
+    renderSidebarAt(alpha.id, [alpha, bravo], {
+      onMoveChannelToSpace: () => new Promise<void>((_, reject) => {
+        refuseMove = reject;
+      }),
+    });
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}`));
+    fireEvent.click(screen.getByRole('button', { name: 'Test query change' }));
+    expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}?panel=details#note`);
+
+    await act(async () => refuseMove?.(new Error('space_access_denied')));
+    expect(document.querySelector('output[aria-label="Current route"]'))
+      .toHaveTextContent(`/workstreams/${bravo.id}?panel=details#note`);
   });
 
   it('waits for an unloaded lower Channel instead of opening Channel home', async () => {
