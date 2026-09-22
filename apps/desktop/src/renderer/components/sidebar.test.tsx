@@ -731,6 +731,25 @@ describe('Sidebar channel markers', () => {
     expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/starting-point');
   });
 
+  it('keeps Spaces expanded until a Channel in the selected Space is opened', () => {
+    const hiring = space();
+    const target = placedIn(workstream('hiring-plan', 'Hiring plan', 'completed'), hiring.id);
+    render(
+      <MemoryRouter initialEntries={['/starting-point']}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+            workspace={workspace} workstreams={[target]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).not.toHaveClass('is-compact');
+
+    fireEvent.click(screen.getByRole('link', { name: /Hiring plan/u }));
+    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
+  });
+
   it('preserves a manually collapsed Channels sidebar when a Space is selected', () => {
     const hiring = space();
     useUiStore.getState().setSidebarCollapsed(true);
