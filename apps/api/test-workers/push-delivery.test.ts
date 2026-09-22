@@ -17,6 +17,7 @@ import type { ApnsOutcome } from '../src/services/push/apns-transport';
 // No runs or model calls: only the real workspace intent/directory read and D1 delivery writes.
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000f101');
 const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000f102');
+const spaceId = '00000000-0000-7000-8000-00000000f107';
 const userId = asUserId('00000000-0000-7000-8000-00000000f103');
 const actorId = asUserId('00000000-0000-7000-8000-00000000f104');
 const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
@@ -51,6 +52,12 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO workspace_space_directory
+      (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
+      VALUES (?, 'General', 'workspace', 1, 1, 'space', 1, 0, 0)`, spaceId);
+    state.storage.sql.exec(`INSERT INTO space_channel_memberships
+      (space_id, workstream_id, state, generation, joined_at, updated_at)
+      VALUES (?, ?, 'active', 1, 0, 0)`, spaceId, workstreamId);
     state.storage.sql.exec(`INSERT INTO workspace_workstream_directory
       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
        scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,

@@ -321,6 +321,7 @@ function workspaceSyncNamespace(listable = true) {
         title: "Regional effects",
         emailAddress: "regional-effects@example.com",
       })),
+      canonicalChannelSpace: vi.fn(async () => ({ spaceId: "00000000-0000-7000-8000-0000000000a9" })),
     }),
   });
   return {

@@ -1,7 +1,10 @@
 # Work-stream links
 
-Every surface that points at a work stream from outside the desktop app emits one
-shape: `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`.
+Every surface that points at a Space, Channel, or Breakout from outside the desktop app uses
+`https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/`,
+with `/c/<channel-base58>` and optional `/b/<breakout-base58>` appended.
+Each Base58 segment encodes the corresponding 16-byte UUID; the Organization ID
+immediately follows the environment/region segment.
 The `rallywithai://` deep link
 is still what actually opens a work stream, but it is now the last hop of that
 HTTPS page rather than the thing Rally hands out — because a custom scheme cannot
@@ -16,6 +19,8 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Concern | Location |
 | --- | --- |
 | Mint, parse, and validate both forms | `packages/contracts/src/workstream-links.ts` |
+| Encode and decode UUID segments | `packages/contracts/src/uuid-base58.ts` |
+| Choose a Channel's current Space placement for server-generated links | `WorkspaceDO.canonicalChannelSpace`, `apps/api/src/services/workstream-link-service.ts` |
 | Serve current and legacy work-stream paths | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
 | Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
@@ -30,19 +35,22 @@ changing the Slack unfurl card or the sweep that keeps it current.
 
 ## How it works
 
-#Private-child links append `/substreams/<substream-uuid>` to the canonical HTTPS path and to the deep-link path (before its workspace query). Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to `/workstreams/<parent>?substream=<child>`. The header's Copy link and child notifications use this same primitive. Email reply routing is unchanged.
+Breakout links append `/b/<breakout-base58>` to the canonical HTTPS path. Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to the existing internal conversation route. The header's Copy link and child notifications use the same contract. Email reply routing is unchanged.
 
 ## The two forms
 
 | Form | Shape | Who mints it |
 | --- | --- | --- |
-| **Canonical link** | `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | Every current surface that emits a work-stream link |
-| **Deep link** | `rallywithai://workspace/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | The canonical page, in the browser, as the last hop |
-| **Legacy reader** | `/app/workstreams/<workstream-uuid>` or an ID-only deep link | Compatibility only; interpreted relative to the active workspace and never newly emitted |
+| **Space** | `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/` | Space sharing and handoff |
+| **Channel** | Space URL plus `c/<channel-base58>` | Current Channel link writers |
+| **Breakout** | Channel URL plus `/b/<breakout-base58>` | Current Breakout link writers |
+| **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>` |
+| **Legacy reader** | `/app/workspaces/.../workstreams/...`, `/app/workstreams/...`, or older deep links | Compatibility for already-shared links |
 
-`rallywithai://workstreams/<uuid>` is still the protocol the desktop client registers,
-and it is still what actually opens a work stream. It stopped being what Rally
-*hands out*, for three reasons:
+The desktop still registers `rallywithai://` and reads the older
+`rallywithai://workstreams/<uuid>` form. The public HTTPS page hands off through
+the addressed Space/Channel deep link; the custom scheme stopped being what
+Rally *hands out*, for three reasons:
 
 - **Slack cannot unfurl it.** Slack emits `link_shared` only for URLs whose domain
   matches one of the app's registered `unfurl_domains`. A custom scheme has no
@@ -200,14 +208,17 @@ with no version constant for a future change to remember to bump.
 
 ## Invariants
 
-- **The workspace-addressed canonical HTTPS link is the only form Rally hands out.** Never emit
+- **The Organization-addressed hierarchical HTTPS link is the only form Rally hands out.** Never emit
   `rallywithai://` into anything a human can copy; it cannot be unfurled, linkified, or
   opened without the app.
 - **The work-stream id lives in the path, never in a fragment.** A server has to be
   able to read it, which is the exact opposite of what the OAuth handoffs need.
-- **Every link is minted by `workstreamCanonicalUrl` and read by
+- **Every Channel or Breakout link is minted by `workstreamCanonicalUrl` and read by
   `parseWorkstreamLinkTarget`.** A URL built by hand is a URL that drifts from the site's
   rewrite rule.
+- **A Channel's Space segment comes from current WorkspaceDO placement.** The
+  URL is a navigation hint, not an authorization grant; a stale placement must
+  not bypass the regional API's Channel and Space checks.
 - **`workstreamCanonicalUrl` throws on anything that is not a work-stream UUID.**
   Deliberate — a link surface should fail loudly rather than emit a URL that 404s
   for the recipient.
@@ -323,17 +334,44 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 ## Apple universal links
 
-Both Rally hosts serve `/.well-known/apple-app-site-association`, claiming
-`/app/workspaces/*` and `/app/workstreams/*` for
-`7ZLT6A8W25.ai.rallywith.desktop` and `7ZLT6A8W25.ai.rallywith.ios`.
-The main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
-uses existing scheme navigation. The iPhone opens the same paths into the
-native client. Legacy origins and other path families remain
+Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
+`/app/*`; iOS still claims only the earlier `/app/workspaces/*` and
+`/app/workstreams/*` paths until an iPhone release with the new parser is
+available. A canonical Channel or Breakout link opens the site handoff, which
+uses the old addressed iPhone reader; it does not send the new Base58 path to
+an installed old build. Space-only URLs stay on the web with a desktop-only
+explanation because the iPhone has no Space dashboard.
+The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
+uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
+into the native client. Legacy origins and other path families remain
 in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
 checks both hosts after site deployment and before desktop release. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-22 — Address Spaces, Channels, and Breakouts hierarchically
+
+**What changed:** New HTTPS links put the Organization immediately after the
+region, then `/s/` Space, `/c/` Channel, and optional `/b/` Breakout in one hierarchy. UUID path
+segments use canonical Base58 encoding. The Space dashboard can copy its URL;
+the browser opens shared Space roots as read-only overviews. Server-side Channel
+links resolve one current Space placement from WorkspaceDO, while old URL shapes
+remain readable. iOS universal-link claims stay on the old paths until the
+new parser has shipped, while the site translates new links for older builds.
+
+**Why:** The old path exposed the prototype Workspace/Workstream/Substream
+taxonomy and could not address a Space dashboard. A shared codec and one
+placement lookup keep every producer on the same URL contract.
+
+**Considered and rejected:** Fabricating a Space ID from the Channel ID or
+keeping separate hand-built URL rules in email, Slack, desktop, and iOS. Neither
+would represent the actual many-to-many Space placement.
+
+**Respect in future changes:** URL placement is not permission; resource reads
+still pass through the owning authority. Keep legacy readers for links already
+in circulation, and update the site rewrite and Apple association whenever a
+new canonical path family is emitted.
 
 ### 2026-09-15 — Claim the iPhone on the same association file
 

@@ -1,12 +1,6 @@
-# Canonical work-stream links carry the id in the path so that a server reading
-# a shared URL — Slack's unfurl handler above all — can see which work stream it
-# points at. No asset can exist per id, so every id under the prefix is rewritten
-# (status 200, URL preserved) onto the one handoff page, which reads the id back
-# out of window.location.pathname. Static assets are matched before these rules,
-# so /app/workstreams/ itself still serves the page directly. The earlier
-# ID-only prefix remains a compatibility reader for links already shared.
-/app/workspaces/*  /app/workstreams/  200
-/app/workstreams/*  /app/workstreams/  200
+# Canonical and legacy /app/ resource URLs share one static handoff page. The
+# rewrite preserves the original URL so the page can parse its resource path.
+/app/*  /app/workstreams/  200
 
 # Legal documents now live together under one Trust Center hierarchy. Preserve
 # public links that predate the consolidation, including their trailing-slash

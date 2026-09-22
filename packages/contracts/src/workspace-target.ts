@@ -1,4 +1,5 @@
 import type { Region } from "@rally/contracts/regions";
+import { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 /**
  * The routing coordinates carried by every externally emitted
  * workspace-scoped Rally link.
@@ -49,7 +50,7 @@ export function assertWorkspaceTarget(value: unknown): asserts value is Workspac
  * link instead of silently opening its resource relative to the wrong active
  * workspace. Query parameters remain exclusively destination payload.
  */
-export function addWorkspaceTarget(url: URL, target: WorkspaceTarget): URL {
+export function addWorkspaceTarget(url: URL, target: WorkspaceTarget, options: { base58?: boolean } = {}): URL {
   assertWorkspaceTarget(target);
   if (
     url.hostname === ADDRESS_HOST
@@ -62,7 +63,7 @@ export function addWorkspaceTarget(url: URL, target: WorkspaceTarget): URL {
   }
   const result = new URL(url.toString());
   result.hostname = ADDRESS_HOST;
-  result.pathname = `/${target.region}/${target.workspaceId}/${url.hostname}${url.pathname}`;
+  result.pathname = `/${target.region}/${options.base58 ? uuidToBase58(target.workspaceId) : target.workspaceId}/${url.hostname}${url.pathname}`;
   result.searchParams.delete("region");
   result.searchParams.delete("workspace");
   return result;
@@ -81,8 +82,8 @@ export function parseWorkspaceAddressedDeepLink(
   if (url.hostname !== ADDRESS_HOST || url.username || url.password || url.port) return null;
   const segments = url.pathname.split("/").slice(1);
   if (segments.length < 4) return null;
-  const [region, workspaceId, destinationHost, ...destinationPath] = segments;
-  const target = { region, workspaceId };
+  const [region, encodedWorkspaceId, destinationHost, ...destinationPath] = segments;
+  const target = { region, workspaceId: encodedWorkspaceId ? uuidFromBase58(encodedWorkspaceId) ?? encodedWorkspaceId : encodedWorkspaceId };
   if (
     !isWorkspaceTarget(target)
     || !destinationHost

@@ -11,8 +11,8 @@ import {
 test("the probe uses the canonical addressed workspace path", () => {
   assert.equal(
     workspaceHandoffProbeUrl("https://rallywith.ai"),
-    "https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/"
-      + "workstreams/00000000-0000-7000-8000-000000000002",
+    "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/"
+      + "c/1111117Hxt1fAWDjN7TY",
   );
 });
 
@@ -25,14 +25,14 @@ test("the desktop probe uses the production arm64 update manifest", () => {
 
 test("the deployed work-stream handoff page satisfies the rollout preflight", async () => {
   await assert.doesNotReject(() => assertWorkspaceHandoffSite(new Response(
-    '<title>Open work stream in Rally</title><a id="open-rally">Open Rally</a>',
+    '<title>Open channel in Rally</title><a id="open-rally">Open Rally</a>',
     { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
   )));
 });
 
 test("only a released desktop manifest carrying the addressed-reader marker passes", async () => {
   await assert.doesNotReject(() => assertWorkspaceHandoffDesktop(new Response(
-    "# rally-workspace-handoff-version: 2\nversion: 1.234.0\n",
+    "# rally-workspace-handoff-version: 3\nversion: 1.234.0\n",
     { status: 200, headers: { "content-type": "application/yaml" } },
   )));
   await assert.rejects(

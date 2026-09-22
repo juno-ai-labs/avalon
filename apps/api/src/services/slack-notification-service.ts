@@ -1,6 +1,5 @@
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
-import { workstreamCanonicalUrl } from "@rally/contracts";
 import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
@@ -11,6 +10,7 @@ import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { canonicalWorkstreamUrl } from "./workstream-link-service";
 
 const SlackMentionConnectionSchema = z.strictObject({
   id: z.string().uuid(),
@@ -305,7 +305,7 @@ async function deliverWorkstreamSlack(
       channel_id: channelId,
       outcome: "opened",
     });
-    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+    const target = await canonicalWorkstreamUrl(env, {
       region: env.AVALON_REGION,
       workspaceId: input.workspaceId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),

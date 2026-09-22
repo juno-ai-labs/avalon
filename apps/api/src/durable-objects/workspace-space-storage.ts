@@ -1834,7 +1834,7 @@ export class WorkspaceSpaceStorage {
           WHERE membership.state = 'active' AND space.archived_at IS NULL
             AND ${spaceVisibleToViewerSql("space", "viewer")}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
-          ORDER BY membership.workstream_id, membership.space_id`,
+          ORDER BY membership.workstream_id, (space.scope = 'personal'), membership.space_id`,
         userId,
         userId,
         ...chunk,
@@ -1850,6 +1850,22 @@ export class WorkspaceSpaceStorage {
   /** The active Spaces a Channel is in, as this viewer may see them. */
   channelSpaceIds(userId: string, workstreamId: string): string[] {
     return this.spaceIdsByChannel(userId, [workstreamId]).get(workstreamId) ?? [];
+  }
+
+  /** Stable placement used by links minted without a currently selected Space. */
+  canonicalChannelSpaceId(workstreamId: string): string | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT membership.space_id
+         FROM space_channel_memberships membership
+         JOIN workspace_space_directory space ON space.space_id = membership.space_id
+        WHERE membership.workstream_id = ?
+          AND membership.state = 'active'
+          AND space.archived_at IS NULL
+        ORDER BY (space.scope = 'personal'), membership.space_id
+        LIMIT 1`,
+      workstreamId,
+    ).toArray()[0]?.space_id ?? null;
   }
 
   /**
