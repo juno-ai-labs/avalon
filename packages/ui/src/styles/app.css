@@ -6278,6 +6278,32 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   line-height: 16px;
 }
 .rail-header { border-bottom: 0; gap: 8px; padding: 0 12px; }
+.artifact-sidebar-header {
+  align-items: center;
+  border-bottom: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);
+  display: flex;
+  gap: 8px;
+  padding: 0 8px 0 16px;
+}
+.artifact-sidebar-header h2 {
+  color: var(--av-sys-color-text-default);
+  flex: 1;
+  font-size: 13px;
+  font-weight: 560;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-sidebar-body { min-height: 0; min-width: 0; overflow: auto; }
+.artifact-sidebar-body > .inspector-detail-document:has(> .markdown-body) { min-height: 100%; padding: 24px 22px 72px; }
+.artifact-sidebar-body > .inspector-detail-document:has(> .inspector-detail-image) { min-height: 100%; }
+.artifact-sidebar-body .inspector-detail-image { width: 100%; }
+.artifact-sidebar-body .inspector-detail-audio { margin: 32px 22px; width: calc(100% - 44px); }
+.artifact-sidebar-body > .inspector-detail-preview-status { padding: 24px 22px; }
+.artifact-sidebar-body:has(> .site-detail) { display: flex; overflow: hidden; }
+.artifact-sidebar-body > .site-detail { flex: 1 1 auto; }
 .rail-section { padding-left: 15px; padding-right: 15px; }
 .rail-section-header h3 { font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .compact-run-list .run-rail-row { grid-template-columns: auto minmax(0, 1fr) auto; }

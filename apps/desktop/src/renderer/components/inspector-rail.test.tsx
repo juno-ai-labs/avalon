@@ -11,10 +11,11 @@ import type {
 } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
-import { InspectorRail } from './inspector-rail';
+import { ArtifactSidebar, InspectorRail } from './inspector-rail';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 
 const copyText = vi.hoisted(() => vi.fn());
+const popOutArtifact = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -30,6 +31,7 @@ function announceApplicationSettings(settings: DesktopApplicationSettings): void
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
+    popOutArtifact,
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettings.listeners.add(listener);
@@ -80,6 +82,8 @@ describe('InspectorRail details', () => {
   beforeEach(() => {
     copyText.mockReset();
     copyText.mockResolvedValue(undefined);
+    popOutArtifact.mockReset();
+    popOutArtifact.mockResolvedValue(true);
     applicationSettings.listeners.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -171,7 +175,7 @@ describe('InspectorRail details', () => {
 
   it('opens individual resource details without offering the resource-management popup', () => {
     useUiStore.setState({ railOpen: false });
-    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose: vi.fn() }} /></Tooltip.Provider>);
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar: vi.fn() }} /></Tooltip.Provider>);
     expect(screen.getByRole('dialog', { name: watched.title })).toBeVisible();
     expect(document.querySelector('.rail-surface')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Back to resources' })).toBeNull();
@@ -186,7 +190,7 @@ describe('InspectorRail details', () => {
     // preview stayed open and a label appeared over it on every open.
     useUiStore.setState({ railOpen: false });
     const onClose = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose }} /></Tooltip.Provider>);
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose, onOpenSidebar: vi.fn() }} /></Tooltip.Provider>);
 
     expect(screen.queryByRole('tooltip')).toBeNull();
     fireEvent.keyDown(screen.getByRole('dialog', { name: watched.title }), { key: 'Escape' });
@@ -780,6 +784,92 @@ describe('resource detail content preview', () => {
     mimeType: SITE_MANIFEST_MIME_TYPE,
   };
 
+  it('hands every generated artifact lightbox to the document sidebar', () => {
+    const onOpenSidebar = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          lightbox={{ resourceId: note.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar }}
+          loadResourceContent={vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }))}
+          workstream={{ ...workstream, resources: [note] }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const button = screen.getByRole('button', { name: 'Open in a righthand sidebar' });
+    expect(button.querySelector('.tabler-icon-layout-sidebar-right-inactive')).not.toBeNull();
+    fireEvent.click(button);
+    expect(onOpenSidebar).toHaveBeenCalledWith(note.id);
+  });
+
+  it('does not offer the document sidebar from a source lightbox', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          lightbox={{ resourceId: note.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar: vi.fn() }}
+          loadResourceContent={vi.fn(async () => new Blob(['source']))}
+          workstream={{ ...workstream, resources: [{ ...note, direction: 'source' }] }}
+        />
+      </Tooltip.Provider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Open in a righthand sidebar' })).not.toBeInTheDocument();
+  });
+
+  it('renders a resizable document-only sidebar with title and close', async () => {
+    const onClose = vi.fn();
+    const onResize = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <ArtifactSidebar
+          loadResourceContent={vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }))}
+          onClose={onClose}
+          onResize={onResize}
+          resource={note}
+          width={360}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('complementary', { name: `Artifact: ${note.title}` })).toBeVisible();
+    const resize = screen.getByRole('separator', { name: 'Resize artifact sidebar' });
+    expect(resize).toBeVisible();
+    fireEvent.keyDown(resize, { key: 'ArrowLeft' });
+    expect(onResize).toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { name: 'Quarterly plan', level: 1 })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close sidebar' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('pops every non-site artifact out through its authorized preview bytes', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }));
+    openDetail(note, loadResourceContent);
+
+    const button = screen.getByRole('button', { name: 'Open in a new window' });
+    expect(button.querySelector('.tabler-icon-window-maximize')).not.toBeNull();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(popOutArtifact).toHaveBeenCalledWith({
+      kind: 'generated',
+      resourceId: note.id,
+      version: note.currentVersion,
+      content: expect.any(Uint8Array),
+      mimeType: 'text/markdown',
+      title: note.title,
+    }));
+    expect(loadResourceContent).toHaveBeenCalledWith(note.id, expect.any(AbortSignal));
+  });
+
+  it('does not offer Open in a new window for a source resource', () => {
+    openDetail({ ...note, direction: 'source' }, vi.fn(async () => new Blob(['source'])));
+    expect(screen.queryByRole('button', { name: 'Open in a new window' })).not.toBeInTheDocument();
+  });
+
+  it('disables artifact readers when the preview route cannot represent the format', () => {
+    const opaque = { ...note, title: 'bundle.bin', mimeType: 'application/octet-stream' };
+    openDetail(opaque, vi.fn(async () => new Blob(['opaque'])));
+    expect(screen.getByRole('button', { name: 'Open in a new window' })).toBeDisabled();
+  });
+
   function siteArtifacts() {
     return {
       openArtifact: vi.fn(async () => ({
@@ -795,12 +885,27 @@ describe('resource detail content preview', () => {
         present: vi.fn(async () => true),
         setBounds: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
-        popOut: vi.fn(async () => undefined),
+        popOut: vi.fn(async () => true),
         copyText: vi.fn(async () => undefined),
         openExternal: vi.fn(async () => undefined),
       },
     };
   }
+
+  it('offers Sidebar for a generated live-site lightbox too', () => {
+    const onOpenSidebar = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          lightbox={{ resourceId: site.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar }}
+          siteArtifacts={siteArtifacts()}
+          workstream={{ ...workstream, resources: [site] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open in a righthand sidebar' }));
+    expect(onOpenSidebar).toHaveBeenCalledWith(site.id);
+  });
 
   it('shows a live artifact as a page to open rather than a record to describe', async () => {
     const artifacts = siteArtifacts();
@@ -811,14 +916,16 @@ describe('resource detail content preview', () => {
     );
     act(() => { useUiStore.getState().inspect({ type: 'resource', id: site.id }); });
     await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
-    expect(screen.getByRole('button', { name: /Pop out/u })).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Open in a new window' });
+    expect(button).toBeInTheDocument();
+    expect(button.querySelector('.tabler-icon-window-maximize')).not.toBeNull();
   });
 
   it('falls back to the ordinary resource card when live artifacts are off', () => {
     // Presentation only: with the flag off a site is still an ordinary resource
     // in the rail — it just is not rendered as a page.
     openDetail(site);
-    expect(screen.queryByRole('button', { name: /Pop out/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open in a new window' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /Preview/u })).not.toBeInTheDocument();
     expect(document.querySelector('.inspector-detail')).toBeInTheDocument();
   });
