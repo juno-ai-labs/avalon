@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src https://api.rallywith.ai https://api.with-avalon.com https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
@@ -19,9 +19,6 @@
   Cache-Control: public, max-age=86400
 
 /site.webmanifest
-  Cache-Control: public, max-age=86400
-
-/landing-init.js
   Cache-Control: public, max-age=86400
 
 /rally-social-v01.jpg

@@ -4,8 +4,7 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/access-copy.ts` | Replaceable landing copy and escaped build rendering. |
-| `apps/site/src/landing.ts`, `landing.css`, `index.html` | Email form and its pending/success/error states. |
+| `apps/site/src/access-copy.ts`, `landing.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
@@ -19,17 +18,16 @@
 
 ## How it works
 
-The public landing page links directly to the canonical macOS installer. It does not collect access requests or load Turnstile. The existing intake API, browser-handler module, Ace review tools, and token-based invitation downloads remain available for their separate workflows. Downloading the installer does not grant workspace membership.
+The public landing page links directly to the canonical macOS installer. It does not collect access requests or load Turnstile. The existing intake API, Ace review tools, and token-based invitation downloads remain available for their separate workflows. Downloading the installer does not grant workspace membership.
 
-The retained access-request client obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
-and lowercases it. D1 has a unique normalized email: repeated submissions preserve
+Global `POST /access/requests` remains the intake boundary for a future authorized client. Validation trims and lowercases the email. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
 failed request sends through the existing Resend service, reduced to plain text
 by the shared renderer and sent with no HTML part. Success records provider acceptance; development records `skipped` and
 never calls the provider. An acknowledged duplicate returns the same accepted
-response without sending another message. The widget runs invisibly: Cloudflare
-shows its checkbox only to a visitor it decides has to interact, so most visitors
-never see a challenge.
+response without sending another message. The endpoint still requires and verifies
+a Turnstile proof from any future authorized client; the current landing page does
+not initialize that client or a browser widget.
 
 Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens; `listDownloadGrants` resolves that email by joining `source_id` against whichever table the grant's `source` names — `access_requests` for `manual`/`access_invitation`, `workspace_invitations` for `workspace_invitation` — so a workspace-invitation grant is findable by the invitee's email rather than always rendering as an unattributed standalone link. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
 associate one with a request. This creates a `manual` grant and returns its URL
@@ -97,9 +95,6 @@ outlive it.
 - Installing does not grant workspace membership. The workspace-invitation
   caller keeps the existing authenticated invitation acceptance checks; a grant
   never bypasses them.
-- The `Rally early access` widget stays in Managed mode in the Cloudflare
-  dashboard; otherwise the landing page's `interaction-only` appearance never
-  reveals a checkbox and a flagged visitor cannot pass.
 
 ## Boundary
 
@@ -148,24 +143,12 @@ traffic filter, **not** an exact global allowance. Platform DDoS protection stil
 handles network floods; this change does not claim protection against every botnet.
 
 The route counts actual body bytes (including chunked bodies and incorrect length
-headers) before parsing. Production signup then validates Turnstile server-side,
+headers) before parsing. Production intake validates Turnstile server-side,
 requiring success, the submitting origin's hostname, and `access_request` action.
 Missing secrets, missing tokens, expired/replayed tokens, wrong actions/hosts,
 and verifier errors all fail closed. Local development skips the external verifier
-and never sends mail. CSP allows the Cloudflare challenge script and frame. The landing page renders
-the managed widget with Cloudflare's `interaction-only` appearance: the challenge
-runs without a visible widget, the token still gates the submit button, and
-Cloudflare reveals the checkbox only for a visitor it decides must interact.
-Cloudflare's script keeps the hidden frame out of the page flow, so the container
-has no height until then. A `ResizeObserver` on the container marks it
-`data-revealed` while its rendered height is above zero, which restores the
-spacing above the form and fills a visually hidden live region so screen-reader
-users hear that a verification appeared; both clear when Cloudflare hides the
-widget again, whether after a reset, a token refresh, an interactive timeout, or
-the form's own success state. The note also clears as soon as a proof arrives,
-because Cloudflare leaves a passed widget in view in its success state. Following
-the rendered height rather than Turnstile's callbacks means no assumption about
-which callback hides the widget can go stale. The landing body uses a more specific selector than shared site styling so production CSS chunk order cannot override its dark background and make the copy illegible.
+and never sends mail. The landing site has no intake client and therefore ships
+no challenge script, widget, or public Turnstile key.
 
 The authoritative hourly email budget is a conditional update of the singleton
 `access_email_budget` row in Global D1. It counts attempts, including uncertain
@@ -258,21 +241,12 @@ Recovery and revocation emit operator/record/action audit events without email,
 bearer URL, or provider response bodies. There is no automatic bounce webhook or
 bulk sending in this slice; use provider delivery records and manual suppression.
 
-The managed `Rally early access` Turnstile widget authorizes `rallywith.ai` and,
-by [Cloudflare's hostname inheritance](https://developers.cloudflare.com/turnstile/additional-configuration/hostname-management/),
-its subdomains, including `www.rallywith.ai`. The retired `with-avalon.com`
-domain is intentionally excluded. The widget must stay in Managed mode in the
-Cloudflare dashboard: the landing page asks for the `interaction-only` appearance,
-which a Non-Interactive widget would never reveal and an Invisible widget ignores,
-and only Managed mode can escalate a flagged visitor to a checkbox. Its secret is
-installed as `TURNSTILE_SECRET_KEY` on the Global API. Its public key is configured
-as `RALLY_TURNSTILE_SITE_KEY` in both GitHub `site-production` and `desktop-release`
-environments, since both workflows publish the site. The desktop release's site
-step explicitly passes it to the build. Production site builds require the key;
-normal CI builds can render an unavailable verification state without credentials.
-The dashboard was used for provisioning after the local/connector API credentials
-refused widget/secret writes. Deploy the approved limiter binding and finite
-constants before public acquisition is enabled.
+The Global API retains `TURNSTILE_SECRET_KEY` so the dormant intake endpoint
+continues to fail closed. The landing Worker has no public intake client and does
+not require a Turnstile site key. Any future browser client must provision and
+bind its public key as part of re-enabling that product surface. Deploy the
+approved limiter binding and finite constants before public acquisition is
+enabled.
 
 The Cloudflare Single Redirect rule `Redirect retired public landing hosts to Rally`
 in the `with-avalon.com` zone matches only `with-avalon.com` and
@@ -340,6 +314,28 @@ or numerical retention period is configured.
 
 ## Changelog
 
+### 2026-09-21 — Remove retired acquisition and release deployment coupling
+
+**What changed:** Deleted the unused landing-page intake and Turnstile client,
+removed the Turnstile-key requirement from site deployment, and made
+`deploy-site.yml` the only workflow that publishes the landing Worker. Desktop
+releases continue to advance the canonical installer and record their durable
+release state without rebuilding the site.
+
+**Why:** The direct-download homepage neither submits access requests nor renders
+desktop release metadata. Retaining those build requirements blocked unrelated
+copy and link-preview deployments during release transitions without protecting
+anything visible or executable on the site.
+
+**Considered and rejected:** Keeping the dormant client and release-driven site
+deploy as future-ready scaffolding preserved two independent failure paths and
+the historical risk of an older release checkout overwriting the live site.
+
+**Consequences:** The Global intake endpoint and its server-side Turnstile guard
+remain available but have no public landing-page caller. A future intake UI must
+restore its own client, public key, and tests explicitly. The canonical installer
+continues to advance entirely through desktop publication.
+
 ### 2026-09-21 — Collaboration landing with a direct macOS download
 
 **What changed:** Replaced the email-only landing with the approved static hero and shared-thread demo. The macOS Beta action links to the configured canonical DMG, and the announcement card is noninteractive. Visible copy and metadata use the existing copy renderer.
@@ -348,7 +344,7 @@ or numerical retention period is configured.
 
 **Considered and rejected:** A dialog wrapping the existing intake form preserved private acquisition but contradicted the requested direct-download behavior. It has been removed; the homepage no longer initializes its verification widget.
 
-**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. Keep the stable installer URL aligned with the release configuration. Trust/support links and regional telemetry stay intact.
+**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. The homepage uses the fixed canonical installer alias that desktop publication advances independently of the release record. Trust/support links and regional telemetry stay intact.
 
 Shipped in #892.
 

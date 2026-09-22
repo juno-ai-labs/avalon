@@ -9,13 +9,13 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "RALLY_RELEASE_DISCOVERY=1 pnpm build && wrangler deploy --config wrangler.jsonc"
+    "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
     "@rally/contracts": "workspace:*"
   },
   "devDependencies": {
-    "jsdom": "30.0.1",
+    "jsdom": "latest",
     "typescript": "catalog:",
     "vite": "latest",
     "vitest": "catalog:",
