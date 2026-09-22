@@ -866,7 +866,9 @@ member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
 Channels. The path keeps the word `channels` because it is a shipped route and
 renaming one to describe its payload buys a reader nothing; what it returns is
 `SpaceChannelPageSchema`, a page of `SpaceConversation` rows. The next section
-is what that page is.
+is what that page is. A Breakout row carries both its own appearance and its
+parent Channel's appearance, so a compact hierarchy treatment never has to
+guess either identity from an id when the person has chosen an icon and colour.
 
 WorkspaceDO decides which conversations the page is about and in what order,
 then projects the Channels through the same directory select and mapper the
@@ -1943,6 +1945,32 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-22 — Needs attention shows the Channel-to-Breakout identity
+
+**What changed:** Every Needs attention row now puts its conversation identity
+before the name. A Channel is its icon inside the shared pebble. A Breakout is
+its parent Channel pebble, the `chevrons-right` mark, and its own bare icon.
+Each icon opens the same identity tooltip used by the Channel rail. Breakout
+projections now preserve their selected appearance, and the Space page joins
+the parent Channel's appearance into the Breakout row. WorkspaceDO migration
+69 adds the nullable projection column; older rows use the id-derived fallback
+until their next projection arrives. A breakout projection can still be
+accepted against the older table while an Organization is held before the
+appearance migration; that write omits the new column until it exists.
+
+**Why:** The icons make a Breakout's relationship to its Channel scannable
+alongside the existing `in Channel` text. Reusing the rail's marks and tooltip
+keeps the identity consistent, while projecting saved appearances prevents the
+table from disagreeing with the conversation after it opens.
+
+**Considered and rejected:** Deriving both marks from ids only. That would have
+needed no projection change, but a person who had customized either appearance
+would see a different identity in Needs attention. A new one-line tooltip was
+also rejected because Channel and Breakout marks already have a purpose-built
+identity card.
+
+PR #941. Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
 
 ### 2026-09-22 — Deep links reveal their hierarchy selection
 
