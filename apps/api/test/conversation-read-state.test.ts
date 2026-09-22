@@ -114,6 +114,19 @@ function environment(recorded: Recorded): Env {
       get: () => ({
         handleProductRequest: (request: { operation: string } & Record<string, unknown>) => {
           recorded.productRequests.push(request);
+          if (request.operation === "create_message") {
+            return {
+              status: 200,
+              bodyJson: JSON.stringify({
+                turn: {
+                  turnId: "00000000-0000-7000-8000-000000000006",
+                  clientMessageId: "00000000-0000-7000-8000-000000000007",
+                  createdAt: "2026-09-22T12:00:00.000Z",
+                },
+                deliveryState: "pending",
+              }),
+            };
+          }
           return {
             status: 200,
             bodyJson: JSON.stringify(testWorkstreamContract({
@@ -161,6 +174,8 @@ async function request(
   recorded: Recorded,
   path: string,
   body: unknown,
+  method = "PATCH",
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; code: unknown; body: Record<string, unknown> | null }> {
   const app = new Hono<HonoAppEnv>();
   app.use("*", async (c, next) => {
@@ -173,8 +188,8 @@ async function request(
   const response = await app.request(
     `https://api.example.com${path}`,
     {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
+      method,
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     },
     environment(recorded),
@@ -185,6 +200,47 @@ async function request(
 }
 
 const read = { readThroughSequenceNumber: 6, observedManualUnreadGeneration: 2 };
+
+describe("ordinary message admission", () => {
+  it("sends a non-socket client through the authenticated conversation authority", async () => {
+    const recorded = recorder();
+    const clientMessageId = "00000000-0000-7000-8000-000000000007";
+
+    const answer = await request(
+      recorded,
+      `/conversations/${workstreamId}/substreams/${substreamId}/messages`,
+      { text: "Sent through the ordinary API", clientMessageId },
+      "POST",
+      { "x-rally-operation-id": clientMessageId },
+    );
+
+    expect(answer.status).toBe(201);
+    expect(answer.body).toEqual({
+      turn: {
+        turnId: "00000000-0000-7000-8000-000000000006",
+        clientMessageId,
+        createdAt: "2026-09-22T12:00:00.000Z",
+      },
+      deliveryState: "pending",
+    });
+    expect([...recorded.objectNames]).toEqual([
+      conversationObjectName("global", workspaceId, workstreamId, substreamId),
+    ]);
+    expect(recorded.productRequests).toEqual([expect.objectContaining({
+      operation: "create_message",
+      input: expect.objectContaining({
+        text: "Sent through the ordinary API",
+        clientMessageId,
+        telemetryOperationId: clientMessageId,
+        telemetryJourney: "message_send",
+      }),
+      auth: expect.objectContaining({ userId, workspaceId }),
+    })]);
+    expect(recorded.authorizeViewer).toHaveBeenCalledWith({
+      workspaceId, parentId: workstreamId, substreamId, userId,
+    });
+  });
+});
 
 describe("acknowledging a read", () => {
   it("moves the waterline on the private substream that was read, not on Main", async () => {
