@@ -2521,7 +2521,7 @@ describe("a member's message travels the whole pipeline", () => {
 
   it("admits one ordinary human continuation from a resource authorization callback", async () => {
     const stub = agentStub();
-    const opened = await initializeWorkstream(stub, "first message");
+    const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
     await settledRun(stub, opened.body.harnessRunId as string);
     const failedToolInvocationId = `${crypto.randomUUID()}:turn:1:tool:0`;
     const input = {
@@ -2536,6 +2536,9 @@ describe("a member's message travels the whole pipeline", () => {
     const auth = { ...AUTH, sessionId: "resource-authorization:callback", principal: "resource_authorization" };
     const before = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count);
+
+    const spoof = await product(stub, { operation: "create_message", auth: AUTH, input });
+    expect(spoof.status).toBe(403);
 
     const first = await product(stub, { operation: "create_message", auth, input });
     const replay = await product(stub, { operation: "create_message", auth, input });

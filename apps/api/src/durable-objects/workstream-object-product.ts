@@ -4229,6 +4229,10 @@ export class WorkstreamObjectProductService {
     reauthorizeWorkspaceMembership: boolean,
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    if (input.clientMessageId.startsWith("resource-authorization:")
+      && auth.principal !== "resource_authorization") {
+      throw new ApiError(403, "resource_authorization_message_id_reserved", "This message ID is reserved for connector authorization");
+    }
     const receiptInput = { ...input };
     delete receiptInput.telemetryOperationId;
     delete receiptInput.telemetryRequestReceivedAt;

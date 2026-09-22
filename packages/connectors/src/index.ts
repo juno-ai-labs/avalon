@@ -508,7 +508,7 @@ function googleRejectedArgument(
 }
 
 export const GoogleFileWriteAuthorizationGuidance =
-  "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
+  "Files with writableByRally=true can be edited immediately. If an existing file is editable by the connected user but not yet app-authorized, a requested write surfaces an Allow editing card for its one-file grant. After the user authorizes it, retry the same edit; do not create a duplicate.";
 
 /**
  * The cursor parameter every paginated Google tool declares, and what it says.
@@ -2369,7 +2369,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         });
         const token = await safeJsonBounded(response, 256_000);
         if (!response.ok || !readString(token, "access_token")) {
-          throw new ConnectorError("provider_error", "Google resource authorization failed", token);
+          throw new ConnectorError("provider_error", "Google resource authorization failed");
         }
         const inspected = await this.inspect(input);
         if (!inspected.authorized) {
@@ -4590,7 +4590,9 @@ function googleDriveFileNotWritableError(
 ): ConnectorError {
   return new ConnectorError(
     "unsupported_capability",
-    "Google file is read-only for Rally; create it through Rally or explicitly open/share it with Rally before editing",
+    !isAppAuthorized && canEdit && name && capability
+      ? "Rally needs a one-file grant. Ask the user to use the Allow editing button on this failed write, then retry the same edit; do not create a copy or retry before authorization"
+      : "Google file cannot be edited through this Rally connection",
     {
       provider: "google",
       reason: "drive_file_not_writable",

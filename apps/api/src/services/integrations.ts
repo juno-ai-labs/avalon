@@ -4244,9 +4244,11 @@ export async function runWorkstreamHarness(
               ? ConnectorResourceAuthorizationRequestSchema.safeParse({
                     ...resourceAuthorization.data,
                     connectionId,
+                    parentKind: input.parentKind,
                     parentId: input.parentId,
                     substreamId: input.substreamId ?? "0",
                     failedToolInvocationId: event.toolCallId,
+                    continuationId: crypto.randomUUID(),
                   })
               : null;
             const participantSafeResult = recovery?.success ? { recovery: recovery.data } : undefined;
@@ -5633,7 +5635,7 @@ function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<stri
   }
   if (granted.has("docs.write") || granted.has("sheets.write")) {
     examples.push(
-      `Check writability before editing — a search result carries \`writableByRally\`, and only a file where it is true can be edited through this connection. A file created by these tools always is; an arbitrary file found in Drive usually is not, so create one rather than assuming an existing file can be written.`,
+      `Check writability before editing — a search result carries \`writableByRally\`. An existing file the user can edit may still need Rally's one-file grant. Attempt the requested edit to surface the Allow editing card, wait for authorization, then retry that same edit instead of creating a duplicate.`,
     );
   }
   if (granted.has("sheets.read")) {
