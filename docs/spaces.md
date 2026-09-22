@@ -1995,7 +1995,12 @@ remove intents: it restores the source if the fast swap already removed it,
 using only the audience already stored on the target rather than the source's
 possibly widened live roster, rebuilds the destination through canonical
 audience operations, then retires the source and finalizes the original
-membership generations.
+membership generations. The fast swap also proves the prepared source revision
+and membership generation before deleting it, so a same-audience source that
+was removed and re-added cannot satisfy a stale move. Recovery reads persisted
+provenance directly from WorkstreamDO and spends the WorkspaceDO-staged intent;
+it does not re-authorize against the initiating user's mutable Channel access
+after provenance may already have moved.
 
 **Why:** The prior server-side operation removed an HTTP boundary but still
 performed a complete add followed by a complete remove. For the common move

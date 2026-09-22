@@ -1413,7 +1413,7 @@ misrouted product statement now fails because the table or column is absent.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
 - **A Channel's readers are the union of one direct source and every Space source that still reaches it, and a source can only widen.** `lib/channel-audience.ts` is the only place that union is derived, and it is written over `sourceId` rather than over Spaces, so a second kind of source composes by being passed in. `workspace` anywhere makes the whole audience Organization-wide; otherwise the readers are the union of every source's participants, and nothing lets one source remove a reader another supplies. Withdrawing a source therefore removes only the readers *that source seated* who no remaining source still supplies, and narrows the scope only when nothing left is Organization-wide. A retraction that recomputed the audience instead of reading the provenance would take out somebody who was added directly or named in a message and happens to appear on the departing Space's roster. The readers a retraction *seats* are attributed the same way: to each remaining source that supplies them, never to the source that is leaving, whose row is gone by then and whose name the attribution could not commit under at all.
-- **Equivalent Space sources may exchange identity, never audience.** `replaceEquivalentSpaceAccessSource` compares the stored source's scope and participant set before it atomically transfers the source row and every supplied-reader attribution to the target Space id. It does not return a reader delta or call a SubstreamAgent because the effective audience is unchanged; any mismatch is a fenced refusal that sends the caller through the ordinary audience-changing path.
+- **Equivalent Space sources may exchange identity, never audience or generation.** `replaceEquivalentSpaceAccessSource` compares the stored source's scope, participant set, Space revision, and membership generation before it atomically transfers the source row and every supplied-reader attribution to the target Space id. It does not return a reader delta or call a SubstreamAgent because the effective audience is unchanged; any mismatch is a fenced refusal that sends the caller through the ordinary audience-changing path.
 - **This object records why somebody may read; it never admits them.** Admission is `resolveScopeAccess` over the grant ledger, or the main conversation's scope and participant rows on a Channel that has never been shared. The RPCs in `workstream-access-protocol.ts` return a *plan*, and applying it goes back through the Channel's canonical scope and participant operations — which is where `assertRetainedContentContains` and the retained-content triggers run. A second writer beside them would be a second place an audience could widen without the fence. `applySpaceAccessSource`'s `bornWithSourceApplied` is not one: it commits provenance for an audience `initialize` already wrote under those same operations, and it applies nothing itself.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
@@ -1821,7 +1821,12 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 replaces a Space access source with another Space id when the stored source and
 requested target name the same scope and participant set. The source row, its
 revision and membership fences, and the union of supplied-reader attribution
-move in one synchronous SQLite transaction.
+move in one synchronous SQLite transaction. The operation requires the prepared
+source revision and membership generation as well as the target fences, so a
+source removed and re-added with the same audience cannot be mistaken for the
+source that preparation observed. Recovery reads persisted Space provenance
+through an authority-internal RPC rather than rechecking the initiating user's
+mutable Channel access after the move has begun.
 
 **Why:** A Channel moved between equivalent Spaces previously paid the full
 audience plan/apply/confirm protocol twice even though its effective readers did
@@ -1841,8 +1846,10 @@ already removed the source before WorkspaceDO detects a stale revision, recovery
 temporarily restores that source from the audience already persisted on the
 target — never the source Space's possibly widened live roster — rebuilds the
 destination through the canonical plan/apply/confirm protocol, and only then
-retracts it. Replaying the same operation id returns its durable first result
-without moving attribution twice.
+retracts it. That recovery spends WorkspaceDO's durable, already-authorized
+intent; losing the actor's current Channel access cannot strand it. Replaying
+the same operation id returns its durable first result without moving
+attribution twice.
 
 ### 2026-09-21 — Migration fingerprint drift no longer blocks an authority
 
