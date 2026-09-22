@@ -5,6 +5,7 @@ import { AutomationGlyph } from './workstream-glyph';
 import { InlineError, Tip } from './primitives';
 import { SidebarHorizontalLine, SidebarRow } from './resizable-sidebar';
 import { SidebarNavigationRowContent } from './navigation';
+import { SidebarRefreshRow } from './sidebar-refresh-row';
 export interface SidekickRow {
   recommended?: boolean;
   /** Management options have not arrived for this non-owned row yet. */
@@ -27,8 +28,7 @@ export interface SidekickRow {
 
 export type SidekickSectionFailure = 'load' | 'remove' | 'recommend' | 'unrecommend';
 
-const sidekickSectionFailureCopy: Record<SidekickSectionFailure, string> = {
-  load: 'Some Sidekick information may be out of date.',
+const sidekickSectionFailureCopy: Record<Exclude<SidekickSectionFailure, 'load'>, string> = {
   remove: 'That Sidekick couldn’t be removed.',
   recommend: 'That Sidekick couldn’t be recommended.',
   unrecommend: 'That Sidekick recommendation couldn’t be removed.',
@@ -44,32 +44,32 @@ const sidekickSectionFailureCopy: Record<SidekickSectionFailure, string> = {
  * still kept apart in the caller, because only one of them may ever be turned
  * into a claim about the room.
  *
- * A failure sits *beside* the rows rather than replacing them. A failed removal
- * is an action failure, while a failed read says only that the rows which did
- * arrive may be incomplete. Alone — nothing arrived — only a read failure can
- * take the section's heading with it, because then the reader is being told
- * about this section rather than about a row in it.
+ * A failed read keeps the rows that did arrive and offers a normal Refresh row;
+ * it never writes warning copy into the rail. Alone — nothing arrived — the
+ * refresh action can take the section's heading with it because it still gives
+ * the reader a useful way to recover the missing section.
  *
  * The state is a closed semantic union. A transport or provider message is
  * diagnostic data, not product copy; accepting only the failed operation keeps
  * arbitrary API responses out of the sidebar and leaves this shared
  * presentation boundary responsible for the words a person sees.
  */
-export function SidekickSection({ items, failure, onOpen, onMenuOpen }: {
+export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh }: {
   items?: SidekickRow[] | undefined;
   failure?: SidekickSectionFailure | undefined;
-  onOpen?: (id: string) => void; onMenuOpen?: () => void;
+  onOpen?: (id: string) => void; onMenuOpen?: () => void; onRefresh?: () => void;
 }): React.JSX.Element | null {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
-    return failure === 'load'
+    return failure === 'load' && onRefresh
       ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
-        <InlineError>Sidekicks couldn’t be loaded.</InlineError>
+        <SidebarRefreshRow onRefresh={onRefresh} />
       </section>
       : null;
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
-    {failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
+    {failure === 'load' ? onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />
+      : failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright

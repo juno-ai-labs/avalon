@@ -115,7 +115,7 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, substreamDrag, mainActions }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, substreamDrag, mainActions }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -142,6 +142,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
    */
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;
+  onRefreshSidekicks?: (() => void) | undefined;
   addSidekick?: React.ReactNode;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
@@ -419,7 +420,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
-        <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
+        <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} onRefresh={onRefreshSidekicks} />
         {addSidekick}
       </SidebarScroll>
       <SidebarCollapseFooter

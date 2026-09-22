@@ -281,14 +281,17 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('still shows a failure that is about the room rather than the viewer', async () => {
+  it('offers a refresh row for a failed room read without writing warning copy into the sidebar', async () => {
     api.getWorkstreamSidekicks.mockRejectedValue(new ApiError('The service is unavailable.', 500));
     renderScreen();
 
-    expect(await screen.findByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Refresh' })).toBeVisible();
+    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
     expect(screen.queryByText('The service is unavailable.')).not.toBeInTheDocument();
     // And the half that did answer stays on screen under it.
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await vi.waitFor(() => expect(api.getWorkstreamSidekicks).toHaveBeenCalledTimes(2));
   });
 
   it('keeps a management-options failure in the picker rather than misreporting the list', async () => {

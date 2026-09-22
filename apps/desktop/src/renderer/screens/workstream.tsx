@@ -536,6 +536,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         <WorkstreamSidebar
           mainVisible={!guest || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
+          onRefreshSidekicks={context.refreshSidekicks}
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
           sidekickFailure={context.sidekickFailure}
