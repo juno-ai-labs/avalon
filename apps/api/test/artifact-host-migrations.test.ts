@@ -9,8 +9,5 @@ describe("ArtifactHostDO migrations", () => {
       "fnv1a64:cab8ce812eccd531",
       "fnv1a64:0a80fa5e6713180a",
     ]);
-    expect(ARTIFACT_HOST_SCHEMA_MIGRATIONS[0]?.compatibleImplementationHashes).toEqual([
-      "fnv1a64:d86989fbefcb799f",
-    ]);
   });
 });

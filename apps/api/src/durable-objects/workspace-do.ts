@@ -1626,9 +1626,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     //
     // A separate version rather than an amendment to 4: every object that
     // constructed between the two deploys recorded a hash of 4's statements,
-    // and editing them in place throws `workspace_do_schema_hash_mismatch:4`
-    // in the constructor — permanently, for every workspace that ran the
-    // earlier release.
+    // and editing them in place emits `workspace_do_schema_hash_mismatch:4`.
+    // The warning no longer blocks construction, but an appended migration is
+    // still the only way to make old and new object schemas converge.
     //
     // Only for an object that already exists. A workspace created after this
     // deploy runs its whole ledger before it has an identity row, and arming a
@@ -1697,9 +1697,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     //
     // Version 1 still creates the narrow table and must: its statements are
     // hashed into every deployed object's `_sql_schema_migrations` receipt,
-    // and editing them in place throws `workspace_do_schema_hash_mismatch:1`
-    // in the constructor of every workspace that ran an earlier release. A new
-    // object therefore creates the old shape and immediately rebuilds it,
+    // and editing them in place emits `workspace_do_schema_hash_mismatch:1`
+    // for every workspace that ran an earlier release. A new object therefore
+    // creates the old shape and immediately rebuilds it,
     // which costs one empty copy once.
     `CREATE TABLE workstream_notification_intents_kinds (
       intent_id TEXT PRIMARY KEY,
