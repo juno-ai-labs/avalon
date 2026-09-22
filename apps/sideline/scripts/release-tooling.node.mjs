@@ -60,3 +60,9 @@ test('the release workflow reuses the desktop trust boundary but not its public 
   );
   assert.doesNotMatch(workflow, /RALLY_MAC_PROVISIONING_PROFILE/u);
 });
+
+test('same-version publication recovery binds the tag to the locally built bytes', async () => {
+  const publisher = await readFile(resolve(sidelineDirectory, 'scripts/publish-r2-release.mjs'), 'utf8');
+  assert.match(publisher, /liveFeedText !== localFeedText/u);
+  assert.match(publisher, /does not match this build/u);
+});

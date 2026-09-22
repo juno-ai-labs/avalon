@@ -24,6 +24,22 @@ describe("initializeSidelineUpdater", () => {
     const updater = updaterDouble();
     const result = initializeSidelineUpdater({
       isPackaged: false,
+      isReleaseBuild: false,
+      platform: "darwin",
+      arch: "arm64",
+      showMessageBox: vi.fn(),
+      updater: updater as never,
+      log: { info: vi.fn(), error: vi.fn() },
+    });
+    expect(result.enabled).toBe(false);
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it("does not contact the release feed from an unsigned local package", () => {
+    const updater = updaterDouble();
+    const result = initializeSidelineUpdater({
+      isPackaged: true,
+      isReleaseBuild: false,
       platform: "darwin",
       arch: "arm64",
       showMessageBox: vi.fn(),
@@ -40,6 +56,7 @@ describe("initializeSidelineUpdater", () => {
     const showMessageBox = vi.fn().mockResolvedValue({ response: 0 });
     const result = initializeSidelineUpdater({
       isPackaged: true,
+      isReleaseBuild: true,
       platform: "darwin",
       arch: "arm64",
       showMessageBox,
@@ -57,7 +74,10 @@ describe("initializeSidelineUpdater", () => {
       message: "Sideline is ready to update",
       detail: "Version 0.2.0 has been downloaded. Restart Sideline to install it.",
       buttons: ["Restart Sideline", "Later"],
-    })));
-    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+    })), { timeout: 2_000 });
+    await vi.waitFor(
+      () => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true),
+      { timeout: 2_000 },
+    );
   });
 });

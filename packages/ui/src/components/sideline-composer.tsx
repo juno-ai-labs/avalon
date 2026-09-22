@@ -39,9 +39,12 @@ export function SearchSelect(props: {
   const options = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return needle
-      ? props.options.filter((option) => `${option.group ?? ""} ${option.label}`.toLocaleLowerCase().includes(needle))
+      ? props.options.filter((option) => (
+          option.value === props.value
+          || `${option.group ?? ""} ${option.label}`.toLocaleLowerCase().includes(needle)
+        ))
       : props.options;
-  }, [props.options, query]);
+  }, [props.options, props.value, query]);
   const groups = [...new Set(options.map((option) => option.group).filter((group): group is string => Boolean(group)))];
   const ungrouped = options.filter((option) => !option.group);
   return (

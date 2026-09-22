@@ -3586,7 +3586,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       authority_basis TEXT NOT NULL CHECK (length(authority_basis) BETWEEN 1 AND 180),
       created_at TEXT NOT NULL,
       revoked_at TEXT,
-      PRIMARY KEY (workspace_id, impersonator_user_id, represented_user_id)
+      PRIMARY KEY (workspace_id, impersonator_user_id, represented_user_id, authority_basis)
     ) STRICT`,
     `CREATE INDEX workspace_impersonation_relationships_targets_idx
       ON workspace_impersonation_relationships(workspace_id, impersonator_user_id, revoked_at, represented_user_id)`,
@@ -12366,6 +12366,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     operationId: string;
     actorUserId: string | null;
     reason: string;
+    impersonationRevocation?: { workspaceId: string; authorityBasis: string };
   }): Promise<{ nodes: RetirementGraphNode[] }> {
     await this.initialized;
     const sql = this.state.storage.sql;
@@ -12411,6 +12412,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
       }
     });
+    if (input.impersonationRevocation) {
+      this.assertWorkspace(input.impersonationRevocation.workspaceId);
+      new WorkspaceImpersonationStorage(this.state.storage).revoke({
+        workspaceId: input.impersonationRevocation.workspaceId,
+        authorityBasis: input.impersonationRevocation.authorityBasis,
+        now: new Date(input.retiredAt).toISOString(),
+      });
+    }
     await this.retireObject(input);
     return { nodes: this.retirementGraphNodes() };
   }

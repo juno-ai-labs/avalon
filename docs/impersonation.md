@@ -22,9 +22,9 @@ basis.
 
 ## How it works
 
-WorkspaceDO migration 67 stores a directed `impersonator_user_id` to
-`represented_user_id` relationship with its authority basis and revocation
-state. Producers call the WorkspaceDO writer; reads never infer an edge from
+WorkspaceDO migration 67 stores producer-scoped grants for a directed
+`impersonator_user_id` to `represented_user_id` relationship, with each grant's
+authority basis and revocation state. Producers call the WorkspaceDO writer; reads never infer an edge from
 roles, workspace names, or demo records. Demo preparation is one producer and
 writes every ordered pair of seated users, including self-pairs, in one
 idempotent call.
@@ -71,12 +71,13 @@ an interrupted build can be replaced by its retry. Only
 `latest-mac.yml` and `Sideline.dmg` are mutable, and their exact public URLs are
 purged and hash-verified after upload. The manifest moves last, after the
 versioned payloads and canonical installer are publicly verified, so a retry
-after commit only verifies the published bytes and finishes the release tag.
+after commit verifies that the live manifest is byte-identical to the local
+release before it finishes the release tag.
 The embedded generic-provider URL points
-only at that prefix. A packaged Apple-silicon build checks it at launch and every
-three hours, downloads in the background, and offers to restart after the update
-is ready. Development, unsigned, non-macOS, and non-arm64 builds never contact
-the production feed.
+only at that prefix. A signed release build on packaged Apple Silicon checks it
+at launch and every three hours, downloads in the background, and offers to
+restart after the update is ready. Development, unsigned local packages,
+non-macOS, and non-arm64 builds never contact the production feed.
 
 ## Invariants
 
@@ -146,9 +147,10 @@ pnpm --filter @rally/sideline test:release
 ## Data model
 
 `workspace_impersonation_relationships` is keyed by workspace, impersonator,
-and represented user. `authority_basis` identifies the producer; `revoked_at`
-removes an edge without erasing its history. Re-granting the same exact edge is
-an upsert, not a second row. Audit rows live in the existing independent
+represented user, and authority basis. Each producer therefore owns an
+independent grant, and revoking one authority basis cannot remove another
+producer's authorization for the same pair. Re-granting the same exact
+producer-owned edge is an upsert, not a second row. Audit rows live in the existing independent
 `audit_events` database and contain a SHA-256 content digest rather than the
 message body.
 

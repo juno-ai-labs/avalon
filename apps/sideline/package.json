@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "pnpm typecheck && electron-vite build",
     "package:local": "pnpm build && electron-builder --config electron-builder.yml --mac --arm64 --dir --publish never",
-    "package:release": "pnpm build && node scripts/package-macos.mjs",
+    "package:release": "SIDELINE_RELEASE_BUILD=true pnpm build && node scripts/package-macos.mjs",
     "release:publish": "node scripts/publish-r2-release.mjs",
     "test:release": "node --test scripts/*.node.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",

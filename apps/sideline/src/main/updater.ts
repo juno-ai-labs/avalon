@@ -19,6 +19,7 @@ type SidelineUpdater = Omit<Pick<
 
 export interface SidelineUpdateDependencies {
   isPackaged: boolean;
+  isReleaseBuild: boolean;
   platform: NodeJS.Platform;
   arch: string;
   showMessageBox(options: MessageBoxOptions): Promise<MessageBoxReturnValue>;
@@ -29,7 +30,7 @@ export interface SidelineUpdateDependencies {
 
 export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): { enabled: boolean } {
   const log = deps.log ?? console;
-  if (!deps.isPackaged || deps.platform !== "darwin" || deps.arch !== "arm64") {
+  if (!deps.isPackaged || !deps.isReleaseBuild || deps.platform !== "darwin" || deps.arch !== "arm64") {
     log.info("[sideline] auto-update disabled for this build");
     return { enabled: false };
   }

@@ -106,10 +106,9 @@ export class ImpersonationService {
     ]);
     if (!workspace) throw new ApiError(403, "workspace_unavailable", "This Organization is unavailable");
 
-    const participants = [];
-    for (const relationship of relationships) {
+    const participants = (await Promise.all(relationships.map(async (relationship) => {
       const member = await this.activeMember(relationship.representedUserId);
-      if (!member) continue;
+      if (!member) return null;
       const auth = representedAuth(this.operator, member);
       const directory = new WorkstreamDirectoryService(this.env, auth);
       const workstreams = [];
@@ -120,14 +119,13 @@ export class ImpersonationService {
         cursor = page.nextCursor ?? undefined;
       } while (cursor);
 
-      const destinations = [];
-      for (const workstream of workstreams) {
-        destinations.push({
+      const destinations = (await Promise.all(workstreams.map(async (workstream) => {
+        const root = {
           workstreamId: workstream.id,
           substreamId: "0" as const,
           label: workstream.title,
           workstreamLabel: workstream.title,
-        });
+        };
         const parent = await durableObjectStubForWorkspace(
           this.env,
           this.env.WORKSTREAM_DOS,
@@ -139,15 +137,15 @@ export class ImpersonationService {
           parentId: workstream.id,
           userId: member.userId,
         });
-        destinations.push(...children.children.map((child) => ({
+        return [root, ...children.children.map((child) => ({
           workstreamId: workstream.id,
           substreamId: child.substreamId,
           label: child.title,
           workstreamLabel: workstream.title,
-        })));
-      }
-      participants.push({ userId: member.userId, name: member.name, avatarUrl: member.avatarUrl, destinations });
-    }
+        }))];
+      }))).flat();
+      return { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl, destinations };
+    }))).filter((participant): participant is NonNullable<typeof participant> => participant !== null);
 
     return SidelineCatalogSchema.parse({
       workspace: { id: this.operator.workspaceId, name: workspace.name },
@@ -161,10 +159,14 @@ export class ImpersonationService {
     const correlation = await sha256Hex([
       this.operator.workspaceId,
       this.operator.userId,
+      input.representedUserId,
+      input.workstreamId,
+      input.substreamId,
       input.idempotencyKey,
+      contentDigest,
     ].join(":"));
     const attemptAuditId = `impersonation:${correlation}:attempt`;
-    const resultAuditId = `impersonation:${correlation}:result`;
+    const resultAuditId = (): string => `impersonation:${correlation}:result:${crypto.randomUUID()}`;
     const auditBase: Record<string, unknown> = {
       operatorUserId: this.operator.userId,
       representedUserId: input.representedUserId,
@@ -184,7 +186,7 @@ export class ImpersonationService {
       attemptAuditId,
       this.operator.workspaceId,
       this.operator.userId,
-      input.workstreamId,
+      null,
       input.representedUserId,
       JSON.stringify({ ...auditBase, decision: "attempted" }),
       input.idempotencyKey,
@@ -194,21 +196,23 @@ export class ImpersonationService {
     try {
       await this.requireOperator();
     } catch (error) {
-      await this.recordOutcome(resultAuditId, auditBase, "sideline_access_denied");
+      await this.recordOutcome(resultAuditId(), auditBase, "sideline_access_denied");
       throw error;
     }
     const represented = await this.activeMember(input.representedUserId);
     if (!represented) {
-      await this.recordOutcome(resultAuditId, auditBase, "represented_member_inactive");
+      await this.recordOutcome(resultAuditId(), auditBase, "represented_member_inactive");
       throw new ApiError(403, "represented_member_inactive", "This participant is no longer available");
     }
     const relationship = await this.relationship(input.representedUserId);
     if (!relationship) {
-      await this.recordOutcome(resultAuditId, auditBase, "impersonation_not_authorized");
+      await this.recordOutcome(resultAuditId(), auditBase, "impersonation_not_authorized");
       throw new ApiError(403, "impersonation_not_authorized", "You can no longer send as this participant");
     }
     auditBase.relationshipAuthorityBasis = relationship.authorityBasis;
 
+    let validatedWorkstreamId: string | undefined;
+    let receipt: Awaited<ReturnType<Awaited<ReturnType<ConversationService["writableClient"]>>["createMessage"]>>;
     try {
       const auth = representedAuth(this.operator, represented);
       const conversations = new ConversationService(this.env, auth);
@@ -216,8 +220,9 @@ export class ImpersonationService {
       if (parent.kind !== "workstream") {
         throw new ApiError(404, "destination_not_found", "This destination is no longer available");
       }
+      validatedWorkstreamId = input.workstreamId;
       const client = await conversations.writableClient(input.workstreamId, input.substreamId);
-      const receipt = await client.createMessage({
+      receipt = await client.createMessage({
         text: input.message,
         clientMessageId: input.idempotencyKey,
         mentions: [],
@@ -226,16 +231,16 @@ export class ImpersonationService {
         telemetryOperationId: input.idempotencyKey,
         telemetryJourney: "message_send",
       });
-      await this.recordOutcome(resultAuditId, auditBase, "accepted", receipt.turn.turnId);
-      return SidelineSendResponseSchema.parse({
-        messageId: receipt.turn.turnId,
-        createdAt: receipt.turn.createdAt,
-      });
     } catch (error) {
       const code = error instanceof ApiError ? error.code : "message_admission_failed";
-      await this.recordOutcome(resultAuditId, auditBase, code);
+      await this.recordOutcome(resultAuditId(), auditBase, code, undefined, validatedWorkstreamId);
       throw error;
     }
+    await this.recordOutcome(resultAuditId(), auditBase, "accepted", receipt.turn.turnId, validatedWorkstreamId);
+    return SidelineSendResponseSchema.parse({
+      messageId: receipt.turn.turnId,
+      createdAt: receipt.turn.createdAt,
+    });
   }
 
   private async recordOutcome(
@@ -243,6 +248,7 @@ export class ImpersonationService {
     base: Record<string, unknown>,
     outcome: string,
     messageId?: string,
+    workstreamId?: string,
   ): Promise<void> {
     await this.env.AUDIT_DB.prepare(
       `INSERT OR IGNORE INTO audit_events
@@ -254,7 +260,7 @@ export class ImpersonationService {
       auditId,
       this.operator.workspaceId,
       this.operator.userId,
-      (base.destination as { workstreamId: string }).workstreamId,
+      workstreamId ?? null,
       base.representedUserId,
       JSON.stringify({ ...base, outcome, ...(messageId ? { messageId, turnId: messageId } : {}) }),
       base.idempotencyKey,
