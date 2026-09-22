@@ -150,6 +150,24 @@ export type WorkspaceSpaceMembershipSettleRequest = z.infer<typeof WorkspaceSpac
 export const WorkspaceSpaceMembershipRemovalRequestSchema = WorkspaceSpaceMembershipRequestSchema;
 export type WorkspaceSpaceMembershipRemovalRequest = z.infer<typeof WorkspaceSpaceMembershipRemovalRequestSchema>;
 
+/** One server-side transfer between two Spaces owned by this WorkspaceDO. */
+export const WorkspaceSpaceMembershipMoveRequestSchema = SpaceActorSchema.extend({
+  sourceSpaceId: SpaceIdSchema,
+  targetSpaceId: SpaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+}).strict();
+export type WorkspaceSpaceMembershipMoveRequest = z.infer<typeof WorkspaceSpaceMembershipMoveRequestSchema>;
+
+export const WorkspaceSpaceMembershipMoveSettleRequestSchema = WorkspaceSpaceMembershipMoveRequestSchema.extend({
+  operationId: IdSchema,
+  sourceSpaceRevision: z.number().int().positive(),
+  sourceMembershipGeneration: z.number().int().positive(),
+  targetSpaceRevision: z.number().int().positive(),
+  targetMembershipGeneration: z.number().int().positive(),
+}).strict();
+export type WorkspaceSpaceMembershipMoveSettleRequest =
+  z.infer<typeof WorkspaceSpaceMembershipMoveSettleRequestSchema>;
+
 /**
  * A refusal with legacy reader details and actionable Channel ids.
  *
@@ -178,6 +196,31 @@ export const WorkspaceSpaceMembershipPlanResultSchema = z.union([
   WorkspaceSpaceAudienceFailureSchema,
 ]);
 export type WorkspaceSpaceMembershipPlanResult = z.infer<typeof WorkspaceSpaceMembershipPlanResultSchema>;
+
+export const WorkspaceSpaceMembershipMovePlanResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    equivalentAudience: z.literal(false),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    equivalentAudience: z.literal(true),
+    operationId: IdSchema,
+    source: SpaceSummarySchema,
+    target: SpaceSummarySchema,
+    sourceMembershipGeneration: z.number().int().positive(),
+    targetMembershipGeneration: z.number().int().positive(),
+  }),
+  WorkspaceSpaceAudienceFailureSchema,
+]);
+export type WorkspaceSpaceMembershipMovePlanResult =
+  z.infer<typeof WorkspaceSpaceMembershipMovePlanResultSchema>;
+
+export const WorkspaceSpaceMembershipMoveResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), source: SpaceSummarySchema, target: SpaceSummarySchema }),
+  WorkspaceSpaceAudienceFailureSchema,
+]);
+export type WorkspaceSpaceMembershipMoveResult = z.infer<typeof WorkspaceSpaceMembershipMoveResultSchema>;
 
 export const WorkspaceSpaceMutationResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema }),
@@ -337,7 +380,7 @@ export type SpaceDefaultTargetFailureRequest = z.infer<typeof SpaceDefaultTarget
  * consumer leg of their own, so admitting `default` and `bootstrap` here
  * described messages nothing could publish.
  */
-export const SpaceIntentKindSchema = z.enum(["add", "remove", "audience", "archive", "restore"]);
+export const SpaceIntentKindSchema = z.enum(["add", "remove", "move", "audience", "archive", "restore"]);
 export type SpaceIntentKind = z.infer<typeof SpaceIntentKindSchema>;
 
 /**
@@ -358,6 +401,9 @@ export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema.nullable(),
   spaceRevision: z.number().int().positive(),
   membershipGeneration: z.number().int().positive().nullable(),
+  sourceSpaceId: SpaceIdSchema.nullable().default(null),
+  sourceSpaceRevision: z.number().int().positive().nullable().default(null),
+  sourceMembershipGeneration: z.number().int().positive().nullable().default(null),
   /**
    * Where the operation's member walk got to, so the resume continues it.
    *
