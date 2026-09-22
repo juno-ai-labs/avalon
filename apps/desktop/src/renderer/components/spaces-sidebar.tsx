@@ -23,7 +23,7 @@ import {
 } from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
 import { Plus } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
@@ -321,7 +321,8 @@ export function SpacesSidebar({
               <ContextMenu.Trigger asChild>
               <Tooltip.Trigger asChild>
                 <SidebarRow
-                  as={NavLink}
+                  as={readOnly ? 'button' : NavLink}
+                  {...(readOnly ? { type: 'button' as const } : { to: `/spaces/${space.id}` })}
                   aria-label={space.name}
                   badge={{
                     count: space.attentionCount ?? 0,
@@ -334,13 +335,13 @@ export function SpacesSidebar({
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
                   draggable={!readOnly}
-                  onDragEnd={(event) => {
+                  onDragEnd={(event: DragEvent<HTMLElement>) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
                     draggingSpaceId.current = null;
                     if (next) void commitOrder(next);
                     else previewOrder(null);
                   }}
-                  onDragEnter={(event) => {
+                  onDragEnter={(event: DragEvent<HTMLElement>) => {
                     const placesChannel = space.reach !== 'through_channel'
                       && selectedSpaceId !== space.id
                       && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)
@@ -360,7 +361,7 @@ export function SpacesSidebar({
                       index,
                     ));
                   }}
-                  onDragOver={(event) => {
+                  onDragOver={(event: DragEvent<HTMLElement>) => {
                     const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
                     const placesChannel = space.reach !== 'through_channel'
                       && selectedSpaceId !== space.id
@@ -370,18 +371,18 @@ export function SpacesSidebar({
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
                   }}
-                  onDragLeave={(event) => {
+                  onDragLeave={(event: DragEvent<HTMLElement>) => {
                     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                     setChannelDropTargetId((current) => current === space.id ? null : current);
                   }}
-                  onDragStart={(event) => {
+                  onDragStart={(event: DragEvent<HTMLElement>) => {
                     if (readOnly) return;
                     draggingSpaceId.current = space.id;
                     previewOrder(orderedSpaces.map((item) => item.id));
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData(SPACE_DRAG_TYPE, space.id);
                   }}
-                  onDrop={(event) => {
+                  onDrop={(event: DragEvent<HTMLElement>) => {
                     const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
                     const sourceSpaceId = event.dataTransfer.getData(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
                     const sourceIsWritable = spaces.some((candidate) => (
@@ -407,7 +408,7 @@ export function SpacesSidebar({
                         });
                       });
                   }}
-                  onKeyDown={(event) => {
+                  onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
                     if (readOnly) return;
                     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
                     event.preventDefault();
@@ -416,7 +417,6 @@ export function SpacesSidebar({
                     void commitOrder(moveWithin(orderedSpaces.map((item) => item.id), space.id, nextIndex));
                   }}
                   onClick={() => onSelect(space.id)}
-                  to={`/spaces/${space.id}`}
                 >
                   <SidebarNavigationRowContent
                     description={space.scope === 'workspace' ? 'Public space' : 'Private space'}

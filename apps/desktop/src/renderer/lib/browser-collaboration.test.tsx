@@ -150,6 +150,8 @@ it('keeps an authorized Channel reachable when no visible Space contains it', as
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
   try {
     expect(await screen.findByRole('button', { name: 'Shared channels' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('1 channel')).toBeVisible();
+    expect(screen.queryByText(/Associated/u)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Channel Alpha, Private channel' })).toBeInTheDocument();
   } finally { view.unmount(); }
 });

@@ -1268,14 +1268,14 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
-**A desktop guest keeps the flat list; a browser guest gets a bounded
-hierarchy.** The desktop guest is handed no member Space directory, so its
-sidebar remains the time-grouped list with its group headings and bulk actions.
-The cookie-scoped browser uses `/sharing/navigation` to draw Space, Channel and
-Breakout rails from canonically admitted Channels only. If an admitted Channel
-has no visible Space placement, the browser puts it in a local **Shared
-channels** fallback so an authority-safe conversation never becomes
-unreachable merely because its container is withheld or not ready.
+**Both guest hosts get the bounded read-only hierarchy.** Neither guest is
+handed the member Space directory. They use `/sharing/navigation` to draw Space,
+Channel and Breakout rails from canonically admitted Channels only. Selecting a
+Space filters the adjacent Channel rail; in Electron the read-only row is a
+button rather than a link to the member Space dashboard. If an admitted Channel
+has no Space placement in a rolling-deploy response, the browser puts it in a
+local **Shared channels** fallback so an authority-safe conversation never
+becomes unreachable while its container metadata is not ready.
 
 **Three lists are arranged by drag, and each has the keyboard's version of the
 same gesture** — Alt with the up or down arrow: Spaces in the first rail,
