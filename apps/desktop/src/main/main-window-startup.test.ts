@@ -33,6 +33,8 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   const create = runInNewContext(`${ts.transpile(reveal!.getText(parsed))}; ${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
     mainWindowStartup: startup, mainWindowLoading: null, mainWindowReadyToShow: false, mainWindow: null, rendererReady: false,
     BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
+    electronScreen: { getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }), getAllDisplays: () => [] },
+    readMainWindowState: () => null, userDataDirectory: () => '/tmp',
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
     installWindowDiagnostics: vi.fn(), rendererUrl: () => 'app://rallywithai/index.html',
     loadRenderer: loaded,

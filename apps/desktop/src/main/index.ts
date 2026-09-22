@@ -1,4 +1,5 @@
 import { startCanvaConnection } from './canva-loopback';
+import { readMainWindowState, writeMainWindowState } from './main-window-state';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -4367,11 +4368,24 @@ async function createMainWindow(): Promise<void> {
   }
   rendererReady = false;
   mainWindowReadyToShow = false;
+  const minimum = { width: 860, height: 640 };
+  const primaryDisplay = electronScreen.getPrimaryDisplay();
+  let savedWindowState = null;
+  try {
+    savedWindowState = readMainWindowState(
+      userDataDirectory(),
+      [primaryDisplay, ...electronScreen.getAllDisplays().filter((display) => display.id !== primaryDisplay.id)],
+      minimum,
+    );
+  } catch (error) {
+    logWarn('rally', 'could not read main window position', error);
+  }
   mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 940,
-    minWidth: 860,
-    minHeight: 640,
+    width: savedWindowState?.bounds.width ?? 1180,
+    height: savedWindowState?.bounds.height ?? 940,
+    ...(savedWindowState ? { x: savedWindowState.bounds.x, y: savedWindowState.bounds.y } : {}),
+    minWidth: minimum.width,
+    minHeight: minimum.height,
     show: false,
     backgroundColor: windowBackgroundColor(),
     title: 'Rally',
@@ -4399,7 +4413,19 @@ async function createMainWindow(): Promise<void> {
   });
   mainWindow.once('ready-to-show', () => {
     mainWindowReadyToShow = true;
+    if (savedWindowState?.maximized) mainWindow?.maximize();
     mainWindow?.show();
+  });
+  mainWindow.on('close', () => {
+    if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      writeMainWindowState(userDataDirectory(), {
+        bounds: mainWindow.getNormalBounds(),
+        maximized: mainWindow.isMaximized(),
+      });
+    } catch (error) {
+      logWarn('rally', 'could not save main window position', error);
+    }
   });
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
