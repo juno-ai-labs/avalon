@@ -26,9 +26,10 @@ import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { compareWorkstreamRecency, formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
+import { compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
@@ -40,7 +41,7 @@ import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
-import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
+import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacesSidebar } from './spaces-sidebar';
@@ -224,7 +225,6 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
-const PLACEMENT_DRAG_HINT_ID = 'placement-drag-hint';
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -617,6 +617,9 @@ function WorkstreamRow({
   onOpen,
   spaces,
   motionMove,
+  canDragToPinned = false,
+  onPinDragEnd,
+  onPinDragStart,
   spacesReadOnly = false,
 }: {
   debugEnabled: boolean;
@@ -638,6 +641,9 @@ function WorkstreamRow({
   /** The active Space directory: where this Channel could go, and where it is. */
   spaces: SpaceSummary[];
   motionMove?: boolean;
+  canDragToPinned?: boolean;
+  onPinDragEnd?: (workstream: WorkstreamSummary) => void;
+  onPinDragStart?: (workstream: WorkstreamSummary) => void;
   spacesReadOnly?: boolean;
 }): React.JSX.Element {
   const location = useLocation();
@@ -740,6 +746,8 @@ function WorkstreamRow({
   const addableSpaces = spaceOptions.filter((space) => !space.disabled);
   const removablePlacement = isProductChannel && placementSpaceId !== undefined
     && spaces.some((space) => space.id === placementSpaceId && space.reach !== 'through_channel');
+  const canStartPinDrag = canDragToPinned && placementSpaceId !== undefined
+    && !isPinned && !spacesReadOnly;
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
@@ -772,17 +780,19 @@ function WorkstreamRow({
           data-motion-hold={drag?.dragging ? '' : undefined}
           data-motion-move={motionMove ? '' : undefined}
           data-motion-key={`workstream:${workstream.id}`}
-          // A drag on this row is either a pinned reorder or a placement, so
-          // it is draggable exactly while one of the two is possible. With no
-          // Space to drop on — an Organization still opening, a shell without
-          // Space navigation, a system Channel — the gesture has nowhere to go
-          // and the row does not offer it.
-          draggable={drag !== undefined || addableSpaces.length > 0}
-          onDragEnd={drag
+          // Pinned rows reorder. An unpinned row in the selected Space can be
+          // dragged into Pinned, and every Channel may still be dragged onto
+          // another Space. Alphabetical rows never reorder among themselves.
+          draggable={drag !== undefined || addableSpaces.length > 0
+            || canStartPinDrag}
+          onDragEnd={drag || canStartPinDrag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
             // list handled always leaves one behind.
-            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') !== 'move')
+            ? (event) => {
+              drag?.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') !== 'move');
+              if (canStartPinDrag) onPinDragEnd?.(workstream);
+            }
             : undefined}
           onDragOver={drag
             ? (event) => {
@@ -821,6 +831,7 @@ function WorkstreamRow({
               if (removablePlacement && placementSpaceId !== undefined) {
                 event.dataTransfer.setData('application/x-rally-channel-source-space-id', placementSpaceId);
               }
+              if (canStartPinDrag) onPinDragStart?.(workstream);
               drag?.onDragStart(workstream);
             }}
           onDrop={drag
@@ -1348,10 +1359,8 @@ export function Sidebar({
   // promise's optimistic result with it so no sibling surface lags the rail.
   const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
+  const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
-  const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
-  const placementDrag = useRef<{ workstreamId: string; dropped: boolean; spaceId: string } | null>(null);
-  const [placementFailure, setPlacementFailure] = useState<AcknowledgedError | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
   const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
@@ -1430,20 +1439,11 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder),
     [activeDragOrder, visibleWorkstreams],
   );
-  const storedUnpinnedWorkstreams = useMemo(() => orderByStoredIds(
+  const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(compareWorkstreamRecency),
-    selectedSpaceId === null ? [] : storedOrderFor(ordering, { kind: 'space', id: selectedSpaceId }),
-    (workstream) => workstream.id,
-  ), [ordering, selectedSpaceId, visibleWorkstreams]);
-  const storedUnpinnedIds = storedUnpinnedWorkstreams.map((workstream) => workstream.id);
-  const activePlacementOrder = placementOrder?.spaceId === selectedSpaceId
-    ? placementOrder.itemIds
-    : null;
-  const unpinnedWorkstreams = activePlacementOrder === null
-    ? storedUnpinnedWorkstreams
-    : orderByStoredIds(storedUnpinnedWorkstreams, activePlacementOrder, (workstream) => workstream.id);
+      .sort(compareAlphabeticalTitle)
+  ), [visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -1866,6 +1866,9 @@ export function Sidebar({
       debugEnabled={debugEnabled}
       {...(drag && !spacesReadOnly ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
+      canDragToPinned={spacesReady}
+      onPinDragEnd={(target) => setPinDropWorkstreamId((current) => current === target.id ? null : current)}
+      onPinDragStart={(target) => setPinDropWorkstreamId(target.id)}
       motionMove={motionMoveIntent.current?.id === workstream.id
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
       {...(placementSpaceId !== undefined && !spacesReadOnly ? { placementSpaceId } : {})}
@@ -1876,66 +1879,6 @@ export function Sidebar({
       onOpen={() => setSpacesCollapsed(true)}
     />
   );
-
-  const commitPlacementOrder = async (spaceId: string, ids: string[]): Promise<void> => {
-    setPlacementOrder({ spaceId, itemIds: ids });
-    setPlacementFailure(null);
-    try {
-      await onReorderContainer({ container: { kind: 'space', id: spaceId }, itemIds: ids });
-    } catch {
-      setPlacementFailure({
-        title: 'Channels could not be reordered',
-        copy: 'The channels in that space are back in the order they were in. Try again in a moment.',
-      });
-    } finally {
-      setPlacementOrder((current) => current?.spaceId === spaceId && current.itemIds === ids ? null : current);
-    }
-  };
-
-  const placementRowDrag = (workstream: WorkstreamSummary, index: number): WorkstreamRowDrag => ({
-    dragging: placementDrag.current?.workstreamId === workstream.id && activePlacementOrder !== null,
-    position: selectedSpace ? `In ${selectedSpace.name}, ${index + 1} of ${unpinnedWorkstreams.length}.` : '',
-    onDragStart: (target) => {
-      if (selectedSpaceId === null) return;
-      placementDrag.current = { workstreamId: target.id, dropped: false, spaceId: selectedSpaceId };
-      setPlacementOrder({ spaceId: selectedSpaceId, itemIds: unpinnedWorkstreams.map((item) => item.id) });
-    },
-    onDragOver: (targetId) => {
-      const current = placementDrag.current;
-      if (!current || current.spaceId !== selectedSpaceId || current.workstreamId === targetId) return;
-      setPlacementOrder((held) => {
-        const ids = held?.spaceId === current.spaceId
-          ? held.itemIds
-          : unpinnedWorkstreams.map((item) => item.id);
-        const targetIndex = ids.indexOf(targetId);
-        return targetIndex < 0
-          ? held
-          : { spaceId: current.spaceId, itemIds: moveWithin(ids, current.workstreamId, targetIndex) };
-      });
-    },
-    onDrop: () => {
-      if (!placementDrag.current) return false;
-      placementDrag.current = { ...placementDrag.current, dropped: true };
-      return true;
-    },
-    onDragEnd: (cancelled) => {
-      const current = placementDrag.current;
-      const held = current && placementOrder?.spaceId === current.spaceId
-        ? placementOrder.itemIds
-        : null;
-      placementDrag.current = null;
-      const next = committedOrder(held, storedUnpinnedIds, cancelled || current?.dropped !== true);
-      if (next && current) void commitPlacementOrder(current.spaceId, next);
-      else setPlacementOrder(null);
-    },
-    onMove: (target, direction) => {
-      const from = unpinnedWorkstreams.findIndex((item) => item.id === target.id);
-      const to = from + direction;
-      if (from < 0 || to < 0 || to >= unpinnedWorkstreams.length) return;
-      if (selectedSpaceId === null) return;
-      void commitPlacementOrder(selectedSpaceId, moveWithin(unpinnedWorkstreams.map((item) => item.id), target.id, to));
-    },
-  });
 
   const closeRename = (): void => {
     if (renaming) return;
@@ -2341,10 +2284,10 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Only when something is pinned. An empty heading would be a
-              standing invitation to a feature the reader has not used, sitting
-              above the work they came here for. */}
-          {pinnedWorkstreams.length > 0 && (
+          {/* Normally only when something is pinned. The first Channel drag
+              temporarily reveals the destination so pinning does not require
+              using the context menu once before the gesture exists. */}
+          {(pinnedWorkstreams.length > 0 || pinDropWorkstreamId !== null) && (
             // The whole section is the drop target, heading included. A release
             // anywhere a reader would call "inside the list they are arranging"
             // has to count as a drop: `dragend` reads a release nothing accepted
@@ -2352,7 +2295,7 @@ export function Sidebar({
             // heading a few pixels above the first one — would silently throw
             // the arrangement away.
             <section
-              aria-describedby={spacesReadOnly ? undefined : PINNED_DRAG_HINT_ID}
+              aria-describedby={spacesReadOnly || pinnedWorkstreams.length === 0 ? undefined : PINNED_DRAG_HINT_ID}
               aria-labelledby="pinned-heading"
               className="sidebar-section pinned-section"
               data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}
@@ -2365,7 +2308,16 @@ export function Sidebar({
               }}
               onDrop={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
-                if (pinnedDrag.current) pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
+                const draggedId = event.dataTransfer.getData('application/x-rally-workstream-id');
+                if (pinnedDrag.current) {
+                  pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
+                } else {
+                  const unpinned = unpinnedWorkstreams.find((workstream) => workstream.id === draggedId);
+                  if (unpinned) {
+                    setPinDropWorkstreamId(null);
+                    void togglePin(unpinned, true);
+                  }
+                }
               }}
             >
               {/* Held: a heading travels with the rows under it and is never
@@ -2377,10 +2329,11 @@ export function Sidebar({
                   as a per-row description it lands inside each link's
                   accessible name, so somebody arrowing through the list hears
                   the whole instruction again before every title. */}
-              {!spacesReadOnly && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+              {!spacesReadOnly && pinnedWorkstreams.length > 0 && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
+                {pinnedWorkstreams.length === 0 && <p className="sidebar-empty">Drop to pin</p>}
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     {...workstreamRowActions}
@@ -2426,7 +2379,6 @@ export function Sidebar({
           */}
           {(
           <section
-            aria-describedby={spacesEnabled && unpinnedWorkstreams.length > 1 ? PLACEMENT_DRAG_HINT_ID : undefined}
             aria-label="Channels"
             className="sidebar-section workstreams-section"
           >
@@ -2441,11 +2393,6 @@ export function Sidebar({
                 <span className="sr-only">Loading your spaces and channels</span>
               </div>
             )}
-            {spacesEnabled && unpinnedWorkstreams.length > 1 && (
-              <p className="sr-only" id={PLACEMENT_DRAG_HINT_ID}>
-                Hold Alt and press the up or down arrow to move a channel in this space.
-              </p>
-            )}
             {loading && visibleWorkstreams.length === 0 ? (
               <>
                 <SidebarSkeletonGroup count={4} />
@@ -2456,11 +2403,11 @@ export function Sidebar({
                 /* The selected Space above is the heading for this rail. A
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
-                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined} data-reorder-list="">
-                  {unpinnedWorkstreams.map((workstream, index) => (
+                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
+                  {unpinnedWorkstreams.map((workstream) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
                       workstream,
-                      spacesReady && selectedSpace ? placementRowDrag(workstream, index) : undefined,
+                      undefined,
                       selectedSpaceId ?? undefined,
                     )}</Fragment>
                   ))}
@@ -2750,10 +2697,6 @@ export function Sidebar({
           copy: removeFromSpaceFailure,
         }}
         onAcknowledge={() => setRemoveFromSpaceFailure(null)}
-      />
-      <AcknowledgedErrorDialog
-        error={placementFailure}
-        onAcknowledge={() => setPlacementFailure(null)}
       />
     </>
   );
