@@ -259,7 +259,7 @@ describe("SpaceService audience changes", () => {
 });
 
 describe("SpaceService lifecycle fan-out", () => {
-  it("given an archive, when it runs, then it stages, retracts from every reached Channel, then finalizes", async () => {
+  it("given an archive, when it runs, then reached Channel retractions overlap and all settle before finalization", async () => {
     const log: string[] = [];
     const workspace = workspaceDouble({
       prepareSpaceArchive: vi.fn(async () => {
@@ -283,10 +283,28 @@ describe("SpaceService lifecycle fan-out", () => {
       }),
     });
     const channels = channelDoubles(log);
+    const release = new Map<string, () => void>();
+    channels.room.retractSpaceAccessSource = vi.fn((input: { parentId: string }) => new Promise((resolve) => {
+      log.push(`retract:${input.parentId}`);
+      release.set(input.parentId, () => resolve({
+        ok: true,
+        plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },
+      }));
+    }));
 
-    await expect(new SpaceService(serviceEnv({
+    const archive = new SpaceService(serviceEnv({
       workspace, conversation: channels.conversation, room: channels.room,
-    }), auth()).archive(SPACE_ID)).resolves.toMatchObject({ status: "archived" });
+    }), auth()).archive(SPACE_ID);
+
+    await vi.waitFor(
+      () => expect([...release.keys()]).toEqual([CHANNEL_ID, SECOND_CHANNEL_ID]),
+      { timeout: 1_000 },
+    );
+    expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
+    release.get(CHANNEL_ID)?.();
+    release.get(SECOND_CHANNEL_ID)?.();
+
+    await expect(archive).resolves.toMatchObject({ status: "archived" });
 
     // `prepareSpaceArchive` flips every membership to `removing`, so the
     // fan-out has to ask which Channels this Space still *reaches*. Asking for
@@ -301,6 +319,57 @@ describe("SpaceService lifecycle fan-out", () => {
     ]);
   });
 
+  it("given one failed retraction, waits for its started sibling before rejecting and never finalizes", async () => {
+    const workspace = workspaceDouble({
+      listSpaceMembers: vi.fn(async () => ({
+        ok: true,
+        members: [
+          { workstreamId: CHANNEL_ID, membershipGeneration: 4 },
+          { workstreamId: SECOND_CHANNEL_ID, membershipGeneration: 2 },
+        ],
+        nextCursor: null,
+      })),
+    });
+    const channels = channelDoubles([]);
+    let rejectFirst: ((reason: Error) => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    channels.room.retractSpaceAccessSource = vi.fn((input: { parentId: string }) => new Promise((resolve, reject) => {
+      if (input.parentId === CHANNEL_ID) rejectFirst = reject;
+      else {
+        releaseSecond = () => resolve({
+          ok: true,
+          plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },
+        });
+      }
+    }));
+
+    let settled = false;
+    const archive = new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).archive(SPACE_ID);
+    const observed = archive.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(
+      () => expect(channels.room.retractSpaceAccessSource).toHaveBeenCalledTimes(2),
+      { timeout: 1_000 },
+    );
+    rejectFirst?.(new Error("channel_retraction_failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
+
+    releaseSecond?.();
+    await expect(observed).resolves.toMatchObject({
+      error: expect.objectContaining({ message: "channel_retraction_failed" }),
+    });
+    expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
+  });
 });
 
 describe("SpaceService restore", () => {

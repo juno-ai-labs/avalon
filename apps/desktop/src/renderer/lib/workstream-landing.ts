@@ -18,11 +18,12 @@ export const WORKSTREAM_LANDING_ROUTE = '/';
  * marked unread stays in the list for good and must not be reopened, since
  * opening it is what reads it. The other rows a batch archive took stay until
  * their tombstones arrive, and only the open one was evicted. And the single
- * archived or left row has already been evicted from the list; naming it here
- * covers the frame in which a directory page re-delivers it ahead of the
- * tombstone. The list itself is never patched by a leaving screen: the
- * directory waterline is what orders a removal against everything else in
- * flight for the row.
+ * archived or left row has already been hidden from directory readers; naming
+ * it here is the route-level half of that fence. A confirmed archive remains
+ * in the raw cache as an archived marker until the versioned tombstone arrives,
+ * so a directory page already in flight cannot make it visible again. The
+ * directory waterline still owns the final removal and orders it against every
+ * other producer.
  */
 export interface WorkstreamLandingState {
   skipWorkstreamIds: string[];
