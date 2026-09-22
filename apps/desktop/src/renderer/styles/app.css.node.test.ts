@@ -1245,9 +1245,8 @@ describe('dictation button recording state', () => {
 });
 
 // These rows were built for the home screen's Needs attention section and are
-// now the Space dashboard's, which renders three of the six tracks. The
-// second-column and source rules below are dead until something fills those
-// tracks again; the geometry is asserted whole because the template is what
+// now the Space dashboard's. Its conversation identity fills the second track;
+// the source rule remains dormant. The geometry is asserted whole because it
 // keeps the chevrons on one right edge. See docs/workstream-markers.md.
 describe('Channel row geometry', () => {
   it('keeps the marker dot at its size, and clips a label the track cannot hold', () => {
@@ -1267,10 +1266,18 @@ describe('Channel row geometry', () => {
     expect(rule('.waiting-workstream-row')).toContain(
       'grid-template-columns: 130px auto minmax(0, 1fr) auto auto 15px;',
     );
-    expect(rule('.waiting-workstream-projects')).toContain('min-width: 20px;');
+    expect(rule('.waiting-conversation-identity')).toContain('min-width: 17px;');
     expect(rule('.waiting-workstream-source')).toContain('grid-column: 4;');
     expect(rule('.waiting-workstream-row time')).toContain('grid-column: 5;');
     expect(rule('.waiting-workstream-row > svg')).toContain('grid-column: 6;');
+  });
+
+  it('keeps a flexible title track after the identity at narrow widths', () => {
+    const narrow = stylesheet.match(/@media \(max-width: 560px\) \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+    expect(ruleWithin(narrow, '.waiting-workstream-row'))
+      .toContain('grid-template-columns: auto auto minmax(0, 1fr) 15px;');
+    expect(ruleWithin(narrow, '.waiting-workstream-row > svg'))
+      .toContain('grid-column: 4;');
   });
 });
 

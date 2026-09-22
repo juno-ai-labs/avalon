@@ -3652,6 +3652,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX space_intents_unsettled_idx
       ON space_intents(state, not_before, operation_id)`,
   ],
+}, {
+  version: 69,
+  description: "preserve breakout appearance in workspace projections",
+  statements: [
+    "ALTER TABLE workspace_breakout_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))",
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4040,6 +4046,9 @@ function breakoutConversation(
     id: row.substream_id,
     workspaceId,
     title: truncateUtf16Safe(row.title, 180),
+    ...(row.appearance_json
+      ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
+      : {}),
     titleStatus: settledTitleStatus(row.title_status, row.source_created_at),
     objective: truncateUtf16Safe(row.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
     emailAddress: null,
@@ -4070,6 +4079,9 @@ function breakoutConversation(
       workstreamId: row.workstream_id,
       substreamId: row.substream_id,
       title: truncateUtf16Safe(row.parent_title, 180),
+      ...(row.parent_appearance_json
+        ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.parent_appearance_json)) }
+        : {}),
     },
   });
 }

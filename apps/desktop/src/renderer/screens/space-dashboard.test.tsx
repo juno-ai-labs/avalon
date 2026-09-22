@@ -83,6 +83,7 @@ function channelRow(overrides: Record<string, unknown> = {}): SpaceConversationS
     spaceIds: [hiring.id as string],
     kind: 'channel',
     breakoutOf: null,
+    appearance: { icon: 'rocket', color: 'blue' },
     ...overrides,
   } as SpaceConversationSummary;
 }
@@ -95,10 +96,12 @@ function breakoutRow(overrides: Record<string, unknown> = {}): SpaceConversation
     lastActivityAt: '2026-08-27T02:00:00.000Z',
     spaceIds: [hiring.id as string],
     kind: 'breakout',
+    appearance: { icon: 'sparkles', color: 'rose' },
     breakoutOf: {
       workstreamId: '00000000-0000-7000-8000-0000000000e1',
       substreamId: '00000000-0000-7000-8000-0000000000e9',
       title: 'Ship the launch',
+      appearance: { icon: 'rocket', color: 'blue' },
     },
     ...overrides,
   } as SpaceConversationSummary;
@@ -183,7 +186,7 @@ describe('the Space dashboard', () => {
 
   // The list is conversations, not memberships: a Channel and any of its
   // breakouts that still need this reader, in one list ordered by activity.
-  it('draws channels and their breakouts as one activity-ordered list', async () => {
+  it('draws channels and their breakouts with their identity marks as one activity-ordered list', async () => {
     api.listSpaceChannels.mockResolvedValue({
       items: [breakoutRow(), channelRow()],
       nextCursor: null,
@@ -199,11 +202,35 @@ describe('the Space dashboard', () => {
       '/workstreams/00000000-0000-7000-8000-0000000000e1',
     ]);
     // The breakout says where it lives, because "Pricing" on its own says
-    // nothing, and it is marked with the ↳ the middle column uses for one.
+    // nothing. Its parent Channel keeps the filled pebble while the Breakout
+    // keeps its own bare mark, joined by the chevrons.
     const breakout = list[0]!;
     expect(within(breakout).getByText('in Ship the launch')).toBeVisible();
-    expect(breakout.textContent).toContain('↳');
+    expect(breakout.querySelector('.workstream-glyph .lucide-rocket')).not.toBeNull();
+    expect(breakout.querySelector('.waiting-conversation-arrow.tabler-icon-chevrons-right')).not.toBeNull();
+    expect(breakout.querySelector('.waiting-conversation-icon > .lucide-sparkles')).not.toBeNull();
+    expect(list[1]!.querySelector('.workstream-glyph .lucide-rocket')).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  });
+
+  it('names each Channel and Breakout mark with the conversation identity tooltip', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [breakoutRow()], nextCursor: null });
+    renderSpace(makeSpace({ channelCount: 1 }));
+
+    const icons = (await screen.findByRole('link', { name: /Pricing/u }))
+      .querySelectorAll<HTMLElement>('.waiting-conversation-icon');
+    expect(icons).toHaveLength(2);
+
+    fireEvent.pointerMove(icons[0]!, { pointerType: 'mouse' });
+    let tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveClass('sidebar-workstream-preview-surface');
+    expect(tooltip).toHaveTextContent('Ship the launch');
+
+    fireEvent.pointerMove(icons[1]!, { pointerType: 'mouse' });
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Pricing'), { timeout: 1_000 });
+    tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveClass('sidebar-workstream-preview-surface');
+    expect(tooltip).toHaveTextContent('Pricing');
   });
 
   // Two empty states, because they are two different facts. Telling somebody

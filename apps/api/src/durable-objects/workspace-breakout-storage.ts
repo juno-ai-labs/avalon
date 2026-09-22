@@ -148,6 +148,8 @@ export interface WorkspaceBreakoutRow extends Record<string, SqlStorageValue> {
   latest_mention_attention_ordinal: number | null;
   unseen: number | null;
   parent_title: string;
+  appearance_json: string | null;
+  parent_appearance_json: string | null;
 }
 
 /**
@@ -160,13 +162,15 @@ export interface WorkspaceBreakoutRow extends Record<string, SqlStorageValue> {
  */
 export const SELECT_WORKSPACE_BREAKOUT = `SELECT breakout.workstream_id, breakout.substream_id,
     breakout.title, breakout.description, breakout.scope, breakout.exact_state,
+    breakout.appearance_json,
     breakout.title_status, breakout.created_by_user_id, breakout.last_activity_at,
     breakout.archived_at, breakout.latest_attention_ordinal,
     breakout.unread_tracking_start_ordinal, breakout.source_created_at,
     breakout.source_updated_at,
     viewer.seen_attention_ordinal, viewer.manual_unread_from_ordinal,
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
-    viewer.unseen, parent.title AS parent_title
+    viewer.unseen, parent.title AS parent_title,
+    parent.appearance_json AS parent_appearance_json
   FROM workspace_breakout_directory breakout
   LEFT JOIN workspace_breakout_viewers viewer
     ON viewer.workstream_id = breakout.workstream_id
@@ -186,6 +190,7 @@ export const SELECT_WORKSPACE_BREAKOUT = `SELECT breakout.workstream_id, breakou
  */
 export class WorkspaceBreakoutStorage {
   private tablesPresent: boolean | null = null;
+  private appearanceColumnPresent = false;
 
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -202,9 +207,13 @@ export class WorkspaceBreakoutStorage {
    * creates the destination tables.
    */
   ready(): boolean {
-    this.tablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_breakout_directory'`,
-    ).toArray().length === 1;
+    if (this.tablesPresent === null) {
+      const columns = this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+        `PRAGMA table_info(workspace_breakout_directory)`,
+      ).toArray();
+      this.tablesPresent = columns.length > 0;
+      this.appearanceColumnPresent = columns.some((column) => column.name === "appearance_json");
+    }
     return this.tablesPresent;
   }
 
@@ -230,21 +239,28 @@ export class WorkspaceBreakoutStorage {
     if (!projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
       return false;
     }
+    // A schema-57 Organization can receive the migration-63 tables while its
+    // cleanup still holds later migrations. Keep the once-only replay retryable
+    // through that interval, then persist appearance once migration 69 lands.
+    const appearanceColumn = this.appearanceColumnPresent ? ", appearance_json" : "";
+    const appearanceValue = this.appearanceColumnPresent ? ", ?" : "";
+    const appearanceUpdate = this.appearanceColumnPresent
+      ? ", appearance_json = excluded.appearance_json" : "";
     this.storage.sql.exec(
       `INSERT INTO workspace_breakout_directory
          (workstream_id, substream_id, authority_generation, waterline, source_event_id,
-          payload_hash, title, description, scope, exact_state, title_status,
+          payload_hash, title, description, scope, exact_state${appearanceColumn}, title_status,
           created_by_user_id, last_activity_at, completed_at, archived_at,
           latest_attention_ordinal, unread_tracking_start_ordinal,
           source_created_at, source_updated_at, projected_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?${appearanceValue}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(workstream_id, substream_id) DO UPDATE SET
          authority_generation = excluded.authority_generation,
          waterline = excluded.waterline,
          source_event_id = excluded.source_event_id,
          payload_hash = excluded.payload_hash,
          title = excluded.title, description = excluded.description,
-         scope = excluded.scope, exact_state = excluded.exact_state,
+         scope = excluded.scope, exact_state = excluded.exact_state${appearanceUpdate},
          title_status = excluded.title_status,
          created_by_user_id = excluded.created_by_user_id,
          last_activity_at = excluded.last_activity_at,
@@ -264,6 +280,7 @@ export class WorkspaceBreakoutStorage {
       effect.description,
       effect.scope,
       effect.state,
+      ...(this.appearanceColumnPresent ? [effect.appearance ? JSON.stringify(effect.appearance) : null] : []),
       effect.titleStatus ?? "settled",
       effect.createdByUserId ?? null,
       epochMilliseconds(effect.lastActivityAt) ?? now,
