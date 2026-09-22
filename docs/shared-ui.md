@@ -85,7 +85,13 @@ dashboard's Channel and breakout entries are host-owned links, not shared
 removable rows; the landing page draws both at full width and keeps placement
 management in its owning surfaces.
 
-The guest browser passes no Space props at all and draws no Space navigation.
+The guest browser supplies its bounded sharing projection to the same
+`ResizableSidebar`, hierarchy headers, rows, scroll regions, collapse controls,
+and resize geometry as Electron. It still owns its browser routes, account
+menu, unsupported-width state and guest-only loading copy, and it omits
+management actions that the sharing projection cannot authorize. At the existing 920px
+responsive boundary and below, the host shows an unsupported-width state
+instead of presenting a compressed or partial hierarchy.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser installs system
@@ -170,6 +176,33 @@ aligns the adjacent headers and removes the visual swap during collapse.
 **Considered and rejected:** Host-specific expanded icons. The shared header
 already owns the layout for each host, and local copies would let their order,
 size, and transition behavior diverge again.
+
+### 2026-09-21 — Browser navigation uses the Electron hierarchy sidebars
+
+**What changed:** The browser's Space and Channel rails now compose the same
+shared resizable sidebar shell, compact geometry, edge interaction, hierarchy
+headers, rows and footer collapse controls used by Electron. Selecting a Space
+compacts the Space rail and leaves its Channels visible; selecting a Channel
+compacts both. At 920px and below, the browser replaces the collaboration shell
+with an unsupported-width message rather than compressing the hierarchy into a
+mobile drawer.
+
+**Why:** The browser had adopted the shared row geometry but still wrapped it
+in two static host-owned panels. That left the same hierarchy behaving
+differently by host and made Electron's compact and resize work unavailable to
+browser guests. Importing the full desktop sidebar was rejected because it
+would also import member-only mutations, socket state and native behavior;
+sharing the complete presentation shell preserves the package's host boundary.
+
+**Consequences:** Browser routing and its bounded sharing directory remain
+browser-owned, while future geometry and interaction changes to the hierarchy
+shell reach both hosts. Guest navigation still exposes no Space or Channel
+management action. The browser host applies Electron's complete-hierarchy width
+budget: it protects 424px for conversation content and a compact Breakout rail,
+caps the Space rail to the remaining room, and forces the Channel rail compact
+when its remembered width no longer fits. Returning to the workspace root
+restores both outer rails; same-Channel navigation cannot leave a route fence
+armed for later history navigation.
 
 ### 2026-09-21 — Hierarchy row cadence lives in one shared list
 

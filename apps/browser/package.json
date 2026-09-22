@@ -22,8 +22,7 @@
     "@tanstack/react-query": "latest",
     "react-router-dom": "latest",
     "lucide-react": "latest",
-    "@rally/desktop": "workspace:*",
-    "@radix-ui/react-dialog": "latest"
+    "@rally/desktop": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",
