@@ -539,6 +539,34 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
 
+### 2026-09-21 — Restore the published artifact-host migration receipt
+
+**What changed:** ArtifactHostDO migration 1 is restored byte-for-byte, and a
+test pins the implementation hash of every released artifact-host migration.
+The explanation of the retained visibility columns now lives outside the SQL
+statement whose bytes form the durable receipt. The runner also accepts the one
+exact, schema-equivalent receipt emitted by the comment-only deployment.
+
+**Why:** The authorization-latency change updated only a SQL comment inside the
+already-released migration. Comments are part of the migration statement and
+therefore part of its persisted implementation hash. Every pre-existing
+artifact host consequently refused initialization with
+`artifact_host_schema_hash_mismatch:1`, so opening its page surfaced the API's
+generic 500 instead of minting a viewer code.
+
+**Considered and rejected:** Rewriting production receipts, adding a new
+migration to bless the changed hash, or disabling hash checks. None changes the
+schema, and each would weaken or obscure the guard whose job is to detect
+edited history. Restoring the published bytes repairs existing objects; naming
+only the known equivalent receipt avoids stranding an object first opened
+during the faulty deployment.
+
+**Consequences:** Released artifact-host migration statements, including their
+embedded comments, cannot change without failing the focused test. The one
+compatible receipt is pinned alongside them, and every other mismatch still
+fails closed. Explanatory updates belong outside those statement strings;
+actual schema changes append a new migration.
+
 ### 2026-09-21 — Open once and trust the admitted viewer session
 
 **What changed:** The desktop uses the first artifact-open response for its

@@ -67,9 +67,17 @@ import {
 
 const MIGRATION_COMPONENT = "artifact_host";
 
+// Migration 1 retains the former per-request visibility columns. New sessions
+// record their admission there, but serving trusts the session until explicit
+// revocation or expiry. Keep this explanation outside the published SQL:
+// migration statement bytes, including SQL comments, are immutable receipts.
 export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
   description: "artifact serving state, viewer sessions, and the error log",
+  // One released build changed only the SQL comment below. Accept that exact
+  // schema-equivalent receipt so an object first opened during that deployment
+  // is not stranded when the published statement bytes are restored.
+  compatibleImplementationHashes: ["fnv1a64:d86989fbefcb799f"],
   statements: [
     // One row. The object *is* the artifact, so its identity is a singleton
     // rather than a keyed table — and a second row would mean this object was
@@ -101,9 +109,10 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       code_sha256 TEXT UNIQUE,
       code_expires_at INTEGER,
       redeemed_at INTEGER,
-      -- Retained from the former per-request visibility polling design. New
-      -- sessions record their admission here, but serving trusts the session
-      -- row until explicit revocation or expiry rather than polling authority.
+      -- When this principal's work-stream visibility was last confirmed
+      -- against WorkstreamDO, and what the answer was. Cached for a bounded
+      -- interval rather than asked per request: a live artifact must not put
+      -- a Durable Object hop in front of every asset byte.
       visibility_checked_at INTEGER,
       visible INTEGER NOT NULL DEFAULT 0 CHECK (visible IN (0, 1))
     ) STRICT`,
