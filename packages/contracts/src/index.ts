@@ -1080,6 +1080,7 @@ export const SpaceConversationSchema = WorkstreamSchema.extend({
     workstreamId: IdSchema,
     substreamId: IdSchema,
     title: z.string().min(1).max(180),
+    appearance: WorkstreamAppearanceSchema.optional(),
   }).nullable().default(null),
 }).superRefine((conversation, context) => {
   if ((conversation.kind === "breakout") !== (conversation.breakoutOf !== null)) {

@@ -21,6 +21,7 @@ import { ResourceIcon } from './resource-icon';
 import { WorkstreamMark } from './workstream-glyph';
 import { SidebarNavigationRowContent } from './navigation';
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
+import { ConversationIdentityTip } from './conversation-identity-tip';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
@@ -113,24 +114,13 @@ function ConversationRowMenu({ actions, children, icon, target }: {
   target: ConversationRowTarget;
 }): React.JSX.Element {
   const main = target.substreamId === '0';
-  const preview = (trigger: React.ReactNode): React.JSX.Element => <Tip
-    className="sidebar-workstream-preview-surface"
-    collisionPadding={8}
-    delayDuration={300}
-    describesTrigger={false}
-    label={<div className="sidebar-workstream-preview">
-      <div className="sidebar-workstream-preview-header">
-        <span className="sidebar-workstream-preview-identity">
-          {icon}
-          <span className="sidebar-workstream-preview-name">{target.title}</span>
-        </span>
-      </div>
-    </div>}
+  const preview = (trigger: React.ReactNode): React.JSX.Element => <ConversationIdentityTip
+    icon={icon}
+    name={target.title}
     side="right"
-    sideOffset={8}
   >
     {trigger}
-  </Tip>;
+  </ConversationIdentityTip>;
   if (!actions) return preview(children);
   return <ContextMenu.Root>
     {preview(<ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>)}
