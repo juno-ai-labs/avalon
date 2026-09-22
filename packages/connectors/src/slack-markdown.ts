@@ -43,6 +43,7 @@ const SLACK_MARKDOWN_LITERAL_ESCAPE = /([\\`*_[\]()<>&#|!~+])/gu;
  */
 export function slackMarkdownLiteral(value: string): string {
   const flattened = value
+    // eslint-disable-next-line no-control-regex -- titles may carry C0, DEL, NEL, or Unicode line separators
     .replace(/[\u0000-\u001F\u007F\u0085\u2028\u2029]/gu, " ")
     .replace(/ {2,}/gu, " ")
     .trim();
