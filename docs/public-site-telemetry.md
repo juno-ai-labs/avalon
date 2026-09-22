@@ -25,7 +25,7 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 ## How it works
 
 - Global reads or creates one random UUIDv7 in first-party `localStorage`, so
-  landing, download, and handoff pages can form one anonymous acquisition path.
+  landing and handoff pages can form one anonymous acquisition path.
 
 `site_page_viewed` carries a closed page class, a lowercased bounded pathname,
 an external referring domain, and allowlisted `utm_source`, `utm_medium`, and
