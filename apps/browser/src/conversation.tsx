@@ -128,7 +128,7 @@ function SharedConversation(): React.JSX.Element {
           onSelectSubstream={(id) => navigate(`/workstreams/${parentId}${id === '0' ? '' : `/substreams/${id}`}`)}
           onParticipants={context.openParticipantDialog} onFocusTranscript={context.focusTranscript}
           onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekickFailure={context.sidekickFailure}
-          onSidekickMenuOpen={context.loadSidekickOptions}
+          onSidekickMenuOpen={context.loadSidekickOptions} onRefreshSidekicks={context.refreshSidekicks}
           addSidekick={<SidekickPicker workstreamId={parentId} substreamId={substreamId} />} />}
         renderHeader={(context) => <ConversationHeader grokBotMode workstream={context.detail} socketState={context.socketState}
           substreamId={substreamId} currentUserId={session?.user.id} presentUserIds={context.presentUserIds}

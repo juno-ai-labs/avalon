@@ -166,10 +166,12 @@ keyed by conversation, so navigation cannot carry an error into another substrea
 A merged row takes its lifecycle from the owned summary and its availability
 from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
-still on its way, as the artifact section beside it is; a failure is the one
-thing it shows beside whichever rows did arrive rather than instead of them.
-Read and action failures remain distinct: a partial read says the list may be
-out of date, while refused local removal, recommendation, and recommendation
+still on its way, as the artifact section beside it is. A failed read keeps
+whichever rows did arrive and adds a normal **Refresh** row; if none arrived,
+the heading and Refresh row are the recovery path without a warning-only
+section. Refresh retries the owned, attached, and recommended sources while
+guests continue to skip the member-only owned directory. Read and action
+failures remain distinct: refused local removal, recommendation, and recommendation
 removal each name the action that failed and stay visible until the next
 Sidekick-management interaction. That interaction clears only a
 settled failure: a removal or attachment still in flight remains observed and
@@ -925,6 +927,29 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-21 — Stale Sidekick reads recover through a row
+
+**What changed:** A failed Sidekick read now keeps every row that did arrive
+and inserts the shared **Refresh** row. When none arrived, the Sidekicks heading
+and Refresh row remain as the recovery path. Neither case writes stale-data or
+load-failure copy into the sidebar or inspector rail.
+
+**Why:** A transient read state is not navigation content. Presenting it as an
+ordinary recovery action keeps the rail structurally stable and gives the user
+the one useful next step without leaving a warning behind.
+
+**Considered and rejected:** Keeping stable “out of date” copy beside the rows
+was rejected because persistent navigation made that operational state look
+like another item in the room. Replacing the known rows with an error state was
+also rejected because a partial read does not invalidate data already received.
+
+**Consequences:** Every rail that renders `SidekickSection` must supply the
+refresh callback when it can report a load failure, and row composition must
+continue using cached query data after a failed refetch. Action failures remain
+separate because they require acknowledgement of a specific attempted change.
+
+PR [#919](https://github.com/juno-ai-labs/avalon/pull/919).
 
 ### 2026-09-17 — A connector event admits under the occurrence its connector named
 

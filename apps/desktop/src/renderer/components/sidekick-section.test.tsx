@@ -79,24 +79,31 @@ describe('SidekickSection', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from this breakout' })).toBeNull();
   });
 
-  it('leaves no heading behind for an empty answer or a pending one, and owns failure copy', () => {
+  it('leaves no heading behind for an empty answer or a pending one, then offers refresh after a failed read', () => {
+    const onRefresh = vi.fn();
     const { rerender } = renderSection({ items: [] });
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
     rerender(<Tooltip.Provider><SidekickSection /></Tooltip.Provider>);
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
-    rerender(<Tooltip.Provider><SidekickSection items={[]} failure="load" /></Tooltip.Provider>);
-    expect(screen.getByText('Sidekicks couldn’t be loaded.')).toBeVisible();
+    rerender(<Tooltip.Provider><SidekickSection items={[]} failure="load" onRefresh={onRefresh} /></Tooltip.Provider>);
+    expect(screen.queryByText('Sidekicks couldn’t be loaded.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it('keeps the rows that arrived beside a failure rather than replacing them', () => {
+  it('keeps the rows that arrived beside a refresh row rather than replacing them with warning copy', () => {
+    const onRefresh = vi.fn();
     // A detach that failed, or one of the two reads behind this section: the
     // Sidekicks it did not take down are still the room's, and blanking them
     // loses a list that worked to report a failure about something else.
     renderSection({
       items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
       failure: 'load',
+      onRefresh,
     });
-    expect(screen.getByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(onRefresh).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
   });
 

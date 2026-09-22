@@ -392,7 +392,7 @@ describe('the Spaces sidebar section', () => {
     expect(onReorder).not.toHaveBeenCalled();
   });
 
-  it('given fixed server order, when saving a reorder fails, then the section explains why the row snapped back', async () => {
+  it('given fixed server order, when saving a reorder fails, then a dialog explains why the row snapped back', async () => {
     const first = space('00000000-0000-7000-8000-0000000000f3', 'First');
     const second = space('00000000-0000-7000-8000-0000000000f4', 'Second');
     renderSection({
@@ -402,7 +402,9 @@ describe('the Spaces sidebar section', () => {
 
     fireEvent.keyDown(screen.getByRole('link', { name: /Second/u }), { altKey: true, key: 'ArrowUp' });
 
-    expect(await screen.findByText('Spaces couldn’t be reordered.')).toBeVisible();
+    const dialog = await screen.findByRole('dialog', { name: 'Spaces could not be reordered' });
+    expect(within(dialog).getByText('The spaces are back in the order they were in. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
     expect(screen.queryByText('Could not save space order')).not.toBeInTheDocument();
   });
 
@@ -561,7 +563,7 @@ describe('the Spaces sidebar section', () => {
     expect(onReorder).not.toHaveBeenCalled();
   });
 
-  it('given a dragged channel, when adding it fails, then the failure is visible outside either modal', async () => {
+  it('given a dragged channel, when adding it fails, then an acknowledged error dialog opens', async () => {
     renderSection({ onAddChannel: async () => { throw new Error('The space changed'); } });
 
     fireEvent.drop(screen.getByRole('link', { name: /Hiring/u }).closest('.space-sidebar-item')!, {
@@ -572,9 +574,10 @@ describe('the Spaces sidebar section', () => {
       },
     });
 
-    expect(await screen.findByText('That channel couldn’t be added to the space.')).toBeVisible();
+    const dialog = await screen.findByRole('dialog', { name: 'Channel could not be added to that space' });
+    expect(within(dialog).getByText('The channel is still in the spaces it was in. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
     expect(screen.queryByText('The space changed')).not.toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   // A hierarchy that is half built is not a state any surface may render, so
@@ -588,13 +591,13 @@ describe('the Spaces sidebar section', () => {
     expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
   });
 
-  it('given a failed refresh, then the known rows stay, marked out of date, with one retry', () => {
+  it('given a failed refresh, then the known rows stay with a refresh row and no warning copy', () => {
     const onRetry = vi.fn();
     renderSection({ onRetry, outOfDate: true, spaces: [general] });
 
     expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
-    expect(screen.getByText('These spaces may be out of date.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetry).toHaveBeenCalled();
   });
 });
