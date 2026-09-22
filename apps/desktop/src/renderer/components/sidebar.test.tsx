@@ -4273,7 +4273,7 @@ describe('alphabetical channels inside a space', () => {
 
   it('hides the empty Pinned drop surface when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
-    const transfer = channelTransfer();
+    const transfer = channelTransfer('none');
     const source = dragTarget(/Bravo/u);
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
