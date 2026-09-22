@@ -145,6 +145,8 @@ export class ChannelAccessService {
       targetSpaceId: SpaceId;
       scope: SpaceScope;
       participantUserIds: readonly UserId[];
+      sourceSpaceRevision: number;
+      sourceMembershipGeneration: number;
       targetSpaceRevision: number;
       targetMembershipGeneration: number;
       operationId: string;
@@ -182,6 +184,17 @@ export class ChannelAccessService {
       ...this.address(workstreamId),
       channel: observed.channel,
     });
+  }
+
+  /**
+   * Read persisted Space provenance while converging a WorkspaceDO-staged move.
+   * The durable intent is the authorization; mutable caller access is not
+   * rechecked after the move may already have changed Channel provenance.
+   */
+  async readPersistedSpaceSources(workstreamId: string): Promise<ChannelAccessSources["spaces"]> {
+    return (await this.room(workstreamId)).readPersistedSpaceAccessSources(
+      this.address(workstreamId),
+    );
   }
 
   /**

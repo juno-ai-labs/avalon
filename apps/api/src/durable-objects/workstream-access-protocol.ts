@@ -1,4 +1,5 @@
 import {
+  ChannelAccessSourcesSchema,
   IdSchema,
   SpaceErrorCodeSchema,
   SpaceIdSchema,
@@ -50,6 +51,16 @@ export type ObservedChannel = z.infer<typeof ObservedChannelSchema>;
 export const ReadChannelAccessSourcesRequestSchema = ChannelAccessAddressSchema.extend({
   channel: ObservedChannelSchema,
 });
+
+/**
+ * Server-internal read of only the persisted Space provenance.
+ *
+ * Recovery for a move was authorized and durably staged by WorkspaceDO. It
+ * must not turn the initiating user's mutable, current Channel access into a
+ * second authorization fence while converging that intent.
+ */
+export const ReadPersistedSpaceAccessSourcesRequestSchema = ChannelAccessAddressSchema;
+export const PersistedSpaceAccessSourcesSchema = ChannelAccessSourcesSchema.shape.spaces;
 
 export const SetChannelDirectScopeRequestSchema = ChannelAccessAddressSchema.extend({
   scope: SpaceScopeSchema,
@@ -213,6 +224,8 @@ export const ReplaceEquivalentSpaceAccessSourceRequestSchema = ChannelAccessAddr
   targetSpaceId: SpaceIdSchema,
   scope: SpaceScopeSchema,
   participantUserIds: z.array(UserIdSchema),
+  sourceSpaceRevision: z.number().int().positive(),
+  sourceMembershipGeneration: z.number().int().positive(),
   targetSpaceRevision: z.number().int().positive(),
   targetMembershipGeneration: z.number().int().positive(),
   operationId: IdSchema,

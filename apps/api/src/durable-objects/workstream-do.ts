@@ -225,7 +225,9 @@ import {
   ConfirmSpaceAccessSourceRequestSchema,
   ConfirmSpaceAccessSourceResultSchema,
   NoteChannelDirectReaderRequestSchema,
+  PersistedSpaceAccessSourcesSchema,
   ReadChannelAccessSourcesRequestSchema,
+  ReadPersistedSpaceAccessSourcesRequestSchema,
   ReplaceEquivalentSpaceAccessSourceRequestSchema,
   ReplaceEquivalentSpaceAccessSourceResultSchema,
   RetractSpaceAccessSourceRequestSchema,
@@ -800,6 +802,24 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     });
   }
 
+  /** Persisted Space provenance for recovery of an already-authorized intent. */
+  async readPersistedSpaceAccessSources(
+    input: z.infer<typeof ReadPersistedSpaceAccessSourcesRequestSchema>,
+  ): Promise<ChannelAccessSources["spaces"]> {
+    await this.initialized;
+    const request = parseRpcInput(
+      ReadPersistedSpaceAccessSourcesRequestSchema,
+      input,
+      "persisted_space_access_sources",
+    );
+    this.assertParent(request.workspaceId, request.parentId);
+    return PersistedSpaceAccessSourcesSchema.parse(this.channelAccess().sources().map((source) => ({
+      spaceId: source.sourceId,
+      scope: source.scope,
+      participantUserIds: source.participantUserIds,
+    })));
+  }
+
   /**
    * Record what the Channel's audience is on its own account.
    *
@@ -1061,6 +1081,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         targetSpaceId: request.targetSpaceId,
         scope: request.scope,
         participantUserIds: request.participantUserIds,
+        sourceSpaceRevision: request.sourceSpaceRevision,
+        sourceMembershipGeneration: request.sourceMembershipGeneration,
         targetSpaceRevision: request.targetSpaceRevision,
         targetMembershipGeneration: request.targetMembershipGeneration,
       },
@@ -1077,7 +1099,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
             ? { ok: true as const }
             : { ok: false as const, code: "space_not_found" as const };
         }
-        if (!audienceMatches(source) || (target && !audienceMatches(target))) {
+        if (source.spaceRevision !== request.sourceSpaceRevision
+          || source.membershipGeneration !== request.sourceMembershipGeneration
+          || !audienceMatches(source)
+          || (target && !audienceMatches(target))) {
           return { ok: false as const, code: "space_revision_conflict" as const };
         }
         if (spaceAccessSourceSuperseded(target, {
