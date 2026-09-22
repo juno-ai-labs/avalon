@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { SpaceSummary } from '@rally/contracts';
 import { MemoryRouter } from 'react-router-dom';
@@ -229,7 +229,7 @@ describe('SpacesSidebar', () => {
     await waitFor(() => expect(onMoveChannel).toHaveBeenCalledWith('general', 'launch', 'channel-1'));
     expect(transfer.dropEffect).toBe('move');
     expect(target).not.toHaveClass('is-channel-drop-target');
-    expect(target).not.toHaveClass('is-channel-drop-accepted');
+    expect(target).toHaveClass('is-channel-drop-accepted');
 
     settleMove?.();
     await waitFor(() => expect(target).toHaveClass('is-channel-drop-accepted'));
@@ -253,6 +253,32 @@ describe('SpacesSidebar', () => {
     expect(dialog).toHaveTextContent('The channel is still in the space it came from. Try again in a moment.');
     expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
     expect(document.querySelector('.spaces-sidebar-error')).not.toBeInTheDocument();
+    expect(target).not.toHaveClass('is-channel-drop-accepted');
+  });
+
+  it('keeps a newer accepted-drop pulse when an older move is refused', async () => {
+    const refusals: Array<(cause: Error) => void> = [];
+    const onMoveChannel = vi.fn(() => new Promise<void>((_, reject) => {
+      refusals.push(reject);
+    }));
+    renderSidebar({ onMoveChannel });
+    const target = screen.getByRole('link', { name: 'Launch' });
+    const transfer = (workstreamId: string) => ({
+      dropEffect: 'none',
+      getData: (type: string) => type === 'application/x-rally-workstream-id'
+        ? workstreamId
+        : type === 'application/x-rally-channel-source-space-id' ? 'general' : '',
+      types: ['application/x-rally-workstream-id', 'application/x-rally-channel-source-space-id'],
+    });
+
+    fireEvent.drop(target, { dataTransfer: transfer('channel-1') });
+    fireEvent.drop(target, { dataTransfer: transfer('channel-2') });
+    expect(onMoveChannel).toHaveBeenCalledTimes(2);
+
+    await act(async () => refusals[0]?.(new Error('first_refused')));
+    expect(target).toHaveClass('is-channel-drop-accepted');
+
+    await act(async () => refusals[1]?.(new Error('second_refused')));
     expect(target).not.toHaveClass('is-channel-drop-accepted');
   });
 

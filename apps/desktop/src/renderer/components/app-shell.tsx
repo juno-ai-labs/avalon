@@ -218,8 +218,45 @@ export function channelSpaceMutationHandlers(
   const applySpace = (updated: SpaceSummary): void => {
     queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
       ...current,
-      items: current.items.map((space) => space.id === updated.id ? updated : space),
+      items: current.items.map((space) => (
+        space.id === updated.id && updated.revision >= space.revision ? updated : space
+      )),
     } : current);
+  };
+  const pendingMoves = new Map<string, Promise<void>>();
+  const moveChannel = async (
+    sourceSpaceId: string,
+    targetSpaceId: string,
+    workstreamId: string,
+  ): Promise<void> => {
+    const moveApi = activeApi();
+    const before = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+      ?.find((workstream) => workstream.id === workstreamId)?.spaceIds;
+    const optimistic = before === undefined ? undefined : [...new Set([
+      ...before.filter((spaceId) => spaceId !== sourceSpaceId),
+      targetSpaceId,
+    ])];
+    if (optimistic !== undefined) {
+      patchCachedWorkstream(queryClient, workstreamId, { spaceIds: optimistic });
+    }
+    let moved: Awaited<ReturnType<typeof moveApi.moveChannelBetweenSpaces>>;
+    try {
+      moved = await moveApi.moveChannelBetweenSpaces(sourceSpaceId, targetSpaceId, workstreamId);
+    } catch (cause) {
+      if (before !== undefined && optimistic !== undefined) {
+        patchCachedWorkstream(queryClient, workstreamId, (current) => (
+          current.spaceIds.length === optimistic.length
+            && current.spaceIds.every((spaceId, index) => spaceId === optimistic[index])
+            ? { ...current, spaceIds: before }
+            : current
+        ));
+      }
+      throw cause;
+    }
+    applySpace(moved.target);
+    applySpace(moved.source);
+    // The optimistic value already represents this successful operation. A
+    // different value here came from a newer socket publication and must win.
   };
   return {
     // A Channel keeps every Space it is already in: adding is additive, and
@@ -233,19 +270,20 @@ export function channelSpaceMutationHandlers(
     // One server operation composes the membership primitives in the safe
     // order: establish the destination before withdrawing the source, so an
     // interrupted move can leave an extra placement but never a homeless
-    // Channel. The response is the cache patch; no refetch extends the gesture.
-    onMoveChannelToSpace: async (sourceSpaceId, targetSpaceId, workstreamId) => {
-      if (sourceSpaceId === targetSpaceId) return;
-      const moved = await activeApi().moveChannelBetweenSpaces(sourceSpaceId, targetSpaceId, workstreamId);
-      applySpace(moved.target);
-      applySpace(moved.source);
-      patchCachedWorkstream(queryClient, workstreamId, (current) => ({
-        ...current,
-        spaceIds: [...new Set([
-          ...current.spaceIds.filter((spaceId) => spaceId !== sourceSpaceId),
-          targetSpaceId,
-        ])],
-      }));
+    // Channel. The Channel cache moves before the request, so the source rail
+    // responds to the drop rather than to a later round trip. The response
+    // reconciles the two Space summaries; no refetch extends the gesture.
+    onMoveChannelToSpace: (sourceSpaceId, targetSpaceId, workstreamId) => {
+      if (sourceSpaceId === targetSpaceId) return Promise.resolve();
+      const previous = pendingMoves.get(workstreamId);
+      const moving = previous === undefined
+        ? moveChannel(sourceSpaceId, targetSpaceId, workstreamId)
+        : previous.then(() => moveChannel(sourceSpaceId, targetSpaceId, workstreamId));
+      pendingMoves.set(workstreamId, moving);
+      void moving.finally(() => {
+        if (pendingMoves.get(workstreamId) === moving) pendingMoves.delete(workstreamId);
+      }).catch(() => undefined);
+      return moving;
     },
     onRemoveChannelFromSpace: async (spaceId, workstreamId) => {
       applySpace(await activeApi().removeChannelFromSpace(spaceId, workstreamId));
@@ -493,6 +531,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const shellMounted = useLayoutMountedRef();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const queryClient = useQueryClient();
+  const channelSpaceHandlers = useMemo(
+    () => channelSpaceMutationHandlers(api, queryClient),
+    [api, queryClient],
+  );
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
@@ -947,7 +989,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           );
           return created;
         }}
-        {...channelSpaceMutationHandlers(api, queryClient)}
+        {...channelSpaceHandlers}
         ordering={ordering}
         // One write for all three hand-arranged lists. The authority answers
         // with what it actually stored — a request may name an item the
