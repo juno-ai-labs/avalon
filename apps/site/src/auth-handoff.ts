@@ -1,5 +1,6 @@
 import type { ConnectorOAuthProviderValue } from '@rally/contracts/connector-oauth-providers';
-import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import { SIDELINE_AUTH_CALLBACK_URI } from '@rally/contracts/desktop-deep-link';
+import { parseDesktopHandoffIntent } from '@rally/contracts/desktop-deep-link-intent';
 import { reportDesktopHandoff } from './telemetry';
 
 type ConnectorProvider = ConnectorOAuthProviderValue;
@@ -37,7 +38,7 @@ export function parseDesktopTarget(fragment: string): string | null {
   const rawTarget = fragmentParameters.get('target');
   if (!rawTarget) return null;
 
-  const intent = parseDesktopDeepLinkIntent(rawTarget);
+  const intent = parseDesktopHandoffIntent(rawTarget);
   return intent?.kind === 'identity-result' || intent?.kind === 'connector-result'
     ? new URL(rawTarget).toString()
     : null;
@@ -45,9 +46,11 @@ export function parseDesktopTarget(fragment: string): string | null {
 
 function initializeHandoff(): void {
   const link = document.querySelector<HTMLAnchorElement>('#open-rally');
+  const linkLabel = document.querySelector<HTMLElement>('#open-app-label');
+  const title = document.querySelector<HTMLElement>('#auth-title');
   const status = document.querySelector<HTMLElement>('#auth-status');
   const help = document.querySelector<HTMLElement>('#auth-help');
-  if (!link || !status || !help) return;
+  if (!link || !linkLabel || !title || !status || !help) return;
 
   const target = parseDesktopTarget(window.location.hash);
 
@@ -66,6 +69,12 @@ function initializeHandoff(): void {
   reportDesktopHandoff('auth', 'presented', 'valid');
 
   const parsedTarget = new URL(target);
+  const sideline = new URL(SIDELINE_AUTH_CALLBACK_URI);
+  const appName = parsedTarget.protocol === sideline.protocol ? 'Sideline' : 'Rally';
+  document.title = `Return to ${appName}`;
+  title.textContent = `Returning you to ${appName}`;
+  linkLabel.textContent = `Open ${appName}`;
+  help.textContent = `If ${appName} does not open automatically, use the button above. You can safely close this page after the app opens.`;
   const provider = parsedTarget.searchParams.get('provider') as ConnectorProvider | null;
   const result = parsedTarget.searchParams.get('status');
   const error = parsedTarget.searchParams.get('error');
@@ -75,10 +84,10 @@ function initializeHandoff(): void {
     status.textContent = `${connectorName[provider]} could not be connected. Opening Rally…`;
     help.textContent = 'Rally will show the authorization result and let you try again.';
   } else if (error) {
-    status.textContent = 'Sign-in could not be completed. Opening Rally…';
-    help.textContent = 'Rally will show the sign-in result and let you try again.';
+    status.textContent = `Sign-in could not be completed. Opening ${appName}…`;
+    help.textContent = `Return to ${appName} and try signing in again.`;
   } else {
-    status.textContent = 'Sign-in is complete. Opening the Rally desktop app…';
+    status.textContent = `Sign-in is complete. Opening ${appName}…`;
   }
   link.href = target;
   link.setAttribute('aria-disabled', 'false');
@@ -94,7 +103,7 @@ function initializeHandoff(): void {
   link.addEventListener('click', () => {
     attempted = true;
     reportDesktopHandoff('auth', 'manual', 'valid');
-    status.textContent = 'Opening Rally…';
+    status.textContent = `Opening ${appName}…`;
   });
   window.setTimeout(openOnce, 120);
 }
