@@ -1,5 +1,5 @@
 import { startCanvaConnection } from './canva-loopback';
-import { readMainWindowState, writeMainWindowState } from './main-window-state';
+import { boundsWithoutConversationDetails, readMainWindowState, writeMainWindowState } from './main-window-state';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -4420,7 +4420,11 @@ async function createMainWindow(): Promise<void> {
     if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
     try {
       writeMainWindowState(userDataDirectory(), {
-        bounds: mainWindow.getNormalBounds(),
+        bounds: boundsWithoutConversationDetails(
+          mainWindow.getNormalBounds(),
+          conversationDetailsExpansion,
+          conversationDetailsAppliedWidth,
+        ),
         maximized: mainWindow.isMaximized(),
       });
     } catch (error) {

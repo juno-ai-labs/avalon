@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
-import { readMainWindowState, restoreMainWindowState, writeMainWindowState } from './main-window-state';
+import {
+  boundsWithoutConversationDetails,
+  readMainWindowState,
+  restoreMainWindowState,
+  writeMainWindowState,
+} from './main-window-state';
 
 const minimum = { width: 860, height: 640 };
 const displays = [
@@ -34,4 +39,25 @@ it('moves a window from a disconnected display into the primary work area', () =
 
 it('ignores malformed stored bounds', () => {
   expect(restoreMainWindowState({ version: 1, bounds: { x: 0, y: 0, width: -1, height: 900 } }, displays, minimum)).toBeNull();
+  expect(restoreMainWindowState({
+    version: 1,
+    bounds: { x: 0, y: 0, width: 1180, height: 900 },
+  }, displays, minimum)).toBeNull();
+});
+
+it('uses native minimum dimensions when a display is too small to contain them', () => {
+  expect(restoreMainWindowState({
+    version: 1,
+    bounds: { x: 1600, y: 100, width: 1180, height: 940 },
+    maximized: false,
+  }, [{ workArea: { x: 100, y: 50, width: 800, height: 600 } }], minimum)).toEqual({
+    bounds: { x: 100, y: 50, width: 860, height: 640 },
+    maximized: false,
+  });
+});
+
+it('removes only an unchanged temporary details-rail expansion', () => {
+  const expanded = { x: 100, y: 50, width: 1480, height: 900 };
+  expect(boundsWithoutConversationDetails(expanded, 300, 1480)).toEqual({ ...expanded, width: 1180 });
+  expect(boundsWithoutConversationDetails({ ...expanded, width: 1530 }, 300, 1480)).toEqual({ ...expanded, width: 1530 });
 });
