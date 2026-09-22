@@ -204,7 +204,8 @@ describe('SessionGate identity-first ordering', () => {
 
     await act(async () => { finishProfile(renamed); });
 
-    expect(screen.getByTestId('settings-workspace')).toHaveTextContent('Rally Labs / America/New_York');
+    await waitFor(() => expect(screen.getByTestId('settings-workspace'))
+      .toHaveTextContent('Rally Labs / America/New_York'));
   });
 
   it('still waits for the read when the session cannot describe the organization', async () => {
