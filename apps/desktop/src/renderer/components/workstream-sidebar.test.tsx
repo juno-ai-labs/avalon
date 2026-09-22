@@ -163,7 +163,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
   });
 
-  it('places children below Main and creation last while retaining compact navigation', () => {
+  it('places children below Main and creation last without collapsing on navigation', () => {
     const onSelectSubstream = vi.fn();
     const onNewSubstream = vi.fn();
     render(<Tooltip.Provider><WorkstreamSidebar
@@ -201,9 +201,10 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New breakout' }));
     expect(onNewSubstream).toHaveBeenCalledOnce();
-    // Making a selection automatically compacts this level; the Breakout's own
-    // icon remains legible in the square mark.
-    expect(sidebar).toHaveClass('is-compact');
+    // Navigation preserves the person's chosen rail width. Only its explicit
+    // toggle or a narrow pane compacts it.
+    expect(sidebar).not.toHaveClass('is-compact');
+    expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
     expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-mark')).not.toBeNull();
     expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
     fireEvent.click(child);

@@ -40,7 +40,7 @@ them; the product design is in
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space compacts the first rail and opens its Channels; selecting a Channel compacts both before the existing room/Breakout rail. |
+| `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space or Channel compacts the Spaces rail and opens the selected destination while leaving the Channels rail at the person's chosen width. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
@@ -1563,10 +1563,10 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, cross-rail drag-to-Space moves, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, Spaces-only automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, cross-rail drag-to-Space moves, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's Space, Channel and Breakout rails; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
-| `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
+| `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's navigation without selection-driven compaction, plus its drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
@@ -2043,6 +2043,21 @@ a permission refusal.
 Future unavailable Space states must remain visible there with a specific
 disabled reason; the server's `through_channel` refusal remains the authority,
 and drag-and-drop continues to expose only writable destinations.
+
+### 2026-09-21 — Only the Spaces rail auto-collapses during navigation
+
+**What changed:** In both desktop and browser navigation, selecting a Space or
+opening or re-entering a Channel now compacts the Spaces rail without changing
+the Channels rail's expanded/collapsed preference. Selecting Main, a Breakout,
+or **New breakout** likewise leaves the Breakouts rail at the width the person
+chose. Explicit collapse controls, edge gestures, and responsive narrow-window
+compaction remain unchanged on every rail.
+
+**Why:** Automatic compaction at every selection made the two contextual rails
+disappear while the person was actively navigating their contents. The Spaces
+rail is the hierarchy level navigation moves away from, so it alone recovers
+conversation width automatically; the Channels and Breakouts rails stay under
+direct user control.
 
 ### 2026-09-20 — Archive is available from a live Space row
 

@@ -1205,8 +1205,7 @@ export function Sidebar({
     previousRouteWorkstreamId.current = routeWorkstreamId;
     if (routeWorkstreamId === null) return;
     setSpacesCollapsed(true);
-    setSidebarCollapsed(true);
-  }, [routeWorkstreamId, setSidebarCollapsed]);
+  }, [routeWorkstreamId]);
   useEffect(() => {
     if (routeSpaceId) {
       if (spaces?.some((space) => space.id === routeSpaceId)) setSelectedSpaceId(routeSpaceId);
@@ -1816,10 +1815,7 @@ export function Sidebar({
       spaces={placementSpaces}
       workspace={workspace}
       workstream={workstream}
-      onOpen={() => {
-        setSpacesCollapsed(true);
-        setSidebarCollapsed(true);
-      }}
+      onOpen={() => setSpacesCollapsed(true)}
     />
   );
 
@@ -2077,7 +2073,6 @@ export function Sidebar({
         onSelect={(spaceId) => {
           setSelectedSpaceId(spaceId);
           setSpacesCollapsed(true);
-          setSidebarCollapsed(false);
         }}
         ordering={ordering}
         ready={spacesReady}

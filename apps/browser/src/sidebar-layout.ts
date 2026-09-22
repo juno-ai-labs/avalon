@@ -49,12 +49,3 @@ export function browserSidebarLayout(input: {
     spacesWidth,
   };
 }
-
-/** A one-shot route fence is needed only when navigation will change the parent route. */
-export function channelsOpenRouteFence(
-  currentParentId: string | null,
-  targetParentId: string,
-  keepChannelsOpen: boolean,
-): string | null {
-  return keepChannelsOpen && currentParentId !== targetParentId ? targetParentId : null;
-}
