@@ -726,6 +726,7 @@ export interface ConversationHeaderContext {
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;
   loadSidekickOptions: () => void;
+  refreshSidekicks: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
   openParticipantDialog: () => void;
@@ -2151,9 +2152,9 @@ export function ConversationSurface({
     // A failed owned read is not a pending one: the attachments answered, and
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
-    owned: !readOwnedSidekickDetails || ownedSidekicks.isError ? [] : ownedSidekicks.data,
-    attached: attachedSidekicks.isError ? [] : attachedSidekicks.data,
-    recommended: recommendedSidekicks.isError ? [] : recommendedSidekicks.data,
+    owned: readOwnedSidekickDetails ? ownedSidekicks.data ?? [] : [],
+    attached: attachedSidekicks.data ?? [],
+    recommended: recommendedSidekicks.data ?? [],
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
@@ -2183,6 +2184,11 @@ export function ConversationSurface({
     if (removeSidekick.isError) removeSidekick.reset();
     void recommendationOptions.refetch();
   };
+  const refreshSidekicks = (): void => {
+    if (readOwnedSidekickDetails) void ownedSidekicks.refetch();
+    void attachedSidekicks.refetch();
+    void recommendedSidekicks.refetch();
+  };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -2199,6 +2205,7 @@ export function ConversationSurface({
       {renderSidebar?.({
         sidekicks: sidekickRows,
         loadSidekickOptions,
+        refreshSidekicks,
         sidekickFailure,
         detail: sidebarDetail,
         socketState,
@@ -2255,6 +2262,7 @@ export function ConversationSurface({
         detail: displayedDetail,
         sidekicks: sidekickRows,
         loadSidekickOptions,
+        refreshSidekicks,
         sidekickFailure,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -2496,6 +2504,7 @@ export function ConversationSurface({
         workstream={resourceManagementDetail}
         sidekicks={sidekickRows}
         sidekickFailure={sidekickFailure}
+        onRefreshSidekicks={refreshSidekicks}
       />}
 
       {artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar

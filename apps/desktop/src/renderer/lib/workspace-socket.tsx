@@ -151,9 +151,9 @@ interface WorkspaceSocketContextValue {
    * Abandon the backoff and try the organization connection now.
    *
    * The one refresh a surface painting socket-owned state can offer. Every
-   * list here is pushed rather than fetched, so a **Try again** beside a stale
-   * one has nothing to refetch — reconnecting is the retry, and it is the same
-   * step the `online` listener already takes when the machine comes back.
+   * list here is pushed rather than fetched, so a **Refresh** row beside a stale
+   * one reconnects instead — the same step the `online` listener already takes
+   * when the machine comes back.
    * A no-op while the provider is unmounted or already connecting.
    */
   reconnect: () => void;
