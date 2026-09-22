@@ -296,7 +296,10 @@ describe("SpaceService lifecycle fan-out", () => {
       workspace, conversation: channels.conversation, room: channels.room,
     }), auth()).archive(SPACE_ID);
 
-    await vi.waitFor(() => expect([...release.keys()]).toEqual([CHANNEL_ID, SECOND_CHANNEL_ID]));
+    await vi.waitFor(
+      () => expect([...release.keys()]).toEqual([CHANNEL_ID, SECOND_CHANNEL_ID]),
+      { timeout: 1_000 },
+    );
     expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
     release.get(CHANNEL_ID)?.();
     release.get(SECOND_CHANNEL_ID)?.();
@@ -314,6 +317,58 @@ describe("SpaceService lifecycle fan-out", () => {
       `retract:${SECOND_CHANNEL_ID}`,
       "finalize",
     ]);
+  });
+
+  it("given one failed retraction, waits for its started sibling before rejecting and never finalizes", async () => {
+    const workspace = workspaceDouble({
+      listSpaceMembers: vi.fn(async () => ({
+        ok: true,
+        members: [
+          { workstreamId: CHANNEL_ID, membershipGeneration: 4 },
+          { workstreamId: SECOND_CHANNEL_ID, membershipGeneration: 2 },
+        ],
+        nextCursor: null,
+      })),
+    });
+    const channels = channelDoubles([]);
+    let rejectFirst: ((reason: Error) => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    channels.room.retractSpaceAccessSource = vi.fn((input: { parentId: string }) => new Promise((resolve, reject) => {
+      if (input.parentId === CHANNEL_ID) rejectFirst = reject;
+      else {
+        releaseSecond = () => resolve({
+          ok: true,
+          plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },
+        });
+      }
+    }));
+
+    let settled = false;
+    const archive = new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).archive(SPACE_ID);
+    const observed = archive.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(
+      () => expect(channels.room.retractSpaceAccessSource).toHaveBeenCalledTimes(2),
+      { timeout: 1_000 },
+    );
+    rejectFirst?.(new Error("channel_retraction_failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
+
+    releaseSecond?.();
+    await expect(observed).resolves.toMatchObject({
+      error: expect.objectContaining({ message: "channel_retraction_failed" }),
+    });
+    expect(workspace.finalizeSpaceArchive).not.toHaveBeenCalled();
   });
 });
 
