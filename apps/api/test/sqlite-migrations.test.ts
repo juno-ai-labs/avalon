@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
   applyDurableObjectSqliteMigrations,
@@ -45,6 +45,16 @@ function storageFor(database: DatabaseSync, kvCall = vi.fn()): DurableObjectStor
 }
 
 describe("Durable Object SQLite migrations", () => {
+  let warn: MockInstance;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
   it("applies an append-only history idempotently without any KV calls", () => {
     const database = new DatabaseSync(":memory:");
     const kvCall = vi.fn();
@@ -80,7 +90,7 @@ describe("Durable Object SQLite migrations", () => {
     }
   });
 
-  it("fails closed when an already-applied migration is edited", () => {
+  it("warns without blocking when an already-applied migration is edited", () => {
     const database = new DatabaseSync(":memory:");
     try {
       const storage = storageFor(database);
@@ -94,52 +104,21 @@ describe("Durable Object SQLite migrations", () => {
         ...MIGRATIONS[0]!,
         statements: [`CREATE TABLE messages(id TEXT PRIMARY KEY, content BLOB NOT NULL) STRICT`],
       }, MIGRATIONS[1]!];
-      expect(() => applyDurableObjectSqliteMigrations({
+      expect(applyDurableObjectSqliteMigrations({
         storage,
         migrations: changed,
         component: "test_do",
         workerVersionId: "worker-two",
-      })).toThrow("test_do_schema_hash_mismatch:1");
-    } finally {
-      database.close();
-    }
-  });
-
-  it("accepts only an explicitly named schema-equivalent historical receipt", () => {
-    const database = new DatabaseSync(":memory:");
-    try {
-      const storage = storageFor(database);
-      const historical = [{
-        ...MIGRATIONS[0]!,
-        statements: [`${MIGRATIONS[0]!.statements[0]}\n-- released comment-only edit`],
-      }];
-      applyDurableObjectSqliteMigrations({
-        storage,
-        migrations: historical,
-        component: "test_do",
-        workerVersionId: "worker-one",
-      });
-
-      const compatible = [{
-        ...MIGRATIONS[0]!,
-        compatibleImplementationHashes: [durableObjectMigrationHash(historical[0]!)],
-      }];
-      expect(applyDurableObjectSqliteMigrations({
-        storage,
-        migrations: compatible,
-        component: "test_do",
-        workerVersionId: "worker-two",
       })).toEqual([]);
-
-      database.prepare(
-        `UPDATE _sql_schema_migrations SET implementation_hash = ? WHERE version = 1`,
-      ).run("fnv1a64:0000000000000000");
-      expect(() => applyDurableObjectSqliteMigrations({
-        storage,
-        migrations: compatible,
+      expect(warn).toHaveBeenCalledWith({
+        event: "durable_object_schema_hash_mismatch",
+        message: "test_do_schema_hash_mismatch:1",
         component: "test_do",
-        workerVersionId: "worker-three",
-      })).toThrow("test_do_schema_hash_mismatch:1");
+        version: 1,
+        workerVersionId: "worker-two",
+        recordedImplementationHash: durableObjectMigrationHash(MIGRATIONS[0]!),
+        currentImplementationHash: durableObjectMigrationHash(changed[0]!),
+      });
     } finally {
       database.close();
     }
