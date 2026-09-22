@@ -217,8 +217,13 @@ attaches it where it attaches the email.
   disabled control and a server refusal that nobody has asked for, not a new
   contract field. Revisit it together with those two, not on its own.
 
-  The rail's resource detail carries two more controls in the header: **Versions**
-  and **Archive**. **Versions** opens the resource's history, labelled with sparse
+  The resource detail carries **Versions** and **Archive** in its header. An
+  artifact-direction lightbox also carries **Open in a new window**, which opens
+  its authorized preview in a separate isolated window, and **Open in a
+  righthand sidebar**, which moves the full-bleed document into the resizable
+  rail beside the feed.
+  Source-direction resources do not carry either action. **Versions** opens the
+  resource's history, labelled with sparse
   relative dates. **Refresh from source** still sits on the document itself and
   additionally requires the server's `refreshSupported` capability, which is true
   only when the deployed connector adapter implements `hydrateResource`. An origin

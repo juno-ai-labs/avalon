@@ -148,11 +148,25 @@ export async function readResourcePreviewText(
   signal: AbortSignal,
   maxWaitMs: number,
 ): Promise<string> {
+  return await (await readResourcePreview(
+    loadResourceContent,
+    resourceId,
+    signal,
+    maxWaitMs,
+  )).text();
+}
+
+/** The same processing-aware read for callers that need the authorized bytes. */
+export async function readResourcePreview(
+  loadResourceContent: ResourcePreviewLoader,
+  resourceId: string,
+  signal: AbortSignal,
+  maxWaitMs: number,
+): Promise<Blob> {
   const deadline = performance.now() + maxWaitMs;
   for (;;) {
     try {
-      const blob = await loadResourceContent(resourceId, signal);
-      return await blob.text();
+      return await loadResourceContent(resourceId, signal);
     } catch (error) {
       const retryAfterMs = processingRetryDelayMs(error);
       // A wait that would end past the deadline is not started at all, so the

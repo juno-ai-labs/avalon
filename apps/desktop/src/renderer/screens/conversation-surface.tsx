@@ -33,6 +33,7 @@ import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
+import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import {
   currentSurfaceEntrypoint,
   reportTelemetryProductIntent,
@@ -69,7 +70,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
-import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
+import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
   substreamInitialContextQueryKey,
@@ -92,7 +93,7 @@ import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Parti
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
-import { InspectorRail } from '../components/inspector-rail';
+import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
@@ -815,9 +816,11 @@ export function ConversationSurface({
   const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
   const storeRailOpen = useUiStore((state) => state.railOpen);
+  const railWidth = useUiStore((state) => state.railWidth);
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
+  const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
@@ -844,8 +847,11 @@ export function ConversationSurface({
   const conversationAddress = `${id}:${substreamId}`;
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
+  const poppedOutArtifactRefreshes = useRef(new Set<string>());
+  const poppedOutArtifactResourceIds = useRef<string[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
+  const [artifactSidebar, setArtifactSidebar] = useState<{ resourceId: string; workstreamScoped?: boolean } | null>(null);
   const openResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
     setAttachmentPreview(null);
     setResourcePreview({ resourceId, returnFocus });
@@ -888,6 +894,7 @@ export function ConversationSurface({
   useLayoutEffect(() => {
     setAttachmentPreview(null);
     setResourcePreview(null);
+    setArtifactSidebar(null);
     setResourceDialogOpen(false);
     setRailScope(id);
     return () => {
@@ -1064,6 +1071,34 @@ export function ConversationSurface({
       },
     };
   }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
+  useEffect(() => {
+    if (!routedDetail) return;
+    const controller = new AbortController();
+    // The socket advances `currentVersion` on the canonical resource. Inline
+    // previews observe the same value directly; detached windows report the
+    // version they still show so we only authorize and transfer newer bytes.
+    const resources = [
+      ...routedDetail.resources,
+      ...(workstreamContext?.id === id ? workstreamContext.resources : []),
+    ];
+    poppedOutArtifactResourceIds.current = [...new Set(resources.map((resource) => resource.id))];
+    void refreshPoppedOutArtifacts({
+      bridge: desktopBridge(),
+      inFlight: poppedOutArtifactRefreshes.current,
+      loadResourceContent,
+      ...(siteArtifacts ? { openSiteArtifact: siteArtifacts.openArtifact } : {}),
+      resources,
+      signal: controller.signal,
+    }).catch(() => {
+      // Inline preview failure presentation owns the user-visible state. A
+      // detached window safely remains on its last complete version and the
+      // next canonical version signal retries it.
+    });
+    return () => controller.abort();
+  }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
+  useEffect(() => () => {
+    void desktopBridge().closePoppedOutArtifacts(poppedOutArtifactResourceIds.current).catch(() => undefined);
+  }, [id]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -1088,7 +1123,7 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = RIGHT_SIDEBAR_ENABLED && storeRailOpen && railScope === id;
+  const railOpen = Boolean(artifactSidebar) && storeRailOpen && railScope === id;
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
@@ -2105,6 +2140,10 @@ export function ConversationSurface({
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
+  const artifactSidebarDetail = artifactSidebar?.workstreamScoped ? sidebarDetail : displayedDetail;
+  const artifactSidebarResource = artifactSidebar
+    ? artifactSidebarDetail.resources.find((resource) => resource.id === artifactSidebar.resourceId)
+    : undefined;
   // One list for both rails, composed once: the room's own Sidekicks and its
   // conversation's attachments are two answers about the same objects, and
   // only a participant may detach one.
@@ -2419,11 +2458,19 @@ export function ConversationSurface({
       </div>
       </>}
 
-      {(RIGHT_SIDEBAR_ENABLED || resourcePreview) && <InspectorRail
-        {...(resourcePreview ? { lightbox: {
+      {resourcePreview && <InspectorRail
+        lightbox={{
           ...resourcePreview,
           onClose: () => setResourcePreview(null),
-        } } : {})}
+          onOpenSidebar: (resourceId) => {
+            setArtifactSidebar({
+              resourceId,
+              ...(resourcePreview.workstreamScoped ? { workstreamScoped: true } : {}),
+            });
+            setResourcePreview(null);
+            openRail('context');
+          },
+        }}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
         failure={watchResource.error
@@ -2449,6 +2496,16 @@ export function ConversationSurface({
         workstream={resourceManagementDetail}
         sidekicks={sidekickRows}
         sidekickFailure={sidekickFailure}
+      />}
+
+      {artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar
+        leaving={railLeaving}
+        {...(api ? { loadResourceContent } : {})}
+        onClose={closeRail}
+        onResize={setRailWidth}
+        resource={artifactSidebarResource}
+        {...(siteArtifacts ? { siteArtifacts } : {})}
+        width={railWidth}
       />}
 
       <AddParticipantDialog
