@@ -21,11 +21,12 @@ import {
   parseWorkspaceAddressedDeepLink,
   type WorkspaceTarget,
 } from "./workspace-target";
+import { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
 const DEEP_LINK_HOST = "workstreams";
 
-/** New canonical prefix: `/app/workspaces/<region>/<workspace>/workstreams/<id>`. */
-export const WORKSTREAM_LINK_PATH_PREFIX = "/app/workspaces/";
+/** Canonical hierarchy: `/app/<region>/<organization>/s/<space>`. */
+export const WORKSTREAM_LINK_PATH_PREFIX = "/app/";
 
 /** ID-only links already shared before workspace-addressed links shipped. */
 export const LEGACY_WORKSTREAM_LINK_PATH_PREFIX = "/app/workstreams/";
@@ -41,11 +42,20 @@ const WORKSTREAM_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 export interface WorkstreamLinkTarget extends WorkspaceTarget {
+  spaceId: string;
   workstreamId: string;
   substreamId?: string;
 }
 
-export type ParsedWorkstreamLinkTarget = WorkstreamLinkTarget | {
+export interface SpaceLinkTarget extends WorkspaceTarget {
+  spaceId: string;
+}
+
+export type ParsedWorkstreamLinkTarget = WorkstreamLinkTarget | (WorkspaceTarget & {
+  spaceId?: undefined;
+  workstreamId: string;
+  substreamId?: string;
+}) | {
   region: null;
   workspaceId: null;
   workstreamId: string;
@@ -66,6 +76,7 @@ function assertWorkstreamLinkTarget(target: WorkstreamLinkTarget): void {
   if (!isWorkspaceTarget(target)) {
     throw new Error("A work-stream link requires a region and workspace UUID");
   }
+  assertWorkstreamId(target.spaceId);
   assertWorkstreamId(target.workstreamId);
   if (target.substreamId) assertWorkstreamId(target.substreamId);
 }
@@ -73,8 +84,20 @@ function assertWorkstreamLinkTarget(target: WorkstreamLinkTarget): void {
 /** The workspace-addressed desktop deep link every new canonical link resolves to. */
 export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`);
-  return addWorkspaceTarget(deepLink, target).toString();
+  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//spaces/${uuidToBase58(target.spaceId)}/channels/${uuidToBase58(target.workstreamId)}${target.substreamId ? `/breakouts/${uuidToBase58(target.substreamId)}` : ""}`);
+  return addWorkspaceTarget(deepLink, target, { base58: true }).toString();
+}
+
+/** The addressed desktop destination for a Space dashboard. */
+export function spaceDeepLink(target: SpaceLinkTarget): string {
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.spaceId)) {
+    throw new Error("A Space link requires a region, Organization UUID, and Space UUID");
+  }
+  return addWorkspaceTarget(
+    new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//spaces/${uuidToBase58(target.spaceId)}`),
+    target,
+    { base58: true },
+  ).toString();
 }
 
 /**
@@ -82,7 +105,11 @@ export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
  * still reach the current desktop; new writers call `workstreamDeepLink`.
  */
 export function workstreamDeepLinkFromParsedTarget(target: ParsedWorkstreamLinkTarget): string {
-  if (target.region !== null) return workstreamDeepLink(target);
+  if (target.region !== null && target.spaceId) return workstreamDeepLink(target as WorkstreamLinkTarget);
+  if (target.region !== null) {
+    const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`);
+    return addWorkspaceTarget(deepLink, target).toString();
+  }
   assertWorkstreamId(target.workstreamId);
   if (target.substreamId) assertWorkstreamId(target.substreamId);
   return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`;
@@ -91,21 +118,53 @@ export function workstreamDeepLinkFromParsedTarget(target: ParsedWorkstreamLinkT
 /** The canonical shareable link emitted by every current surface. */
 export function workstreamCanonicalUrl(webBaseUrl: string, target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`;
+  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/s/${uuidToBase58(target.spaceId)}/c/${uuidToBase58(target.workstreamId)}${target.substreamId ? `/b/${uuidToBase58(target.substreamId)}` : ""}`;
   return new URL(path, webBaseUrl).toString();
+}
+
+/** The canonical URL for a Space dashboard. */
+export function spaceCanonicalUrl(webBaseUrl: string, target: SpaceLinkTarget): string {
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.spaceId)) {
+    throw new Error("A Space link requires a region, Organization UUID, and Space UUID");
+  }
+  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/s/${uuidToBase58(target.spaceId)}/`, webBaseUrl).toString();
+}
+
+/** Parse the canonical Space root, without accepting a Channel below it. */
+export function parseSpaceLinkPathTarget(pathname: string): SpaceLinkTarget | null {
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const match = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/s\/([^/]+)$/u.exec(normalized);
+  if (!match) return null;
+  const workspaceId = uuidFromBase58(match[2]!);
+  const spaceId = uuidFromBase58(match[3]!);
+  const target = { region: match[1]!, workspaceId: workspaceId!, spaceId: spaceId! };
+  return workspaceId && spaceId && isWorkspaceTarget(target) ? target as SpaceLinkTarget : null;
 }
 
 /** Read a work-stream target out of either current or legacy canonical path. */
 export function parseWorkstreamLinkPathTarget(pathname: string): ParsedWorkstreamLinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const canonical = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/s\/([^/]+)\/c\/([^/]+)(?:\/b\/([^/]+))?$/u.exec(normalized);
+  if (canonical) {
+    const [, region, encodedWorkspaceId, encodedSpaceId, encodedWorkstreamId, encodedSubstreamId] = canonical;
+    const workspaceId = uuidFromBase58(encodedWorkspaceId!);
+    const spaceId = uuidFromBase58(encodedSpaceId!);
+    const workstreamId = uuidFromBase58(encodedWorkstreamId!);
+    const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    const target = { region: region!, workspaceId: workspaceId!, spaceId: spaceId!, workstreamId: workstreamId!,
+      ...(substreamId ? { substreamId } : {}) };
+    return workspaceId && spaceId && workstreamId && (!encodedSubstreamId || substreamId) && isWorkspaceTarget(target)
+      ? target as WorkstreamLinkTarget
+      : null;
+  }
   const childPath = /^(.*)\/substreams\/([^/]+)$/u.exec(normalized);
   if (childPath) {
     const parent = parseWorkstreamLinkPathTarget(childPath[1]!);
     return parent && !parent.substreamId && isWorkstreamId(childPath[2]!) ? { ...parent, substreamId: childPath[2]! } : null;
   }
-  const current = /^\/app\/workspaces\/([a-z][a-z0-9-]*)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
-  if (current) {
-    const [, region, workspaceId, workstreamId] = current;
+  const addressedLegacy = /^\/app\/workspaces\/([a-z][a-z0-9-]*)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
+  if (addressedLegacy) {
+    const [, region, workspaceId, workstreamId] = addressedLegacy;
     if (!region || !workspaceId || !workstreamId) return null;
     const target = { region, workspaceId, workstreamId };
     return isWorkspaceTarget(target) && isWorkstreamId(target.workstreamId)
@@ -126,8 +185,17 @@ function parseDeepLink(url: URL): ParsedWorkstreamLinkTarget | null {
   if (!isDesktopDeepLinkProtocol(url.protocol)) return null;
   const addressed = parseWorkspaceAddressedDeepLink(url);
   const destination = addressed?.destination ?? url;
-  if (destination.hostname !== DEEP_LINK_HOST) return null;
   if (destination.hash || destination.username || destination.password || destination.port) return null;
+  if (destination.hostname === "spaces") {
+    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, breakoutSegment, encodedSubstreamId, ...extra] = destination.pathname.slice(1).split("/");
+    const spaceId = uuidFromBase58(encodedSpaceId);
+    const workstreamId = encodedWorkstreamId ? uuidFromBase58(encodedWorkstreamId) : null;
+    const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    if (!addressed || !spaceId || channelSegment !== "channels" || !workstreamId || extra.length
+      || (breakoutSegment !== undefined && (breakoutSegment !== "breakouts" || !substreamId))) return null;
+    return { ...addressed.target, spaceId, workstreamId, ...(substreamId ? { substreamId } : {}) };
+  }
+  if (destination.hostname !== DEEP_LINK_HOST) return null;
   const [workstreamId = "", childSegment, substreamId, ...extra] = destination.pathname.slice(1).split("/");
   if (childSegment !== undefined && (childSegment !== "substreams" || !substreamId || !isWorkstreamId(substreamId) || extra.length)) return null;
   if (!isWorkstreamId(workstreamId)) return null;

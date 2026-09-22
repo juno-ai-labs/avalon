@@ -321,6 +321,18 @@ export const WorkspaceChannelSpacesResultSchema = z.strictObject({
 });
 export type WorkspaceChannelSpacesResult = z.infer<typeof WorkspaceChannelSpacesResultSchema>;
 
+/** Server-side URL placement: the stable first active Space ID. */
+export const WorkspaceCanonicalChannelSpaceRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceCanonicalChannelSpaceRequest = z.infer<typeof WorkspaceCanonicalChannelSpaceRequestSchema>;
+
+export const WorkspaceCanonicalChannelSpaceResultSchema = z.strictObject({
+  spaceId: SpaceIdSchema.nullable(),
+});
+export type WorkspaceCanonicalChannelSpaceResult = z.infer<typeof WorkspaceCanonicalChannelSpaceResultSchema>;
+
 export const WorkspaceSpaceDefaultRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   kind: SpaceDefaultKindSchema,

@@ -1852,6 +1852,22 @@ export class WorkspaceSpaceStorage {
     return this.spaceIdsByChannel(userId, [workstreamId]).get(workstreamId) ?? [];
   }
 
+  /** Stable placement used by links minted without a currently selected Space. */
+  canonicalChannelSpaceId(workstreamId: string): string | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT membership.space_id
+         FROM space_channel_memberships membership
+         JOIN workspace_space_directory space ON space.space_id = membership.space_id
+        WHERE membership.workstream_id = ?
+          AND membership.state = 'active'
+          AND space.archived_at IS NULL
+        ORDER BY membership.space_id
+        LIMIT 1`,
+      workstreamId,
+    ).toArray()[0]?.space_id ?? null;
+  }
+
   /**
    * Space marks for Channels whose canonical grant owner has admitted a guest.
    *

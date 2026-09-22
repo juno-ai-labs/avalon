@@ -327,11 +327,12 @@ function OnboardingChecklist(): React.JSX.Element {
  * menu and its right rail. Like every other surface it emits the canonical
  * HTTPS link, never the `rallywithai://` deep link — see `docs/workstream-links.md`.
  */
-function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
+function CopyWorkstreamLinkItem({ workstreamId, spaceId, workspace }: {
   workstreamId: string;
+  spaceId: string;
   workspace: Pick<Workspace, 'id' | 'region'>;
 }): React.JSX.Element {
-  const copy = (): Promise<void> => copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, workstreamId);
+  const copy = (): Promise<void> => copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, workstreamId);
 
   return (
     <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
@@ -1028,7 +1029,7 @@ function WorkstreamRow({
               <Globe2 aria-hidden="true" size={16} /> Manage access
             </ContextMenu.Item>
           )}
-          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
+          {debugEnabled && workstream.spaceIds.length > 0 && <CopyWorkstreamLinkItem workstreamId={workstream.id} spaceId={[...workstream.spaceIds].sort()[0]!} workspace={workspace} />}
           <ContextMenu.Separator className="menu-separator" />
           {removablePlacement && (
             <ContextMenu.Item
@@ -1214,7 +1215,8 @@ export function Sidebar({
     if (controlledSpacesCollapsed === undefined) setUncontrolledSpacesCollapsed(collapsed);
     onSpacesCollapsedChange?.(collapsed);
   }, [controlledSpacesCollapsed, onSpacesCollapsedChange]);
-  const routeSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
+  const routeSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1]
+    ?? (location.pathname.startsWith('/workstreams/') ? new URLSearchParams(location.search).get('space') : null);
   const routeWorkstreamId = /^\/workstreams\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   const currentRoute = `${location.pathname}${location.search}${location.hash}`;
   const currentRouteRef = useRef(currentRoute);

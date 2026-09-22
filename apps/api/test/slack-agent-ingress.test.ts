@@ -745,7 +745,7 @@ describe("App Home task rows", () => {
       "Ada",
       [
         { id: "workstream-ownerless", title: "Unlinkable", harness_status: "running" },
-        { id: good, title: "Quarterly planning", harness_status: "needs_input" },
+        { id: good, title: "Quarterly planning", harness_status: "needs_input", url: "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ" },
       ],
       [],
       webBase,
@@ -756,7 +756,7 @@ describe("App Home task rows", () => {
     );
 
     const rendered = JSON.stringify(blocks);
-    expect(rendered).toContain(`${webBase}/app/workspaces/global/${workspaceId}/workstreams/${good}`);
+    expect(rendered).toContain(`${webBase}/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ`);
     expect(rendered).toContain("Quarterly planning");
     expect(rendered).not.toContain("Unlinkable");
   });

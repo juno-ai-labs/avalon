@@ -4,6 +4,12 @@ import { workstreamHttpsDeepLink } from './deep-links';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 const id = '00000000-0000-7000-8000-000000000001';
 describe('Apple channel links', () => {
+  it('adapts Base58 Space, Channel, and Breakout paths with their placement', () => {
+    const root = 'https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/';
+    expect(parseDesktopDeepLinkIntent(workstreamHttpsDeepLink(root)!)).toMatchObject({ kind: 'space', spaceId: '00000000-0000-7000-8000-000000000002' });
+    expect(parseDesktopDeepLinkIntent(workstreamHttpsDeepLink(`${root}c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te`)!))
+      .toMatchObject({ kind: 'workstream', spaceId: '00000000-0000-7000-8000-000000000002', substreamId: '00000000-0000-7000-8000-000000000009' });
+  });
   it('adapts an addressed private child into the existing scheme parser', () => {
     const link = workstreamHttpsDeepLink(`https://rallywith.ai/app/workspaces/enterprise/${id}/workstreams/${id}/substreams/${id}`);
     expect(link).not.toBeNull();

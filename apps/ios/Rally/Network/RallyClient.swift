@@ -212,6 +212,11 @@ actor RallyClient {
         try await get(path: "/workstreams/\(id)/control-socket", as: RallySocketTicket.self)
     }
 
+    func channelSpaceIds(id: String) async throws -> [String] {
+        struct Access: Decodable { var spaceIds: [String] }
+        return try await get(path: "/workstreams/\(id)/access", as: Access.self).spaceIds
+    }
+
     func prepareSubstream(parentId: String, operationId: String, throughTurnId: String?) async throws -> SubstreamPreparationPreview {
         struct Body: Encodable {
             var operationId: String

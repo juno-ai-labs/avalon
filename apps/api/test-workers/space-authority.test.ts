@@ -831,6 +831,18 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
+  it("chooses one active Space placement for a canonical Channel link", async () => {
+    const first = await reserve("First");
+    const second = await reserve("Second");
+    await publishChannel(CHANNEL_A, null);
+    await place(second, CHANNEL_A);
+    await place(first, CHANNEL_A);
+    await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_A }))
+      .resolves.toEqual({ spaceId: [first, second].sort()[0] });
+    await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_B }))
+      .resolves.toEqual({ spaceId: null });
+  });
+
   it("given a Channel in a personal Space, when another member can read it, then that Space is named to them", async () => {
     const personal = await reserve("Side work", "personal");
     const organization = await reserve("Company", "workspace");

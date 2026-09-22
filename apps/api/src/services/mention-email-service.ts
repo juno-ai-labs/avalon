@@ -1,8 +1,9 @@
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
+import type { Region } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
+import { canonicalWorkstreamUrl } from "./workstream-link-service";
 
 const MAX_MESSAGE_EXCERPT_LENGTH = 320;
 
@@ -42,7 +43,7 @@ export async function sendWorkstreamMentionEmail(
   // A mail client will not linkify `rallywithai://`, and a recipient reading on a
   // phone has no desktop app to hand it to. The canonical HTTPS link is a real
   // link in every client and still ends at the same work stream.
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+  const workstreamUrl = await canonicalWorkstreamUrl(env, {
     region: input.region,
     workspaceId: input.workspaceId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),

@@ -104,12 +104,13 @@ export {
 LEGACY_WORKSTREAM_LINK_ORIGINS,LEGACY_WORKSTREAM_LINK_PATH_PREFIX,WORKSTREAM_LINK_PATH_PREFIX,
 isWorkstreamId,
 parseWorkstreamLink,parseWorkstreamLinkPath,
-parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,workstreamCanonicalUrl,
+parseSpaceLinkPathTarget,parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,spaceCanonicalUrl,spaceDeepLink,workstreamCanonicalUrl,
 workstreamDeepLink,
 workstreamDeepLinkFromParsedTarget,
-type ParsedWorkstreamLinkTarget,
+type ParsedWorkstreamLinkTarget,type SpaceLinkTarget,
 type WorkstreamLinkTarget
 } from "./workstream-links";
+export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
 

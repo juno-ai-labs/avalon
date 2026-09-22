@@ -2,7 +2,6 @@ import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
-import { workstreamCanonicalUrl } from "@rally/contracts/workstream-links";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceNotificationIntentDeliverySchema } from "../durable-objects/workspace-notification-intent-protocol";
@@ -14,6 +13,7 @@ import { livePushDevices } from "../services/push-device-service";
 import { sendApns } from "../services/push/apns-transport";
 import { renderPushPayload, pushCollapseId } from "../services/push/push-payload";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
+import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
 
 export async function deliverPush(env: Env, message: PushDeliveryMessage, send: typeof sendApns = sendApns, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
@@ -41,10 +41,11 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
     workspaceId: id, userId: row.recipientUserId,
   }));
+  const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
+    workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
   const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data: {
     v: 1, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId,
-    url: workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
-      workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) }),
+    url,
   } });
   const db = workspaceRegionalDatabase(env);
   const collapseId = await pushCollapseId(row.workspaceId, row.intentId);

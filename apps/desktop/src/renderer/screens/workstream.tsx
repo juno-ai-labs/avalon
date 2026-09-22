@@ -72,8 +72,8 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: st
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
 
-export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
-  'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null }): React.JSX.Element {
+export function WorkstreamHeader({ workspaceTarget, spaceId, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
+  'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null; spaceId: string | null }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
   const closeRail = useUiStore((state) => state.closeRail);
@@ -86,7 +86,7 @@ export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.Compo
   // HTTPS links unfurl and work without the desktop app installed; custom schemes do not.
   return <ConversationHeader {...props} railOpen={railOpen} railVariant={railVariant} onCloseRail={closeRail}
     contextEnabled={CONTEXT_SIDEBAR_ENABLED} onShowNavigation={() => setSidebarOpen(true)}
-    onCopyLink={() => { if (workspaceTarget) void copyWorkstreamLink(workspaceTarget, props.workstream.id, props.substreamId ?? '0').catch(() => undefined); }}
+    onCopyLink={() => { if (workspaceTarget && spaceId) void copyWorkstreamLink(workspaceTarget, spaceId, props.workstream.id, props.substreamId ?? '0').catch(() => undefined); }}
     onCopyEmail={props.workstream.emailAddress ? () => copy(props.workstream.emailAddress!, 'workstream_email') : undefined}
     onCopyId={() => copy(props.workstream.id, 'workstream_id')} />;
 }
@@ -122,6 +122,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const sharedParent = guest
     ? sharedNavigation.data?.workstreams.find((item) => item.parentId === id)
     : undefined;
+  const linkSpaceId = [...(parent.data?.spaceIds ?? sharedNavigation.data?.spaces
+    .filter((space) => space.workstreamIds.includes(id)).map((space) => space.id) ?? [])].sort()[0] ?? null;
   // The open substream's own detail, for its row in the rail below. Its title
   // and the header's are then one value rather than two that agree eventually.
   const openChild = useQuery<WorkstreamDetail | undefined>({
@@ -261,7 +263,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     const workspace = session.workspace;
     const visit = routeRef.current.visit;
     const operation = ++menuOperation.current;
-    void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, id, target.substreamId).catch(() => {
+    if (!linkSpaceId) return;
+    void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, linkSpaceId, id, target.substreamId).catch(() => {
       if (routeRef.current.visit === visit && menuOperation.current === operation) {
         setSubstreamMenuFailure('copy_link');
       }
@@ -547,6 +550,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
+          spaceId={linkSpaceId}
           workstream={{ ...context.detail, appearance: selectedAppearance }}
         />
       )}

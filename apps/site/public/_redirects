@@ -5,6 +5,7 @@
 # out of window.location.pathname. Static assets are matched before these rules,
 # so /app/workstreams/ itself still serves the page directly. The earlier
 # ID-only prefix remains a compatibility reader for links already shared.
+/app/*  /app/workstreams/  200
 /app/workspaces/*  /app/workstreams/  200
 /app/workstreams/*  /app/workstreams/  200
 
