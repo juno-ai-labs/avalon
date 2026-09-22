@@ -23,7 +23,7 @@ import {
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from '@rally/ui/lib/sidebar-geometry';
-import { browserSidebarLayout, channelsOpenRouteFence } from './sidebar-layout';
+import { browserSidebarLayout } from './sidebar-layout';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -147,10 +147,9 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
   const spacesSidebar = useBrowserSidebar(Boolean(routeParentId));
-  const channelsSidebar = useBrowserSidebar(Boolean(routeParentId));
+  const channelsSidebar = useBrowserSidebar(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
-  const keepChannelsOpenForRoute = useRef<string | null>(null);
   const sidebarLayout = browserSidebarLayout({
     channelOpen: routeParentId !== null,
     channelsCollapsed: channelsSidebar.compact,
@@ -194,18 +193,11 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   }, [navigationSpaces, routeParentId]);
   useEffect(() => {
     if (!routeParentId) {
-      keepChannelsOpenForRoute.current = null;
       spacesSidebar.setCompact(false);
-      channelsSidebar.setCompact(false);
       return;
     }
     spacesSidebar.setCompact(true);
-    if (keepChannelsOpenForRoute.current === routeParentId) {
-      keepChannelsOpenForRoute.current = null;
-      return;
-    }
-    channelsSidebar.setCompact(true);
-  }, [channelsSidebar.setCompact, routeParentId, spacesSidebar.setCompact]);
+  }, [routeParentId, spacesSidebar.setCompact]);
   useLayoutEffect(() => {
     const shell = spacesSidebar.ref.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return undefined;
@@ -222,13 +214,11 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
   const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
-  const openWorkstream = (parentId: string, keepChannelsOpen = false) => {
+  const openWorkstream = (parentId: string) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
     const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
     if (!first) return;
     spacesSidebar.setCompact(true);
-    channelsSidebar.setCompact(!keepChannelsOpen);
-    keepChannelsOpenForRoute.current = channelsOpenRouteFence(routeParentId, parentId, keepChannelsOpen);
     const targetPath = `/workstreams/${parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`;
     if (pathname !== targetPath) navigate(targetPath);
   };
@@ -242,8 +232,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       !workstream.archived && workstream.conversations.some((conversation) => !conversation.archived));
     const target = firstActive ?? containedWorkstreams[0];
     spacesSidebar.setCompact(true);
-    channelsSidebar.setCompact(false);
-    if (target) openWorkstream(target.parentId, true);
+    if (target) openWorkstream(target.parentId);
   };
   return <>
     <ResizableSidebar
@@ -317,9 +306,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
         if (!first) return null;
         return <SidebarRow as={NavLink} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
-          keepChannelsOpenForRoute.current = null;
           spacesSidebar.setCompact(true);
-          channelsSidebar.setCompact(true);
         }} key={workstream.parentId} to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
           <NavigationRowContent id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </SidebarRow>;
