@@ -77,6 +77,7 @@ interface InspectorRailProps {
    */
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;
+  onRefreshSidekicks?: (() => void) | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -189,6 +190,7 @@ function ContextContent({
   workstream,
   sidekicks,
   sidekickFailure,
+  onRefreshSidekicks,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
@@ -196,6 +198,7 @@ function ContextContent({
   | 'workstream'
   | 'sidekicks'
   | 'sidekickFailure'
+  | 'onRefreshSidekicks'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -243,7 +246,7 @@ function ContextContent({
         )}
       </Section>
 
-      <SidekickSection items={sidekicks} failure={sidekickFailure} />
+      <SidekickSection items={sidekicks} failure={sidekickFailure} onRefresh={onRefreshSidekicks} />
 
       <Section title="Details">
         <dl className="detail-list">

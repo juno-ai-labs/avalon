@@ -4,6 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
+import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
 import {
   ResizableSidebar,
   SidebarCollapseFooter,
@@ -30,6 +31,7 @@ import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '..
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
+import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
 import { Button, IconButton, InlineError, Modal, Tip } from './primitives';
 import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -114,7 +116,7 @@ export function SpacesSidebar({
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<AcknowledgedError | null>(null);
   const draggingSpaceId = useRef<string | null>(null);
   const [channelDropTargetId, setChannelDropTargetId] = useState<string | null>(null);
   const [acceptedChannelDropTargetId, setAcceptedChannelDropTargetId] = useState<string | null>(null);
@@ -191,7 +193,10 @@ export function SpacesSidebar({
     try {
       await onReorder({ container: { kind: 'organization' }, itemIds: ids });
     } catch {
-      setFailure('Spaces couldn\u2019t be reordered.');
+      setFailure({
+        title: 'Spaces could not be reordered',
+        copy: 'The spaces are back in the order they were in. Try again in a moment.',
+      });
     } finally {
       if (dragOrderRef.current === ids) previewOrder(null);
     }
@@ -307,11 +312,7 @@ export function SpacesSidebar({
           ) : spaces.length === 0 ? (
             <p className="spaces-sidebar-empty">No spaces yet</p>
           ) : <>
-            {outOfDate && <div className="space-sidebar-stale">
-              <p role="status">These spaces may be out of date.</p>
-              <Button onClick={onRetry}>Try again</Button>
-            </div>}
-            {failure && <p className="spaces-sidebar-error" role="alert">{failure}</p>}
+            {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
             {orderedSpaces.map((space, index) => (
             <Tooltip.Root key={space.id} delayDuration={300}>
               <ContextMenu.Root>
@@ -390,7 +391,13 @@ export function SpacesSidebar({
                     void onMoveChannel(sourceSpaceId, space.id, workstreamId)
                       .then(() => flashAcceptedChannelDrop(space.id))
                       .catch((cause: unknown) => {
-                        setFailure(spaceFailureSentence(cause, 'That channel couldn\u2019t be moved.'));
+                        setFailure({
+                          title: 'Channel could not be moved',
+                          copy: spaceFailureSentence(
+                            cause,
+                            'The channel is still in the space it came from. Try again in a moment.',
+                          ),
+                        });
                       });
                   }}
                   onKeyDown={(event) => {
@@ -461,6 +468,10 @@ export function SpacesSidebar({
           onToggle={toggle}
         />
       </ResizableSidebar>
+      <AcknowledgedErrorDialog
+        error={failure}
+        onAcknowledge={() => setFailure(null)}
+      />
       <Modal
         footer={<>
           <Button disabled={archiveSaving} onClick={closeArchive}>Cancel</Button>

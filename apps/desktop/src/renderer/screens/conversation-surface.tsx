@@ -726,6 +726,7 @@ export interface ConversationHeaderContext {
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;
   loadSidekickOptions: () => void;
+  refreshSidekicks: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
   openParticipantDialog: () => void;
@@ -2183,6 +2184,11 @@ export function ConversationSurface({
     if (removeSidekick.isError) removeSidekick.reset();
     void recommendationOptions.refetch();
   };
+  const refreshSidekicks = (): void => {
+    if (readOwnedSidekickDetails) void ownedSidekicks.refetch();
+    void attachedSidekicks.refetch();
+    void recommendedSidekicks.refetch();
+  };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -2199,6 +2205,7 @@ export function ConversationSurface({
       {renderSidebar?.({
         sidekicks: sidekickRows,
         loadSidekickOptions,
+        refreshSidekicks,
         sidekickFailure,
         detail: sidebarDetail,
         socketState,
@@ -2255,6 +2262,7 @@ export function ConversationSurface({
         detail: displayedDetail,
         sidekicks: sidekickRows,
         loadSidekickOptions,
+        refreshSidekicks,
         sidekickFailure,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -2496,6 +2504,7 @@ export function ConversationSurface({
         workstream={resourceManagementDetail}
         sidekicks={sidekickRows}
         sidekickFailure={sidekickFailure}
+        onRefreshSidekicks={refreshSidekicks}
       />}
 
       {artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar

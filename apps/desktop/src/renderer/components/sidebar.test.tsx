@@ -1709,7 +1709,7 @@ describe('Sidebar channel markers', () => {
     expect(within(failure).getByText('The channel is still in the sidebar. Try again in a moment.'))
       .toBeVisible();
 
-    fireEvent.click(within(failure).getByRole('button', { name: 'Close' }));
+    fireEvent.click(within(failure).getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Channel could not be archived' }))
       .not.toBeInTheDocument());
     // The row is still there, and saying so is the reason this dialog exists:
@@ -2228,8 +2228,8 @@ describe('Sidebar channel markers', () => {
     );
 
     expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
-    expect(screen.getByText('These spaces may be out of date.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetrySpaces).toHaveBeenCalled();
   });
 
@@ -3565,7 +3565,7 @@ describe('pinned channels', () => {
       .toBeVisible();
     // The open dialog hides the sidebar from the accessibility tree, so the
     // order can only be read once it is dismissed.
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
   });
@@ -4051,7 +4051,7 @@ describe('reordering the channels inside a space', () => {
       .toHaveAccessibleDescription('Hold Alt and press the up or down arrow to move a channel in this space.');
   });
 
-  it('keeps an in-flight order and its failure scoped to the Space that started it', async () => {
+  it('keeps an in-flight order scoped to its Space and reports failure in a dialog', async () => {
     let rejectOrder: ((cause: unknown) => void) | undefined;
     const onReorderContainer = vi.fn(() => new Promise<void>((_resolve, reject) => {
       rejectOrder = reject;
@@ -4073,10 +4073,9 @@ describe('reordering the channels inside a space', () => {
 
     rejectOrder?.(new Error('The space changed while this was applied'));
     await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
-    expect(screen.queryByText('The channels in that space couldn’t be reordered.')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
-    expect(await screen.findByText('The channels in that space couldn’t be reordered.')).toBeVisible();
+    const dialog = await screen.findByRole('dialog', { name: 'Channels could not be reordered' });
+    expect(within(dialog).getByText('The channels in that space are back in the order they were in. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
   });
 
   it('offers placement removal for a pinned Channel in the selected Space', async () => {
@@ -4092,14 +4091,19 @@ describe('reordering the channels inside a space', () => {
     await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, alpha.id));
   });
 
-  it('given a refused reorder, then the placements snap back and the section says so', async () => {
+  it('given a refused reorder, then the placements snap back and a dialog says so', async () => {
     renderSidebar({
       onReorderContainer: async () => { throw new Error('The space changed while this was applied'); },
     });
 
     fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
 
-    expect(await screen.findByText('The channels in that space couldn’t be reordered.')).toBeVisible();
+    const dialog = await screen.findByRole('dialog', { name: 'Channels could not be reordered' });
+    expect(within(dialog).getByText('The channels in that space are back in the order they were in. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Channels could not be reordered' }))
+      .not.toBeInTheDocument());
     // The list shows what the server holds, which is what this person's other
     // windows are showing — not a local order nothing took.
     expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);

@@ -926,6 +926,17 @@ on every transcript update.
 
 ## Changelog
 
+### 2026-09-21 — Stale Sidekick reads recover through a row
+
+**What changed:** A failed Sidekick read now keeps every row that did arrive
+and inserts the shared **Refresh** row. When none arrived, the Sidekicks heading
+and Refresh row remain as the recovery path. Neither case writes stale-data or
+load-failure copy into the sidebar or inspector rail.
+
+**Why:** A transient read state is not navigation content. Presenting it as an
+ordinary recovery action keeps the rail structurally stable and gives the user
+the one useful next step without leaving a warning behind.
+
 ### 2026-09-17 — A connector event admits under the occurrence its connector named
 
 **What changed:** `admitExternalEvent` keys the run on `occurrence:<key>` when

@@ -40,6 +40,7 @@ import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
+import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacesSidebar } from './spaces-sidebar';
@@ -1326,7 +1327,7 @@ export function Sidebar({
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [placementOrder, setPlacementOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const placementDrag = useRef<{ workstreamId: string; dropped: boolean; spaceId: string } | null>(null);
-  const [placementFailure, setPlacementFailure] = useState<string | null>(null);
+  const [placementFailure, setPlacementFailure] = useState<AcknowledgedError | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
   const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
@@ -1824,7 +1825,10 @@ export function Sidebar({
     try {
       await onReorderContainer({ container: { kind: 'space', id: spaceId }, itemIds: ids });
     } catch {
-      setPlacementFailure(spaceId);
+      setPlacementFailure({
+        title: 'Channels could not be reordered',
+        copy: 'The channels in that space are back in the order they were in. Try again in a moment.',
+      });
     } finally {
       setPlacementOrder((current) => current?.spaceId === spaceId && current.itemIds === ids ? null : current);
     }
@@ -2339,7 +2343,6 @@ export function Sidebar({
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
                 <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined} data-reorder-list="">
-                  {placementFailure === selectedSpaceId && <InlineError>The channels in that space couldn’t be reordered.</InlineError>}
                   {unpinnedWorkstreams.map((workstream, index) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
                       workstream,
@@ -2623,26 +2626,21 @@ export function Sidebar({
           deleted, but Rally has no way to bring a channel back.
         </p>
       </Modal>
-      <Modal
-        footer={<Button onClick={() => setMenuFailure(null)}>Close</Button>}
-        onOpenChange={(open) => {
-          if (!open) setMenuFailure(null);
+      <AcknowledgedErrorDialog
+        error={menuFailure ? sidebarMenuFailureCopy[menuFailure] : null}
+        onAcknowledge={() => setMenuFailure(null)}
+      />
+      <AcknowledgedErrorDialog
+        error={removeFromSpaceFailure === null ? null : {
+          title: 'Channel could not be removed from that space',
+          copy: removeFromSpaceFailure,
         }}
-        open={Boolean(menuFailure)}
-        title={menuFailure ? sidebarMenuFailureCopy[menuFailure].title : 'That could not be updated'}
-      >
-        {menuFailure && <p className="modal-copy">{sidebarMenuFailureCopy[menuFailure].copy}</p>}
-      </Modal>
-      <Modal
-        footer={<Button onClick={() => setRemoveFromSpaceFailure(null)}>Close</Button>}
-        onOpenChange={(open) => {
-          if (!open) setRemoveFromSpaceFailure(null);
-        }}
-        open={removeFromSpaceFailure !== null}
-        title="Channel could not be removed from that space"
-      >
-        {removeFromSpaceFailure && <p className="modal-copy">{removeFromSpaceFailure}</p>}
-      </Modal>
+        onAcknowledge={() => setRemoveFromSpaceFailure(null)}
+      />
+      <AcknowledgedErrorDialog
+        error={placementFailure}
+        onAcknowledge={() => setPlacementFailure(null)}
+      />
     </>
   );
 }
