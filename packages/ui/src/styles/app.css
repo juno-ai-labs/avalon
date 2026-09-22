@@ -7558,7 +7558,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    drawn a little inside it so the shape's own points are not the row's edge. */
 .workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
 .sidekick-section-list > li { align-items: center; display: flex; }
-.sidekick-section-list > li > .workstream-context-row { min-width: 0; }
+.sidekick-section-list > li > .workstream-context-row { flex: 1; min-width: 0; }
 
 /* The avatars shrink into the square with their overlap; the presence
    border's own fade is restated so the size rule does not replace it. */

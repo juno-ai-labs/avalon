@@ -69,7 +69,7 @@ import { ApiError } from '../lib/api';
 import { useUiStore } from '../lib/ui-store';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
-import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type { WorkstreamAutomationSummary, WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000901';
 const childId = '00000000-0000-7000-8000-000000000902';
@@ -117,7 +117,7 @@ function boot(participant = false): WorkstreamBoot {
   };
 }
 
-function renderScreen(participant = false): void {
+function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAutomationSummary[]): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -126,6 +126,7 @@ function renderScreen(participant = false): void {
   queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
   queryClient.setQueryData(workstreamDetailQueryKey(workstreamId, childId), detail);
   queryClient.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), transcript);
+  if (cachedOwnedSidekicks) queryClient.setQueryData(['workstream-sidekicks', workstreamId], cachedOwnedSidekicks);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -139,6 +140,7 @@ function renderScreen(participant = false): void {
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
+  return queryClient;
 }
 
 /**
@@ -292,6 +294,19 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await vi.waitFor(() => expect(api.getWorkstreamSidekicks).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps cached Sidekick rows when a refresh fails', async () => {
+    api.getWorkstreamSidekicks.mockRejectedValue(new ApiError('The service is unavailable.', 500));
+    renderScreen(false, [{
+      id: 'owned', name: 'Owned guide', description: 'Keep this visible.', loadable: true,
+      status: 'active', updatedAt: '2026-09-21T00:00:00.000Z',
+    }]);
+
+    expect(await screen.findByRole('button', { name: 'Owned guide' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Refresh' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Owned guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
   });
 
   it('keeps a management-options failure in the picker rather than misreporting the list', async () => {
