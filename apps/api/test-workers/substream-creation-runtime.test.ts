@@ -78,6 +78,8 @@ beforeEach(async () => {
     userId: CREATOR_ID,
     sessionId: SESSION_ID,
   });
+  await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID))
+    .initializeWorkspace(WORKSPACE_ID, "wnam");
   await env.DB.batch([
     env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN name TEXT DEFAULT 'Test workspace'`),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)

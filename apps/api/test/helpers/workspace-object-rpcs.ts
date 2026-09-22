@@ -106,6 +106,7 @@ export function createTestWorkspaceDO(input: {
  */
 export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "executeRuntimeSql",
+  "canonicalChannelSpace",
   // Read on the way into every activity-shaped event; a fresh object answers
   // "inactive", which is the stubbed `false` these suites used to hand-write.
   "hasActiveExternalEventRegistration",

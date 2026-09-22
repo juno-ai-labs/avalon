@@ -1,5 +1,5 @@
 import { slackApi } from "@rally/connectors";
-import { asWorkspaceId, workstreamCanonicalUrl } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
 
@@ -278,11 +278,7 @@ async function refreshConnectionUnfurls(
 
     const blocks = workstreamUnfurlBlocks(
       external ? null : workstreamUnfurlSummary(raw),
-      workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
-        region: env.AVALON_REGION,
-        workspaceId: connection.workspace_id,
-        workstreamId: row.workstream_id,
-      }),
+      row.url,
     );
     const hash = await workstreamUnfurlCardHash(blocks);
 

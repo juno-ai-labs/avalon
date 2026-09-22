@@ -36,7 +36,6 @@ import {
   addWorkspaceTarget,
   isWorkstreamId,
   parseWorkstreamLinkTarget,
-  workstreamCanonicalUrl,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginContext,
@@ -83,6 +82,7 @@ import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { WorkstreamService } from "./workstream-service";
+import { canonicalWorkstreamUrl } from "./workstream-link-service";
 import {
   describeWorkstreamOrigin,
   type OriginResourceDescriptor,
@@ -1292,12 +1292,9 @@ export class SlackAgentService {
           thread_ts: session.slack_thread_ts,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
           text: "Rally task controls",
-          blocks: responseActionBlocks(
-            workstreamId,
-            this.env.PUBLIC_WEB_BASE_URL,
-            this.env.AVALON_REGION,
-            workspaceId,
-          ),
+          blocks: responseActionBlocks(workstreamId, await canonicalWorkstreamUrl(this.env, {
+            region: this.env.AVALON_REGION, workspaceId, workstreamId,
+          })),
         }, AbortSignal.timeout(10_000));
       }
       // A run that asked for something only a connected member can give, when
@@ -2777,7 +2774,17 @@ export class SlackAgentService {
       blocks = linkedHome(
         this.env,
         link.name,
-        tasks.results ?? [],
+        await Promise.all((tasks.results ?? []).map(async (task) => {
+          try {
+            return { ...task, url: await canonicalWorkstreamUrl(this.env, {
+              region: this.env.AVALON_REGION,
+              workspaceId: connection.workspace_id,
+              workstreamId: String(task.id),
+            }) };
+          } catch {
+            return { ...task, url: null };
+          }
+        })),
         automations.results ?? [],
         this.env.PUBLIC_WEB_BASE_URL,
         this.env.AVALON_REGION,
@@ -2839,11 +2846,7 @@ export class SlackAgentService {
     for (const [url, workstreamId] of linkedWorkstreams) {
       const blocks = workstreamUnfurlBlocks(
         summaries.get(workstreamId) ?? null,
-        workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, {
-          region: this.env.AVALON_REGION,
-          workspaceId: connection.workspace_id,
-          workstreamId,
-        }),
+        url,
       );
       rendered.set(url, blocks);
       unfurls[url] = { blocks };
@@ -3835,7 +3838,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
     // Minting a link is strict on purpose, but this is a list: one row that
     // cannot produce a link must cost that row, not the whole App Home. The
     // throw would otherwise escape `views.publish` and fail account linking.
-    if (!isWorkstreamId(workstreamId)) {
+    if (!isWorkstreamId(workstreamId) || typeof task.url !== "string") {
       logWarn(env, "slack_app_home_task_skipped", {
         workstream_id: workstreamId,
       });
@@ -3846,7 +3849,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
       : task.harness_status === "running"
         ? ":large_green_circle: Running"
         : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId })}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${String(task.url)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
   if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Rally DM." } });
@@ -3877,9 +3880,9 @@ function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
     }));
 }
 
-function responseActionBlocks(workstreamId: string, webBase: string, region: Region, workspaceId: string): Record<string, unknown>[] {
+function responseActionBlocks(workstreamId: string, url: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
-    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_task" },
+    { type: "button", text: { type: "plain_text", text: "Open task" }, url, action_id: "rally_open_task" },
     { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
   ] }, aiResponseDisclaimerBlock()];
 }

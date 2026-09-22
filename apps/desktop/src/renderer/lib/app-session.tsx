@@ -891,12 +891,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = '/workstreams/new';
         return;
       }
+      if (intent.kind === 'space') {
+        const openSpace = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = `/spaces/${intent.spaceId}`;
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
+        else if (requireActiveWorkspace('Sign in before opening this Space link.')) openSpace();
+        return;
+      }
       if (intent.kind === 'workstream') {
         const openWorkstream = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
           markDeepLinkWorkstreamNavigation(intent.workstreamId);
-          window.location.hash = `/workstreams/${intent.workstreamId}${intent.substreamId ? `?substream=${intent.substreamId}` : ""}`;
+          const query = new URLSearchParams();
+          if (intent.substreamId) query.set('substream', intent.substreamId);
+          if (intent.spaceId) query.set('space', intent.spaceId);
+          window.location.hash = `/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
         else if (requireActiveWorkspace('Sign in before opening this channel link.')) openWorkstream();

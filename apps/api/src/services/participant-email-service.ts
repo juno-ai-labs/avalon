@@ -1,7 +1,8 @@
-import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
+import type { Region } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
+import { canonicalWorkstreamUrl } from "./workstream-link-service";
 
 const MAX_OBJECTIVE_EXCERPT_LENGTH = 320;
 
@@ -52,7 +53,7 @@ export async function sendWorkstreamParticipantAddedEmail(
   // The `rallywithai://` deep link is not linkified by mail clients, and a
   // recipient reading on a phone has no desktop app to hand it to. The
   // canonical HTTPS link is a real link everywhere and ends in the same place.
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+  const workstreamUrl = await canonicalWorkstreamUrl(env, {
     region: input.region,
     workspaceId: input.workspaceId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),

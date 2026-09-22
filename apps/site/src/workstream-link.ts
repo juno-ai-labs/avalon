@@ -1,6 +1,9 @@
 import {
+  parseSpaceLinkPathTarget,
   parseWorkstreamLinkPathTarget,
+  spaceDeepLink,
   workstreamDeepLinkFromParsedTarget,
+  type ParsedWorkstreamLinkTarget,
 } from '@rally/contracts/workstream-links';
 import { reportDesktopHandoff } from './telemetry';
 
@@ -17,24 +20,47 @@ function initializeWorkstreamHandoff(): void {
   const button = document.querySelector<HTMLAnchorElement>('#open-rally');
   const title = document.querySelector<HTMLElement>('#workstream-title');
   const status = document.querySelector<HTMLElement>('#workstream-status');
+  const kindLabel = document.querySelector<HTMLElement>('#resource-kind');
   const help = document.querySelector<HTMLElement>('#workstream-help');
   const error = document.querySelector<HTMLElement>('#workstream-error');
   if (!button) return;
 
   const workstreamTarget = parseWorkstreamLinkPathTarget(window.location.pathname);
-  if (!workstreamTarget) {
+  const spaceTarget = parseSpaceLinkPathTarget(window.location.pathname);
+  if (!workstreamTarget && !spaceTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     error?.removeAttribute('hidden');
-    if (title) title.textContent = 'This link did not lead to a work stream';
+    if (title) title.textContent = 'This link did not lead to a Rally resource';
     if (status) status.textContent = 'Ask the sender for the link again.';
     return;
   }
 
   reportDesktopHandoff('workstream', 'presented', 'valid');
 
-  const target = workstreamDeepLinkFromParsedTarget(workstreamTarget);
+  const kind = spaceTarget ? 'Space' : workstreamTarget?.substreamId ? 'Breakout' : 'Channel';
+  document.title = `Open ${kind.toLowerCase()} in Rally`;
+  if (kindLabel) kindLabel.textContent = kind;
+  if (title) title.textContent = `Opening this ${kind.toLowerCase()} in Rally`;
+  if (status) status.textContent = `This ${kind.toLowerCase()} opens with your existing Rally session and organization permissions.`;
+
+  // iOS has Channel and Breakout views but no Space screen. Leave a Space URL
+  // on the web instead of launching the app into an unrelated conversation.
+  if (spaceTarget && isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)) {
+    document.title = 'Open this Space on desktop';
+    if (title) title.textContent = 'Open this Space on desktop';
+    if (status) status.textContent = 'Space dashboards are available in Rally for Mac.';
+    button.setAttribute('hidden', '');
+    help?.setAttribute('hidden', '');
+    return;
+  }
+
+  const target = workstreamTarget
+    ? isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)
+      ? legacyIosWorkstreamHandoff(workstreamTarget)
+      : workstreamDeepLinkFromParsedTarget(workstreamTarget)
+    : spaceDeepLink(spaceTarget!);
   button.href = target;
   button.setAttribute('aria-disabled', 'false');
 
@@ -51,6 +77,16 @@ function initializeWorkstreamHandoff(): void {
     reportDesktopHandoff('workstream', 'manual', 'valid');
   });
   window.setTimeout(openOnce, 120);
+}
+
+export function isIosDevice(userAgent: string, platform: string, maxTouchPoints: number): boolean {
+  return /iPad|iPhone|iPod/u.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
+
+/** Old iPhone builds understand this addressed path, but not Base58 /s/ /c/ /b/. */
+export function legacyIosWorkstreamHandoff(target: ParsedWorkstreamLinkTarget): string {
+  if (!target.region || !target.workspaceId) return workstreamDeepLinkFromParsedTarget(target);
+  return `rallywithai://handoff/workspaces/${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ''}`;
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {

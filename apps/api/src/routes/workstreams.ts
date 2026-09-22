@@ -46,6 +46,7 @@ import { WorkstreamBatchUpdateService } from "../services/workstream-batch-updat
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 
+const ChannelLinkSpacesSchema = z.strictObject({ spaceIds: z.array(SpaceIdSchema) });
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const listQuery = z.object({
@@ -362,6 +363,23 @@ workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
     workstreamId: asWorkstreamId(workstreamId),
   });
   return c.json(ChannelAccessSchema.parse({ ...sources, spaceIds: memberships.spaceIds }));
+});
+/** Viewer-visible Space coordinates for a copied Channel or Breakout URL. */
+workstreamRoutes.get("/:id/link-spaces", zValidator("param", idParam), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const auth = getAuth(c);
+  const workstreamId = c.req.valid("param").id;
+  await new WorkstreamService(c.env, auth).get(workstreamId);
+  const workspace = await durableObjectStubForWorkspace(
+    c.env, c.env.WORKSPACE_DOS, auth.workspaceId,
+    workspaceDOName(c.env.AVALON_REGION, auth.workspaceId),
+  );
+  const memberships = await workspace.channelSpaces({
+    workspaceId: asWorkspaceId(auth.workspaceId),
+    userId: asUserId(auth.userId),
+    workstreamId: asWorkstreamId(workstreamId),
+  });
+  return c.json(ChannelLinkSpacesSchema.parse(memberships));
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");

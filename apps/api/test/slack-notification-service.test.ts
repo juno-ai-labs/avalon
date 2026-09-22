@@ -8,6 +8,12 @@ import { sendWorkstreamMentionSlack } from "../src/services/slack-notification-s
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
+vi.mock("../src/services/workstream-link-service", async () => {
+  const { workstreamCanonicalUrl } = await import("@rally/contracts");
+  return { canonicalWorkstreamUrl: async (env: Env, target: { region: "global"; workspaceId: string; workstreamId: string; substreamId?: string }) =>
+    workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, spaceId: "00000000-0000-7000-8000-000000000002" }) };
+});
+
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
 const recipientId = "00000000-0000-7000-8000-000000000003";
@@ -50,7 +56,7 @@ describe("workspace Slack mention delivery", () => {
     // must sit in the path rather than a fragment for the unfurl handler to
     // read it back off the shared URL.
     expect(String(calls[2]?.body.text)).toContain(
-      `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`,
+      "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/",
     );
     expect(String(calls[2]?.body.text)).not.toContain("avalon://");
     expect(String(calls[2]?.body.text)).not.toContain("/open#");
@@ -204,7 +210,7 @@ describe("workspace Slack mention delivery", () => {
     const env = environment(database);
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
-    const messageText = "x".repeat(80_001);
+    const messageText = "§".repeat(80_001);
 
     await expect(sendWorkstreamMentionSlack(
       env,
@@ -216,7 +222,7 @@ describe("workspace Slack mention delivery", () => {
     const posts = calls.filter((call) => call.method === "chat.postMessage");
     expect(posts).toHaveLength(3);
     expect(posts.every((post) => String(post.body.text).length <= 40_000)).toBe(true);
-    expect(posts.map((post) => String(post.body.text)).join("").match(/x/gu)).toHaveLength(messageText.length);
+    expect(posts.map((post) => String(post.body.text)).join("").match(/§/gu)).toHaveLength(messageText.length);
     expect(posts[0]?.body).not.toHaveProperty("thread_ts");
     expect(posts[1]?.body).toMatchObject({ thread_ts: "1786060000.001" });
     expect(posts[2]?.body).toMatchObject({ thread_ts: "1786060000.001" });

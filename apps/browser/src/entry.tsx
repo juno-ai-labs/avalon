@@ -5,10 +5,10 @@ import { configuredRegions, ConfiguredRegionSchema } from "@rally/contracts/regi
 import { BrowserSessionSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
-import { ScopeInvitationResultSchema, ScopeInvitationPreviewSchema, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
+import { ScopeInvitationResultSchema, ScopeInvitationPreviewSchema, SharedNavigationDirectorySchema, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
 import { invitationFromFragment, invitationTargetPath, type BrowserInvitation } from "./invitation";
 
-import { parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 import { WorkspaceIdSchema } from "@rally/contracts";
 
@@ -28,6 +28,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   // deployment serving it, and an addressed link against the one it names.
   const [invitation, setInvitation] = useState<{ region: string; credential: BrowserInvitation["credential"] } | null>(null);
   const [accepted, setAccepted] = useState<ScopeInvitationSummary | null>(null);
+  const [acceptedSpaceIds, setAcceptedSpaceIds] = useState<Record<string, string>>({});
   const [session, setSession] = useState<BrowserSession | null>(null);
   const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"]>([]);
   const [busy, setBusy] = useState(false);
@@ -45,7 +46,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const workspacePath = /^\/app\/workspaces\/([^/]+)\/([^/]+)\/?$/u.exec(location.pathname);
     const workspaceTarget = workspacePath ? z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema })
       .safeParse({ region: workspacePath[1], workspaceId: workspacePath[2] }) : null;
-    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname);
+    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname) ?? parseSpaceLinkPathTarget(location.pathname);
     const target = parsedTarget?.region && parsedTarget.workspaceId ? parsedTarget
       : workspaceTarget?.success ? workspaceTarget.data : null;
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
@@ -249,9 +250,16 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       if (result.status !== "accepted" || !target) throw new Error("This invitation is unavailable. Ask the sender for a new invitation.");
       await browserRequest(invitation.region, "/workspace/select", BrowserSessionSchema, { workspaceId: target.workspaceId });
       if (read !== sessionRead.current) return;
+      const navigation = await browserRequest(invitation.region, `/api/${target.workspaceId}/sharing/navigation`, SharedNavigationDirectorySchema);
+      const spaceIds = Object.fromEntries(result.invitation.targets.flatMap((entry) => {
+        const space = navigation.spaces.filter((item) => item.workstreamIds.includes(entry.parentId))
+          .sort((left, right) => Number(left.scope === 'personal') - Number(right.scope === 'personal') || left.id.localeCompare(right.id))[0];
+        return space ? [[entry.parentId, space.id]] : [];
+      }));
+      setAcceptedSpaceIds(spaceIds);
       setAccepted(result.invitation);
       if (result.invitation.targets.length === 1) {
-        location.assign(invitationTargetPath(location.origin, invitation.region, target));
+        location.assign(invitationTargetPath(location.origin, invitation.region, target, spaceIds[target.parentId]));
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to accept this invitation. Please try again."); }
     finally { setBusy(false); }
@@ -271,7 +279,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
         {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
-          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
+          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target, acceptedSpaceIds[target.parentId])}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
           : invitation ? <><p>Accept this invitation using the email address it was sent to.</p><button disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy ? "Joining…" : "Accept invitation"}</button></>
           : workspaces.length ? <nav aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="workspace-link" key={workspace.id} href={`/app/workspaces/${region}/${workspace.id}`}>{workspace.name}<span aria-hidden="true">→</span></a>)}</nav>

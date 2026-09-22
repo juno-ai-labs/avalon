@@ -22,6 +22,7 @@
     "./telemetry": "./src/telemetry.ts",
     "./workspace-target": "./src/workspace-target.ts",
     "./workstream-links": "./src/workstream-links.ts",
+    "./uuid-base58": "./src/uuid-base58.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",
     "./markdown-code": "./src/markdown-code.ts",

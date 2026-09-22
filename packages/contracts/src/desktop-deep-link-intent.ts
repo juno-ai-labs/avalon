@@ -8,6 +8,7 @@ import {
   type WorkspaceTarget,
   type WorkspaceTargetRegion,
 } from "./workspace-target";
+import { uuidFromBase58 } from "./uuid-base58";
 
 const UUID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/iu;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{20,500}$/u;
@@ -17,7 +18,8 @@ const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
 type Targeted = { target: WorkspaceTarget | null };
 
 export type DesktopDeepLinkIntent =
-  | ({ kind: "workstream"; workstreamId: string; substreamId?: string } & Targeted)
+  | ({ kind: "space"; spaceId: string } & Targeted)
+  | ({ kind: "workstream"; workstreamId: string; spaceId?: string; substreamId?: string } & Targeted)
   | { kind: "new-workstream" }
   | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
@@ -162,6 +164,18 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
 
   if (url.hostname === "workstreams" && url.pathname === "/new") {
     return !target && !url.search ? { kind: "new-workstream" } : null;
+  }
+  if (url.hostname === "spaces") {
+    if (!target || url.search) return null;
+    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, breakoutSegment, encodedSubstreamId, ...extra] = url.pathname.slice(1).split("/");
+    const spaceId = uuidFromBase58(encodedSpaceId);
+    if (!spaceId || extra.length) return null;
+    if (channelSegment === undefined) return { kind: "space", spaceId, target };
+    const workstreamId = encodedWorkstreamId ? uuidFromBase58(encodedWorkstreamId) : null;
+    const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    if (channelSegment !== "channels" || !workstreamId
+      || (breakoutSegment !== undefined && (breakoutSegment !== "breakouts" || !substreamId))) return null;
+    return { kind: "workstream", workstreamId, spaceId, target, ...(substreamId ? { substreamId } : {}) };
   }
   if (url.hostname === "workstreams") {
     const [workstreamId = "", segment, substreamId, ...extra] = url.pathname.slice(1).split("/");

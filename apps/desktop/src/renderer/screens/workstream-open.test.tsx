@@ -106,6 +106,7 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    spaceIds: ['00000000-0000-7000-8000-000000000673'],
     participantUserIds: [],
     participantExtraCount: 0,
     createdAt: '2026-08-26T14:00:00.000Z',
