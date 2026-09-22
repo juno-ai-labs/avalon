@@ -224,7 +224,7 @@ describe('Sidebar channel markers', () => {
       <Sidebar {...defaultActions} automations={[]} onCreateChannel={onCreateChannel}
         onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
-    const launcher = screen.getAllByRole('button', { name: 'New channel' })[0];
+    const launcher = screen.getAllByRole('button', { name: 'New channel or space' })[0];
     if (!launcher) throw new Error('New channel launcher missing');
     fireEvent.keyDown(launcher, { key: 'ArrowDown' });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
@@ -349,7 +349,7 @@ describe('Sidebar channel markers', () => {
   it('preserves the expanded preference while navigation is forced compact', () => {
     useUiStore.getState().setSidebarCollapsed(false);
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const toggle = screen.getByRole('button', { name: 'Expand navigation' });
+    const toggle = screen.getByRole('button', { name: 'Expand channels' });
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
@@ -367,9 +367,9 @@ describe('Sidebar channel markers', () => {
       return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
     }
     render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse channels' }));
     expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand channels' }));
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
     fireEvent.doubleClick(edge);
@@ -437,7 +437,7 @@ describe('Sidebar channel markers', () => {
     useUiStore.getState().setSidebarCollapsed(true);
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
 
-    expect(screen.getByRole('button', { name: 'Expand navigation' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Expand channels' })).toBeDisabled();
 
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
     fireEvent.focus(edge);
@@ -1354,7 +1354,7 @@ describe('Sidebar channel markers', () => {
   // above it with the compact toggle and leaves with the expand, and is marked
   // so the list motion shows it doing so; the titlebar's own is hidden in the
   // rail rather than unmounted, so it can fade with the layout.
-  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted above it', () => {
+  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted above it', async () => {
     const onOpenSearch = vi.fn();
     const view = (compact: boolean): React.JSX.Element => (
       <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
@@ -1369,6 +1369,10 @@ describe('Sidebar channel markers', () => {
     expect(create.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(create).toHaveAttribute('data-motion-key', 'action:new');
     expect(create).toHaveAttribute('data-motion-insert');
+    fireEvent.focus(search);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
+    expect(search).not.toHaveAttribute('aria-describedby');
+    fireEvent.blur(search);
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(create).toHaveAttribute('aria-haspopup', 'menu');
@@ -1379,6 +1383,10 @@ describe('Sidebar channel markers', () => {
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
+    const expandedSearch = screen.getByRole('button', { name: 'Search organization' });
+    fireEvent.focus(expandedSearch);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
+    expect(expandedSearch).not.toHaveAttribute('aria-describedby');
   });
 
   it.each([false, true])('shows only enabled standalone Sidekicks and opens their library detail (compact=%s)', (compact) => {
@@ -1801,7 +1809,7 @@ describe('Sidebar channel markers', () => {
     const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
       .getAllByRole('link')
       .map((link) => link.getAttribute('aria-label'));
-    const launcher = screen.getByRole('button', { name: 'New channel' });
+    const launcher = screen.getByRole('button', { name: 'New channel or space' });
     fireEvent.keyDown(launcher, { key: 'ArrowDown' });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
 
