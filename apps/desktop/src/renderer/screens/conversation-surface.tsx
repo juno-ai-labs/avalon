@@ -98,6 +98,8 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
+import { useWorkstreamSidebarGeometry } from '@rally/ui/components/workstream-sidebar';
+import { SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -149,34 +151,60 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
  * content arriving into an already-open room and prevents the whole pane from
  * being redrawn around the snapshot.
  */
+function ConversationOpeningSidebar(): React.JSX.Element {
+  const { compact, sidebarRef, width } = useWorkstreamSidebarGeometry();
+  return (
+    <aside
+      aria-hidden="true"
+      className={clsx('resizable-sidebar workstream-context-sidebar conversation-opening-sidebar', compact && 'is-compact')}
+      ref={sidebarRef}
+      style={{ flexBasis: width }}
+    >
+      <SidebarTitleHeader
+        className="workstream-context-toolbar window-drag conversation-opening-sidebar-header"
+        icon={<span className="skeleton-bar conversation-opening-sidebar-mark" />}
+        title={<span className="skeleton-bar conversation-opening-sidebar-title" />}
+      />
+      <SidebarScroll className="workstream-context-scroll conversation-opening-sidebar-scroll">
+        <SidebarSkeletonRows count={4} />
+        <span className="skeleton-bar skeleton-group-label" />
+        <SidebarSkeletonRows count={3} />
+      </SidebarScroll>
+    </aside>
+  );
+}
+
 export function ConversationOpeningSkeleton({
   label,
+  parentKind,
   sidebar = false,
 }: {
   label: string;
+  parentKind: ConversationParentKind;
   sidebar?: boolean;
 }): React.JSX.Element {
   return (
-    <div aria-busy="true" aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
-      {sidebar && (
-        <aside aria-hidden="true" className="workstream-context-sidebar conversation-opening-sidebar">
-          <div className="conversation-opening-sidebar-header">
-            <span className="skeleton-bar conversation-opening-sidebar-mark" />
-            <span className="skeleton-bar conversation-opening-sidebar-title" />
-          </div>
-          <div className="conversation-opening-sidebar-scroll">
-            <SidebarSkeletonRows count={4} />
-            <span className="skeleton-bar skeleton-group-label" />
-            <SidebarSkeletonRows count={3} />
-          </div>
-        </aside>
-      )}
-      <div aria-hidden="true" className="workstream-screen conversation-opening-feed">
-        <header className="workstream-header conversation-opening-header">
-          <span className="skeleton-bar conversation-opening-header-mark" />
-          <span className="skeleton-bar conversation-opening-header-title" />
-          <span className="skeleton-bar conversation-opening-header-action" />
-        </header>
+    <div aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
+      {sidebar && <ConversationOpeningSidebar />}
+      <div aria-hidden="true" className={clsx(
+        'workstream-screen conversation-opening-feed',
+        parentKind === 'automation' && 'automation-screen',
+      )}>
+        {parentKind === 'automation' ? (
+          <header className="sidekick-conversation-heading window-drag conversation-opening-header">
+            <span className="skeleton-bar conversation-opening-header-title" />
+          </header>
+        ) : (
+          <header className="grokbot-workstream-header window-drag conversation-opening-header">
+            <div className="grokbot-conversation-title conversation-opening-channel-title">
+              <span className="skeleton-bar conversation-opening-header-mark" />
+              <span className="skeleton-bar conversation-opening-header-title" />
+            </div>
+            <div className="grokbot-header-actions">
+              <span className="skeleton-bar conversation-opening-header-action" />
+            </div>
+          </header>
+        )}
         <div className="transcript-scroll">
           <div className="transcript-column conversation-opening-messages">
             <div className="conversation-opening-message">
@@ -2164,6 +2192,7 @@ export function ConversationSurface({
     return (
       <ConversationOpeningSkeleton
         label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
+        parentKind={parentKind}
         sidebar={renderSidebar !== undefined}
       />
     );

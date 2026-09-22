@@ -25,6 +25,77 @@ const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
+/**
+ * The persisted and pane-constrained geometry shared by every Channel sidebar
+ * state, including the opening skeleton shown before Channel data arrives.
+ */
+export function useWorkstreamSidebarGeometry(): {
+  collapse: () => void;
+  compact: boolean;
+  constrained: boolean;
+  onResize: (requested: number) => void;
+  onToggle: () => void;
+  sidebarRef: React.RefObject<HTMLElement | null>;
+  width: number;
+} {
+  const sidebarRef = useRef<HTMLElement>(null);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch { return false; }
+  });
+  const [storedWidth, setStoredWidth] = useState(() => {
+    try {
+      const stored = Number.parseFloat(localStorage.getItem(WIDTH_KEY) ?? '');
+      return Number.isFinite(stored) ? clampWidth(stored) : DEFAULT_SIDEBAR_WIDTH;
+    } catch { return DEFAULT_SIDEBAR_WIDTH; }
+  });
+  const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
+  // Observe the available pane, never this sidebar or the transcript. Its
+  // width does not change when this rail collapses, avoiding resize feedback.
+  useLayoutEffect(() => {
+    const pane = sidebarRef.current?.parentElement;
+    if (!pane) return;
+    const update = (): void => setPaneWidth(pane.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
+  const constrained = paneWidth < storedWidth + SIDEBAR_CONTENT_MIN_WIDTH;
+  const compact = collapsed || constrained;
+  const width = compact ? COLLAPSED_SIDEBAR_WIDTH : storedWidth;
+  useLayoutEffect(() => {
+    const shell = sidebarRef.current?.closest<HTMLElement>('.workspace-shell');
+    shell?.style.setProperty('--workstream-sidebar-width', `${width}px`);
+    return () => { shell?.style.removeProperty('--workstream-sidebar-width'); };
+  }, [width]);
+  const saveCollapsed = (next: boolean): void => {
+    setCollapsed(next);
+    try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch { /* Best-effort device preference. */ }
+  };
+  const onResize = (requested: number): void => {
+    const available = paneWidth - SIDEBAR_CONTENT_MIN_WIDTH;
+    if (compact && (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || available < MIN_SIDEBAR_WIDTH)) return;
+    if (!compact && requested < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
+      saveCollapsed(true);
+      return;
+    }
+    if (available < MIN_SIDEBAR_WIDTH) return;
+    const next = clampWidth(Math.min(requested, available));
+    setStoredWidth(next);
+    saveCollapsed(false);
+    try { localStorage.setItem(WIDTH_KEY, String(next)); } catch { /* Best-effort device preference. */ }
+  };
+  return {
+    collapse: () => saveCollapsed(true),
+    compact,
+    constrained,
+    onResize,
+    onToggle: () => saveCollapsed(!collapsed),
+    sidebarRef,
+    width,
+  };
+}
+
 export interface ConversationRowTarget { substreamId: string; title: string }
 
 /**
@@ -154,53 +225,15 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   substreamDrag?: SubstreamListDrag | undefined;
   mainActions?: ConversationRowActions | undefined;
 }): React.JSX.Element {
-  const sidebar = useRef<HTMLElement>(null);
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch { return false; }
-  });
-  const [width, setWidth] = useState(() => {
-    try {
-      const stored = Number.parseFloat(localStorage.getItem(WIDTH_KEY) ?? '');
-      return Number.isFinite(stored) ? clampWidth(stored) : DEFAULT_SIDEBAR_WIDTH;
-    } catch { return DEFAULT_SIDEBAR_WIDTH; }
-  });
-  const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
-  // Observe the available pane, never this sidebar or the transcript. Its
-  // width does not change when this rail collapses, avoiding resize feedback.
-  useLayoutEffect(() => {
-    const pane = sidebar.current?.parentElement;
-    if (!pane) return;
-    const update = (): void => setPaneWidth(pane.clientWidth);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(pane);
-    return () => observer.disconnect();
-  }, []);
-  const narrow = paneWidth < width + SIDEBAR_CONTENT_MIN_WIDTH;
-  const compact = collapsed || narrow;
-  const effectiveWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : width;
-  useLayoutEffect(() => {
-    const shell = sidebar.current?.closest<HTMLElement>('.workspace-shell');
-    shell?.style.setProperty('--workstream-sidebar-width', `${effectiveWidth}px`);
-    return () => { shell?.style.removeProperty('--workstream-sidebar-width'); };
-  }, [effectiveWidth]);
-  const saveCollapsed = (next: boolean): void => {
-    setCollapsed(next);
-    try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch { /* Best-effort device preference. */ }
-  };
-  const resize = (requested: number): void => {
-    const available = paneWidth - SIDEBAR_CONTENT_MIN_WIDTH;
-    if (compact && (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || available < MIN_SIDEBAR_WIDTH)) return;
-    if (!compact && requested < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
-      saveCollapsed(true);
-      return;
-    }
-    if (available < MIN_SIDEBAR_WIDTH) return;
-    const next = clampWidth(Math.min(requested, available));
-    setWidth(next);
-    saveCollapsed(false);
-    try { localStorage.setItem(WIDTH_KEY, String(next)); } catch { /* Best-effort device preference. */ }
-  };
+  const {
+    collapse,
+    compact,
+    constrained,
+    onResize,
+    onToggle,
+    sidebarRef,
+    width,
+  } = useWorkstreamSidebarGeometry();
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   /**
    * The substream being created, once it has a row of its own here.
@@ -229,13 +262,13 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
       aria-label="Channel sidebar"
       className="workstream-context-sidebar"
       compact={compact}
-      constrained={narrow}
-      onResize={resize}
-      onToggle={() => saveCollapsed(!collapsed)}
+      constrained={constrained}
+      onResize={onResize}
+      onToggle={onToggle}
       resizeLabel="Resize channel sidebar"
-      sidebarRef={sidebar}
-      style={{ flexBasis: effectiveWidth }}
-      width={effectiveWidth}
+      sidebarRef={sidebarRef}
+      style={{ flexBasis: width }}
+      width={width}
     >
       <SidebarTitleHeader
         className="workstream-context-toolbar window-drag"
@@ -264,7 +297,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
             type="button"
-            onClick={() => { saveCollapsed(true); onSelectSubstream?.('0'); onFocusTranscript(); }}
+            onClick={() => { collapse(); onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
@@ -300,7 +333,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   substreamDrag?.draggingSubstreamId === child.substreamId && 'is-dragging',
                 )}
                 draggable={substreamDrag !== undefined}
-                onClick={() => { saveCollapsed(true); onSelectSubstream?.(child.substreamId); }}
+                onClick={() => { collapse(); onSelectSubstream?.(child.substreamId); }}
                 onDragStart={substreamDrag ? (event) => {
                   // Chromium refuses to start a drag with an empty payload,
                   // and the id is what any other surface would want anyway.
@@ -391,7 +424,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 'workstream-context-row workstream-new-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
-              onClick={() => { saveCollapsed(true); onNewSubstream(); }}
+              onClick={() => { collapse(); onNewSubstream(); }}
               type="button"
             >
               <SidebarNavigationRowContent
@@ -425,10 +458,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
       <SidebarCollapseFooter
         collapseLabel="Collapse channel"
         compact={compact}
-        constrained={narrow}
+        constrained={constrained}
         constrainedTitle="Widen the window to expand channel"
         expandLabel="Expand channel"
-        onToggle={() => saveCollapsed(!collapsed)}
+        onToggle={onToggle}
       />
     </ResizableSidebar>
   );
