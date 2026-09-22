@@ -72,8 +72,8 @@ interface InspectorRailProps {
   workstream?: WorkstreamDetail;
   /**
    * This work stream's Sidekicks, or `undefined` while the answer is on its
-   * way. Neither state leaves a heading behind: a room with none simply has no
-   * such section, as it has no artifact section until it has produced one.
+   * way. Both pending and empty states retain the shared Sidekicks heading;
+   * only actual Sidekicks and a failed-read recovery action add rows beneath it.
    */
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;

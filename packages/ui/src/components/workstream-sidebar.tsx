@@ -180,8 +180,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   /**
    * This work stream's Sidekicks — the ones it owns and the ones its
    * conversation has loaded — or `undefined` while that answer is still on its
-   * way. The section says nothing at all for either, the way the artifact
-   * section above it does.
+   * way. The section keeps its heading in both the pending and empty states;
+   * only the rows wait for an authoritative answer.
    */
   sidekicks?: SidekickRow[] | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;

@@ -530,7 +530,7 @@ describe('WorkstreamSidebar', () => {
     expect(within(screen.getByRole('region', { name: 'Artifacts' })).getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
   });
 
-  it('lists the room’s Sidekicks under the people, and drops the section when it has none', () => {
+  it('lists the room’s Sidekicks under the people and keeps the section heading when it has none', () => {
     const onRemove = vi.fn();
     const { rerender } = render(<Tooltip.Provider><WorkstreamSidebar
       workstream={workstream}
@@ -554,16 +554,15 @@ describe('WorkstreamSidebar', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(onRemove).toHaveBeenCalledOnce();
 
-    // Neither an empty answer nor a pending one leaves a heading behind, the
-    // way the artifact section above drops itself; the caller is where the two
-    // states are kept apart.
+    // The heading is a stable landmark even while the answer is pending or the
+    // room has no Sidekicks; the caller still keeps those two states apart.
     for (const pending of [{ sidekicks: [] }, {}]) {
       rerender(<Tooltip.Provider><WorkstreamSidebar
         workstream={workstream} presentUserIds={[]} {...pending}
         onOpenArtifact={vi.fn()} onParticipants={vi.fn()} onFocusTranscript={vi.fn()}
       /></Tooltip.Provider>);
-      expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
-      expect(screen.queryByText('Sidekicks')).toBeNull();
+      expect(screen.getByRole('region', { name: 'Sidekicks' })).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
     }
   });
 

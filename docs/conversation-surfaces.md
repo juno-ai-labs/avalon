@@ -27,7 +27,7 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and, below them, lists this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, in one section, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
 ## Where the code lives
 
