@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
-import { sendWorkstreamMentionSlack } from "../src/services/slack-notification-service";
+import { sendWorkstreamMentionSlack, sendWorkstreamParticipantAddedSlack } from "../src/services/slack-notification-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
@@ -40,18 +40,33 @@ describe("workspace Slack mention delivery", () => {
     ]);
     expect(calls[0]?.body).toEqual({ email: "ada@example.com" });
     expect(calls[1]?.body).toEqual({ users: "UADA" });
-    expect(calls[2]?.body).toMatchObject({ channel: "DADA" });
+    expect(calls[2]?.body).toMatchObject({
+      channel: "DADA",
+      unfurl_links: false,
+      unfurl_media: false,
+    });
     expect(String(calls[2]?.body.text)).toContain("Author Person mentioned you");
+    expect(String(calls[2]?.body.text)).toContain("the channel");
     expect(String(calls[2]?.body.text)).toContain("@Ada Lovelace");
     expect(String(calls[2]?.body.text)).not.toContain(`person:${recipientId}`);
     expect(String(calls[2]?.body.text)).not.toContain(`person://${recipientId}`);
     expect(String(calls[2]?.body.text)).toContain("Open in Rally");
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
     // Slack can only unfurl a link on the app's registered domain, and the id
     // must sit in the path rather than a fragment for the unfurl handler to
-    // read it back off the shared URL.
-    expect(String(calls[2]?.body.text)).toContain(
-      `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`,
+    // read it back off the shared URL. The Agent Messages tab still needs the
+    // same URL in a markdown link and a button; the fallback `text` is not a
+    // rendered link there.
+    expect(String(calls[2]?.body.text)).toContain(destination);
+    expect(markdownBlocks(calls[2]?.body.blocks).join("")).toContain(
+      `[Mention review](${destination})`,
     );
+    expect(openInRallyButton(calls[2]?.body.blocks)).toEqual({
+      type: "button",
+      text: { type: "plain_text", text: "Open in Rally" },
+      url: destination,
+      action_id: "rally_open_notification",
+    });
     expect(String(calls[2]?.body.text)).not.toContain("avalon://");
     expect(String(calls[2]?.body.text)).not.toContain("/open#");
     expect(calls[2]?.body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/u);
@@ -72,6 +87,50 @@ describe("workspace Slack mention delivery", () => {
       chunk_index: 0,
       outcome: "sent",
     }));
+  });
+
+  it("links a breakout mention on the first message, including the child in the canonical URL", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const substreamId = "00000000-0000-7000-8000-000000000009";
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}/substreams/${substreamId}`;
+
+    await expect(sendWorkstreamMentionSlack(env, { ...mention(), substreamId }, slackApiFixture(calls)))
+      .resolves.toBe("sent");
+
+    const posted = calls.find((call) => call.method === "chat.postMessage")?.body;
+    expect(markdownBlocks(posted?.blocks).join("")).toContain(`the breakout [Mention review](${destination})`);
+    expect(openInRallyButton(posted?.blocks)).toMatchObject({ url: destination });
+    expect(String(posted?.text)).toContain(`Open in Rally: ${destination}`);
+  });
+
+  it("links a participant-added DM to the channel on the first message", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, true);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
+
+    await expect(sendWorkstreamParticipantAddedSlack(env, {
+      sourceId: "participant-1",
+      recipientUserId: recipientId,
+      recipientEmail: "ada@example.com",
+      actorName: "Author Person",
+      workspaceId,
+      workspaceName: "Avalon Studio",
+      workstreamId,
+      workstreamTitle: "Mention review",
+      workstreamObjective: "Ship the mention path.",
+      titleIsProvisional: false,
+    }, slackApiFixture(calls))).resolves.toBe("sent");
+
+    const posted = calls.find((call) => call.method === "chat.postMessage")?.body;
+    expect(markdownBlocks(posted?.blocks).join("")).toContain(
+      `added you to the channel [Mention review](${destination})`,
+    );
+    expect(openInRallyButton(posted?.blocks)).toMatchObject({ url: destination });
   });
 
   it("prefers a confirmed Slack identity and does not perform email lookup", async () => {
@@ -199,12 +258,13 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("uses Slack-sized threaded chunks without truncating the Rally message", async () => {
+  it("puts the Rally destination on the first chunk of a long mention, without truncating the Rally message", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
     const messageText = "x".repeat(80_001);
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
 
     await expect(sendWorkstreamMentionSlack(
       env,
@@ -214,12 +274,14 @@ describe("workspace Slack mention delivery", () => {
     )).resolves.toBe("sent");
 
     const posts = calls.filter((call) => call.method === "chat.postMessage");
-    expect(posts).toHaveLength(3);
+    expect(posts.length).toBeGreaterThan(1);
     expect(posts.every((post) => String(post.body.text).length <= 40_000)).toBe(true);
-    expect(posts.map((post) => String(post.body.text)).join("").match(/x/gu)).toHaveLength(messageText.length);
+    expect(posts.flatMap((post) => markdownBlocks(post.body.blocks)).join("").match(/x/gu))
+      .toHaveLength(messageText.length);
     expect(posts[0]?.body).not.toHaveProperty("thread_ts");
     expect(posts[1]?.body).toMatchObject({ thread_ts: "1786060000.001" });
-    expect(posts[2]?.body).toMatchObject({ thread_ts: "1786060000.001" });
+    expect(openInRallyButton(posts[0]?.body.blocks)).toMatchObject({ url: destination });
+    expect(posts.slice(1).every((post) => openInRallyButton(post.body.blocks) === null)).toBe(true);
   });
 
   it("reduces a citation, which Slack shows verbatim just like a mention's UUID", async () => {
@@ -227,10 +289,9 @@ describe("workspace Slack mention delivery", () => {
     const env = environment(database);
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
-    // An external source, deliberately: this text is Slack mrkdwn, which has no
-    // `[label](url)` and no `**bold**`, so the Markdown source list the digest
-    // gets would arrive here as literal syntax. A fixture whose only source is
-    // internal reduces to a bare title and never exercises that.
+    // The quoted body is reduced before it is placed in a markdown block. A
+    // fixture whose only source is internal reduces to a bare title and never
+    // exercises the external-source leak this is covering.
     const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [The memo](https://example.com/memo)";
 
     await expect(sendWorkstreamMentionSlack(
@@ -240,13 +301,14 @@ describe("workspace Slack mention delivery", () => {
       async () => undefined,
     )).resolves.toBe("sent");
 
-    const posted = calls.filter((call) => call.method === "chat.postMessage")
-      .map((call) => String(call.body.text)).join("");
+    const posted = markdownBlocks(
+      calls.filter((call) => call.method === "chat.postMessage").flatMap((call) => call.body.blocks),
+    ).join("");
     expect(posted).not.toContain("resource:");
     expect(posted).not.toContain("[^1]");
     expect(posted).toContain("See the deck.");
-    // The source reaches the channel as words and a bare URL, not as markup a
-    // reader has to decode.
+    // The quoted body is still the plain shape; the destination link is authored
+    // separately as Slack markdown, not left for this rewriter to invent.
     expect(posted).not.toContain("**Sources**");
     expect(posted).not.toContain("](https://example.com/memo)");
     expect(posted).not.toContain("\n  1. The memo");
@@ -491,6 +553,31 @@ function migratedDatabase(): DatabaseSync {
   const database = legacyProductSqliteDatabase();
   databases.push(database);
   return database;
+}
+
+function markdownBlocks(blocks: unknown): string[] {
+  if (!Array.isArray(blocks)) return [];
+  return blocks.flatMap((block) => {
+    if (!block || typeof block !== "object") return [];
+    const candidate = block as { type?: unknown; text?: unknown };
+    return candidate.type === "markdown" && typeof candidate.text === "string" ? [candidate.text] : [];
+  });
+}
+
+function openInRallyButton(blocks: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(blocks)) return null;
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    const candidate = block as { type?: unknown; elements?: unknown };
+    if (candidate.type !== "actions" || !Array.isArray(candidate.elements)) continue;
+    const button = candidate.elements.find((element): element is Record<string, unknown> => (
+      Boolean(element)
+      && typeof element === "object"
+      && (element as { action_id?: unknown }).action_id === "rally_open_notification"
+    ));
+    if (button) return button;
+  }
+  return null;
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
