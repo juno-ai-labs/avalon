@@ -262,6 +262,21 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:
+      # GITHUB_TOKEN cannot push a tag whose tree changes a workflow relative
+      # to the current default branch. Check the environment credential before
+      # setup, signing, or building a release that could become live but
+      # untagged.
+      - name: Require the release token that can publish workflow-bearing tags
+        if: needs.plan.outputs.create_tag == 'true'
+        env:
+          RELEASE_GITHUB_TOKEN_CONFIGURED: ${{ secrets.DESKTOP_RELEASE_GITHUB_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_GITHUB_TOKEN_CONFIGURED" != "true" ]; then
+            echo "DESKTOP_RELEASE_GITHUB_TOKEN is required in the desktop-release environment with contents and workflows write access" >&2
+            exit 1
+          fi
+
       - name: Check out the exact release commit
         uses: actions/checkout@v5
         with:
@@ -448,12 +463,21 @@ jobs:
       # so anything that fails later must stay
       # recoverable. An untagged live release is not — it cannot be re-run
       # (the immutable-bytes guard rejects a fresh build) and cannot be
-      # dispatched (there is no tag). Pushing with GITHUB_TOKEN does not start
-      # another workflow run, so this cannot re-enter the release.
+      # dispatched (there is no tag). GITHUB_TOKEN also cannot create a tag when
+      # that tag's tree differs from main under .github/workflows, so this one
+      # push uses the desktop-release credential with workflow permission. Tag
+      # pushes do not match this workflow's branch-only trigger.
       - name: Publish the release tag
         if: needs.plan.outputs.create_tag == 'true'
         shell: bash
-        run: git push origin "refs/tags/$RELEASE_TAG"
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.DESKTOP_RELEASE_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git push \
+            -c http.https://github.com/.extraheader= \
+            "https://x-access-token:${RELEASE_GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/$RELEASE_TAG"
 
       # The publisher rewrote apps/site/release.config.json on this runner, and
       # the runner is about to be reclaimed. main must learn the new version and
