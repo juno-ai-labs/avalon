@@ -1815,6 +1815,28 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-22 — Command-only clients can use ordinary message admission
+
+**What changed:** The conversation API exposes authenticated message admission
+for clients that do not hold a conversation socket. It resolves the same
+parent and writable conversation client, then invokes the same idempotent
+`create_message` object operation and returns its existing admission receipt.
+Sideline uses this route only when sending as the signed-in user.
+
+**Why:** Sideline is deliberately a command-only surface with no transcript
+subscription, but acting as its current user must use ordinary user authority
+rather than a fabricated self-impersonation relationship.
+
+**Considered and rejected:** Opening a hibernating conversation socket solely
+to submit one command would bring feed lifecycle and reconnect state into a
+surface that does not consume them. Reusing the represented-user endpoint would
+keep transport simple by making the authorization model false.
+
+**Consequences:** Rally's open conversation view still uses the admitted socket
+for lower latency and reconnect resend. A no-socket client can call the generic
+REST route with the same durable client-message identity; both transports enter
+one object operation and publish the same canonical effects.
+
 ### 2026-09-22 — Equivalent Space moves transfer provenance without touching the audience
 
 **What changed:** WorkstreamDO gained one typed, receipted operation that

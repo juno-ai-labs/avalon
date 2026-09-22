@@ -35,15 +35,20 @@ token in an encrypted session file and exposes only named operations to the
 sandboxed renderer. The catalog service returns active represented members and
 the Channels and Breakouts each represented member can currently see.
 
-For a send, the regional service first writes a content-free attempt audit. It
-then rechecks internal-sidecar eligibility, both active memberships, the exact
-directed relationship, and the destination under the represented participant.
-The existing `ConversationService` and conversation object's `createMessage`
-method perform admission with the caller's idempotency key. The message and all
+The catalog always includes the signed-in operator through their ordinary
+membership and adds other participants from active relationships. When the
+operator selects themselves, Sideline calls the generic authenticated
+conversation-message API; no impersonation relationship or dual-principal audit
+is involved. A represented send still enters the regional impersonation
+service, which first writes a content-free attempt audit, then rechecks
+internal-sidecar eligibility, both active memberships, the exact directed
+relationship, and the destination under the represented participant. Both
+paths reach the existing `ConversationService` and conversation object's
+`createMessage` method with the caller's idempotency key. The message and all
 downstream addressing, realtime, participation, and harness behavior remain the
-ordinary path. A separate result audit correlates the operator, represented
-participant, relationship basis, destination, outcome, and canonical turn id.
-Sideline stops at that direct response.
+ordinary path. A separate result audit for represented sends correlates the
+operator, represented participant, relationship basis, destination, outcome,
+and canonical turn id. Sideline stops at that direct response.
 
 ## Packaging, release, and updates
 
@@ -98,8 +103,8 @@ non-macOS, and non-arm64 builds never contact the production feed.
 - A relationship is directional and workspace-scoped; reversing either user or
   changing the workspace denies the action, preventing authority from being
   inferred from proximity or membership.
-- Self-impersonation requires an explicit self-pair, so it follows the same
-  grant and revocation path as every other represented action.
+- Acting as yourself is ordinary authenticated authority, not impersonation;
+  self-pairs neither gate nor audit that path.
 - Demo state is never an authorization input. Coupling the read path to the demo
   register would turn a platform relationship into a hidden demo capability.
 - The attempt audit succeeds before message admission. Otherwise a represented
@@ -123,7 +128,9 @@ conversation loop documented in [workstream-durable-object.md](workstream-durabl
 
 Only trusted Worker code can write relationships. Sideline cannot administer
 them, retrieve transcript history, answer elicitations, choose a region or
-arbitrary Organization id, or obtain a represented user's credential.
+arbitrary Organization id, or obtain a represented user's credential. Its
+current-user send uses the generic conversation API with its own session; its
+represented send uses the impersonation endpoint.
 
 ## Failure modes and limits
 
@@ -187,6 +194,32 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-22 — Current-user sends use ordinary message authority
+
+**What changed:** Sideline's catalog includes the signed-in operator without a
+self-impersonation grant. Selecting that participant sends through the generic
+authenticated conversation-message API, while selecting somebody else keeps
+using the relationship-gated, dual-principal impersonation endpoint. The old
+Sideline endpoint also admits a self-send through ordinary authority for
+rolling-release compatibility, records no impersonation audit for it, and
+preserves the request-received timestamp for message telemetry. The composer
+labels the mixed self and represented send surface accordingly.
+
+**Why:** Acting as the signed-in user is not impersonation. Requiring a
+self-pair made an ordinary member action depend on a separate administrative
+grant and described the resulting audit as two-principal activity when there
+was only one principal.
+
+**Considered and rejected:** Giving every operator a self-pair would preserve
+one transport at the cost of the wrong authority model. Giving Sideline a
+conversation socket would add a transcript client, subscriptions, and recovery
+state to a command-only tool.
+
+**Consequences:** Sideline can send as its current user in any visible writable
+Channel or Breakout without relationship setup. Represented sends retain their
+existing authorization and audit guarantees. Rally's conversation UI remains
+on its lower-latency socket command path.
 
 ### 2026-09-21 — Sideline release recovery and app identity
 

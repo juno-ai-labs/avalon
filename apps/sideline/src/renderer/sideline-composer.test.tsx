@@ -46,6 +46,16 @@ function render(model: SidelineCardModel): string {
 }
 
 describe("Sideline shared composer", () => {
+  it("labels mixed self and represented messaging without implying a self-send audit", () => {
+    const html = render(card());
+
+    expect(html).toContain("Messaging");
+    expect(html).toContain("Sending as another participant is audited.");
+    expect(html).toContain('aria-label="Messages"');
+    expect(html).toContain('placeholder="Write a message"');
+    expect(html).not.toContain("Impersonation");
+  });
+
   it("names the selected participant's empty-destination state and disables send", () => {
     const html = render(card());
 
