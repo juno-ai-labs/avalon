@@ -18,17 +18,18 @@ import type { WorkstreamSummary } from './types';
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
-let observedRows: WorkstreamSummary[] | undefined;
-let observedActiveRows: WorkstreamSummary[] | undefined;
+const activeRowsBySource = new WeakMap<WorkstreamSummary[], WorkstreamSummary[]>();
 
 /** Preserve the raw archived marker for ordering while every directory reader sees only active rows. */
 function activeWorkstreams(rows: WorkstreamSummary[]): WorkstreamSummary[];
 function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined;
 function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined {
-  if (rows === observedRows) return observedActiveRows;
-  observedRows = rows;
-  observedActiveRows = rows?.filter((workstream) => !workstream.archivedAt);
-  return observedActiveRows;
+  if (!rows) return undefined;
+  const observed = activeRowsBySource.get(rows);
+  if (observed) return observed;
+  const active = rows.filter((workstream) => !workstream.archivedAt);
+  activeRowsBySource.set(rows, active);
+  return active;
 }
 
 const selectActiveWorkstreams = (rows: WorkstreamSummary[]): WorkstreamSummary[] =>
