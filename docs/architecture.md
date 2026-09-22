@@ -66,7 +66,13 @@ docs/                      Product, architecture, security, setup, runbooks
    regional API. The macOS application menu opens the singleton Settings window
    with **Command-,** and closes the focused window with **Command-W**, which on
    darwin has to come from a File menu of Rally's own — Electron's `windowMenu`
-   role omits it there. Settings and the Sidekicks window also close on
+   role omits it there. The main window saves its normal bounds and maximized
+   state on close in the device's `userData` directory; a later creation restores
+   them into a current display's work area, falling back to the default size
+   when no valid state exists. This includes reopening after a macOS window close
+   without quitting the app; [`main-window-state.md`](main-window-state.md) owns
+   the temporary details-rail width and small-display limits. Settings and the
+   Sidekicks window also close on
    **Escape**, a convenience rather than the platform gesture, and only when no
    IME composition, dialog, select menu, or unsaved text field has a nearer
    claim on the keystroke; `renderer/lib/window-escape.ts` is the one predicate
