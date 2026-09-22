@@ -3,7 +3,9 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
 
-it('defers early main-window creation until renderer protocol and IPC setup completes', async () => {
+import { boundsWithoutConversationDetails } from './main-window-state';
+
+it('defers main-window creation and restores and persists native geometry', async () => {
   const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
   const parsed = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
   const declaration = parsed.statements.find((node): node is ts.FunctionDeclaration =>
@@ -17,22 +19,33 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   let finishLoad!: () => void;
   const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
   const loaded = vi.fn(() => loading);
-  const created = vi.fn();
+  const created = vi.fn((options: Record<string, unknown>) => options);
   const shown = vi.fn();
+  const maximized = vi.fn();
+  const writeState = vi.fn();
   let readyToShow!: () => void;
+  let close!: () => void;
   class Window {
     webContents = { id: 1, on: vi.fn() };
     isDestroyed = () => false;
     isMinimized = () => false;
     show = shown;
     focus = vi.fn();
-    on = vi.fn();
+    on = (event: string, callback: () => void) => { if (event === 'close') close = callback; };
     once = (_event: string, callback: () => void) => { readyToShow = callback; };
-    constructor() { created(); }
+    maximize = maximized;
+    getNormalBounds = () => ({ x: 100, y: 50, width: 1480, height: 900 });
+    isMaximized = () => true;
+    constructor(options: Record<string, unknown>) { created(options); }
   }
   const create = runInNewContext(`${ts.transpile(reveal!.getText(parsed))}; ${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
     mainWindowStartup: startup, mainWindowLoading: null, mainWindowReadyToShow: false, mainWindow: null, rendererReady: false,
     BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
+    electronScreen: { getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }), getAllDisplays: () => [] },
+    readMainWindowState: () => ({ bounds: { x: 100, y: 50, width: 1180, height: 900 }, maximized: true }),
+    writeMainWindowState: writeState, boundsWithoutConversationDetails,
+    conversationDetailsExpansion: 300, conversationDetailsAppliedWidth: 1480,
+    userDataDirectory: () => '/tmp',
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
     installWindowDiagnostics: vi.fn(), rendererUrl: () => 'app://rallywithai/index.html',
     loadRenderer: loaded,
@@ -52,13 +65,21 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   finishLoad();
   await Promise.all([opening, secondOpening]);
   expect(created).toHaveBeenCalledTimes(1);
+  expect(created).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 50, width: 1180, height: 900 }));
   expect(loaded).toHaveBeenCalledTimes(1);
   await create();
   expect(shown).not.toHaveBeenCalled();
   readyToShow();
+  expect(maximized).toHaveBeenCalledTimes(1);
   expect(shown).toHaveBeenCalledTimes(1);
+  expect(maximized.mock.invocationCallOrder[0]).toBeLessThan(shown.mock.invocationCallOrder[0]!);
   await create();
   expect(shown).toHaveBeenCalledTimes(2);
+  close();
+  expect(writeState).toHaveBeenCalledWith('/tmp', {
+    bounds: { x: 100, y: 50, width: 1180, height: 900 },
+    maximized: true,
+  });
   const release = source.indexOf('resolveMainWindowStartup();');
   const protocolInstall = source.indexOf('await installRendererProtocol();');
   const ipcInstall = source.indexOf('    registerIpc();');
