@@ -1974,6 +1974,8 @@ identity card.
 when the projection has one. Older Breakout rows continue to use the stable
 id-derived mark until their next directory projection arrives.
 
+PR #941. Design: `docs/PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md`.
+
 ### 2026-09-22 — Deep links reveal their hierarchy selection
 
 **What changed:** A desktop deep link to a Channel now carries a renderer-local
