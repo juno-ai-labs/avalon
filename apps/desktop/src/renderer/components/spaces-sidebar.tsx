@@ -404,7 +404,6 @@ export function SpacesSidebar({
                   to={`/spaces/${space.id}`}
                 >
                   <SidebarNavigationRowContent
-                    description={space.channelCount === 1 ? '1 channel' : `${space.channelCount} channels`}
                     icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
                     title={space.name}
                   />
@@ -439,7 +438,7 @@ export function SpacesSidebar({
                       </span>
                     </div>
                     <p className="sidebar-workstream-preview-scope">
-                      {space.scope === 'personal' ? 'Private space' : 'Organization space'} · {space.channelCount === 1 ? '1 channel' : `${space.channelCount} channels`}
+                      {space.scope === 'personal' ? 'Private space' : 'Organization space'}
                     </p>
                   </div>
                 </Tooltip.Content>
