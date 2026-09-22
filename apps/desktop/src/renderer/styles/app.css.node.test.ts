@@ -657,7 +657,7 @@ describe('clipped lines in both navigation rails', () => {
     '.account-copy strong',
     '.automation-tile-name',
     '.space-row-link > span',
-    '.sidebar-row-hint-text',
+    '.sidebar-row-activity',
     '.sidebar-row-title',
     '.sidebar-row-title-copy',
   ];
@@ -691,9 +691,9 @@ describe('clipped lines in both navigation rails', () => {
   });
 
   it.each([
-    ['.sidebar-row-title,\n.sidebar-row-hint'],
+    ['.sidebar-row-title,\n.sidebar-row-activity'],
     ['.sidebar-row-title-copy'],
-    ['.sidebar-row-hint-text'],
+    ['.sidebar-row-activity'],
     ['.space-row-link > span'],
     ['.automation-tile-name'],
     ['.account-copy strong'],

@@ -568,9 +568,6 @@
     "sys.font.size.row": {
       "$type": "dimension"
     },
-    "sys.font.size.hint": {
-      "$type": "dimension"
-    },
     "sys.font.size.action": {
       "$type": "dimension"
     },
