@@ -23,7 +23,7 @@ import {
 } from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
 import { Plus } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
@@ -49,6 +49,7 @@ interface SpacesSidebarProps {
   readOnly?: boolean;
   spaces: SpaceSummary[];
   selectedSpaceId: string | null;
+  revealSelection?: { revision: number; spaceId: string } | null;
   ready: boolean;
   outOfDate: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
@@ -94,6 +95,7 @@ export function SpacesSidebar({
   readOnly = false,
   spaces,
   selectedSpaceId,
+  revealSelection = null,
   ready,
   outOfDate,
   onCollapsedChange,
@@ -114,6 +116,8 @@ export function SpacesSidebar({
 }: SpacesSidebarProps): React.JSX.Element {
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLElement>(null);
+  const scrollRef = useRef<HTMLElement | null>(null);
+  const revealedRevision = useRef<number | null>(null);
   const onNewChannelRoute = currentPath === '/workstreams/new';
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
@@ -151,6 +155,15 @@ export function SpacesSidebar({
   const orderedSpaces = dragOrder === null
     ? storedSpaces
     : orderByStoredIds(spaces, dragOrder, (space) => space.id);
+  useLayoutEffect(() => {
+    if (revealSelection === null || revealedRevision.current === revealSelection.revision) return;
+    const row = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-space-id="${revealSelection.spaceId}"]`,
+    );
+    if (!row) return;
+    revealedRevision.current = revealSelection.revision;
+    row.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+  }, [orderedSpaces, revealSelection]);
   const restorableSpaces = inactiveSpaces.filter((space) => space.reach !== 'through_channel');
   const currentArchiveTarget = archiveTarget === null
     ? null
@@ -318,6 +331,7 @@ export function SpacesSidebar({
           aria-describedby={!readOnly && ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
           aria-label="Spaces"
           className="spaces-sidebar-scroll"
+          scrollRef={scrollRef}
         >
           <SidebarList>
           {!ready ? (
@@ -348,6 +362,7 @@ export function SpacesSidebar({
                     channelDropTargetId === space.id && 'is-channel-drop-target',
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
+                  data-space-id={space.id}
                   draggable={!readOnly}
                   onDragEnd={(event: DragEvent<HTMLElement>) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');

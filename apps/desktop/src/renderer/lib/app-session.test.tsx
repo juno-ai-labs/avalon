@@ -75,8 +75,10 @@ const bridge = vi.hoisted(() => ({
   surrenderActiveWorkspace: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
+const markDeepLinkWorkstreamNavigation = vi.hoisted(() => vi.fn());
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
+vi.mock('./deep-link-navigation', () => ({ markDeepLinkWorkstreamNavigation }));
 
 const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
 
@@ -1335,6 +1337,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
 
     await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
+    expect(markDeepLinkWorkstreamNavigation).toHaveBeenCalledWith(workstreamId);
   });
 
   it('does not apply a connector result when its organization cannot be activated', async () => {
