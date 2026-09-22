@@ -54,7 +54,7 @@ describe('SidebarList', () => {
 
     rerender(<MemoryRouter><SidebarList
       as={NavLink}
-      className={({ isActive }) => isActive ? 'current-list' : undefined}
+      className={({ isActive }: { isActive: boolean }) => isActive ? 'current-list' : undefined}
       to="/"
     /></MemoryRouter>);
     expect(screen.getByRole('link')).toHaveClass('sidebar-list', 'current-list');
