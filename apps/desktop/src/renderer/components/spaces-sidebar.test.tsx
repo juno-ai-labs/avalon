@@ -70,7 +70,7 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
 }
 
 describe('SpacesSidebar', () => {
-  it('draws one navigation row per Space and selects the next level', () => {
+  it('draws one navigation row per Space without a Channel count and selects the next level', () => {
     const { onSelect } = renderSidebar();
     const sidebar = screen.getByRole('complementary', { name: 'Spaces sidebar' });
 
@@ -83,7 +83,8 @@ describe('SpacesSidebar', () => {
     expect(sidebar.querySelector('.spaces-sidebar-scroll')).toHaveClass('sidebar-scroll');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('sidebar-row');
-    expect(screen.getByText('3 channels')).toBeVisible();
+    expect(screen.queryByText('3 channels')).not.toBeInTheDocument();
+    expect(screen.queryByText('1 channel')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
 
     expect(onSelect).toHaveBeenCalledWith('launch');
