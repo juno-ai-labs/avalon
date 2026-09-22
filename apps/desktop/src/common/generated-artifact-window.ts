@@ -21,7 +21,7 @@ function safeMimeType(value: string): string {
   const candidate = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(candidate)
     ? candidate
-    : 'text/plain';
+    : 'application/octet-stream';
 }
 
 /**

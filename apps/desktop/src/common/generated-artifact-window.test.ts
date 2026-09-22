@@ -36,4 +36,18 @@ describe('generated artifact pop-out document', () => {
     expect(document).toContain(`<${element} ${labelAttribute}="Chart"`);
     expect(document).toContain(`src="data:${mimeType};base64,AAECAw=="`);
   });
+
+  it('falls back to an inert MIME type when the supplied value is malformed', () => {
+    const document = generatedArtifactWindowDocument({
+      kind: 'generated',
+      resourceId: 'resource-3',
+      version: 1,
+      content: new TextEncoder().encode('safe text'),
+      mimeType: 'image/png" onerror="alert(1)',
+      title: 'Chart',
+    });
+
+    expect(document).toContain('<pre>safe text</pre>');
+    expect(document).not.toContain('onerror=');
+  });
 });
