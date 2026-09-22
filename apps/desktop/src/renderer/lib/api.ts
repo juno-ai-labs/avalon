@@ -17,6 +17,7 @@ import {
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
+  ConnectorResourceAuthorizationStartSchema as WireConnectorResourceAuthorizationStartSchema,
   CursorPageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
@@ -41,6 +42,8 @@ import {
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
+  type ConnectorResourceAuthorizationRequest,
+  type ConnectorResourceAuthorizationStart,
   type CustomMcpConnectionSettings,
   type CustomMcpToolPolicy,
   type Elicitation as WireElicitation,
@@ -326,6 +329,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
     connectorType: connection.connectorType,
     displayName: connection.displayName,
     scope: connection.scope === 'personal' ? 'you' : 'workspace',
+    ...(connection.ownerUserId ? { ownerUserId: connection.ownerUserId } : {}),
     ...(connection.ownerName ? { ownerName: connection.ownerName } : {}),
     status: connection.status === 'needs_reconnect'
       ? 'reconnect_required'
@@ -2398,6 +2402,24 @@ export class RallyApi {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
     });
+  }
+
+  async startConnectorResourceAuthorization(
+    request: ConnectorResourceAuthorizationRequest,
+  ): Promise<ConnectorResourceAuthorizationStart> {
+    return this.request(
+      `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?desktopHandoffVersion=2`,
+      {
+        method: 'POST',
+        body: { target: {
+          parentKind: request.parentKind,
+          parentId: request.parentId,
+          substreamId: request.substreamId,
+          failedToolInvocationId: request.failedToolInvocationId,
+        } },
+        schema: WireConnectorResourceAuthorizationStartSchema,
+      },
+    );
   }
 
   async testConnection(id: string) {

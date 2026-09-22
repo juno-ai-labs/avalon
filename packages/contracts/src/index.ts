@@ -3916,6 +3916,7 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "attachmentKind",
   "resourceId",
   "suggestedCall",
+  "resourceAuthorization",
 ] as const;
 
 const MAXIMUM_FAILURE_DETAIL_BYTES = 8_000;
@@ -3923,6 +3924,47 @@ const MAXIMUM_FAILURE_REASON_LENGTH = 1_000;
 /** Producer-side bounds for values sent through structured tool-failure recovery. */
 export const MAXIMUM_FAILURE_VALUE_LENGTH = 160;
 export const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
+
+export const ConnectorResourceAuthorizationHintSchema = z.strictObject({
+  kind: z.literal("connector_resource_authorization"),
+  provider: ConnectorOAuthProviderSchema,
+  capability: z.string().min(1),
+  operation: z.enum(["edit"]),
+  resource: z.strictObject({
+    id: z.string().min(1),
+    type: z.string().regex(/^[a-z0-9_]{1,80}$/u),
+    name: z.string().min(1),
+  }),
+});
+export type ConnectorResourceAuthorizationHint = z.infer<typeof ConnectorResourceAuthorizationHintSchema>;
+
+export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuthorizationHintSchema.extend({
+  connectionId: IdSchema,
+  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentId: IdSchema,
+  substreamId: SubstreamIdSchema,
+  failedToolInvocationId: z.string().min(1),
+  continuationId: z.string().uuid(),
+});
+export type ConnectorResourceAuthorizationRequest = z.infer<typeof ConnectorResourceAuthorizationRequestSchema>;
+
+export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
+  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentId: IdSchema,
+  substreamId: SubstreamIdSchema,
+  failedToolInvocationId: z.string().min(1),
+});
+export type ConnectorResourceAuthorizationTarget = z.infer<typeof ConnectorResourceAuthorizationTargetSchema>;
+export const StartConnectorResourceAuthorizationRequestSchema = z.strictObject({
+  target: ConnectorResourceAuthorizationTargetSchema,
+});
+export type StartConnectorResourceAuthorizationRequest = z.infer<typeof StartConnectorResourceAuthorizationRequestSchema>;
+export const ConnectorResourceAuthorizationStartSchema = z.strictObject({
+  attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  status: z.enum(["pending", "succeeded"]),
+  url: HttpUrlSchema.nullable(),
+});
+export type ConnectorResourceAuthorizationStart = z.infer<typeof ConnectorResourceAuthorizationStartSchema>;
 
 export interface StructuredFailureDetail {
   code: string;
@@ -3973,6 +4015,10 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
       // this runs against stored `errorJson` on every reprojection, and an
       // invalid field here discards the entire detail rather than just itself.
       const parsed = parseStoredSuggestedAttachmentToolCall(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
+    case "resourceAuthorization": {
+      const parsed = ConnectorResourceAuthorizationHintSchema.safeParse(value);
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
   }

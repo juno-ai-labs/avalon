@@ -1072,7 +1072,7 @@ export function WorkspaceSettingsScreen({
   }, [bridge]);
 
   useEffect(() => {
-    if (!api || !pendingConnectorOAuth
+    if (!api || !pendingConnectorOAuth || pendingConnectorOAuth.source === 'resource'
       || pendingConnectorOAuth.region !== workspace.region
       || pendingConnectorOAuth.workspaceId !== workspace.id) return;
     let cancelled = false;

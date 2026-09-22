@@ -222,6 +222,24 @@ export function MessageFeed({
       return next;
     });
   }, []);
+  const [latchedAuthorizedResourceToolIds, setLatchedAuthorizedResourceToolIds] = useState<ReadonlySet<string>>(new Set());
+  const markResourceAuthorized = useCallback((failedToolInvocationId: string) => {
+    setLatchedAuthorizedResourceToolIds((current) => {
+      if (current.has(failedToolInvocationId)) return current;
+      const next = new Set(current);
+      next.add(failedToolInvocationId);
+      return next;
+    });
+  }, []);
+  const authorizedResourceToolIds = useMemo(() => {
+    const ids = new Set(latchedAuthorizedResourceToolIds);
+    for (const message of messages) {
+      if (message.authorType !== 'human') continue;
+      const id = message.clientMessageId?.match(/^resource-authorization:(.+)$/u)?.[1];
+      if (id) ids.add(id);
+    }
+    return ids;
+  }, [latchedAuthorizedResourceToolIds, messages]);
   const rowDisclosure = useMemo<RowDisclosure>(() => ({
     expanded: expandedRows,
     onToggle: (messageId) => setExpandedRows((current) => {
@@ -257,6 +275,8 @@ export function MessageFeed({
           connectorConnectionCards={connectorConnectionCards}
           connectedConnectorSelections={connectedConnectorSelections}
           onConnectorConnected={markConnectorConnected}
+          authorizedResourceToolIds={authorizedResourceToolIds}
+          onResourceAuthorized={markResourceAuthorized}
         />
       )}
     </div>
