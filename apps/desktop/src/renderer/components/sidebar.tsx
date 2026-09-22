@@ -618,6 +618,8 @@ function WorkstreamRow({
   spaces,
   motionMove,
   canDragToPinned = false,
+  onPinDragEnd,
+  onPinDragStart,
   spacesReadOnly = false,
 }: {
   debugEnabled: boolean;
@@ -640,6 +642,8 @@ function WorkstreamRow({
   spaces: SpaceSummary[];
   motionMove?: boolean;
   canDragToPinned?: boolean;
+  onPinDragEnd?: (workstream: WorkstreamSummary) => void;
+  onPinDragStart?: (workstream: WorkstreamSummary) => void;
   spacesReadOnly?: boolean;
 }): React.JSX.Element {
   const location = useLocation();
@@ -742,6 +746,8 @@ function WorkstreamRow({
   const addableSpaces = spaceOptions.filter((space) => !space.disabled);
   const removablePlacement = isProductChannel && placementSpaceId !== undefined
     && spaces.some((space) => space.id === placementSpaceId && space.reach !== 'through_channel');
+  const canStartPinDrag = canDragToPinned && placementSpaceId !== undefined
+    && !isPinned && !spacesReadOnly;
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
@@ -778,12 +784,15 @@ function WorkstreamRow({
           // dragged into Pinned, and every Channel may still be dragged onto
           // another Space. Alphabetical rows never reorder among themselves.
           draggable={drag !== undefined || addableSpaces.length > 0
-            || (canDragToPinned && placementSpaceId !== undefined && !isPinned && !spacesReadOnly)}
-          onDragEnd={drag
+            || canStartPinDrag}
+          onDragEnd={drag || canStartPinDrag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
             // list handled always leaves one behind.
-            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') !== 'move')
+            ? (event) => {
+              drag?.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') !== 'move');
+              if (canStartPinDrag) onPinDragEnd?.(workstream);
+            }
             : undefined}
           onDragOver={drag
             ? (event) => {
@@ -822,6 +831,7 @@ function WorkstreamRow({
               if (removablePlacement && placementSpaceId !== undefined) {
                 event.dataTransfer.setData('application/x-rally-channel-source-space-id', placementSpaceId);
               }
+              if (canStartPinDrag) onPinDragStart?.(workstream);
               drag?.onDragStart(workstream);
             }}
           onDrop={drag
@@ -1349,6 +1359,7 @@ export function Sidebar({
   // promise's optimistic result with it so no sibling surface lags the rail.
   const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
+  const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
@@ -1855,7 +1866,9 @@ export function Sidebar({
       debugEnabled={debugEnabled}
       {...(drag && !spacesReadOnly ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
-      canDragToPinned={spacesReady && pinnedWorkstreams.length > 0}
+      canDragToPinned={spacesReady}
+      onPinDragEnd={(target) => setPinDropWorkstreamId((current) => current === target.id ? null : current)}
+      onPinDragStart={(target) => setPinDropWorkstreamId(target.id)}
       motionMove={motionMoveIntent.current?.id === workstream.id
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
       {...(placementSpaceId !== undefined && !spacesReadOnly ? { placementSpaceId } : {})}
@@ -2271,10 +2284,10 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Only when something is pinned. An empty heading would be a
-              standing invitation to a feature the reader has not used, sitting
-              above the work they came here for. */}
-          {pinnedWorkstreams.length > 0 && (
+          {/* Normally only when something is pinned. The first Channel drag
+              temporarily reveals the destination so pinning does not require
+              using the context menu once before the gesture exists. */}
+          {(pinnedWorkstreams.length > 0 || pinDropWorkstreamId !== null) && (
             // The whole section is the drop target, heading included. A release
             // anywhere a reader would call "inside the list they are arranging"
             // has to count as a drop: `dragend` reads a release nothing accepted
@@ -2282,7 +2295,7 @@ export function Sidebar({
             // heading a few pixels above the first one — would silently throw
             // the arrangement away.
             <section
-              aria-describedby={spacesReadOnly ? undefined : PINNED_DRAG_HINT_ID}
+              aria-describedby={spacesReadOnly || pinnedWorkstreams.length === 0 ? undefined : PINNED_DRAG_HINT_ID}
               aria-labelledby="pinned-heading"
               className="sidebar-section pinned-section"
               data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}
@@ -2300,7 +2313,10 @@ export function Sidebar({
                   pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
                 } else {
                   const unpinned = unpinnedWorkstreams.find((workstream) => workstream.id === draggedId);
-                  if (unpinned) void togglePin(unpinned, true);
+                  if (unpinned) {
+                    setPinDropWorkstreamId(null);
+                    void togglePin(unpinned, true);
+                  }
                 }
               }}
             >
@@ -2313,10 +2329,11 @@ export function Sidebar({
                   as a per-row description it lands inside each link's
                   accessible name, so somebody arrowing through the list hears
                   the whole instruction again before every title. */}
-              {!spacesReadOnly && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+              {!spacesReadOnly && pinnedWorkstreams.length > 0 && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
+                {pinnedWorkstreams.length === 0 && <p className="sidebar-empty">Drop to pin</p>}
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     {...workstreamRowActions}

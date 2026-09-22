@@ -313,8 +313,8 @@ describe('WorkstreamSidebar', () => {
     /></Tooltip.Provider>);
     const sidebar = screen.getByRole('complementary');
     const rows = [...sidebar.querySelectorAll('.workstream-conversation-list > .sidebar-row')];
-    // Last, where a child created now will be listed: the directory orders
-    // children oldest first, so the row does not move when it becomes real.
+    // After every named Breakout while its server-derived title is unavailable;
+    // once it becomes real it joins the alphabetical rows.
     expect(rows.map((row) => row.className)).toEqual([
       expect.stringContaining('workstream-conversation-row'),
       expect.stringContaining('workstream-conversation-row'),
@@ -662,6 +662,35 @@ describe('WorkstreamSidebar', () => {
       for (const row of within(sidebar).getAllByRole('button', { name: /Go to breakout:/u })) {
         expect(row).not.toHaveAttribute('draggable', 'true');
       }
+    });
+
+    it('uses a fixed locale and the Breakout id as the final title tie-break', () => {
+      const onSelectSubstream = vi.fn();
+      const earlierId = asSubstreamId('00000000-0000-7000-8000-0000000000a1');
+      const laterId = asSubstreamId('00000000-0000-7000-8000-0000000000f1');
+      render(<Tooltip.Provider><WorkstreamSidebar
+        workstream={{ ...workstream, privateChildren: [
+          { ...first, substreamId: laterId, title: 'Same' },
+          { ...first, substreamId: earlierId, title: 'Same' },
+          { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000e1'), title: 'Zulu' },
+          { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000d1'), title: 'Åland' },
+        ] }}
+        presentUserIds={[]}
+        onOpenArtifact={vi.fn()}
+        onParticipants={vi.fn()}
+        onFocusTranscript={vi.fn()}
+        onSelectSubstream={onSelectSubstream}
+      /></Tooltip.Provider>);
+
+      const breakouts = screen.getAllByRole('button', { name: /Go to breakout:/u });
+      expect(breakouts.map((button) => button.getAttribute('aria-label'))).toEqual([
+        'Go to breakout: Åland',
+        'Go to breakout: Same',
+        'Go to breakout: Same',
+        'Go to breakout: Zulu',
+      ]);
+      fireEvent.click(breakouts[1]!);
+      expect(onSelectSubstream).toHaveBeenCalledWith(earlierId);
     });
   });
 });
