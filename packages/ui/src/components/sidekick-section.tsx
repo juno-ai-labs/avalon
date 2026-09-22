@@ -35,19 +35,18 @@ const sidekickSectionFailureCopy: Record<Exclude<SidekickSectionFailure, 'load'>
 };
 
 /**
- * The rail's **Sidekicks** section, or nothing.
+ * The rail's **Sidekicks** section.
  *
- * Absent while `items` is `undefined` — the answer is still on its way — and
- * absent again for `[]`, which is the rail's settled answer to an empty
- * section: a heading over nothing reads as a load failure, and the artifact
- * section beside this one drops itself for the same reason. The two states are
- * still kept apart in the caller, because only one of them may ever be turned
- * into a claim about the room.
+ * Its heading is stable while `items` is `undefined` — the answer is still on
+ * its way — and for `[]`, the settled answer to an empty section. Sidekicks are
+ * a standing kind of participant in a room, so this label remains beside the
+ * always-visible Participants section even when there are no rows beneath it.
+ * The two item states stay apart in the caller because only `[]` may be turned
+ * into a claim about what the room contains.
  *
  * A failed read keeps the rows that did arrive and offers a normal Refresh row;
  * it never writes warning copy into the rail. Alone — nothing arrived — the
- * refresh action can take the section's heading with it because it still gives
- * the reader a useful way to recover the missing section.
+ * refresh action sits beneath the same stable heading.
  *
  * The state is a closed semantic union. A transport or provider message is
  * diagnostic data, not product copy; accepting only the failed operation keeps
@@ -58,14 +57,12 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh 
   items?: SidekickRow[] | undefined;
   failure?: SidekickSectionFailure | undefined;
   onOpen?: (id: string) => void; onMenuOpen?: () => void; onRefresh?: () => void;
-}): React.JSX.Element | null {
+}): React.JSX.Element {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
-    return failure === 'load' && onRefresh
-      ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
-        <SidebarRefreshRow onRefresh={onRefresh} />
-      </section>
-      : null;
+    return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
+      {failure === 'load' && onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />}
+    </section>;
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
     {failure === 'load' ? onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />
