@@ -599,20 +599,32 @@ participants or resources, pin it, invite a member, or change workspace
 settings. Those operations select or change the parent and may create/destroy
 the very child connection a socket command would require.
 
+A narrow command client that deliberately owns no conversation feed is the
+other no-socket case. `POST
+/conversations/:parentId/substreams/:substreamId/messages` gives such a client
+ordinary authenticated message admission, using the same durable
+`clientMessageId` and private admission receipt as the socket command. Sideline
+uses it only when the selected participant is the signed-in user. Rally's open
+conversation view already has the owning socket and must not call this route;
+represented Sideline sends remain on the separately audited impersonation
+boundary.
+
 **Do**
 
 - Send commands for an open child through that child's addressed socket.
 - Give every socket command a stable operation ID, private receipt, durable
   idempotency rule, and reconnect resend.
 - Send bootstrap and parent-owned mutations over REST.
+- Let a command-only client with no conversation socket use the generic REST
+  admission path; keep clients with an admitted socket on that socket.
 - Return the authoritative result when the caller needs read-your-write.
 - Publish the durable consequence to every subscriber, the mutator included.
 - Let the push be the ordering for everyone, the caller included.
 
 **Don't**
 
-- Don't add a parallel REST route for a child command already carried by its
-  socket.
+- Don't make a client with an admitted child socket use the parallel REST route
+  for a command that socket already carries.
 - Don't resend an ambiguous command under a new identity.
 - Don't make a caller learn the outcome of its own write by waiting for a
   broadcast.
@@ -767,7 +779,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
-| Sending a message | Command frame on the admitted SubstreamAgent socket, answered with a private receipt | Yes. The command is scoped by the socket attachment and remains idempotent across reconnect. |
+| Sending a message | Command frame on the admitted SubstreamAgent socket for Rally; generic conversation REST admission for a command-only client with no socket | Yes. Both paths enter the same object operation with the same durable client-message identity; a client never uses both. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
 | Substream-local commands | `create_message`, elicitation answer, pending-input reorder, stop, and retry use the addressed SubstreamAgent socket with private operation receipts | Yes. |
 | Read acknowledgement | `PATCH /conversations/:parentId/substreams/:substreamId/read-state`, addressed to the conversation whose waterline it moves | Yes, as the stated exception. It selects a child the open socket already selects, and stays on REST because it must not be resent on reconnect, needs read-your-write, and has no corrective push behind it. See **Why child commands use the owning socket**. |

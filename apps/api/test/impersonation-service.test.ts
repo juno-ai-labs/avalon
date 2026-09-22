@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => ({
   audit: [] as Array<{ sql: string; values: unknown[] }>,
   order: [] as string[],
   relationship: { authorityBasis: "support:approved" } as { authorityBasis: string } | null,
+  relationships: [] as Array<{ representedUserId: string }>,
   representedAuth: null as AuthContext | null,
   parentKind: "workstream" as "workstream" | "space",
   operatorEmail: "operator@rallywith.ai",
@@ -26,7 +27,14 @@ const harness = vi.hoisted(() => ({
 vi.mock("../src/lib/durable-object-namespace", () => ({
   durableObjectStubForWorkspace: async () => ({
     authorizeImpersonation: async () => ({ relationship: harness.relationship }),
+    listImpersonationRelationships: async () => ({ relationships: harness.relationships }),
   }),
+}));
+
+vi.mock("../src/services/workstream-directory-service", () => ({
+  WorkstreamDirectoryService: class {
+    async list() { return { items: [], nextCursor: null }; }
+  },
 }));
 
 vi.mock("../src/services/conversation-service", () => ({
@@ -57,11 +65,13 @@ function environment(): Env {
   ]);
   for (const userId of harness.inactiveUserIds) members.delete(asUserId(userId));
   const DB = createTestD1Database({
-    prepare: () => {
+    prepare: (sql) => {
       let values: unknown[] = [];
       const statement: D1PreparedStatement = createTestD1PreparedStatement({
         bind: (...next): D1PreparedStatement => { values = next; return statement; },
-        first: async <T>() => (members.get(asUserId(String(values[1]))) as T | undefined) ?? null,
+        first: async <T>() => sql.includes("SELECT name FROM workspaces")
+          ? ({ name: "Rally Test" } as T)
+          : (members.get(asUserId(String(values[1]))) as T | undefined) ?? null,
       });
       return statement;
     },
@@ -104,6 +114,7 @@ beforeEach(() => {
   harness.audit.length = 0;
   harness.order.length = 0;
   harness.relationship = { authorityBasis: "support:approved" };
+  harness.relationships.length = 0;
   harness.representedAuth = null;
   harness.parentKind = "workstream";
   harness.operatorEmail = "operator@rallywith.ai";
@@ -117,6 +128,14 @@ beforeEach(() => {
 });
 
 describe("impersonation message admission", () => {
+  it("lists the operator through ordinary authority without requiring a self-pair", async () => {
+    harness.relationships.push({ representedUserId: operatorId }, { representedUserId: representedId });
+
+    const catalog = await new ImpersonationService(environment(), auth).catalog();
+
+    expect(catalog.participants.map(({ userId }) => userId)).toEqual([operatorId, representedId]);
+  });
+
   it("audits before admission and uses the represented principal without storing message content", async () => {
     const response = await new ImpersonationService(environment(), auth).send(request);
 
@@ -145,13 +164,19 @@ describe("impersonation message admission", () => {
     expect(JSON.stringify(harness.audit)).toContain("impersonation_not_authorized");
   });
 
-  it("uses the same exact relationship path for an explicit self-pair", async () => {
+  it("admits the operator as themselves without an impersonation relationship or audit", async () => {
+    harness.relationship = null;
     const selfRequest = SidelineSendRequestSchema.parse({ ...request, representedUserId: operatorId });
 
-    await new ImpersonationService(environment(), auth).send(selfRequest);
+    await new ImpersonationService(environment(), auth).send(selfRequest, 1_795_000_000_000);
 
-    expect(harness.representedAuth).toMatchObject({ userId: operatorId, principal: "impersonation" });
-    expect(harness.order).toEqual(["audit-attempt", "message-admission", "audit-result"]);
+    expect(harness.representedAuth).toMatchObject({ userId: operatorId });
+    expect(harness.representedAuth?.principal).toBeUndefined();
+    expect(harness.order).toEqual(["message-admission"]);
+    expect(harness.audit).toEqual([]);
+    expect(harness.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      telemetryRequestReceivedAt: 1_795_000_000_000,
+    }));
   });
 
   it("rejects stale represented membership before destination admission", async () => {

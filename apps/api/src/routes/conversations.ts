@@ -4,8 +4,10 @@ import { requireSendableMessageLength, zValidator } from "../middleware/validati
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
+  CreateMessageRequestSchema,
   IdSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamMessageAdmissionReceiptSchema,
   WorkstreamResourceSchema,
   WorkstreamBootSchema,
   WorkstreamSchema,
@@ -82,6 +84,31 @@ conversationRoutes.delete("/:parentId/substreams/:substreamId/resources/:resourc
   await client.detachResource(resourceId);
   return c.body(null,204);
 });
+/**
+ * Ordinary message admission for an authenticated client that does not hold a
+ * conversation socket. Rally's conversation screen keeps using its admitted
+ * socket; narrow command clients such as Sideline use this route rather than
+ * manufacturing an impersonation relationship for the signed-in user.
+ */
+conversationRoutes.post("/:parentId/substreams/:substreamId/messages",
+  requireSendableMessageLength("text"),
+  zValidator("param", substreamSocketParam),
+  zValidator("json", CreateMessageRequestSchema),
+  async (c) => {
+    const { parentId, substreamId } = c.req.valid("param");
+    const input = c.req.valid("json");
+    const operationId = telemetryOperationId(
+      readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID),
+    );
+    const client = await new ConversationService(c.env, getWorkspaceAuth(c))
+        .writableClient(parentId, substreamId);
+    return c.json(WorkstreamMessageAdmissionReceiptSchema.parse(await client.createMessage({
+      ...input,
+      ...(operationId ? { telemetryOperationId: operationId } : {}),
+      telemetryRequestReceivedAt: c.get("requestReceivedAt"),
+      telemetryJourney: "message_send",
+    })), 201);
+  });
 conversationRoutes.get("/:parentId/substreams/:substreamId/sidekick-recommendation-options", zValidator("param", substreamSocketParam), async (c) => {
   const { parentId, substreamId } = c.req.valid("param");
   return c.json(SidekickRecommendationOptionsSchema.parse(await new WorkstreamService(c.env, getWorkspaceAuth(c))

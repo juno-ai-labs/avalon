@@ -110,8 +110,8 @@ export function SidelineComposer(props: {
           <p>{`Signed in as ${props.catalog?.operator.name ?? props.operatorName}`}</p>
         </div>
         <div className="sideline-header-actions">
-          <span className="sideline-marker">Impersonation</span>
-          <span className="sideline-audit-copy">Represented messages are audited.</span>
+          <span className="sideline-marker">Messaging</span>
+          <span className="sideline-audit-copy">Sending as another participant is audited.</span>
           <button className="button button-secondary" type="button" onClick={props.onSignOut}>Sign out</button>
         </div>
       </header>
@@ -127,7 +127,7 @@ export function SidelineComposer(props: {
         </section>
       )}
 
-      <section className="sideline-cards" aria-label="Represented messages">
+      <section className="sideline-cards" aria-label="Messages">
         {props.cards.map((card, index) => {
           const participant = props.catalog?.participants.find((item) => item.userId === card.representedUserId);
           const destinations = participant?.destinations ?? [];
@@ -194,7 +194,7 @@ export function SidelineComposer(props: {
                     rows={5}
                     value={card.message}
                     disabled={card.state === "sending"}
-                    placeholder="Write the participant’s message"
+                    placeholder="Write a message"
                     onChange={(event) => props.onChange(card.id, { message: event.target.value, state: "idle", result: undefined })}
                   />
                 </label>
