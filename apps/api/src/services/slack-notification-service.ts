@@ -1,5 +1,11 @@
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
+import {
+  ConnectorError,
+  connectorRetryAfterMs,
+  slackApi,
+  slackMarkdownMessages,
+  type SlackMarkdownMessage,
+} from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
 import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { nowIso } from "@rally/db";
@@ -77,7 +83,7 @@ interface WorkstreamSlackDelivery {
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
   kind: "mention" | "participant_added";
-  chunks: (target: string, maximum: number) => string[];
+  chunks: (target: string) => SlackMarkdownMessage[];
 }
 
 /**
@@ -98,7 +104,7 @@ export async function sendWorkstreamMentionSlack(
     recipientEmail: input.recipientEmail,
     sourceId: input.messageId,
     kind: "mention",
-    chunks: (target, maximum) => slackMentionChunks(input, target, maximum),
+    chunks: (target) => slackMentionChunks(input, target),
   }, input.workstreamId, request, sleep);
 }
 
@@ -122,7 +128,7 @@ export async function sendWorkstreamParticipantAddedSlack(
     recipientEmail: input.recipientEmail,
     sourceId: input.sourceId,
     kind: "participant_added",
-    chunks: (target, maximum) => slackParticipantAddedChunks(input, target, maximum),
+    chunks: (target) => slackParticipantAddedChunks(input, target),
   }, input.workstreamId, request, sleep);
 }
 
@@ -311,7 +317,7 @@ async function deliverWorkstreamSlack(
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),
       workstreamId,
     });
-    const chunks = input.chunks(target, 40_000);
+    const chunks = input.chunks(target);
     for (const [index, chunk] of chunks.entries()) {
       if (index > 0) await sleep(1_000);
       const clientMessageId = await stableUuid(
@@ -323,7 +329,10 @@ async function deliverWorkstreamSlack(
           channel: opened.channel.id,
           ...(threadTs ? { thread_ts: threadTs } : {}),
           client_msg_id: clientMessageId,
-          text: chunk,
+          text: chunk.text,
+          blocks: chunk.blocks,
+          unfurl_links: false,
+          unfurl_media: false,
         },
         request,
         sleep,
@@ -413,6 +422,9 @@ async function postSlackMentionChunk(
     thread_ts?: string;
     client_msg_id: string;
     text: string;
+    blocks: Record<string, unknown>[];
+    unfurl_links: false;
+    unfurl_media: false;
   },
   request: typeof fetch,
   sleep: (milliseconds: number) => Promise<void>,
@@ -531,11 +543,9 @@ async function workspaceBotToken(
  * and it quotes the same message text they render — so it owes the same
  * reduction.
  *
- * In its plain shape, though: this text goes to `chat.postMessage`'s `text`
- * field, which is Slack mrkdwn and has neither `**bold**` nor `[label](url)`.
- * The Markdown shape the digest gets would arrive here as a literal `**Sources**`
- * over a literal bracketed link — a different leak from the one this call site
- * was added to close, rather than none.
+ * The quoted body is still the plain shape: person-notification copy is not
+ * agent markdown, and the intro that *does* need a link is authored here as a
+ * Slack markdown `[title](url)` rather than left for this rewriter to invent.
  */
 function humanReadableMessage(value: string): string {
   return rewriteMessageAsPlainText(value, { sources: "plain" });
@@ -544,80 +554,98 @@ function humanReadableMessage(value: string): string {
 function slackParticipantAddedChunks(
   input: WorkstreamSlackParticipantAdded,
   target: string,
-  maximum: number,
-): string[] {
+): SlackMarkdownMessage[] {
   // Read through the same renderer the mention path uses. The objective is a
   // work stream's description, which the description agent rewrites from
   // transcript messages — and those carry `[@Name](person://<uuid>)` (or the
   // legacy bare `person:` form), which would otherwise print a raw UUID.
   const objective = humanReadableMessage(input.workstreamObjective).trim();
-  // A work stream created from the composer has no name yet: quoting its
-  // placeholder title names the room by a fragment of the opening message, and
-  // then prints the same words again below. See `participant-email-service.ts`.
-  const opening = input.titleIsProvisional
-    ? [
-      ...escapedSlackTokens(input.actorName),
-      " started a channel with you in ",
-      ...escapedSlackTokens(input.workspaceName),
-      ".\n\n",
-    ]
-    : [
-      ...escapedSlackTokens(input.actorName),
-      " added you to “",
-      ...escapedSlackTokens(input.workstreamTitle),
-      "” in ",
-      ...escapedSlackTokens(input.workspaceName),
-      ".\n\n",
-    ];
-  return chunkSlackTokens([
-    ...opening,
-    ...(objective ? [...escapedSlackTokens(objective), "\n\n"] : []),
-    `<${target}|Open in Rally>`,
-  ], maximum);
+  return slackNotificationMessages(slackParticipantAddedIntro(input, target), objective, target);
 }
 
-function slackMentionChunks(input: WorkstreamSlackMention, target: string, maximum: number): string[] {
-  return chunkSlackTokens([
-    ...escapedSlackTokens(input.authorName),
-    " mentioned you in “",
-    ...escapedSlackTokens(input.workstreamTitle),
-    "” in ",
-    ...escapedSlackTokens(input.workspaceName),
-    ".\n\n",
-    ...escapedSlackTokens(humanReadableMessage(input.messageText)),
-    "\n\n",
-    `<${target}|Open in Rally>`,
-  ], maximum);
+function slackMentionChunks(input: WorkstreamSlackMention, target: string): SlackMarkdownMessage[] {
+  return slackNotificationMessages(
+    slackMentionIntro(input, target),
+    humanReadableMessage(input.messageText).trim(),
+    target,
+  );
 }
 
 /**
- * Packs already-escaped tokens into messages no larger than Slack's limit.
+ * The Agent Messages tab renders Block Kit, not `chat.postMessage` `text`.
  *
- * Tokens are single characters apart from the trailing link, which must not be
- * split: half a `<url|label>` is not a link, it is visible markup.
+ * A trailing `<url|Open in Rally>` in that fallback field is how these DMs
+ * used to carry the destination, and it is also why a recipient looking at
+ * the Rally Agent DM could not open the channel or breakout the notice was
+ * about: Slack's Agent view does not turn that markup into a link. Task
+ * results already posted an `actions` button; this is the same contract for
+ * the two things Rally tells one person about a work stream.
+ *
+ * The button and the title link live on the first message on purpose. A long
+ * body still chunks, but the destination must not wait until the last reply
+ * in the thread — that is the message a reader expanding the DM does not see.
  */
-function chunkSlackTokens(tokens: readonly string[], maximum: number): string[] {
-  const chunks: string[] = [];
-  let chunk = "";
-  for (const token of tokens) {
-    if (token.length > maximum) throw new ConnectorError("provider_error", "Slack message token exceeds its text limit");
-    if (chunk.length + token.length > maximum) {
-      chunks.push(chunk);
-      chunk = "";
-    }
-    chunk += token;
-  }
-  if (chunk) chunks.push(chunk);
-  return chunks;
+function slackNotificationMessages(
+  intro: string,
+  body: string,
+  target: string,
+): SlackMarkdownMessage[] {
+  const messages = slackMarkdownMessages(body ? `${intro}\n\n${body}` : intro);
+  const first = messages[0];
+  if (!first) throw new ConnectorError("provider_error", "Slack notification produced no message");
+  return [
+    {
+      text: `${first.text}\n\nOpen in Rally: ${target}`,
+      blocks: [...first.blocks, openInRallyButton(target)],
+    },
+    ...messages.slice(1),
+  ];
 }
 
-function escapedSlackTokens(value: string): string[] {
-  return [...value].map((character) => {
-    if (character === "&") return "&amp;";
-    if (character === "<") return "&lt;";
-    if (character === ">") return "&gt;";
-    return character;
-  });
+function slackMentionIntro(input: WorkstreamSlackMention, target: string): string {
+  const kind = destinationKind(input.substreamId);
+  const title = slackMarkdownLink(input.workstreamTitle.trim() || `Untitled ${kind}`, target);
+  return `${slackMarkdownProse(input.authorName)} mentioned you in the ${kind} ${title} in ${slackMarkdownProse(input.workspaceName)}.`;
+}
+
+function slackParticipantAddedIntro(input: WorkstreamSlackParticipantAdded, target: string): string {
+  const kind = destinationKind(input.substreamId);
+  const actor = slackMarkdownProse(input.actorName);
+  const workspace = slackMarkdownProse(input.workspaceName);
+  // A work stream created from the composer has no name yet: quoting its
+  // placeholder title names the room by a fragment of the opening message, and
+  // then prints the same words again below. See `participant-email-service.ts`.
+  // The destination word itself is the link, so the DM still has somewhere to
+  // tap.
+  if (input.titleIsProvisional) {
+    return `${actor} started a ${slackMarkdownLink(kind, target)} with you in ${workspace}.`;
+  }
+  const title = slackMarkdownLink(input.workstreamTitle.trim() || `Untitled ${kind}`, target);
+  return `${actor} added you to the ${kind} ${title} in ${workspace}.`;
+}
+
+function destinationKind(substreamId?: string): "channel" | "breakout" {
+  return substreamId ? "breakout" : "channel";
+}
+
+function slackMarkdownLink(label: string, url: string): string {
+  return `[${label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]")}](${url})`;
+}
+
+function slackMarkdownProse(value: string): string {
+  return value.replace(/([\\`*_[\]()])/g, "\\$1");
+}
+
+function openInRallyButton(url: string): Record<string, unknown> {
+  return {
+    type: "actions",
+    elements: [{
+      type: "button",
+      text: { type: "plain_text", text: "Open in Rally" },
+      url,
+      action_id: "rally_open_notification",
+    }],
+  };
 }
 
 async function delay(milliseconds: number): Promise<void> {

@@ -441,12 +441,14 @@ As a Rally admin, I can install the same Rally app into several Slack workspaces
 
 #### Notify a mentioned teammate
 
-As a Rally member, when I mention an active teammate in a work stream, Rally sends that
+As a Rally member, when I mention an active teammate in a channel or breakout, Rally sends that
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
 Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
-linking the accounts. The message identifies the author, workspace, work stream, complete
-mention text, and a secure **Open in Rally** handoff. If Slack cannot resolve or deliver it,
-Rally sends the existing mention email instead.
+linking the accounts. The first message identifies the author, workspace, and channel or
+breakout — the title is a markdown link to the canonical work-stream URL — quotes the complete
+mention text, and carries an **Open in Rally** button. Being added to a channel or breakout
+uses the same shape. If Slack cannot resolve or deliver it, Rally sends the existing mention
+email instead.
 
 #### Morning Gmail briefing
 
@@ -795,6 +797,16 @@ briefing's three/one/zero-result cases.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
+
+### 2026-09-22 — Person-notification DMs carry the destination as Block Kit
+
+**What changed:** Mention and "added you" Agent DMs now post through `slackMarkdownMessages`: the first message's markdown names the channel or breakout and links its title to the canonical work-stream URL, and an **Open in Rally** button sits on that same first message. Later chunks of a long body no longer wait to mention the destination. `unfurl_links` is off so Slack does not stack a generic site card on the same URL.
+
+**Why:** The previous payload put `<url|Open in Rally>` only in `chat.postMessage`'s `text` field, at the end of the quoted body. The Agent Messages tab renders Block Kit, not that fallback, so a recipient looking at the Rally DM had no way to open the channel or breakout the notice was about. Task results already used an `actions` button; these two notices did not.
+
+**Considered and rejected:** Keeping the mrkdwn fallback as the only link and adding a `link_shared` unfurl. Slack does not send `link_shared` for URLs the app itself posts, so the unfurl card would never attach. Putting the button on the last chunk was rejected because that is the message a reader of the root DM does not see.
+
+**What a future change has to respect:** A person-notification DM owes a destination on its first message, as a markdown title link and as a URL button, minted by `workstreamCanonicalUrl`. Do not return this path to text-only mrkdwn because the Agent view will hide it again.
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 

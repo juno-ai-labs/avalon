@@ -30,7 +30,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 
 ## How it works
 
-#Private-child links append `/substreams/<substream-uuid>` to the canonical HTTPS path and to the deep-link path (before its workspace query). Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to `/workstreams/<parent>?substream=<child>`. The header's Copy link and child notifications use this same primitive. Email reply routing is unchanged.
+#Private-child links append `/substreams/<substream-uuid>` to the canonical HTTPS path and to the deep-link path (before its workspace query). Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to `/workstreams/<parent>?substream=<child>`. The header's Copy link and child notifications use this same primitive. Email reply routing is unchanged. Slack person-notification DMs (a mention, and being added) mint that same URL on the first message as a markdown title link and an **Open in Rally** button; they do not rely on `chat.postMessage`'s `text` field, which the Agent Messages tab does not render as a link.
 
 ## The two forms
 

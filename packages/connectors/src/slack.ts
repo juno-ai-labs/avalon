@@ -985,6 +985,12 @@ const SlackWebApiSchemas = {
       thread_ts: SlackTimestampSchema.optional(),
       client_msg_id: z.string().uuid().optional(),
       blocks: z.array(SlackBlockSchema).max(50).optional(),
+      // Person-notification DMs carry the canonical work-stream URL in a
+      // markdown link and a button. Slack's default unfurl of that same URL
+      // would add a generic site card on top, and in the Agent Messages tab
+      // can hide the inline link the button is there to replace.
+      unfurl_links: z.boolean().optional(),
+      unfurl_media: z.boolean().optional(),
     }),
     response: SlackMessageResponseSchema,
   },
