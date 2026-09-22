@@ -70,6 +70,9 @@ DMG contents, and retains the exact release directory as a GitHub artifact for
 API deployment associated with the newest contract commit. A manual dispatch
 uses the same planner and is the retry path for an untagged failed release;
 release versions are no longer bumped by hand.
+Version stamping refuses to absorb a newer `main` tip after planning, so the
+packaged contract tree and the deployment revision checked by the gate cannot
+diverge; rerunning replans from that newer tip.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
@@ -190,7 +193,8 @@ helpers. A queued planner uses the last Sideline tag as a watermark, advances an
 independent patch version, and skips stale runs whose inputs were already built.
 Contract-driven builds wait for the API deployment produced by the newest
 contract commit, and candidate tags are checked again immediately before R2
-publication.
+publication. Version stamping is bound to the exact tip the planner classified
+and must replan if `main` advances.
 
 **Why:** Sideline already had an isolated R2 update channel, but its manual-only
 workflow could leave installed copies behind changes that had merged to the
