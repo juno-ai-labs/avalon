@@ -619,28 +619,60 @@ describe('applyPinnedWorkstreams', () => {
 });
 
 describe('channelSpaceMutationHandlers', () => {
-  it('uses one server move and immediately patches both Space and Channel caches', async () => {
+  it('uses one server move and optimistically patches the Channel before it settles', async () => {
     const queryClient = new QueryClient();
-    const source = { ...space, id: 'source-space', channelCount: 0 };
-    const target = { ...space, id: 'target-space', channelCount: 1 };
+    const sourceId = asSpaceId('00000000-0000-7000-8000-0000000000a1');
+    const targetId = asSpaceId('00000000-0000-7000-8000-0000000000a2');
+    const source = { ...space, id: sourceId, channelCount: 0 };
+    const target = { ...space, id: targetId, channelCount: 1 };
     queryClient.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [source, target] });
     setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: [source.id] }]);
+    let settleMove: ((value: { source: typeof source; target: typeof target }) => void) | undefined;
     const api = {
       addChannelToSpace: vi.fn().mockResolvedValue({ ...space, channelCount: 1 }),
       removeChannelFromSpace: vi.fn().mockResolvedValue(space),
-      moveChannelBetweenSpaces: vi.fn().mockResolvedValue({ source, target }),
+      moveChannelBetweenSpaces: vi.fn(() => new Promise<{ source: typeof source; target: typeof target }>((resolve) => {
+        settleMove = resolve;
+      })),
     };
     const handlers = channelSpaceMutationHandlers(api, queryClient);
 
     await handlers.onAddChannelToSpace(space.id, workstreamId);
     await handlers.onRemoveChannelFromSpace(space.id, workstreamId);
-    await handlers.onMoveChannelToSpace('source-space', 'target-space', workstreamId);
+    const moving = handlers.onMoveChannelToSpace(sourceId, targetId, workstreamId);
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual([targetId]);
+    settleMove?.({ source, target });
+    await moving;
 
     expect(api.addChannelToSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
     expect(api.removeChannelFromSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
-    expect(api.moveChannelBetweenSpaces).toHaveBeenCalledWith('source-space', 'target-space', workstreamId);
+    expect(api.moveChannelBetweenSpaces).toHaveBeenCalledWith(sourceId, targetId, workstreamId);
     expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items).toEqual([source, target]);
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds).toEqual(['target-space']);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds).toEqual([targetId]);
+  });
+
+  it('restores the source placement when an optimistic move is refused', async () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: ['source-space'] }]);
+    let refuseMove: ((cause: Error) => void) | undefined;
+    const handlers = channelSpaceMutationHandlers({
+      addChannelToSpace: vi.fn(),
+      removeChannelFromSpace: vi.fn(),
+      moveChannelBetweenSpaces: vi.fn(() => new Promise<{ source: typeof space; target: typeof space }>((_, reject) => {
+        refuseMove = reject;
+      })),
+    }, queryClient);
+
+    const moving = handlers.onMoveChannelToSpace('source-space', 'target-space', workstreamId);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['target-space']);
+    refuseMove?.(new Error('space_access_denied'));
+
+    await expect(moving).rejects.toThrow('space_access_denied');
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['source-space']);
   });
 });
 

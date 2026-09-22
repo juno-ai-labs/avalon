@@ -2039,6 +2039,26 @@ export function Sidebar({
     void navigate(`/spaces/${created.id}`);
   }, [navigate, onCreateSpace]);
 
+  const moveChannelFromSelectedSpace = (
+    sourceSpaceId: string,
+    targetSpaceId: string,
+    workstreamId: string,
+  ): Promise<void> => {
+    // Decide against the rows as they are drawn before the optimistic cache
+    // patch removes the dragged Channel. Moving the open Channel continues
+    // downward through the selected Space, falls back upward at the bottom,
+    // and opens the New channel home when that placement was the last one.
+    if (sourceSpaceId === selectedSpaceId && routeWorkstreamId === workstreamId) {
+      const displayed = [...pinnedWorkstreams, ...unpinnedWorkstreams];
+      const index = displayed.findIndex((workstream) => workstream.id === workstreamId);
+      const next = index < 0 ? undefined : displayed[index + 1] ?? displayed[index - 1];
+      void navigate(next
+        ? `/workstreams/${encodeURIComponent(next.id)}`
+        : '/workstreams/new', { replace: true });
+    }
+    return onMoveChannelToSpace(sourceSpaceId, targetSpaceId, workstreamId);
+  };
+
   // Active standalone Sidekicks occupy the strip. Until one exists, its empty
   // slot remains the dashed New Sidekick action; the whole section stays absent
   // only while the workspace answer is still loading.
@@ -2075,7 +2095,7 @@ export function Sidebar({
         onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
         onOrderPreviewChange={setSpaceOrderPreview}
-        onMoveChannel={onMoveChannelToSpace}
+        onMoveChannel={moveChannelFromSelectedSpace}
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
         onRestore={onRestoreSpace}

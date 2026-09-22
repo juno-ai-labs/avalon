@@ -3987,6 +3987,28 @@ describe('reordering the channels inside a space', () => {
     );
   }
 
+  function renderSidebarAt(workstreamId: string, rows: WorkstreamSummary[]): void {
+    function RouteProbe(): React.JSX.Element {
+      return <output aria-label="Current route">{useLocation().pathname}</output>;
+    }
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onMoveChannelToSpace={async () => undefined}
+            onSignOut={vi.fn()}
+            spaces={[hiring, launch]}
+            workspace={workspace}
+            workstreams={rows}
+          />
+          <RouteProbe />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
   function placementTitles(): string[] {
     const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
     if (!list) throw new Error('The space has no placement list');
@@ -4036,6 +4058,39 @@ describe('reordering the channels inside a space', () => {
     await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
     expect(onReorderContainer).not.toHaveBeenCalled();
     expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  });
+
+  it('opens the next Channel down when the current Channel is moved out of the selected Space', async () => {
+    renderSidebarAt(alpha.id, [alpha, bravo]);
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}`));
+  });
+
+  it('opens the Channel above when the current Channel is moved from the bottom', async () => {
+    renderSidebarAt(bravo.id, [alpha, bravo]);
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${alpha.id}`));
+  });
+
+  it('opens the Channel home when the moved Channel was the selected Space\'s last one', async () => {
+    renderSidebarAt(alpha.id, [alpha]);
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent('/workstreams/new'));
   });
 
   it('does not advertise a cross-space move from a read-only source Space', () => {
