@@ -6,6 +6,10 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import {
+  consumeDeepLinkWorkstreamNavigation,
+  markDeepLinkWorkstreamNavigation,
+} from '../lib/deep-link-navigation';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
@@ -176,6 +180,8 @@ function placedIn(target: WorkstreamSummary, ...spaceIds: string[]): WorkstreamS
 
 describe('Sidebar channel markers', () => {
   beforeEach(() => {
+    const reset = markDeepLinkWorkstreamNavigation('__test_reset__');
+    consumeDeepLinkWorkstreamNavigation(reset.revision);
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
     markSurfaceEntrypoint.mockReset();
@@ -798,6 +804,138 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(screen.getByRole('link', { name: /Route reset/u }));
     expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
     expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
+  });
+
+  it('centers the containing Space and active Channel when a deep link opens', async () => {
+    const other = space('00000000-0000-7000-8000-0000000000a1', 'Other');
+    const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
+    const target = placedIn(workstream('deep-linked-channel', 'Deep linked', 'completed'), hiring.id);
+    const neighbor = placedIn(workstream('ordinary-navigation', 'Ordinary navigation', 'completed'), hiring.id);
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    });
+    markDeepLinkWorkstreamNavigation(target.id);
+
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+            spaces={[other, hiring]} workspace={workspace} workstreams={[target, neighbor]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(scrolled).toHaveLength(2));
+    expect(scrolled.map((row) => row.getAttribute('data-space-id')).filter(Boolean)).toEqual([hiring.id]);
+    expect(scrolled.map((row) => row.getAttribute('data-workstream-id')).filter(Boolean)).toEqual([target.id]);
+    for (const call of vi.mocked(Element.prototype.scrollIntoView).mock.calls) {
+      expect(call[0]).toEqual({ block: 'center', behavior: 'auto' });
+    }
+
+    markDeepLinkWorkstreamNavigation(target.id);
+    await waitFor(() => expect(scrolled).toHaveLength(4));
+
+    fireEvent.click(screen.getByRole('link', { name: /Ordinary navigation/u }));
+    expect(scrolled).toHaveLength(4);
+  });
+
+  it('waits for the live Space hierarchy before consuming a deep-link reveal', async () => {
+    const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
+    const target = placedIn(workstream('waiting-deep-link', 'Waiting deep link', 'completed'), hiring.id);
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    markDeepLinkWorkstreamNavigation(target.id);
+    const view = render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[]}
+            spacesReady={false} workspace={workspace} workstreams={[target]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    view.rerender(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+            spacesReady workspace={workspace} workstreams={[target]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+  });
+
+  it('loads directory pages until a deep-linked Channel can reveal its hierarchy', async () => {
+    const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
+    const target = placedIn(workstream('paged-deep-link', 'Paged deep link', 'completed'), hiring.id);
+    const firstPage = placedIn(workstream('first-page-channel', 'First page channel', 'completed'), hiring.id);
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const onLoadMoreWorkstreams = vi.fn();
+    markDeepLinkWorkstreamNavigation(target.id);
+    const view = render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+            onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onLoadMoreWorkstreams).toHaveBeenCalledOnce());
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    view.rerender(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+            onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(2));
+    view.rerender(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+            onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage, target]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+  });
+
+  it('cancels a pending deep-link reveal when navigation leaves its route', async () => {
+    const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
+    const target = placedIn(workstream('stale-deep-link', 'Stale deep link', 'completed'), hiring.id);
+    const neighbor = placedIn(workstream('different-channel', 'Different channel', 'completed'), hiring.id);
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    markDeepLinkWorkstreamNavigation(target.id);
+    function Navigation() {
+      const navigate = useNavigate();
+      const [items, setItems] = useState([neighbor]);
+      return <>
+        <button onClick={() => navigate(`/workstreams/${neighbor.id}`)}>Leave deep link</button>
+        <button onClick={() => {
+          setItems([target, neighbor]);
+          navigate(`/workstreams/${target.id}`);
+        }}>Open restored channel</button>
+        <Sidebar {...defaultActions} automations={[]} loading onSignOut={vi.fn()}
+          spaces={[hiring]} workspace={workspace} workstreams={items} />
+      </>;
+    }
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider><Navigation /></Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Leave deep link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open restored channel' }));
+    await screen.findByRole('link', { name: /Stale deep link/u });
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('does not start navigation telemetry when the active channel row is clicked again', () => {

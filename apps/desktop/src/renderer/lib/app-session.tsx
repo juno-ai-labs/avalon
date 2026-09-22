@@ -30,6 +30,7 @@ import { CollaborationSessionProvider, type PendingConnectorOAuth } from './coll
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
+import { markDeepLinkWorkstreamNavigation } from './deep-link-navigation';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
@@ -894,6 +895,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openWorkstream = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
+          markDeepLinkWorkstreamNavigation(intent.workstreamId);
           window.location.hash = `/workstreams/${intent.workstreamId}${intent.substreamId ? `?substream=${intent.substreamId}` : ""}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);

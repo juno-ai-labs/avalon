@@ -41,6 +41,7 @@ them; the product design is in
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
 | `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space keeps the Spaces rail open while filtering the middle rail; selecting a Channel in that middle rail compacts Spaces and opens the destination while leaving Channels at the person's chosen width. |
+| `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so both hierarchy rails reveal it once. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
@@ -73,6 +74,18 @@ membership, audience change, archive and restore goes through
 provenance implies and applies it through the Channel's canonical scope and
 participant operations — where the retained-content containment preflight and
 its SQL triggers already run.
+
+### Opening a Channel deep link
+
+The hash route identifies a Channel but cannot say whether it came from an
+external deep link. `deep-link-navigation.ts` carries that distinction until
+the live Space hierarchy is ready. The Channels sidebar walks its existing
+directory pager until the target summary is resident, selects one active Space
+that contains it, and asks both hierarchy rails to center their selected row.
+The signal is revisioned so reopening the current Channel works even though its
+hash does not change, and is discarded when the reader navigates elsewhere or
+the complete directory does not contain the target. Ordinary in-app navigation
+therefore never inherits a delayed reveal.
 
 ### Creating a Space
 
@@ -1922,6 +1935,27 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-22 — Deep links reveal their hierarchy selection
+
+**What changed:** A desktop deep link to a Channel now carries a renderer-local
+navigation signal until the destination directory is mounted. Once the Channel
+row is available, the left rail selects a containing Space and both that Space
+row and the active Channel row are centered in their respective scroll views,
+clamped naturally near either end of a short list. Ordinary in-app navigation
+does not recenter either rail.
+
+**Why:** The route alone selected the Channel surface, but it could leave the
+Space rail describing a different container and both selected rows outside the
+visible part of long navigation lists. Treating every route change as a reveal
+was rejected because clicking an already visible row should not move the lists
+under the reader.
+
+**Consequences:** The signal is retained across an Organization switch until
+the live Space hierarchy arrives, walks existing directory pages until the
+matching Channel row is found, and is discarded if the target is absent or the
+reader navigates elsewhere. Repeated deep links to the already-open Channel
+rearm the reveal even though the hash itself does not change.
 
 ### 2026-09-22 — Space selection keeps the Spaces rail open
 
