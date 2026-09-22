@@ -962,6 +962,17 @@ describe("Slack connector principal delivery", () => {
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
     objectDatabase.exec(`
+      INSERT INTO workspace_space_directory
+        (space_id, title, scope, authority_generation, source_version, payload_hash,
+         revision, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-0000000000a9', 'General', 'workspace', 1, 1,
+              'fixture', 1, 0, 0);
+      INSERT INTO space_channel_memberships
+        (space_id, workstream_id, state, generation, joined_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-0000000000a9',
+              '7a000000-0000-4000-8000-0000000000ab', 'active', 1, 0, 0);
+    `);
+    objectDatabase.exec(`
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
