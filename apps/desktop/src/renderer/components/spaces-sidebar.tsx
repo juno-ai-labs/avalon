@@ -321,6 +321,10 @@ export function SpacesSidebar({
                 <SidebarRow
                   as={NavLink}
                   aria-label={space.name}
+                  badge={{
+                    count: space.attentionCount ?? 0,
+                    label: `${space.attentionCount ?? 0} ${space.attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention in ${space.name}`,
+                  }}
                   className={clsx(
                     'spaces-sidebar-row',
                     selectedSpaceId === space.id && 'is-active',

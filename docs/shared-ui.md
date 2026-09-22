@@ -46,6 +46,12 @@ so it composes the lower-level `SidebarFooter` with the same account-slot
 layout. Hosts provide labels, persistence and the optional leading content
 rather than rebuilding either layout.
 
+`SidebarRow` also owns the optional hierarchy count badge. A positive count is
+a trailing badge inside the row's padding when expanded and overlaps the mark's
+top-right corner when compact; zero renders nothing. Hosts supply the count and
+accessible label, while the shared row owns placement so Space and Channel
+hosts cannot drift.
+
 Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
 marks itself `data-reorder-list`: a host's row finds the slots it is being
 measured against through that mark rather than by knowing whose list it is in,
@@ -161,6 +167,28 @@ leading content must use the primitive's explicit slot; new sidebar-specific
 footer positioning is not part of the contract. Every footer shares the former
 56px Space/browser height so its controls sit on one vertical centerline across
 the three adjacent desktop rails.
+
+### 2026-09-21 — Sidebar rows share one optional count badge
+
+**What changed:** `SidebarRow` accepts an optional labelled numeric badge and
+owns its expanded trailing-edge and compact icon-corner layouts. Non-positive
+counts render no badge.
+
+**Why:** Space and Channel attention totals are the same navigation affordance
+at adjacent hierarchy levels. Host-specific markup would make their compact
+overlap, padding and accessibility diverge, and would leave the prepared browser
+host to reproduce the geometry.
+
+**Considered and rejected:** Putting badges inside `SpaceIcon` and
+`WorkstreamGlyph`, which would couple reusable identity marks to one navigation
+state and still duplicate expanded-row placement.
+
+**Consequences:** Any host using the shared row gets the same badge behavior by
+supplying data; identity components remain usable without navigation state.
+The visible count is hidden from the accessibility tree and the
+labelled count is attached to the row's accessible description, so focus
+announces the destination and its attention total together without exposing a
+second, non-interactive element.
 
 ### 2026-09-21 — Hierarchy title headers keep one identity composition
 

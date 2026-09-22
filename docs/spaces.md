@@ -812,6 +812,8 @@ failing.** The meeting-notes retirement holds an object at schema 57 until its
 external cleanup finishes, and the connect payload reads the Space tables before
 anything product-shaped can refuse. Every Space read therefore goes through
 `WorkspaceSpaceStorage`, which answers empty state when its tables are absent;
+the Channel badge aggregate independently answers empty until the Breakout
+projection tables exist;
 every Space *write* is refused by name with `space_bootstrap_pending`.
 
 The two exceptions are paginated and therefore cannot ride the socket: a Space's
@@ -871,6 +873,19 @@ query and the function reach the same answer. **Nothing on the client calls
 filtered — so it is the definition the page query is held to rather than a
 second implementation in use. That test is the contract; if it
 is deleted the two implementations start drifting the same day.
+
+The hierarchy sidebar counts that same set. `SpaceSummary.attentionCount` is
+the number of admitted Channel and Breakout rows in the Space;
+`Workstream.breakoutAttentionCount` is the admitted Breakouts under one
+Channel. Both are viewer-specific WorkspaceDO reads rendered from the same
+`liveForViewerSql` text as the dashboard page. The opening socket carries both
+totals. Space totals are grouped into one aggregate query for the visible
+directory instead of one query per Space. A Channel total also requires the
+parent Channel to be visible, and a guest counts only Breakouts carrying that
+guest's explicit viewer grant. Later child projections republish the parent Channel row, while the
+existing `space_conversations_changed` nudge carries the current Space totals,
+so ordinary attention changes do not rebuild and resend both Space directories.
+Zero remains a real count on the wire and is an absent badge in presentation.
 
 **One page query, one order, one cursor.** `conversationPage` is a `UNION ALL`
 of the Space's active member Channels that are not archived and those Channels'
@@ -1530,7 +1545,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a narrowing which leaves the person asking for it out of the Space is refused by name before anything moves. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
-| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
+| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
@@ -1908,6 +1923,31 @@ states keep confirmed rows and expose the shared Refresh row; the Space
 directory's action remains a socket reconnect rather than a second fetch path.
 
 PR [#919](https://github.com/juno-ai-labs/avalon/pull/919).
+
+### 2026-09-21 — Hierarchy rows carry live attention totals
+
+**What changed:** Space summaries now carry the number of Channels and
+Breakouts the Space dashboard would admit for the viewer, and Channel summaries
+carry the matching count of admitted Breakouts. The opening workspace payload
+contains both; later projection changes update Channel rows and add Space totals
+to the existing dashboard nudge.
+
+**Why:** Deriving badges from the device's loaded rows undercounts paginated
+Spaces and cannot see unopened Breakouts. Republishing the complete Space
+snapshot on every message would put a directory rebuild on the hottest
+projection path. WorkspaceDO already owns the complete viewer-scoped tables and
+the exact dashboard predicate, so its aggregate is both cheaper to trust and
+impossible for the two surfaces to define differently.
+
+**Considered and rejected:** A client-side filter over Channel markers, which
+has no complete child directory; a durable counter updated on every message,
+which duplicates state already queryable in one authority; and full Space
+snapshot republication for every attention change.
+
+**Consequences:** Space summary reads pay one local aggregate query per visible
+Space, while directory Channel pages load Breakout totals in bounded fan-in
+queries. A future change to what “Needs attention” means must change the shared
+SQL predicate and keep the aggregate/page equivalence test able to fail.
 
 ### 2026-09-21 — A cross-rail drag moves its Channel
 
