@@ -6724,14 +6724,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "finalize_space_membership_move",
     );
     this.assertWorkspace(request.workspaceId);
-    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
     const storage = this.spaceStorage();
-    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
-      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
     const moved = storage.finalizeMembershipMove(request);
     if (moved === "conflict") {
       return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
@@ -6750,9 +6743,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceSpaceMembershipMoveResultSchema.parse({ ok: true, ...moved });
   }
 
+  async replanSpaceMembershipMoveForAudience(
+    input: WorkspaceSpaceMembershipMoveSettleRequest,
+  ): Promise<WorkspaceSpaceMembershipMovePlanResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipMoveSettleRequestSchema,
+      input,
+      "replan_space_membership_move_for_audience",
+    );
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceSpaceMembershipMovePlanResultSchema.parse(
+      this.spaceStorage().replanMembershipMoveForAudience(request),
+    );
+    if (result.ok) await this.armNextAlarm();
+    return result;
+  }
+
   async cancelSpaceMembershipMove(
     input: WorkspaceSpaceMembershipMoveSettleRequest,
-  ): Promise<{ cancelled: true }> {
+  ): Promise<{ cancelled: boolean }> {
     await this.initialized;
     const request = parseRpcInput(
       WorkspaceSpaceMembershipMoveSettleRequestSchema,
@@ -6760,10 +6770,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "cancel_space_membership_move",
     );
     this.assertWorkspace(request.workspaceId);
-    this.spaceStorage().cancelMembershipMove(request);
-    this.publishSpaceSnapshot();
+    const cancelled = this.spaceStorage().cancelMembershipMove(request);
+    if (cancelled) this.publishSpaceSnapshot();
     await this.armNextAlarm();
-    return { cancelled: true };
+    return { cancelled };
   }
 
   async finalizeSpaceMembershipRemoval(

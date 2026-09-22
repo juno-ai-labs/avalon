@@ -2024,14 +2024,96 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * Keep the original move intent but switch its delivery to the canonical
+   * audience path. This is the recovery path when the cheap provenance swap
+   * loses a revision fence after the move was staged (or even after the swap
+   * itself committed): the destination is rebuilt before the source is finally
+   * retracted, and the same membership generations are finalized.
+   */
+  replanMembershipMoveForAudience(
+    request: WorkspaceSpaceMembershipMoveSettleRequest,
+    now = Date.now(),
+  ): WorkspaceSpaceMembershipMovePlanResult {
+    return this.storage.transactionSync(() => {
+      const intent = this.moveIntent(request);
+      if (!intent) {
+        return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      const sourceMembership = this.storage.sql.exec<{
+        state: string;
+        generation: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT state, generation FROM space_channel_memberships
+          WHERE space_id = ? AND workstream_id = ?`,
+        request.sourceSpaceId,
+        request.workstreamId,
+      ).toArray()[0];
+      const targetMembership = this.storage.sql.exec<{
+        state: string;
+        generation: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT state, generation FROM space_channel_memberships
+          WHERE space_id = ? AND workstream_id = ?`,
+        request.targetSpaceId,
+        request.workstreamId,
+      ).toArray()[0];
+      if (sourceMembership?.state !== "active"
+        || sourceMembership.generation !== request.sourceMembershipGeneration
+        || !targetMembership
+        || !["joining", "active"].includes(targetMembership.state)
+        || targetMembership.generation !== request.targetMembershipGeneration) {
+        // A competing move may already have retired the source. Its target is
+        // active; this intent's target is still joining and must never be
+        // published as a second destination.
+        this.cancelMembershipMoveRows(request, now);
+        return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
+      const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
+      if (source === false || target === false) {
+        this.cancelMembershipMoveRows(request, now);
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      this.storage.sql.exec(
+        `UPDATE space_intents
+            SET space_revision = ?, source_space_revision = ?,
+                updated_at = ?
+          WHERE operation_id = ? AND state IN ('pending', 'applied')`,
+        target.revision,
+        source.revision,
+        now,
+        request.operationId,
+      );
+      return {
+        ok: true,
+        equivalentAudience: true,
+        operationId: request.operationId,
+        source,
+        target,
+        sourceMembershipGeneration: request.sourceMembershipGeneration,
+        targetMembershipGeneration: request.targetMembershipGeneration,
+      };
+    });
+  }
+
   /** Atomically publish the target placement and retire the source placement. */
   finalizeMembershipMove(
     request: WorkspaceSpaceMembershipMoveSettleRequest,
     now = Date.now(),
   ): { source: SpaceSummary; target: SpaceSummary } | "conflict" | false {
     return this.storage.transactionSync(() => {
-      if (!this.canEdit(request.userId, request.sourceSpaceId)
-        || !this.canEdit(request.userId, request.targetSpaceId, true)) return false;
+      const intent = this.moveIntent(request, true, true);
+      if (!intent) return false;
+      if (intent.state === "settled") {
+        const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
+        const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
+        return source === false || target === false ? false : { source, target };
+      }
+      // The prepare authorized this exact actor and intent; re-checking mutable
+      // Space reach after WorkstreamDO has already moved provenance could make
+      // an authorized operation impossible to finish.
+      const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
       const revisions = this.storage.sql.exec<{
         space_id: string;
         revision: number;
@@ -2062,6 +2144,7 @@ export class WorkspaceSpaceStorage {
       const sourceSettled = sourceBefore?.state === "removed"
         && sourceBefore.generation === request.sourceMembershipGeneration + 1;
       if (!targetBefore || !["joining", "active"].includes(targetBefore.state)
+        || (sourceSettled && targetBefore.state !== "active")
         || (!sourceSettled && (sourceBefore?.state !== "active"
           || sourceBefore.generation !== request.sourceMembershipGeneration))) return false;
 
@@ -2131,8 +2214,7 @@ export class WorkspaceSpaceStorage {
       );
       this.advanceWaterline(now);
       this.settleIntent(request.operationId, "membership_moved", true, now);
-      const source = this.space(request.sourceSpaceId, request.userId);
-      const target = this.space(request.targetSpaceId, request.userId);
+      const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
       return source === false || target === false ? false : { source, target };
     });
   }
@@ -2140,21 +2222,30 @@ export class WorkspaceSpaceStorage {
   cancelMembershipMove(
     request: WorkspaceSpaceMembershipMoveSettleRequest,
     now = Date.now(),
-  ): void {
-    this.storage.transactionSync(() => {
-      this.storage.sql.exec(
-        `UPDATE space_channel_memberships
-            SET state = 'removed', updated_at = ?, removed_at = ?
-          WHERE space_id = ? AND workstream_id = ? AND state = 'joining' AND generation = ?`,
-        now,
-        now,
-        request.targetSpaceId,
-        request.workstreamId,
-        request.targetMembershipGeneration,
-      );
-      this.cancelIntent(request.operationId, now);
-      this.advanceWaterline(now);
+  ): boolean {
+    return this.storage.transactionSync(() => {
+      if (!this.moveIntent(request, true)) return false;
+      this.cancelMembershipMoveRows(request, now);
+      return true;
     });
+  }
+
+  private cancelMembershipMoveRows(
+    request: WorkspaceSpaceMembershipMoveSettleRequest,
+    now: number,
+  ): void {
+    this.storage.sql.exec(
+      `UPDATE space_channel_memberships
+          SET state = 'removed', updated_at = ?, removed_at = ?
+        WHERE space_id = ? AND workstream_id = ? AND state = 'joining' AND generation = ?`,
+      now,
+      now,
+      request.targetSpaceId,
+      request.workstreamId,
+      request.targetMembershipGeneration,
+    );
+    this.cancelIntent(request.operationId, now);
+    this.advanceWaterline(now);
   }
 
   prepareMembership(
@@ -3014,6 +3105,38 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /** The durable authorization and fences for a staged move. */
+  private moveIntent(
+    request: WorkspaceSpaceMembershipMoveSettleRequest,
+    requireRevisions = false,
+    allowSettled = false,
+  ): { state: string } | null {
+    const row = this.storage.sql.exec<{
+      state: string;
+      space_revision: number;
+      source_space_revision: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT state, space_revision, source_space_revision
+         FROM space_intents
+        WHERE operation_id = ? AND kind = 'move' AND state <> 'cancelled'
+          AND requested_by_user_id = ? AND space_id = ? AND source_space_id = ?
+          AND workstream_id = ? AND membership_generation = ?
+          AND source_membership_generation = ?`,
+      request.operationId,
+      request.userId,
+      request.targetSpaceId,
+      request.sourceSpaceId,
+      request.workstreamId,
+      request.targetMembershipGeneration,
+      request.sourceMembershipGeneration,
+    ).toArray()[0];
+    if (!row) return null;
+    if (!allowSettled && !["pending", "applied"].includes(row.state)) return null;
+    if (requireRevisions && (row.space_revision !== request.targetSpaceRevision
+      || row.source_space_revision !== request.sourceSpaceRevision)) return null;
+    return row;
+  }
+
   /**
    * Every Space this Organization has, archived ones included.
    *
@@ -3755,6 +3878,25 @@ export class WorkspaceSpaceStorage {
       userId,
       spaceId,
       userId,
+    ).toArray()[0];
+    return row === undefined
+      ? false
+      : this.summary(row, userId, this.attentionCount(userId, row.space_id));
+  }
+
+  /**
+   * Read the current Space authority for an already-authorized durable intent.
+   * Unlike a product read this deliberately does not re-evaluate the actor's
+   * mutable reach: the intent row is the authorization and the current roster
+   * is what its recovery must converge onto.
+   */
+  private authoritativeSpace(spaceId: string, userId: string): SpaceSummary | false {
+    const row = this.storage.sql.exec<SpaceRow>(
+      `SELECT space.*,
+              CASE WHEN space.scope = 'workspace' THEN 'organization' ELSE 'participant' END AS reach
+         FROM workspace_space_directory space
+        WHERE space.space_id = ? AND space.archived_at IS NULL`,
+      spaceId,
     ).toArray()[0];
     return row === undefined
       ? false
