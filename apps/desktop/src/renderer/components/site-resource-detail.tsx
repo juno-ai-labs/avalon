@@ -80,6 +80,7 @@ export function SiteResourceDetail({
   const paneRef = React.useRef<HTMLDivElement | null>(null);
   const initialAccessRef = React.useRef<{
     resourceId: string;
+    version: number;
     openArtifact: SiteResourceDetailProps['openArtifact'];
     promise: Promise<SiteArtifactAccess>;
   } | null>(null);
@@ -141,8 +142,9 @@ export function SiteResourceDetail({
     setShowingData(false);
 
     let request = initialAccessRef.current;
-    if (request?.resourceId !== resourceId || request.openArtifact !== openArtifact) {
-      request = { resourceId, openArtifact, promise: openArtifact(resourceId) };
+    if (request?.resourceId !== resourceId || request.version !== version
+      || request.openArtifact !== openArtifact) {
+      request = { resourceId, version, openArtifact, promise: openArtifact(resourceId) };
       initialAccessRef.current = request;
     }
     void request.promise
