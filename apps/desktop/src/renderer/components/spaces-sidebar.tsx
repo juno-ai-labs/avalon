@@ -122,7 +122,11 @@ export function SpacesSidebar({
   const draggingSpaceId = useRef<string | null>(null);
   const [channelDropTargetId, setChannelDropTargetId] = useState<string | null>(null);
   const [acceptedChannelDropTargetId, setAcceptedChannelDropTargetId] = useState<string | null>(null);
-  const acceptedChannelDropTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const acceptedChannelDropTimer = useRef<{
+    handle: ReturnType<typeof setTimeout>;
+    token: number;
+  } | null>(null);
+  const acceptedChannelDropGeneration = useRef(0);
   const [archiveTarget, setArchiveTarget] = useState<SpaceSummary | null>(null);
   const [archiveFailure, setArchiveFailure] = useState<string | null>(null);
   const [archiveSaving, setArchiveSaving] = useState(false);
@@ -134,7 +138,9 @@ export function SpacesSidebar({
   // Create control's leftward entrance and stand-in exit independently.
   useListMotion(commandRef, collapsed);
   useEffect(() => () => {
-    if (acceptedChannelDropTimer.current !== null) clearTimeout(acceptedChannelDropTimer.current);
+    if (acceptedChannelDropTimer.current !== null) {
+      clearTimeout(acceptedChannelDropTimer.current.handle);
+    }
   }, []);
   const storedSpaces = useMemo(() => orderByStoredIds(
     spaces,
@@ -204,13 +210,20 @@ export function SpacesSidebar({
     }
   };
 
-  const flashAcceptedChannelDrop = (spaceId: string): void => {
-    if (acceptedChannelDropTimer.current !== null) clearTimeout(acceptedChannelDropTimer.current);
+  const flashAcceptedChannelDrop = (spaceId: string): number => {
+    const token = acceptedChannelDropGeneration.current + 1;
+    acceptedChannelDropGeneration.current = token;
+    if (acceptedChannelDropTimer.current !== null) {
+      clearTimeout(acceptedChannelDropTimer.current.handle);
+    }
     setAcceptedChannelDropTargetId(spaceId);
-    acceptedChannelDropTimer.current = setTimeout(() => {
+    const handle = setTimeout(() => {
+      if (acceptedChannelDropTimer.current?.token !== token) return;
       setAcceptedChannelDropTargetId(null);
       acceptedChannelDropTimer.current = null;
     }, CHANNEL_DROP_ACCEPTED_FLASH_MS);
+    acceptedChannelDropTimer.current = { handle, token };
+    return token;
   };
 
   const closeArchive = (): void => {
@@ -402,14 +415,14 @@ export function SpacesSidebar({
                     // server refusal still restores the placement and opens
                     // the failure dialog; the pulse describes the gesture,
                     // not network latency.
-                    flashAcceptedChannelDrop(space.id);
+                    const dropToken = flashAcceptedChannelDrop(space.id);
                     void onMoveChannel(sourceSpaceId, space.id, workstreamId)
                       .catch((cause: unknown) => {
-                        if (acceptedChannelDropTimer.current !== null) {
-                          clearTimeout(acceptedChannelDropTimer.current);
+                        if (acceptedChannelDropTimer.current?.token === dropToken) {
+                          clearTimeout(acceptedChannelDropTimer.current.handle);
                           acceptedChannelDropTimer.current = null;
+                          setAcceptedChannelDropTargetId(null);
                         }
-                        setAcceptedChannelDropTargetId((current) => current === space.id ? null : current);
                         setFailure({
                           title: 'Channel could not be moved',
                           copy: spaceFailureSentence(

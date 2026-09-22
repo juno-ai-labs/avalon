@@ -1927,10 +1927,15 @@ feel unresponsive and leaves the current screen out of step with the optimistic
 sidebar. Choosing the globally most recent Channel was rejected because the
 gesture is scoped to the selected Space and already has a visible local order.
 
-**Consequences:** A refusal restores the source placement and presents the
-existing acknowledged failure dialog. The route transition is decided from the
-pre-drop displayed order, with lower preferred over upper, and replaces the
-current history entry so Back cannot reopen the displaced selection.
+**Consequences:** A refusal restores both the source placement and an
+optimistically displaced route, then presents the existing acknowledged failure
+dialog. The route transition is decided from the pre-drop displayed order,
+with lower preferred over upper, and replaces the current history entry so Back
+cannot reopen the displaced selection. When that lower row belongs to a page
+still in flight, navigation waits for the row rather than mistaking the loaded
+slice for an empty Space. Moves of the same Channel settle in gesture order,
+and each destination pulse owns its timer, so an older settlement cannot
+overwrite a newer placement or strand newer feedback.
 
 ### 2026-09-21 — Space archive Channel retractions overlap within the platform envelope
 

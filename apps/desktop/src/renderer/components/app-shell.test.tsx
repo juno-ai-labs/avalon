@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import { patchCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
   associativeSpacesForSidebar,
@@ -671,6 +671,76 @@ describe('channelSpaceMutationHandlers', () => {
     refuseMove?.(new Error('space_access_denied'));
 
     await expect(moving).rejects.toThrow('space_access_denied');
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['source-space']);
+  });
+
+  it('preserves a newer socket placement when an optimistic move settles', async () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: ['source-space'] }]);
+    let settleMove: ((value: { source: typeof space; target: typeof space }) => void) | undefined;
+    const handlers = channelSpaceMutationHandlers({
+      addChannelToSpace: vi.fn(),
+      removeChannelFromSpace: vi.fn(),
+      moveChannelBetweenSpaces: vi.fn(() => new Promise<{ source: typeof space; target: typeof space }>((resolve) => {
+        settleMove = resolve;
+      })),
+    }, queryClient);
+
+    const moving = handlers.onMoveChannelToSpace('source-space', 'target-space', workstreamId);
+    patchCachedWorkstream(queryClient, workstreamId, { spaceIds: ['newer-space'] });
+    settleMove?.({ source: space, target: space });
+    await moving;
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['newer-space']);
+  });
+
+  it('does not roll a refused move back over a newer socket placement', async () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: ['source-space'] }]);
+    let refuseMove: ((cause: Error) => void) | undefined;
+    const handlers = channelSpaceMutationHandlers({
+      addChannelToSpace: vi.fn(),
+      removeChannelFromSpace: vi.fn(),
+      moveChannelBetweenSpaces: vi.fn(() => new Promise<{ source: typeof space; target: typeof space }>((_, reject) => {
+        refuseMove = reject;
+      })),
+    }, queryClient);
+
+    const moving = handlers.onMoveChannelToSpace('source-space', 'target-space', workstreamId);
+    patchCachedWorkstream(queryClient, workstreamId, { spaceIds: ['newer-space'] });
+    refuseMove?.(new Error('space_access_denied'));
+
+    await expect(moving).rejects.toThrow('space_access_denied');
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['newer-space']);
+  });
+
+  it('does not let overlapping moves advance past a refused predecessor', async () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: ['source-space'] }]);
+    let refuseMove: ((cause: Error) => void) | undefined;
+    const moveChannelBetweenSpaces = vi.fn(() => new Promise<{ source: typeof space; target: typeof space }>((_, reject) => {
+      refuseMove = reject;
+    }));
+    const handlers = channelSpaceMutationHandlers({
+      addChannelToSpace: vi.fn(),
+      removeChannelFromSpace: vi.fn(),
+      moveChannelBetweenSpaces,
+    }, queryClient);
+
+    const first = handlers.onMoveChannelToSpace('source-space', 'middle-space', workstreamId);
+    const second = handlers.onMoveChannelToSpace('middle-space', 'target-space', workstreamId);
+    expect(moveChannelBetweenSpaces).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
+      .toEqual(['middle-space']);
+
+    refuseMove?.(new Error('space_access_denied'));
+    await expect(first).rejects.toThrow('space_access_denied');
+    await expect(second).rejects.toThrow('space_access_denied');
+
+    expect(moveChannelBetweenSpaces).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds)
       .toEqual(['source-space']);
   });
