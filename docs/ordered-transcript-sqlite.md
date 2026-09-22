@@ -141,7 +141,7 @@ by the other.
 ## Failure modes and limits
 
 - **A released statement changed.** The runner warns with
-  `<component>_do_schema_hash_mismatch:<version>` and both fingerprints on every
+  `<component>_schema_hash_mismatch:<version>` and both fingerprints on every
   check of an object that already applied it, then continues. Restore a
   comment-only edit; append a migration for a real schema change.
 - **A payload cannot be canonicalized.** `canonicalTranscriptJson` throws
