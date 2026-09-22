@@ -97,6 +97,8 @@ export interface WorkstreamRuntimeResourceAttachment {
   resourceId: string;
   attachedByUserId: string | null;
   relationshipType?: ResourceRelationshipType;
+  /** The realtime transition this durable link write should advertise. */
+  eventType?: "resource_attached" | "resource_updated";
 }
 
 export type WorkstreamRuntimeResourceAttacher = (

@@ -1,7 +1,7 @@
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -853,9 +853,21 @@ describe("Daytona Terminal runtime", () => {
     // command's own shell, so it runs here against a scratch root: clean until
     // the destination appears, then exit 54 naming it, while an updated file's
     // existence is not a collision.
-    const root = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    // macOS exposes /var as a symlink to /private/var. The production
+    // containment command compares real paths, so the scratch root substituted
+    // for /workspace must be canonical too or a valid child is rejected as an
+    // apparent escape on that platform.
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "apply-patch-")));
     try {
-      const preflight = commands[0]!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${root}`);
+      const preflight = commands[0]!.split("\nlib=")[0]!
+        .replaceAll("/workspace", root)
+        // Daytona is Linux and provides GNU `realpath -m`; macOS's BSD
+        // `realpath` has no `-m`, so use the same non-existent-path semantics
+        // through Python when exercising the generated shell locally.
+        .replaceAll(
+          'realpath -m -- "$target"',
+          'python3 -c \'import os,sys; print(os.path.realpath(sys.argv[1]))\' "$target"',
+        );
       mkdirSync(join(root, "src"));
       writeFileSync(join(root, "src/file.txt"), "hello\n");
       expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
@@ -876,9 +888,14 @@ describe("Daytona Terminal runtime", () => {
     await expect(runtime.applyPatch(context, [
       "*** Begin Patch", "*** Update File: src/escape/passwd", "@@", "-root", "+toor", "*** End Patch",
     ].join("\n"))).resolves.toBeDefined();
-    const escapeRoot = mkdtempSync(join(tmpdir(), "apply-patch-"));
+    const escapeRoot = realpathSync(mkdtempSync(join(tmpdir(), "apply-patch-")));
     try {
-      const preflight = commands.at(-1)!.split("\nlib=")[0]!.replace(/'\/workspace(?=[/'])/gu, `'${escapeRoot}`);
+      const preflight = commands.at(-1)!.split("\nlib=")[0]!
+        .replaceAll("/workspace", escapeRoot)
+        .replaceAll(
+          'realpath -m -- "$target"',
+          'python3 -c \'import os,sys; print(os.path.realpath(sys.argv[1]))\' "$target"',
+        );
       mkdirSync(join(escapeRoot, "src/escape"), { recursive: true });
       expect(spawnSync("bash", ["-c", preflight], { encoding: "utf8" })).toMatchObject({ status: 0 });
       rmSync(join(escapeRoot, "src/escape"), { recursive: true });

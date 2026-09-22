@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
-/** Retained for the artifact-lightbox detail migration, not a live shell surface. */
-export const RIGHT_SIDEBAR_ENABLED = false;
+/** The general channel context rail remains retired; artifact reading uses the slot directly. */
+export const CONTEXT_SIDEBAR_ENABLED = false;
 
 export type RailVariant = 'context';
 /** The panel occupying the right sidebar slot. */

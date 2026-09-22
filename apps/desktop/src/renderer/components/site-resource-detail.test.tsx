@@ -22,7 +22,7 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
     present: vi.fn(async () => true),
     setBounds: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    popOut: vi.fn(async () => undefined),
+    popOut: vi.fn(async () => true),
     copyText: vi.fn(async () => undefined),
     openExternal: vi.fn(async () => undefined),
     ...overrides,
@@ -52,6 +52,7 @@ function mintingAccess() {
 function setup(overrides: Partial<SiteResourceDetailProps> = {}, options: { strict?: boolean } = {}) {
   const props: SiteResourceDetailProps = {
     resourceId: RESOURCE,
+    version: 4,
     title: 'Offsite RSVP',
     openArtifact: mintingAccess(),
     describeData: vi.fn(async () => ({
@@ -126,15 +127,28 @@ describe('showing a live artifact in the rail', () => {
     expect(props.openArtifact).toHaveBeenCalledOnce();
   });
 
+  it('remints and replaces the native preview when a new version is published', async () => {
+    const openArtifact = mintingAccess();
+    const { props, rerender } = setup({ openArtifact, version: 4 });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(1));
+    const firstUrl = vi.mocked(props.surface.present).mock.calls[0]?.[0]?.url;
+
+    rerender(<Harness props={{ ...props, version: 5 }} />);
+
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+    expect(props.surface.close).toHaveBeenCalled();
+    expect(vi.mocked(props.surface.present).mock.calls[1]?.[0]?.url).not.toBe(firstUrl);
+  });
+
   it('gives every navigating surface its own code, because redemption spends it', async () => {
     // Redemption clears the code in the same statement that reads it, so a
     // second surface handed the first one redeems nothing and lands on the
-    // neutral page. Pop out and Open in browser were both dead this way.
+    // neutral page. Open in a new window and Open in browser were both dead this way.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     const presented = vi.mocked(props.surface.present).mock.calls[0]?.[0]?.url;
 
-    fireEvent.click(screen.getByRole('button', { name: /pop out/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in a new window' }));
     await waitFor(() => expect(props.surface.popOut).toHaveBeenCalled());
     const poppedOut = vi.mocked(props.surface.popOut).mock.calls[0]?.[0]?.url;
 
@@ -285,7 +299,7 @@ describe('the actions the host draws in its header', () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     const header = within(screen.getByTestId('host-header'));
-    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u, /Stored data/u]) {
+    for (const name of [/Open in a new window/u, /Copy public link/u, /Open in browser/u, /Stored data/u]) {
       const action = header.getByRole('button', { name });
       expect(action).toBeInTheDocument();
       // Every one of them is an icon alone, so every one of them owes a
@@ -310,7 +324,7 @@ describe('the actions the host draws in its header', () => {
 
     // Focus rather than hover: Radix opens on focus without waiting out the
     // pointer delay, and the side is the same either way.
-    fireEvent.focus(screen.getByRole('button', { name: /Pop out/u }));
+    fireEvent.focus(screen.getByRole('button', { name: 'Open in a new window' }));
     const tip = await screen.findByRole('tooltip');
     expect(tip).toHaveAttribute('data-side', 'top');
     vi.unstubAllGlobals();
@@ -326,14 +340,17 @@ describe('the actions the host draws in its header', () => {
 
   it('pops out the artifact with its own access url', async () => {
     // Named for what it always claimed and did not do: this asserted the URL
-    // the preview had already spent, which is why Pop out landed on the
+    // the preview had already spent, which is why Open in a new window landed on the
     // neutral page rather than the site.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     const presented = vi.mocked(props.surface.present).mock.calls[0]?.[0]?.url;
-    fireEvent.click(screen.getByRole('button', { name: /Pop out/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in a new window' }));
     await waitFor(() => expect(props.surface.popOut).toHaveBeenCalled());
     expect(props.surface.popOut).toHaveBeenCalledWith({
+      kind: 'site',
+      resourceId: RESOURCE,
+      version: 4,
       artifactId: ARTIFACT,
       url: expect.stringContaining('/__rally/open#'),
       title: 'Offsite RSVP',
@@ -343,7 +360,7 @@ describe('the actions the host draws in its header', () => {
 
   it('keeps every action disabled until access exists', () => {
     setup({ openArtifact: vi.fn(() => new Promise<SiteArtifactAccess>(() => undefined)) });
-    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u]) {
+    for (const name of [/Open in a new window/u, /Copy public link/u, /Open in browser/u]) {
       expect(screen.getByRole('button', { name })).toBeDisabled();
     }
   });

@@ -439,7 +439,7 @@ describe("Terminal authority on real workerd", () => {
     });
   });
 
-  it("keeps resident-agent resource attachments in the owning artifact event and broadcasts them", async () => {
+  it("broadcasts the requested resident-agent resource transition from the owning object", async () => {
     const stub = mainAgent();
     await boot(stub);
     const resourceId = "00000000-0000-7000-8000-00000000aa03";
@@ -516,6 +516,14 @@ describe("Terminal authority on real workerd", () => {
           attachedByUserId: null,
           relationshipType: "generated",
         });
+        await attacher({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          resourceId,
+          attachedByUserId: null,
+          relationshipType: "generated",
+          eventType: "resource_updated",
+        });
         const realtime = state.storage.sql.exec<{ event_sequence: number }>(
           `SELECT event_sequence FROM realtime_state WHERE id = 1`,
         ).toArray()[0];
@@ -536,20 +544,28 @@ describe("Terminal authority on real workerd", () => {
       }
     });
 
-    expect(outcome.recorded).toEqual([[
-      WORKSPACE_ID,
-      resourceId,
-      null,
-      "generated",
-    ]]);
-    expect(outcome.eventSequence).toBe(1);
+    expect(outcome.recorded).toEqual([
+      [WORKSPACE_ID, resourceId, null, "generated"],
+      [WORKSPACE_ID, resourceId, null, "generated"],
+    ]);
+    expect(outcome.eventSequence).toBe(2);
     expect(outcome.preparedSnapshot).toBeNull();
     expect(outcome.preparedSnapshotTicketId).toBeNull();
-    expect(outcome.snapshotRevision).toBe(outcome.snapshotRevisionBefore + 1);
+    expect(outcome.snapshotRevision).toBe(outcome.snapshotRevisionBefore + 2);
     expect(outcome.emitted).toEqual([
       expect.objectContaining({
         sequence: 1,
         type: "resource_attached",
+        resource: expect.objectContaining({
+          id: resourceId,
+          relationshipType: "generated",
+          direction: "artifact",
+          title: "Generated recording.mp3",
+        }),
+      }),
+      expect.objectContaining({
+        sequence: 2,
+        type: "resource_updated",
         resource: expect.objectContaining({
           id: resourceId,
           relationshipType: "generated",

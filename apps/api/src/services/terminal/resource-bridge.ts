@@ -227,6 +227,8 @@ async function swapPublishedContent(input: {
   contentMode: string;
   derivativeStatus: string;
   harnessRunId: string;
+  effectIntentId: string;
+  publicationEventType: "resource_attached" | "resource_updated";
 }): Promise<PublishedRow> {
   const { workspace, env, workspaceId, existing, bytes, digest } = input;
   const timestamp = nowIso();
@@ -247,6 +249,8 @@ async function swapPublishedContent(input: {
     size: bytes.byteLength,
     attachmentKind: input.attachmentKind,
     contentMode: input.contentMode,
+    publicationEffectIntentId: input.effectIntentId,
+    publicationEventType: input.publicationEventType,
     ...(description ? { description } : {}),
   });
   await putStagedResourceObject({
@@ -410,7 +414,11 @@ export function createTerminalResourceBridge(
    */
   const attachPublication = async (
     context: { workspaceId: string; workstreamId: string },
-    input: { resourceId: string; attachedByUserId: string | null },
+    input: {
+      resourceId: string;
+      attachedByUserId: string | null;
+      eventType?: "resource_attached" | "resource_updated";
+    },
     internalProviderResourceId?: string | undefined,
   ) => {
     const workstreamId = publicationWorkstream(context, internalProviderResourceId);
@@ -938,18 +946,19 @@ export function createTerminalResourceBridge(
       const digest = await sha256Hex(bytes);
 
       if (settled) {
-        const relink = async () => {
+        const relink = async (eventType?: "resource_attached" | "resource_updated") => {
           const linked = await createResourceObjectPort(
             env,
             context.workspaceId,
             publicationWorkstream(context, input.providerResourceId),
           ).isAttached({ resourceId: settled.id });
-          if (linked) return;
+          if (linked && eventType === undefined) return;
           await attachPublication(context, {
             resourceId: settled.id,
             attachedByUserId: context.executionPrincipal.type === "user"
               ? context.executionPrincipal.userId
               : null,
+            ...(eventType ? { eventType } : {}),
           }, input.providerResourceId);
         };
         // Equal content covers both a crash-replay of a settled call and a
@@ -959,7 +968,14 @@ export function createTerminalResourceBridge(
         // it keeps the identity it was published with.
         const perCallReplay = existing === null;
         if (perCallReplay || settled.content_sha256 === digest) {
-          await relink();
+          let metadata: Record<string, unknown> = {};
+          try { metadata = JSON.parse(settled.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
+          const replayEvent = metadata.publicationEffectIntentId === effectIntentId
+            && (metadata.publicationEventType === "resource_attached"
+              || metadata.publicationEventType === "resource_updated")
+            ? metadata.publicationEventType
+            : undefined;
+          await relink(replayEvent);
           return publishedOutput(settled, bytes.byteLength);
         }
         const updated = await swapPublishedContent({
@@ -977,8 +993,16 @@ export function createTerminalResourceBridge(
           contentMode,
           derivativeStatus,
           harnessRunId: context.harnessRunId,
+          effectIntentId,
+          publicationEventType: "resource_updated",
         });
-        await relink();
+        await attachPublication(context, {
+          resourceId: settled.id,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+          eventType: "resource_updated",
+        }, input.providerResourceId);
         return publishedOutput(updated, bytes.byteLength);
       }
 
@@ -1005,6 +1029,8 @@ export function createTerminalResourceBridge(
         size: bytes.byteLength,
         attachmentKind,
         contentMode,
+        publicationEffectIntentId: effectIntentId,
+        publicationEventType: "resource_attached",
         ...(input.description ? { description: input.description } : {}),
       });
       try {
@@ -1145,6 +1171,19 @@ export function createTerminalResourceBridge(
               WHERE workspace_id = ? AND artifact_id = ? AND hostname_stub IS NULL`,
           ).bind(hostnameStub, context.workspaceId, previous.artifactId).run();
         }
+        let settledMetadata: Record<string, unknown> = {};
+        try { settledMetadata = JSON.parse(settled.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
+        if (settledMetadata.publicationEffectIntentId === effectIntentId
+          && (settledMetadata.publicationEventType === "resource_attached"
+            || settledMetadata.publicationEventType === "resource_updated")) {
+          await attachPublication(context, {
+            resourceId: settled.id,
+            attachedByUserId: context.executionPrincipal.type === "user"
+              ? context.executionPrincipal.userId
+              : null,
+            eventType: settledMetadata.publicationEventType,
+          });
+        }
         return siteOutput(env, settled, {
           artifactId: previous.artifactId,
           version: previous.version,
@@ -1188,6 +1227,8 @@ export function createTerminalResourceBridge(
         size: written.manifest.totalBytes,
         attachmentKind: "site",
         contentMode: "unsupported",
+        publicationEffectIntentId: effectIntentId,
+        publicationEventType: settled ? "resource_updated" : "resource_attached",
         artifactId: written.artifactId,
         artifactVersion: version,
         artifactMode: site.mode,
@@ -1211,6 +1252,8 @@ export function createTerminalResourceBridge(
           contentMode: "unsupported",
           derivativeStatus: "unsupported",
           harnessRunId: context.harnessRunId,
+          effectIntentId,
+          publicationEventType: "resource_updated",
         });
       } else {
         await workspace.prepare(
@@ -1268,6 +1311,18 @@ export function createTerminalResourceBridge(
         region: env.AVALON_REGION,
         manifest: written.manifest,
       });
+      // The resource row and the public artifact pointer are separate durable
+      // authorities. Advertise a revision only after both name the new version,
+      // so a client refreshing in response cannot resolve the previous site.
+      if (settled) {
+        await attachPublication(context, {
+          resourceId,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+          eventType: "resource_updated",
+        });
+      }
 
       return siteOutput(env, {
         id: resourceId,
