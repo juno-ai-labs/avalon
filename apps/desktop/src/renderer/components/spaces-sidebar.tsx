@@ -324,6 +324,7 @@ export function SpacesSidebar({
                   as={readOnly ? 'button' : NavLink}
                   {...(readOnly ? { type: 'button' as const } : { to: `/spaces/${space.id}` })}
                   aria-label={space.name}
+                  aria-description={space.scope === 'workspace' ? 'Public space' : 'Private space'}
                   badge={{
                     count: space.attentionCount ?? 0,
                     label: `${space.attentionCount ?? 0} ${space.attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention in ${space.name}`,

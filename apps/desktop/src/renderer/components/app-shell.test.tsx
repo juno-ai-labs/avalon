@@ -253,15 +253,27 @@ describe('associative guest navigation', () => {
     ]);
   });
 
-  it('filters socket rows to admitted Channels and attaches their Space placements', () => {
+  it('keeps fresher socket metadata while attaching canonical guest placements and destination', () => {
     const hidden = summary('completed', '00000000-0000-7000-8000-0000000000f9');
     expect(associativeWorkstreamsForSidebar(directory, [summary('completed'), hidden])).toEqual([
+      expect.objectContaining({
+        id: workstreamId,
+        title: 'Draft the reply',
+        scope: 'workspace',
+        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
+        spaceIds: [directory.spaces[0]!.id],
+      }),
+    ]);
+  });
+
+  it('synthesizes the Channel ancestor when only one Breakout is shared', () => {
+    expect(associativeWorkstreamsForSidebar(directory, [])).toEqual([
       expect.objectContaining({
         id: workstreamId,
         title: 'Launch plan',
         appearance: { icon: 'rocket', color: 'violet' },
         scope: 'personal',
-        spaceIds: [directory.spaces[0]!.id],
+        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
       }),
     ]);
   });

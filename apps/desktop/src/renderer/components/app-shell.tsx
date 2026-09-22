@@ -412,13 +412,13 @@ export function associativeSpacesForSidebar(directory: SharedNavigationDirectory
   })) ?? [];
 }
 
-/** Keep only canonically admitted Channels and attach their associative placements. */
+/** Build the guest Channel rail from canonical grants and enrich it with live socket state. */
 export function associativeWorkstreamsForSidebar(
   directory: SharedNavigationDirectory | undefined,
   workstreams: readonly WorkstreamSummary[] | undefined,
 ): WorkstreamSummary[] {
   if (!directory || !workstreams) return [];
-  const shared = new Map(directory.workstreams.map((item) => [item.parentId, item]));
+  const live = new Map(workstreams.map((item) => [item.id, item]));
   const placements = new Map<string, string[]>();
   for (const space of directory.spaces) {
     for (const workstreamId of space.workstreamIds) {
@@ -427,15 +427,32 @@ export function associativeWorkstreamsForSidebar(
       placements.set(workstreamId, current);
     }
   }
-  return workstreams.flatMap((workstream) => {
-    const metadata = shared.get(workstream.id);
-    if (!metadata) return [];
+  return directory.workstreams.flatMap((metadata) => {
+    const first = metadata.conversations.find((item) => !item.archived) ?? metadata.conversations[0];
+    if (!first) return [];
+    const workstream = live.get(metadata.parentId);
     return [{
-      ...workstream,
-      title: metadata.title ?? workstream.title,
-      scope: metadata.scope,
-      ...(metadata.appearance ? { appearance: metadata.appearance } : {}),
-      spaceIds: placements.get(workstream.id) ?? [],
+      ...(workstream ?? {
+        id: metadata.parentId,
+        title: metadata.title ?? first.title,
+        titleStatus: 'settled' as const,
+        harnessStatus: 'completed' as const,
+        latestAttentionSequenceNumber: 0,
+        readThroughSequenceNumber: 0,
+        manualUnreadFromSequenceNumber: null,
+        manualUnreadGeneration: 0,
+        hasUnread: false,
+        firstUnreadSequenceNumber: null,
+        lastActivityAt: '1970-01-01T00:00:00.000Z',
+        scope: metadata.scope,
+        participantUserIds: [],
+        participantExtraCount: 0,
+        nextPendingWakeup: null,
+        pinPosition: null,
+        ...(metadata.appearance ? { appearance: metadata.appearance } : {}),
+      }),
+      associativeSubstreamId: first.substreamId,
+      spaceIds: placements.get(metadata.parentId) ?? [],
     }];
   });
 }

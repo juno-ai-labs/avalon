@@ -301,6 +301,10 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
+      // The browser has no Organization socket. Its open conversation's
+      // metadata frame is therefore the low-cost nudge to refresh associative
+      // Space and ancestor presentation without polling.
+      void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
       queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {

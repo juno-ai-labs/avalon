@@ -6619,6 +6619,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  async preflightSpaceMembershipMoveSource(
+    input: WorkspaceSpaceMembershipRemovalRequest,
+  ): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "preflight_space_membership_move_source");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    return WorkspaceSpaceMutationResultSchema.parse(
+      this.spaceStorage().preflightMembershipMoveSource(request),
+    );
+  }
+
   async finalizeSpaceMembershipRemoval(
     input: WorkspaceSpaceMembershipSettleRequest,
   ): Promise<WorkspaceSpaceMutationResult> {
