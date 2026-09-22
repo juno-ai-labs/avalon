@@ -27,7 +27,7 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and, below them, lists this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, in one section, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
 ## Where the code lives
 
@@ -687,6 +687,27 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-22 — The Sidekicks heading is a stable room landmark
+
+**What changed:** `SidekickSection` now keeps its section and **Sidekicks**
+heading visible while its rows are loading and after an empty answer. The center
+sidebar and inspector rail inherit the same behavior from the shared component;
+a failed read still adds the existing **Refresh** row beneath the heading.
+
+**Why:** **Participants** is always named in the room rail, but the adjacent
+**Sidekicks** label disappeared whenever no Sidekick row happened to be present.
+That made the room's two kinds of collaborators look like different structures
+and hid the Sidekick affordance exactly in the empty state where its label is
+most useful.
+
+**Considered and rejected:** Adding a placeholder row. The request is for a
+stable section label, not empty-state prose or another interactive control.
+Rows remain reserved for actual Sidekicks and the recovery action.
+
+**Consequences:** The section shell no longer communicates whether the list is
+pending or empty; callers keep those states distinct for data correctness, and
+only a load failure adds content beneath an otherwise empty heading.
 
 ### 2026-09-21 — Expanded hierarchy headers keep their identity marks
 
