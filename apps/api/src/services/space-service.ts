@@ -6,6 +6,7 @@ import {
   asWorkspaceId,
   ContainerOrderSchema,
   SpaceChannelPageSchema,
+  MoveChannelBetweenSpacesResultSchema,
   SpaceRefusalDetailsSchema,
   SpaceSummarySchema,
   type CreateSpaceRequest,
@@ -39,7 +40,6 @@ import {
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
@@ -72,7 +72,7 @@ export function spaceRefusal(
   // not, rather than rendering an empty pair of quotation marks: a refusal that
   // says “” about a Space is worse than one that does not name it.
   const subject = spaceName.trim().length > 0 ? `“${spaceName.trim()}”` : "this Space";
-  // Carried on the two refusals that are about a Channel, so a confirmation can
+  // Carried on refusals that are about a Channel, so a confirmation can
   // name what has to move first instead of asking the person to find it.
   const details = blockedChannelIds.length > 0
     ? SpaceRefusalDetailsSchema.parse({ channelIds: [...blockedChannelIds] })
@@ -527,31 +527,15 @@ export class SpaceService {
     }
   }
 
-  /**
-   * Take a Channel out of a Space, when the Channel still has a home and its
-   * readers can still find it.
-   *
-   * The remaining audience is computed from the Channel's own access sources
-   * with this Space taken out, because WorkspaceDO cannot see a Channel's
-   * direct source and the discoverability test is about the readers who
-   * *survive* the retraction rather than the ones this Space supplied.
-   */
+  /** Take a Channel out of a Space, when it still has another home. */
   async removeChannel(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<SpaceSummary> {
     const access = new ChannelAccessService(this.env, this.auth);
-    const sources = await access.readSources(workstreamId);
-    const remaining = effectiveChannelAudience({
-      direct: sources.direct,
-      sources: sources.spaces
-        .filter((source) => source.spaceId !== spaceId)
-        .map((source) => ({ sourceId: source.spaceId, ...source })),
-    });
     const workspace = await this.workspace();
     const plan = this.planned(await workspace.prepareSpaceMembershipRemoval({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       workstreamId,
-      remainingAudience: { scope: remaining.scope, participantUserIds: [...remaining.participantUserIds] },
     }), "");
     await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
     return this.settled(await workspace.finalizeSpaceMembershipRemoval({
@@ -562,6 +546,36 @@ export class SpaceService {
       spaceRevision: plan.space.revision,
       membershipGeneration: plan.membershipGeneration,
     }), plan.space.name);
+  }
+
+  /**
+   * Move one Channel between Spaces behind one server boundary.
+   *
+   * The destination settles first, so an interrupted request may temporarily
+   * leave an extra placement but can never leave the Channel without a home.
+   * Each half keeps its existing durable intent and recovery path; delivery of
+   * inherited defaults and realtime convergence remain asynchronous behind
+   * those primitives.
+   */
+  async moveChannel(
+    sourceSpaceId: SpaceId,
+    targetSpaceId: SpaceId,
+    workstreamId: WorkstreamId,
+  ) {
+    if (sourceSpaceId === targetSpaceId) {
+      const space = await this.summary(targetSpaceId);
+      return MoveChannelBetweenSpacesResultSchema.parse({ source: space, target: space });
+    }
+    const workspace = await this.workspace();
+    this.settled(await workspace.preflightSpaceMembershipMoveSource({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId: sourceSpaceId,
+      workstreamId,
+    }), "");
+    const target = await this.addChannel(targetSpaceId, workstreamId);
+    const source = await this.removeChannel(sourceSpaceId, workstreamId);
+    return MoveChannelBetweenSpacesResultSchema.parse({ source, target });
   }
 
   /**

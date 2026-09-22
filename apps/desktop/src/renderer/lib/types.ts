@@ -196,6 +196,8 @@ export interface WorkstreamSummary {
    * is one record whatever it is listed under.
    */
   spaceIds: string[];
+  /** First conversation this viewer may open when Main itself is not shared. */
+  associativeSubstreamId?: string;
   /** Breakouts under this Channel that currently need this viewer. */
   breakoutAttentionCount?: number;
 }

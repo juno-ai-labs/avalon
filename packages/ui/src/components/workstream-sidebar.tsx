@@ -294,10 +294,12 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
+            aria-description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
             type="button"
             onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
+              description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
               title={workstream.title}
             />
@@ -324,6 +326,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
                 aria-label={[`Go to breakout: ${child.title}`, substreamDrag ? position : undefined]
                   .filter(Boolean).join(', ')}
+                aria-description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
                 className={clsx(
                   'workstream-context-row workstream-conversation-row',
                   currentSubstreamId === child.substreamId && 'is-current',
@@ -369,6 +372,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 type="button"
               >
                 <SidebarNavigationRowContent
+                  description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
                   icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />}
                   title={child.title}
                 />

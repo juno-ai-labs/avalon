@@ -147,32 +147,14 @@ export const WorkspaceSpaceMembershipSettleRequestSchema = WorkspaceSpaceMembers
 }).strict();
 export type WorkspaceSpaceMembershipSettleRequest = z.infer<typeof WorkspaceSpaceMembershipSettleRequestSchema>;
 
-/**
- * What a Channel's readers would be once this Space stops reaching it.
- *
- * Supplied by the caller because only the Channel's own authority can compute
- * it: WorkspaceDO records which Spaces reach a Channel, never the Channel's
- * direct source. It is the input to the discoverability test — every remaining
- * reader has to be able to find at least one Space the Channel still belongs
- * to, or the Channel becomes something they can read and cannot reach.
- */
-export const RemainingChannelAudienceSchema = z.strictObject({
-  scope: SpaceScopeSchema,
-  participantUserIds: z.array(UserIdSchema),
-});
-export type RemainingChannelAudience = z.infer<typeof RemainingChannelAudienceSchema>;
-
-export const WorkspaceSpaceMembershipRemovalRequestSchema = WorkspaceSpaceMembershipRequestSchema.extend({
-  remainingAudience: RemainingChannelAudienceSchema,
-}).strict();
+export const WorkspaceSpaceMembershipRemovalRequestSchema = WorkspaceSpaceMembershipRequestSchema;
 export type WorkspaceSpaceMembershipRemovalRequest = z.infer<typeof WorkspaceSpaceMembershipRemovalRequestSchema>;
 
 /**
- * A refusal that names the readers and the Channels it is about.
+ * A refusal with legacy reader details and actionable Channel ids.
  *
- * `unreachableUserIds` are ids the caller itself supplied in
- * `remainingAudience`, so returning them widens nothing: they are the subset of
- * what came in, not a record key or a value read out of storage.
+ * `unreachableUserIds` remains on the stable RPC result shape during cutover;
+ * associative ancestor visibility means current membership paths leave it empty.
  *
  * `blockedWorkstreamIds` are read out of storage, and are therefore narrowed to
  * the Channels this caller may already list. An archive is refused because of a

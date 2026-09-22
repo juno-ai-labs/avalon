@@ -276,15 +276,15 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
-    parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
+    parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared breakout", archived: false }],
   }] });
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
     spaces: [
-      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", workstreamIds: [parentId] },
-      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", workstreamIds: [parentId] },
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [parentId] },
     ],
-    workstreams: [{ parentId, title: "Private parent", archived: false,
-      conversations: [{ substreamId: childId, title: "Shared substream", archived: false }] }],
+    workstreams: [{ parentId, title: "Private parent", scope: "personal", archived: false,
+      conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] }],
   });
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
   // The workspace still contains the added candidate, but the canonical grant
@@ -295,7 +295,7 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
 });
 
-it("shows both Spaces when a guest has one shared Breakout in two different Channels", async () => {
+it("shows every containing Space when a guest has shared Breakouts", async () => {
   await initializeSecondRoom();
   await parkEffectQueue(room());
   await parkEffectQueue(secondRoom());
@@ -341,14 +341,15 @@ it("shows both Spaces when a guest has one shared Breakout in two different Chan
 
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
     spaces: [
-      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", workstreamIds: [parentId] },
-      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", workstreamIds: [secondParentId] },
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [secondParentId] },
+      { id: privateSpaceId, name: "Private planning", iconKey: "star", colorKey: "red", scope: "personal", workstreamIds: [parentId] },
     ],
     workstreams: [
-      { parentId, title: "Private parent", archived: false,
-        conversations: [{ substreamId: childId, title: "Shared substream", archived: false }] },
-      { parentId: secondParentId, title: "Research channel", archived: false,
-        conversations: [{ substreamId: secondChildId, title: "Research breakout", archived: false }] },
+      { parentId, title: "Private parent", scope: "personal", archived: false,
+        conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] },
+      { parentId: secondParentId, title: "Research channel", scope: "personal", archived: false,
+        conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
     ],
   });
 });
@@ -359,16 +360,38 @@ it("releases canonical Channel and shared conversation labels without granting M
   await seedActorGrant(child);
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec("UPDATE conversation_children SET title='Visible child' WHERE substream_id=?", childId);
+    for (const [substreamId, icon, color] of [["0", "briefcase", "blue"], [childId, "star", "red"]] as const) {
+      state.storage.sql.exec(`INSERT INTO substream_directory
+        (substream_id, source_version, payload_hash, effect_json, updated_at)
+        VALUES (?, 1, ?, json(?), 1)`, substreamId, `hash-${substreamId}`, JSON.stringify({
+        kind: "directory_common",
+        appearance: { icon, color },
+        title: substreamId === "0" ? "Private parent" : "Visible child",
+        description: "",
+        preview: "",
+        scope: "personal",
+        state: "idle",
+        systemKind: null,
+        lastActivityAt: "2026-09-18T00:00:00.000Z",
+        completedAt: null,
+        archivedAt: null,
+      }));
+    }
   });
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
   expect(await room().readSharedWorkstream(request)).toBeNull();
   await room().mutateScopeGrant(mutation());
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", archived: false,
-    conversations: [{ substreamId: childId, title: "Visible child", archived: false }] });
+  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
+    appearance: { icon: "briefcase", color: "blue" },
+    conversations: [{ substreamId: childId, title: "Visible child", scope: "personal", archived: false,
+      appearance: { icon: "star", color: "red" } }] });
   expect(await room().readSharedWorkstream({ ...request, membershipIncarnation: "replacement" })).toBeNull();
   await room().mutateScopeGrant(mutation(main));
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", archived: false,
-    conversations: [{ substreamId: "0", title: "Main", archived: false }, { substreamId: childId, title: "Visible child", archived: false }] });
+  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
+    appearance: { icon: "briefcase", color: "blue" },
+    conversations: [{ substreamId: "0", title: "Main", scope: "personal", archived: false,
+      appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false,
+      appearance: { icon: "star", color: "red" } }] });
   await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
   expect(await room().readSharedWorkstream(request)).toBeNull();
 });
@@ -377,7 +400,7 @@ it("lists inherited and archived readable children but omits restricted and unre
   await seedActorGrant(parent);
   await room().mutateScopeGrant(mutation(parent));
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
-  expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", archived: false }]);
+  expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec("UPDATE conversation_children SET audience='inherits_workstream' WHERE substream_id=?", childId);
   });
@@ -386,7 +409,7 @@ it("lists inherited and archived readable children but omits restricted and unre
     await runInDurableObject(room(), (_instance, state) => {
       state.storage.sql.exec("UPDATE conversation_children SET status=? WHERE substream_id=?", status, childId);
     });
-    expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", archived: false }]);
+    expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
   }
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec("UPDATE conversation_children SET status='ready', archived_at=1 WHERE substream_id=?", childId);

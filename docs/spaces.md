@@ -156,13 +156,13 @@ rather than staging a new one, and the settlement accepts that row at *that*
 generation: a retry, and two people dragging the same Channel onto the same
 Space, are ordinary rather than a 404.
 
-Removing one is the same shape in reverse, with two refusals in front of it.
-`space_membership_final` is the invariant that every Channel has a home.
-`space_audience_incompatible` is the weaker one that also has to hold: a reader
-who keeps access through some other source must still be able to *find* the
-Channel, which means discovering one of the Spaces it stays in. The service
-computes the remaining audience from the Channel's own access sources with this
-Space taken out, because WorkspaceDO cannot see a Channel's direct source.
+Removing one is the same shape in reverse, with one refusal in front of it:
+`space_membership_final` preserves the invariant that every Channel has a home.
+A person who may read a Channel or one of its Breakouts may always discover the
+presentation metadata of every ancestor above it, so a remaining Space does not
+need that person on its own roster. This associative reach exposes only name,
+icon, colour and public/private scope; it grants no Space participation, content,
+defaults or write capability.
 
 A removal and an archive both *stage* before they ask a Channel for anything:
 the preflight flips the membership out of `active` and only then does the
@@ -1100,22 +1100,25 @@ Channel belongs to at least one Space, so a sidebar without it cannot say where
 anything lives. General is in the directory like any other Space and the section
 has no case for it.
 
-The desktop member shell is handed the full Space directory; a guest is not.
-Guest Space management remains unavailable, and `spacesEnabledForSession`
-keeps the desktop guest shell's recency list, with no Space choices in the
-global creation menu, no **Add to space** and no draggable row. The browser host
-has a separate read-only hierarchy: `/sharing/navigation` returns only visible
-Space marks and containment for Channels its canonical grant owners admitted.
-It never exposes the full member directory or any Space write capability.
+The desktop member shell is handed the full Space directory. Guests in both the
+desktop and browser hosts use the separate read-only `/sharing/navigation`
+hierarchy: only canonically authorized Channels, Breakouts, their containment,
+and each ancestor's name, icon, colour and public/private scope. It never
+exposes the full member directory, Space participants, defaults, content or any
+Space write capability.
 
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
-Channel from the selected Channel rail onto another Space is a move: the client
-establishes the destination membership before withdrawing the selected source
-membership, preserving the invariant that every Channel has a home if the
-second operation is interrupted. **Add to space** remains explicitly additive.
+Channel from the selected Channel rail onto another Space is one server-side
+move request. The server first validates that the selected source is writable
+and contains the Channel without staging a mutation, then establishes the destination membership before
+withdrawing the selected source, preserving the invariant that every Channel
+has a home if the second operation is interrupted. The response waits for those
+two access-authority writes and their durable receipts; realtime republication,
+directory nudges, default delivery and recovery-alarm cleanup converge
+asynchronously. **Add to space** remains explicitly additive.
 
 **A Space this reader reaches only through a Channel in it is an ordinary
 row.** Mark, colour, name, expansion, its placements — limited to the Channels
@@ -1213,9 +1216,10 @@ being attempted supplies its own sentence for a refusal that carried no code —
 "Spaces couldn't be reordered" also accounts for the row that snapped back.
 The placement menu has one product-copy exception: `space_membership_final`
 uses **A channel must be in at least one space.** in its modal. Every other
-named refusal still uses the shared table, including the actionable instruction
-for `space_audience_incompatible`; the exception changes the requested sentence,
-not which authority decides the refusal.
+named refusal still uses the shared table. `space_audience_incompatible` remains
+in the wire vocabulary for older deployments but current membership removal,
+archive and Channel creation no longer emit it; associative ancestor visibility
+makes its old discoverability premise false.
 
 **A `through_channel` viewer's dashboard is the header and the conversation
 list.** Mark, colour, name — and that list, which is already filtered to the
@@ -1265,14 +1269,14 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
-**A desktop guest keeps the flat list; a browser guest gets a bounded
-hierarchy.** The desktop guest is handed no member Space directory, so its
-sidebar remains the time-grouped list with its group headings and bulk actions.
-The cookie-scoped browser uses `/sharing/navigation` to draw Space, Channel and
-Breakout rails from canonically admitted Channels only. If an admitted Channel
-has no visible Space placement, the browser puts it in a local **Shared
-channels** fallback so an authority-safe conversation never becomes
-unreachable merely because its container is withheld or not ready.
+**Both guest hosts get the bounded read-only hierarchy.** Neither guest is
+handed the member Space directory. They use `/sharing/navigation` to draw Space,
+Channel and Breakout rails from canonically admitted Channels only. Selecting a
+Space filters the adjacent Channel rail; in Electron the read-only row is a
+button rather than a link to the member Space dashboard. If an admitted Channel
+has no Space placement in a rolling-deploy response, the browser puts it in a
+local **Shared channels** fallback so an authority-safe conversation never
+becomes unreachable while its container metadata is not ready.
 
 **Three lists are arranged by drag, and each has the keyboard's version of the
 same gesture** — Alt with the up or down arrow: Spaces in the first rail,
@@ -1553,7 +1557,7 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them, against real objects: that a created Space's own projection reaches the Organization carrying the scope the request asked for, that a second member is sent it or not according to that scope, and that an audience change, a rename and an archive all work on a Space whose conversation has been evicted — which is the state it is in for all but the seconds after it is made. And that a narrowing which leaves the person asking for it out of the Space is refused by name before anything moves. And that a Space's own authority failing is answered by name rather than as `internal_error`. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and a one-request Channel move whose returned source and destination summaries match the settled memberships. Also that a narrowing which leaves its caller out is refused before anything moves, and an unreachable Space authority is named rather than reduced to `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
@@ -1573,7 +1577,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, Spaces-only automatic compaction on selection, selected-Space filtering, the opening fallback, the desktop guest shell's unchanged recency list, stored personal order, cross-rail drag-to-Space moves, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The adjacent Space and Channel rails, Spaces-only automatic compaction on selection, selected-Space filtering, associative read-only guest hierarchy, stored personal order, cross-rail drag-to-Space moves, Channel reorder by pointer and Alt+Arrow, and stable refusal copy. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's Space, Channel and Breakout rails; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's navigation without selection-driven compaction, plus its drag: the move reported as the pointer crosses, a backed-out drag reported as cancelled, Alt+Arrow, and no gesture at all for a reader who cannot store an order. |
@@ -1929,6 +1933,39 @@ at once, but all are joined before failure propagates. Audience and restore
 walks remain sequential because they apply mutable revisions rather than only
 withdraw an independent source. The 500 ms P50 remains a live-performance
 target, not a claim established by capability-double timing.
+
+### 2026-09-21 — Move Channels server-side and make ancestor metadata associative
+
+**What changed:** Cross-Space movement is one server request. The server validates
+the source without mutation, then settles the destination before retracting it,
+while the client patches the two
+Space summaries and Channel placement immediately from that response. Removal
+and archive no longer perform the obsolete audience-discoverability preflight.
+Any person who may read a Channel or Breakout now receives the name, icon,
+colour and public/private scope of its Channel and Space ancestors in desktop
+and browser navigation. Realtime and directory convergence run after the
+durable membership answer instead of extending its latency. Guest hierarchy
+refreshes reuse existing Organization and open-conversation socket nudges, and
+breakout-only grants synthesize their Channel ancestor without requiring Main.
+
+**Why:** Client composition paid two HTTP boundaries, repeated authority reads,
+then waited for a directory refetch. The discoverability refusal also encoded
+the opposite of the product rule: a readable descendant must make its hierarchy
+identifiable even when the reader is not a Space participant.
+
+**Considered and rejected:** Returning before the destination grant or source
+retraction was rejected because it would report a move while access was still
+wrong. Making ancestor visibility imply participation was rejected because it
+would disclose rosters, defaults and content and grant writes merely from a
+descendant share.
+
+**Consequences:** The synchronous boundary is one local source preflight,
+durable staging plus the two
+Channel access-source writes, in destination-first order. An interruption can
+leave an extra placement but never a homeless Channel. Ancestor reads are
+metadata-only and `through_channel`; all controls remain withheld. Live socket
+Channel fields win over an older associative read; the latter owns containment,
+authorized conversation destinations, and missing ancestor rows.
 
 ### 2026-09-21 — Sidebar recovery stays actionable and free of warnings
 
