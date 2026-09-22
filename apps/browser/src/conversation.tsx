@@ -260,7 +260,9 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
             className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
             key={space.id} onClick={() => selectSpace(space.id)} type="button">
             <SidebarNavigationRowContent
-              description={`${space.scope === null ? 'Associated' : space.scope === 'workspace' ? 'Public' : 'Private'} · ${space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}`}
+              description={space.scope === null
+                ? space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`
+                : `${space.scope === 'workspace' ? 'Public' : 'Private'} · ${space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}`}
               icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
               title={space.name}
             />

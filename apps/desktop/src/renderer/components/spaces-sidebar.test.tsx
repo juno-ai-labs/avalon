@@ -165,6 +165,16 @@ describe('SpacesSidebar', () => {
     expect(onMoveChannel).not.toHaveBeenCalled();
   });
 
+  it('selects read-only Spaces without opening the member Space dashboard', () => {
+    const { onSelect } = renderSidebar({ readOnly: true });
+
+    expect(screen.queryByRole('link', { name: 'Launch' })).not.toBeInTheDocument();
+    const row = screen.getByRole('button', { name: 'Launch' });
+    expect(row).not.toHaveAttribute('href');
+    fireEvent.click(row);
+    expect(onSelect).toHaveBeenCalledWith('launch');
+  });
+
   it('marks a cross-rail Channel drop as a move', () => {
     renderSidebar();
     const row = screen.getByRole('link', { name: 'Launch' });

@@ -403,8 +403,10 @@ expose unrelated Spaces and management fields. Keeping a separate Electron-only
 projection would duplicate the authority and drift from browser behavior.
 
 **Consequences:** Shared navigation reveals exactly name, icon, colour and
-public/private scope up the ancestor chain. It does not grant Main, unshared
-Breakouts, participants, defaults, content or Space mutations.
+public/private scope up the ancestor chain. A read-only Space selection filters
+the Channel rail rather than opening the member Space dashboard. It does not
+grant Main, unshared Breakouts, participants, defaults, content or Space
+mutations.
 
 ### 2026-09-21 — Put guest Channels in their Spaces
 
