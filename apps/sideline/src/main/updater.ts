@@ -28,11 +28,32 @@ export interface SidelineUpdateDependencies {
   log?: UpdateLogger;
 }
 
-export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): { enabled: boolean } {
+export interface SidelineUpdateHandle {
+  enabled: boolean;
+  checkForUpdates(): void;
+}
+
+export interface SidelineUpdateMenuItem {
+  id: "sideline-check-for-updates";
+  label: "Check for Updates…";
+  enabled: boolean;
+  click(): void;
+}
+
+export function sidelineUpdateMenuItem(handle: SidelineUpdateHandle): SidelineUpdateMenuItem {
+  return {
+    id: "sideline-check-for-updates",
+    label: "Check for Updates…",
+    enabled: handle.enabled,
+    click: handle.checkForUpdates,
+  };
+}
+
+export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): SidelineUpdateHandle {
   const log = deps.log ?? console;
   if (!deps.isPackaged || !deps.isReleaseBuild || deps.platform !== "darwin" || deps.arch !== "arm64") {
     log.info("[sideline] auto-update disabled for this build");
-    return { enabled: false };
+    return { enabled: false, checkForUpdates: () => undefined };
   }
 
   const updater = deps.updater ?? electronUpdater.autoUpdater;
@@ -69,5 +90,5 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): { e
     return { unref: () => handle.unref() };
   });
   schedule(check, UPDATE_INTERVAL_MS).unref();
-  return { enabled: true };
+  return { enabled: true, checkForUpdates: check };
 }
