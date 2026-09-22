@@ -233,10 +233,35 @@ export function channelSpaceMutationHandlers(
     // One server operation composes the membership primitives in the safe
     // order: establish the destination before withdrawing the source, so an
     // interrupted move can leave an extra placement but never a homeless
-    // Channel. The response is the cache patch; no refetch extends the gesture.
+    // Channel. The Channel cache moves before the request, so the source rail
+    // responds to the drop rather than to a later round trip. The response
+    // reconciles the two Space summaries; no refetch extends the gesture.
     onMoveChannelToSpace: async (sourceSpaceId, targetSpaceId, workstreamId) => {
       if (sourceSpaceId === targetSpaceId) return;
-      const moved = await activeApi().moveChannelBetweenSpaces(sourceSpaceId, targetSpaceId, workstreamId);
+      const moveApi = activeApi();
+      const before = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+        ?.find((workstream) => workstream.id === workstreamId)?.spaceIds;
+      const optimistic = before === undefined ? undefined : [...new Set([
+        ...before.filter((spaceId) => spaceId !== sourceSpaceId),
+        targetSpaceId,
+      ])];
+      if (optimistic !== undefined) {
+        patchCachedWorkstream(queryClient, workstreamId, { spaceIds: optimistic });
+      }
+      let moved: Awaited<ReturnType<typeof moveApi.moveChannelBetweenSpaces>>;
+      try {
+        moved = await moveApi.moveChannelBetweenSpaces(sourceSpaceId, targetSpaceId, workstreamId);
+      } catch (cause) {
+        if (before !== undefined && optimistic !== undefined) {
+          patchCachedWorkstream(queryClient, workstreamId, (current) => (
+            current.spaceIds.length === optimistic.length
+              && current.spaceIds.every((spaceId, index) => spaceId === optimistic[index])
+              ? { ...current, spaceIds: before }
+              : current
+          ));
+        }
+        throw cause;
+      }
       applySpace(moved.target);
       applySpace(moved.source);
       patchCachedWorkstream(queryClient, workstreamId, (current) => ({
