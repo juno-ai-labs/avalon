@@ -11,9 +11,9 @@ underneath different parents.
 The promise it makes is narrow and load-bearing: **these bytes never change.**
 Each host applies the array as one version of its own append-only migration
 ledger, and the runner records a hash of every applied version. Editing a
-statement here does not migrate anything; it strands every deployed object of
-every host on a hash mismatch. Read this before touching a file in that folder,
-and before giving a second object an ordered transcript.
+statement here does not migrate anything; it warns on every deployed object's
+next check without changing that object's schema. Read this before touching a
+file in that folder, and before giving a second object an ordered transcript.
 
 What the rows *mean* is owned elsewhere:
 [`workstream-durable-object.md`](workstream-durable-object.md) owns the
@@ -45,10 +45,11 @@ automation object did exactly that until it was deleted on 2026-09-03.
 
 The runner hashes each version's statements when it applies them and compares
 the stored hash on every later wake. That is what makes the array immutable in
-practice rather than by convention: a whitespace change to one statement raises
-`substream_agent_do_schema_hash_mismatch:27` on the next wake of every deployed
-work-stream agent, and the object stops serving. A change to these tables is a
-**new** versioned delta appended to each host's own ledger.
+practice rather than by convention: a whitespace change to one statement emits
+`substream_agent_do_schema_hash_mismatch:27` with both fingerprints on the next
+check of every deployed work-stream agent. Construction continues, so a change
+to these tables still needs a **new** versioned delta appended to each host's own
+ledger to make old and new schemas converge.
 
 ### Content-addressed facts
 
@@ -95,10 +96,10 @@ coordinate it originally allocated.
 ## Invariants
 
 - **`ORDERED_TRANSCRIPT_SCHEMA_V1` is immutable.** Its bytes are inside a
-  released migration hash for at least two object classes. Editing it strands
-  every deployed object of every host on the next wake, with no route back
-  except restoring the exact previous bytes. Add a new versioned delta to each
-  host's ledger instead.
+  released migration hash. Editing it warns on every deployed object's next
+  check but does not apply the edit to stored schemas. Restore a comment-only
+  change; add a new versioned delta to the host's ledger for a real schema
+  change.
 - **A host adds the array as one whole version.** Splitting it across two
   versions, or reordering the statements for one host, produces a different hash
   and — worse — a physically different schema than its siblings, so a query the
@@ -139,10 +140,10 @@ by the other.
 
 ## Failure modes and limits
 
-- **A released statement changed.** The runner throws
-  `<component>_do_schema_hash_mismatch:<version>` on every wake of every object
-  that already applied it. The object cannot serve; recovery is restoring the
-  bytes, not a new migration.
+- **A released statement changed.** The runner warns with
+  `<component>_do_schema_hash_mismatch:<version>` and both fingerprints on every
+  check of an object that already applied it, then continues. Restore a
+  comment-only edit; append a migration for a real schema change.
 - **A payload cannot be canonicalized.** `canonicalTranscriptJson` throws
   `transcript_non_json_value` or `transcript_non_finite_number` before anything
   is written, so the caller's transaction never opens. The host surfaces it as
@@ -169,6 +170,25 @@ by the other.
 The trap: a test that asserts on a migration *hash* is asserting on the bytes of
 this file, which is the intent — if such an assertion fails after an edit here,
 the edit is wrong, not the test.
+
+### 2026-09-21 — Transcript migration drift warns without blocking the object
+
+**What changed:** A changed released statement now produces the shared
+structured fingerprint warning while allowing `SubstreamAgent` construction to
+continue.
+
+**Why:** A hash disagreement is evidence that checked-in history moved, but a
+comment-only difference elsewhere proved that using the disagreement itself as
+a constructor failure can take usable objects offline.
+
+**Considered and rejected:** Keeping this module's hash fatal because transcript
+rows are load-bearing. The hash cannot distinguish whitespace from missing DDL;
+real transcript changes still require an appended migration, whose SQL and
+integrity failures remain fatal.
+
+**Consequences:** The immutable-byte rule remains, now enforced by pinned tests,
+review, and an observable warning instead of availability loss. A mismatch does
+not update an existing schema and is never a substitute for a forward migration.
 
 ### 2026-09-03 — The second host is gone
 
