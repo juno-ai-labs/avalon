@@ -1280,6 +1280,130 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [{ state: "active", generation: 1 }] });
   });
 
+  it("given a staged move, when another actor tries to cancel it, then the durable owner fence refuses", async () => {
+    const source = await reserve("Source", "workspace");
+    const target = await reserve("Target", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(source, CHANNEL_A);
+    const plan = await workspace().prepareSpaceMembershipMove({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source,
+      targetSpaceId: target,
+      workstreamId: CHANNEL_A,
+    });
+    if (!plan.ok || !plan.equivalentAudience) throw new Error("move was not staged");
+    const settle = {
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source,
+      targetSpaceId: target,
+      workstreamId: CHANNEL_A,
+      operationId: plan.operationId,
+      sourceSpaceRevision: plan.source.revision,
+      sourceMembershipGeneration: plan.sourceMembershipGeneration,
+      targetSpaceRevision: plan.target.revision,
+      targetMembershipGeneration: plan.targetMembershipGeneration,
+    };
+
+    await expect(workspace().cancelSpaceMembershipMove({ ...settle, userId: MEMBER }))
+      .resolves.toEqual({ cancelled: false });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state FROM space_intents WHERE operation_id = ?",
+      bindings: [plan.operationId],
+    })).toMatchObject({ rows: [{ state: "pending" }] });
+
+    await expect(workspace().cancelSpaceMembershipMove(settle))
+      .resolves.toEqual({ cancelled: true });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state FROM space_intents WHERE operation_id = ?",
+      bindings: [plan.operationId],
+    })).toMatchObject({ rows: [{ state: "cancelled" }] });
+  });
+
+  it("given a prepared move whose actor loses target reach, when it finalizes, then the intent still completes", async () => {
+    const source = await reserve("Source", "personal");
+    const target = await reserve("Target", "personal");
+    await publishChannel(CHANNEL_A, null);
+    await place(source, CHANNEL_A);
+    const plan = await workspace().prepareSpaceMembershipMove({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source,
+      targetSpaceId: target,
+      workstreamId: CHANNEL_A,
+    });
+    if (!plan.ok || !plan.equivalentAudience) throw new Error("move was not staged");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE workspace_space_viewers SET is_participant = 0 WHERE space_id = ? AND user_id = ?",
+        target,
+        OWNER,
+      );
+    });
+
+    await expect(workspace().finalizeSpaceMembershipMove({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source,
+      targetSpaceId: target,
+      workstreamId: CHANNEL_A,
+      operationId: plan.operationId,
+      sourceSpaceRevision: plan.source.revision,
+      sourceMembershipGeneration: plan.sourceMembershipGeneration,
+      targetSpaceRevision: plan.target.revision,
+      targetMembershipGeneration: plan.targetMembershipGeneration,
+    })).resolves.toMatchObject({ ok: true, target: { id: target, channelCount: 1 } });
+  });
+
+  it("given overlapping moves, when the newer target wins, then the older target cannot activate", async () => {
+    const source = await reserve("Source", "workspace");
+    const olderTarget = await reserve("Older", "workspace");
+    const winnerTarget = await reserve("Winner", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(source, CHANNEL_A);
+    const prepare = async (targetSpaceId: SpaceId) => {
+      const plan = await workspace().prepareSpaceMembershipMove({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        sourceSpaceId: source,
+        targetSpaceId,
+        workstreamId: CHANNEL_A,
+      });
+      if (!plan.ok || !plan.equivalentAudience) throw new Error("move was not staged");
+      return plan;
+    };
+    const older = await prepare(olderTarget);
+    const winner = await prepare(winnerTarget);
+    const settle = (targetSpaceId: SpaceId, plan: typeof older) => ({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source,
+      targetSpaceId,
+      workstreamId: CHANNEL_A,
+      operationId: plan.operationId,
+      sourceSpaceRevision: plan.source.revision,
+      sourceMembershipGeneration: plan.sourceMembershipGeneration,
+      targetSpaceRevision: plan.target.revision,
+      targetMembershipGeneration: plan.targetMembershipGeneration,
+    });
+
+    await expect(workspace().finalizeSpaceMembershipMove(settle(winnerTarget, winner)))
+      .resolves.toMatchObject({ ok: true });
+    await expect(workspace().finalizeSpaceMembershipMove(settle(olderTarget, older)))
+      .resolves.toMatchObject({ ok: false, code: "space_not_found" });
+    await expect(workspace().replanSpaceMembershipMoveForAudience(settle(olderTarget, older)))
+      .resolves.toMatchObject({ ok: false, code: "space_revision_conflict" });
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT space_id, state FROM space_channel_memberships
+             WHERE workstream_id = ? AND space_id IN (?, ?) ORDER BY space_id`,
+      bindings: [CHANNEL_A, olderTarget, winnerTarget],
+    })).toMatchObject({ rows: expect.arrayContaining([
+      { space_id: olderTarget, state: "removed" },
+      { space_id: winnerTarget, state: "active" },
+    ]) });
+  });
+
   it("given a Channel in one Space, when that membership is removed, then it is refused as final", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);

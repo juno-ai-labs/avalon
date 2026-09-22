@@ -21,6 +21,7 @@ import {
   type UpdateSpacePresentationRequest,
   type UserId,
   type WorkstreamId,
+  type WorkspaceId,
 } from "@rally/contracts";
 
 import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName } from "../durable-objects/names";
@@ -605,8 +606,7 @@ export class SpaceService {
     } catch (error) {
       if (!(error instanceof ApiError)
         || (error.code !== "space_revision_conflict" && error.code !== "space_not_found")) throw error;
-      await workspace.cancelSpaceMembershipMove(settle);
-      return this.moveChannelThroughAudienceChange(sourceSpaceId, targetSpaceId, workstreamId);
+      return this.moveChannelThroughStagedAudienceChange(settle);
     }
     const moved = WorkspaceSpaceMembershipMoveResultSchema.parse(
       await workspace.finalizeSpaceMembershipMove(settle),
@@ -617,19 +617,69 @@ export class SpaceService {
     if (moved.code !== "space_revision_conflict" && moved.code !== "space_not_found") {
       throw spaceRefusal(moved.code, "", moved.unreachableUserIds, moved.blockedWorkstreamIds);
     }
-    const fallback = await this.moveChannelThroughAudienceChange(
-      sourceSpaceId,
-      targetSpaceId,
-      workstreamId,
+    return this.moveChannelThroughStagedAudienceChange(settle);
+  }
+
+  /** Converge a staged move through canonical audience operations. */
+  private async moveChannelThroughStagedAudienceChange(
+    settle: {
+      workspaceId: WorkspaceId;
+      userId: UserId;
+      sourceSpaceId: SpaceId;
+      targetSpaceId: SpaceId;
+      workstreamId: WorkstreamId;
+      operationId: string;
+      sourceSpaceRevision: number;
+      sourceMembershipGeneration: number;
+      targetSpaceRevision: number;
+      targetMembershipGeneration: number;
+    },
+  ) {
+    const workspace = await this.workspace();
+    const replanned = this.plannedMove(
+      await workspace.replanSpaceMembershipMoveForAudience(settle),
     );
-    await workspace.recordSpaceIntentReceipt({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      operationId: prepared.operationId,
-      receipt: "move_converged_by_audience_path",
-      settled: true,
+    if (!replanned.equivalentAudience) {
+      throw new Error("space_move_audience_replan_missing_intent");
+    }
+    const currentSettle = {
+      ...settle,
+      sourceSpaceRevision: replanned.source.revision,
+      targetSpaceRevision: replanned.target.revision,
+    };
+    const access = new ChannelAccessService(this.env, this.auth);
+    const targetRoster = rosterOf(replanned.target);
+    const current = await access.readSources(settle.workstreamId);
+    // If the cheap swap already removed the source, restore it before
+    // rebuilding the destination. Every interruption then leaves at least one
+    // durable Space source and the next resume can repeat this sequence.
+    if (!current.spaces.some((source) => source.spaceId === settle.sourceSpaceId)) {
+      await access.applySpaceSource(settle.workstreamId, {
+        spaceId: settle.sourceSpaceId,
+        scope: replanned.source.scope,
+        participantUserIds: rosterOf(replanned.source),
+        spaceRevision: replanned.source.revision,
+        membershipGeneration: settle.sourceMembershipGeneration,
+        operationId: uuidV7(),
+      });
+    }
+    await access.retractSpaceSource(settle.workstreamId, settle.targetSpaceId, uuidV7());
+    await access.applySpaceSource(settle.workstreamId, {
+      spaceId: settle.targetSpaceId,
+      scope: replanned.target.scope,
+      participantUserIds: targetRoster,
+      spaceRevision: replanned.target.revision,
+      membershipGeneration: settle.targetMembershipGeneration,
+      operationId: uuidV7(),
     });
-    return fallback;
+    await access.retractSpaceSource(settle.workstreamId, settle.sourceSpaceId, uuidV7());
+    const moved = WorkspaceSpaceMembershipMoveResultSchema.parse(
+      await workspace.finalizeSpaceMembershipMove(currentSettle),
+    );
+    if (!moved.ok) {
+      throw spaceRefusal(moved.code, "", moved.unreachableUserIds, moved.blockedWorkstreamIds);
+    }
+    return MoveChannelBetweenSpacesResultSchema.parse({ source: moved.source, target: moved.target });
   }
 
   private async moveChannelThroughAudienceChange(
@@ -952,6 +1002,38 @@ export class SpaceService {
       await this.recordReceipt(intent.operationId, reason, true);
       return { outcome: "abandoned", reason };
     };
+    // A move's persisted intent is its authorization. Recovery deliberately
+    // enters the durable audience path before a viewer-scoped Space read: the
+    // requester may have lost mutable reach after WorkstreamDO committed the
+    // provenance swap, and that must not strand the already-authorized move.
+    if (intent.kind === "move") {
+      if (!intent.workstreamId || !intent.membershipGeneration || !intent.sourceSpaceId
+        || !intent.sourceSpaceRevision || !intent.sourceMembershipGeneration) {
+        return abandon("move_fences_missing");
+      }
+      try {
+        await this.moveChannelThroughStagedAudienceChange({
+          workspaceId: asWorkspaceId(this.auth.workspaceId),
+          userId: asUserId(this.auth.userId),
+          sourceSpaceId: intent.sourceSpaceId,
+          targetSpaceId: intent.spaceId,
+          workstreamId: intent.workstreamId,
+          operationId: intent.operationId,
+          sourceSpaceRevision: intent.sourceSpaceRevision,
+          sourceMembershipGeneration: intent.sourceMembershipGeneration,
+          targetSpaceRevision: intent.spaceRevision,
+          targetMembershipGeneration: intent.membershipGeneration,
+        });
+      } catch (error) {
+        if (!(error instanceof ApiError)
+          || (error.code !== "space_revision_conflict" && error.code !== "space_not_found")) throw error;
+        // The replan cancels a move whose source generation was already won by
+        // another target. This delivery is terminal too: retrying a cancelled
+        // intent would turn a resolved race into a dead-letter message.
+        return { outcome: "abandoned", reason: "move_superseded" };
+      }
+      return { outcome: "settled" };
+    }
     const space = await this.summary(intent.spaceId);
     // The resume runs as the person who staged the intent, and `summary` is
     // *their* view of the Space. Somebody taken out of a Space between staging
@@ -977,57 +1059,6 @@ export class SpaceService {
       return abandon("requester_reach_lost");
     }
     const access = new ChannelAccessService(this.env, this.auth);
-    if (intent.kind === "move") {
-      if (!intent.workstreamId || !intent.membershipGeneration || !intent.sourceSpaceId
-        || !intent.sourceSpaceRevision || !intent.sourceMembershipGeneration) {
-        return abandon("move_fences_missing");
-      }
-      const source = await this.summary(intent.sourceSpaceId);
-      const sourceRoster = rosterOf(source);
-      const targetRoster = rosterOf(space);
-      const sourceUsers = new Set(sourceRoster);
-      const stillEquivalent = source.revision === intent.sourceSpaceRevision
-        && space.revision === intent.spaceRevision
-        && source.scope === space.scope
-        && sourceUsers.size === targetRoster.length
-        && targetRoster.every((userId) => sourceUsers.has(userId));
-      if (!stillEquivalent) {
-        await this.moveChannelThroughAudienceChange(
-          intent.sourceSpaceId,
-          intent.spaceId,
-          intent.workstreamId,
-        );
-        await this.recordReceipt(intent.operationId, "move_converged_by_audience_path", true);
-        return { outcome: "settled" };
-      }
-      await access.replaceEquivalentSpaceSource(intent.workstreamId, {
-        sourceSpaceId: intent.sourceSpaceId,
-        targetSpaceId: intent.spaceId,
-        scope: space.scope,
-        participantUserIds: targetRoster,
-        targetSpaceRevision: intent.spaceRevision,
-        targetMembershipGeneration: intent.membershipGeneration,
-        operationId: intent.operationId,
-      });
-      const moved = WorkspaceSpaceMembershipMoveResultSchema.parse(
-        await workspace.finalizeSpaceMembershipMove({
-          workspaceId: asWorkspaceId(this.auth.workspaceId),
-          userId: asUserId(this.auth.userId),
-          sourceSpaceId: intent.sourceSpaceId,
-          targetSpaceId: intent.spaceId,
-          workstreamId: intent.workstreamId,
-          operationId: intent.operationId,
-          sourceSpaceRevision: intent.sourceSpaceRevision,
-          sourceMembershipGeneration: intent.sourceMembershipGeneration,
-          targetSpaceRevision: intent.spaceRevision,
-          targetMembershipGeneration: intent.membershipGeneration,
-        }),
-      );
-      if (!moved.ok) {
-        throw spaceRefusal(moved.code, "", moved.unreachableUserIds, moved.blockedWorkstreamIds);
-      }
-      return { outcome: "settled" };
-    }
     if (intent.kind === "add") {
       // Both fences are written by the staging and neither is nullable for
       // this kind, so a row without them is a malformed one rather than an

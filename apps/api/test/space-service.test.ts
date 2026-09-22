@@ -54,6 +54,7 @@ interface WorkspaceDouble {
   listSpaceMembers: ReturnType<typeof vi.fn>;
   prepareSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   prepareSpaceMembershipMove: ReturnType<typeof vi.fn>;
+  replanSpaceMembershipMoveForAudience: ReturnType<typeof vi.fn>;
   finalizeSpaceMembershipMove: ReturnType<typeof vi.fn>;
   cancelSpaceMembershipMove: ReturnType<typeof vi.fn>;
   finalizeSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
@@ -76,6 +77,15 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
       ok: true, space: summary(), membershipGeneration: 4,
     })),
     prepareSpaceMembershipMove: vi.fn(async () => ({ ok: true, equivalentAudience: false })),
+    replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
+      ok: true,
+      equivalentAudience: true,
+      operationId: "00000000-0000-7000-8000-0000000000e2",
+      source: summary({ name: "Source" }),
+      target: summary({ id: TARGET_SPACE_ID, name: "Target" }),
+      sourceMembershipGeneration: 4,
+      targetMembershipGeneration: 2,
+    })),
     finalizeSpaceMembershipMove: vi.fn(async () => ({
       ok: true,
       source: summary({ channelCount: 0 }),
@@ -146,7 +156,11 @@ function channelDoubles(log: string[]) {
       readManagementAccess: vi.fn(async () => ({ allowed: true })),
       readAccessSources: vi.fn(async () => ({
         direct: { scope: "workspace", participantUserIds: [], observed: true },
-        spaces: [],
+        spaces: [] as Array<{
+          spaceId: typeof SPACE_ID;
+          scope: "personal" | "workspace";
+          participantUserIds: Array<typeof OWNER>;
+        }>,
       })),
       retractSpaceAccessSource: vi.fn(async (input: { parentId: string }) => {
         log.push(`retract:${input.parentId}`);
@@ -332,6 +346,68 @@ describe("SpaceService lifecycle fan-out", () => {
     expect(channels.conversation.handleProductRequest).not.toHaveBeenCalled();
     expect(channels.room.applySpaceAccessSource).not.toHaveBeenCalled();
     expect(channels.room.retractSpaceAccessSource).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refused fast move on its original intent while converging the audience", async () => {
+    const log: string[] = [];
+    const source = summary();
+    const target = summary({ id: TARGET_SPACE_ID, name: "Product", channelCount: 0 });
+    const workspace = workspaceDouble({
+      prepareSpaceMembershipMove: vi.fn(async () => ({
+        ok: true,
+        equivalentAudience: true,
+        operationId: "00000000-0000-7000-8000-0000000000e2",
+        source,
+        target,
+        sourceMembershipGeneration: 4,
+        targetMembershipGeneration: 2,
+      })),
+      replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
+        ok: true,
+        equivalentAudience: true,
+        operationId: "00000000-0000-7000-8000-0000000000e2",
+        source: { ...source, revision: 4 },
+        target: { ...target, revision: 5 },
+        sourceMembershipGeneration: 4,
+        targetMembershipGeneration: 2,
+      })),
+      finalizeSpaceMembershipMove: vi.fn(async () => {
+        log.push("finalize");
+        return {
+          ok: true,
+          source: { ...source, revision: 4, channelCount: 0 },
+          target: { ...target, revision: 5, channelCount: 1 },
+        };
+      }),
+    });
+    const channels = channelDoubles(log);
+    channels.room.readAccessSources = vi.fn(async () => ({
+      direct: { scope: "workspace", participantUserIds: [], observed: true },
+      spaces: [{ spaceId: SPACE_ID, scope: "workspace", participantUserIds: [OWNER, MEMBER] }],
+    }));
+    channels.room.replaceEquivalentSpaceAccessSource = vi.fn(async () => ({
+      ok: false, code: "space_revision_conflict",
+    }));
+
+    await expect(new SpaceService(serviceEnv({
+      workspace, conversation: channels.conversation, room: channels.room,
+    }), auth()).moveChannel(SPACE_ID, TARGET_SPACE_ID, CHANNEL_ID)).resolves.toMatchObject({
+      source: { id: SPACE_ID, revision: 4, channelCount: 0 },
+      target: { id: TARGET_SPACE_ID, revision: 5, channelCount: 1 },
+    });
+
+    expect(workspace.cancelSpaceMembershipMove).not.toHaveBeenCalled();
+    expect(log).toEqual([
+      `retract:${CHANNEL_ID}`,
+      `apply:${CHANNEL_ID}:2`,
+      `retract:${CHANNEL_ID}`,
+      "finalize",
+    ]);
+    expect(workspace.finalizeSpaceMembershipMove).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: "00000000-0000-7000-8000-0000000000e2",
+      sourceSpaceRevision: 4,
+      targetSpaceRevision: 5,
+    }));
   });
 
   it("given an archive, when it runs, then reached Channel retractions overlap and all settle before finalization", async () => {
@@ -544,7 +620,13 @@ describe("SpaceService intent resumption", () => {
       cursor: null,
     })).resolves.toEqual({ outcome: "settled" });
 
-    expect(log).toEqual([`replace:${SPACE_ID}:${TARGET_SPACE_ID}`, "finalize"]);
+    expect(log).toEqual([
+      `apply:${CHANNEL_ID}:4`,
+      `retract:${CHANNEL_ID}`,
+      `apply:${CHANNEL_ID}:2`,
+      `retract:${CHANNEL_ID}`,
+      "finalize",
+    ]);
     expect(workspace.finalizeSpaceMembershipMove).toHaveBeenCalledWith(expect.objectContaining({
       operationId: "00000000-0000-7000-8000-0000000000e2",
       sourceSpaceRevision: 3,
@@ -552,6 +634,30 @@ describe("SpaceService intent resumption", () => {
       targetSpaceRevision: 3,
       targetMembershipGeneration: 2,
     }));
+  });
+
+  it("acks a resumed move that a competing destination already superseded", async () => {
+    const workspace = workspaceDouble({
+      replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
+        ok: false,
+        code: "space_revision_conflict",
+        unreachableUserIds: [],
+        blockedWorkstreamIds: [],
+      })),
+    });
+
+    await expect(new SpaceService(serviceEnv({ workspace }), auth()).resumeIntent({
+      operationId: "00000000-0000-7000-8000-0000000000e3",
+      kind: "move",
+      spaceId: TARGET_SPACE_ID,
+      workstreamId: CHANNEL_ID,
+      spaceRevision: 3,
+      membershipGeneration: 2,
+      sourceSpaceId: SPACE_ID,
+      sourceSpaceRevision: 3,
+      sourceMembershipGeneration: 4,
+      cursor: null,
+    })).resolves.toEqual({ outcome: "abandoned", reason: "move_superseded" });
   });
 
   it("given a superseded audience intent, when it resumes, then it converges on the current Space", async () => {
