@@ -34,8 +34,10 @@ import {
 import { zodDiagnosticCode, codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
@@ -849,7 +851,20 @@ async function phaseBody(
            ON CONFLICT (workspace_id, user_id) DO UPDATE SET status = 'active'`,
         ).bind(workspaceId, userId, at).run();
       }
-      return { outcome: "completed", detail: { workspaceId, members: seated.size } };
+      const people = [...seated];
+      await (await durableObjectStubForWorkspace(
+        env,
+        env.WORKSPACE_DOS,
+        asWorkspaceId(workspaceId),
+        workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+      )).upsertImpersonationRelationships({
+        workspaceId,
+        relationships: demoImpersonationRelationships(people, record.operation_id),
+      });
+      return {
+        outcome: "completed",
+        detail: { workspaceId, members: seated.size, impersonationRelationships: people.length ** 2 },
+      };
     }
     case "copying_connections": {
       const workspaceId = requireWorkspace(record);
@@ -920,4 +935,12 @@ function requireWorkspace(record: OperationRecord): string {
   return record.workspace_id;
 }
 
-export const __demoPreparationTesting = { castOf, operatorError };
+function demoImpersonationRelationships(userIds: string[], operationId: string) {
+  return userIds.flatMap((impersonatorUserId) => userIds.map((representedUserId) => ({
+    impersonatorUserId,
+    representedUserId,
+    authorityBasis: `demo:${operationId}`,
+  })));
+}
+
+export const __demoPreparationTesting = { castOf, demoImpersonationRelationships, operatorError };
