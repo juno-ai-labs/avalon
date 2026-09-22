@@ -2774,14 +2774,17 @@ export class SlackAgentService {
       blocks = linkedHome(
         this.env,
         link.name,
-        await Promise.all((tasks.results ?? []).filter((task) => isWorkstreamId(String(task.id))).map(async (task) => ({
-          ...task,
-          url: await canonicalWorkstreamUrl(this.env, {
-            region: this.env.AVALON_REGION,
-            workspaceId: connection.workspace_id,
-            workstreamId: String(task.id),
-          }),
-        }))),
+        await Promise.all((tasks.results ?? []).map(async (task) => {
+          try {
+            return { ...task, url: await canonicalWorkstreamUrl(this.env, {
+              region: this.env.AVALON_REGION,
+              workspaceId: connection.workspace_id,
+              workstreamId: String(task.id),
+            }) };
+          } catch {
+            return { ...task, url: null };
+          }
+        })),
         automations.results ?? [],
         this.env.PUBLIC_WEB_BASE_URL,
         this.env.AVALON_REGION,
@@ -3835,7 +3838,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
     // Minting a link is strict on purpose, but this is a list: one row that
     // cannot produce a link must cost that row, not the whole App Home. The
     // throw would otherwise escape `views.publish` and fail account linking.
-    if (!isWorkstreamId(workstreamId)) {
+    if (!isWorkstreamId(workstreamId) || typeof task.url !== "string") {
       logWarn(env, "slack_app_home_task_skipped", {
         workstream_id: workstreamId,
       });

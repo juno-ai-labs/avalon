@@ -214,7 +214,7 @@ actor RallyClient {
 
     func channelSpaceIds(id: String) async throws -> [String] {
         struct Access: Decodable { var spaceIds: [String] }
-        return try await get(path: "/workstreams/\(id)/access", as: Access.self).spaceIds
+        return try await get(path: "/workstreams/\(id)/link-spaces", as: Access.self).spaceIds
     }
 
     func prepareSubstream(parentId: String, operationId: String, throughTurnId: String?) async throws -> SubstreamPreparationPreview {

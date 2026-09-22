@@ -44,6 +44,20 @@ enum RallyDeepLink {
             return WorkstreamTarget(region: region, workspaceId: workspaceId, spaceId: spaceId,
                                     workstreamId: workstreamId, substreamId: substreamId)
         }
+        if url.scheme == "rallywithai", url.host == "workspace",
+           parts.count == 6 || parts.count == 8,
+           let region = RallyRegion(rawValue: parts[0]),
+           let workspaceId = uuidFromBase58(parts[1]),
+           parts[2] == "spaces", let spaceId = uuidFromBase58(parts[3]),
+           parts[4] == "channels", let workstreamId = uuidFromBase58(parts[5]) {
+            var substreamId = SubstreamAddress.main
+            if parts.count == 8 {
+                guard parts[6] == "breakouts", let decoded = uuidFromBase58(parts[7]) else { return nil }
+                substreamId = decoded
+            }
+            return WorkstreamTarget(region: region, workspaceId: workspaceId, spaceId: spaceId,
+                                    workstreamId: workstreamId, substreamId: substreamId)
+        }
         if url.scheme == "rallywithai", url.host == "workstreams" {
             guard let workstreamId = parts.first, !workstreamId.isEmpty, workstreamId != "new" else {
                 return nil

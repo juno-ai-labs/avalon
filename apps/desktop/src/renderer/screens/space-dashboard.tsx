@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, RotateCcw } from 'lucide-react';
+import { Archive, Copy, RotateCcw } from 'lucide-react';
 import { IconChevronsRight } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
@@ -31,6 +31,7 @@ import {
   StatusDot,
 } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
+import { copySpaceLink } from '../lib/copy-workstream-link';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
@@ -48,6 +49,7 @@ import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
  * participant picker, and closing one modal carried the sentence to the next.
  */
 type FailureSlot =
+  | 'copy'
   | 'restore'
   | 'name'
   | 'archive'
@@ -225,14 +227,20 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           actions={reachedThroughChannel ? undefined : space.status === 'active'
             // General is the Organization's fallback home. Its identity,
             // lifecycle and audience are immutable; its name and mark are not.
-            ? (!isGeneral && <IconButton
+            ? <><IconButton
+              label="Copy space link"
+              onClick={() => void copySpaceLink({ region: workspace.region, workspaceId: workspace.id }, space.id).catch(() => {
+                setFailures((current) => ({ ...current, copy: 'The space link could not be copied.' }));
+              })}
+            ><Copy aria-hidden="true" size={15} /></IconButton>
+            {!isGeneral && <IconButton
               className="icon-button-danger"
               disabled={!editable}
               label="Archive space"
               onClick={() => { report('archive', null); setArchiveConfirmOpen(true); }}
             >
               <Archive aria-hidden="true" size={15} />
-            </IconButton>)
+            </IconButton>}</>
             : <Button disabled={directoryFromLocalCache || saving} onClick={() => void save(
               'restore',
               () => api!.restoreSpace(space.id),
@@ -275,6 +283,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
             },
           })}
         />
+        {failures.copy && <InlineError>{failures.copy}</InlineError>}
 
         <SpaceDashboardSection heading="Needs attention" headingId="space-channels-heading">
           {channelPages.isPending
