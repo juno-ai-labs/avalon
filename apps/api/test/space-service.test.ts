@@ -604,6 +604,14 @@ describe("SpaceService intent resumption", () => {
       }),
     });
     const channels = channelDoubles(log);
+    channels.room.readAccessSources = vi.fn(async () => ({
+      direct: { scope: "workspace", participantUserIds: [], observed: true },
+      spaces: [{
+        spaceId: TARGET_SPACE_ID,
+        scope: "personal" as const,
+        participantUserIds: [OWNER],
+      }],
+    }));
 
     await expect(new SpaceService(serviceEnv({
       workspace, conversation: channels.conversation, room: channels.room,
@@ -627,6 +635,14 @@ describe("SpaceService intent resumption", () => {
       `retract:${CHANNEL_ID}`,
       "finalize",
     ]);
+    expect(channels.room.applySpaceAccessSource.mock.calls[0]?.[0]).toMatchObject({
+      spaceId: SPACE_ID,
+      participantUserIds: [OWNER],
+    });
+    expect(channels.room.applySpaceAccessSource.mock.calls[1]?.[0]).toMatchObject({
+      spaceId: TARGET_SPACE_ID,
+      participantUserIds: [OWNER, MEMBER],
+    });
     expect(workspace.finalizeSpaceMembershipMove).toHaveBeenCalledWith(expect.objectContaining({
       operationId: "00000000-0000-7000-8000-0000000000e2",
       sourceSpaceRevision: 3,

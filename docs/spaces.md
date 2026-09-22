@@ -1992,8 +1992,10 @@ intent carries both Space revisions and membership generations and is resumed
 by the existing alarm path. A stale source fence switches that same intent to
 a durable audience-convergence mode rather than spawning separate add and
 remove intents: it restores the source if the fast swap already removed it,
-rebuilds the destination through canonical audience operations, then retires
-the source and finalizes the original membership generations.
+using only the audience already stored on the target rather than the source's
+possibly widened live roster, rebuilds the destination through canonical
+audience operations, then retires the source and finalizes the original
+membership generations.
 
 **Why:** The prior server-side operation removed an HTTP boundary but still
 performed a complete add followed by a complete remove. For the common move

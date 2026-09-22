@@ -2110,10 +2110,6 @@ export class WorkspaceSpaceStorage {
         const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
         return source === false || target === false ? false : { source, target };
       }
-      // The prepare authorized this exact actor and intent; re-checking mutable
-      // Space reach after WorkstreamDO has already moved provenance could make
-      // an authorized operation impossible to finish.
-      const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
       const revisions = this.storage.sql.exec<{
         space_id: string;
         revision: number;
@@ -2214,6 +2210,10 @@ export class WorkspaceSpaceStorage {
       );
       this.advanceWaterline(now);
       this.settleIntent(request.operationId, "membership_moved", true, now);
+      // Both summaries are read after the membership switch so their counts
+      // describe the same committed result. The persisted move intent, not
+      // mutable reach, authorized this exact actor and set of fences.
+      const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
       const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
       return source === false || target === false ? false : { source, target };
     });
