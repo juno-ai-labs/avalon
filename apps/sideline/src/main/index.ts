@@ -6,6 +6,7 @@ import {
   type Session,
 } from "@rally/contracts";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
+import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
 import {
   app,
@@ -26,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
 import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
+import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
 
 const API_BASE_URL = (
   process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
@@ -390,9 +392,15 @@ ipcMain.handle("sideline:send", async (event, raw) => {
     } satisfies SidelineSendResult;
   }
   try {
-    const response = SidelineSendResponseSchema.parse(await authenticated(
-      "/sideline/messages",
-      { method: "POST", body: JSON.stringify(input) },
+    if (!session) throw new Error("Sign in to use Sideline");
+    const request = sidelineHttpSend(session.user.id, input);
+    const response = sidelineHttpSendResponse(request.kind, await authenticated(
+      request.path,
+      {
+        method: "POST",
+        ...(request.kind === "self" ? { headers: { [RALLY_HEADERS.OPERATION_ID]: request.operationId } } : {}),
+        body: JSON.stringify(request.body),
+      },
     ));
     return { ok: true, response } satisfies SidelineSendResult;
   } catch (error) {

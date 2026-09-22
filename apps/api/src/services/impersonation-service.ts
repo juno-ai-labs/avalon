@@ -106,10 +106,7 @@ export class ImpersonationService {
     ]);
     if (!workspace) throw new ApiError(403, "workspace_unavailable", "This Organization is unavailable");
 
-    const participants = (await Promise.all(relationships.map(async (relationship) => {
-      const member = await this.activeMember(relationship.representedUserId);
-      if (!member) return null;
-      const auth = representedAuth(this.operator, member);
+    const participant = async (member: ActiveMember, auth: AuthContext) => {
       const directory = new WorkstreamDirectoryService(this.env, auth);
       const workstreams = [];
       let cursor: string | undefined;
@@ -145,7 +142,18 @@ export class ImpersonationService {
         }))];
       }))).flat();
       return { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl, destinations };
-    }))).filter((participant): participant is NonNullable<typeof participant> => participant !== null);
+    };
+    const [operatorParticipant, representedCandidates] = await Promise.all([
+      participant(operator, this.operator),
+      Promise.all(relationships
+        .filter((relationship) => relationship.representedUserId !== operator.userId)
+        .map(async (relationship) => {
+          const member = await this.activeMember(relationship.representedUserId);
+          return member ? participant(member, representedAuth(this.operator, member)) : null;
+        })),
+    ]);
+    const represented = representedCandidates.filter((value): value is NonNullable<typeof value> => value !== null);
+    const participants = [operatorParticipant, ...represented];
 
     return SidelineCatalogSchema.parse({
       workspace: { id: this.operator.workspaceId, name: workspace.name },
@@ -154,7 +162,30 @@ export class ImpersonationService {
     });
   }
 
-  async send(input: SidelineSendRequest): Promise<SidelineSendResponse> {
+  async send(input: SidelineSendRequest, requestReceivedAt?: number): Promise<SidelineSendResponse> {
+    if (input.representedUserId === this.operator.userId) {
+      await this.requireOperator();
+      const conversations = new ConversationService(this.env, this.operator);
+      const parent = await conversations.resolveParent(input.workstreamId);
+      if (parent.kind !== "workstream") {
+        throw new ApiError(404, "destination_not_found", "This destination is no longer available");
+      }
+      const client = await conversations.writableClient(input.workstreamId, input.substreamId);
+      const receipt = await client.createMessage({
+        text: input.message,
+        clientMessageId: input.idempotencyKey,
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+        telemetryOperationId: input.idempotencyKey,
+        ...(requestReceivedAt !== undefined ? { telemetryRequestReceivedAt: requestReceivedAt } : {}),
+        telemetryJourney: "message_send",
+      });
+      return SidelineSendResponseSchema.parse({
+        messageId: receipt.turn.turnId,
+        createdAt: receipt.turn.createdAt,
+      });
+    }
     const contentDigest = await sha256Hex(input.message);
     const correlation = await sha256Hex([
       this.operator.workspaceId,
