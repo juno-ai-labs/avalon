@@ -90,6 +90,27 @@ describe('SpacesSidebar', () => {
     expect(onSelect).toHaveBeenCalledWith('launch');
   });
 
+  it('keeps Space scope but no Channel count in compact row previews', async () => {
+    renderSidebar({ collapsed: true });
+    const general = screen.getByRole('link', { name: 'General' });
+    const launch = screen.getByRole('link', { name: 'Launch' });
+
+    fireEvent.focus(general);
+    const generalPreview = await screen.findByRole('tooltip');
+    expect(generalPreview).toHaveTextContent('General');
+    expect(generalPreview).toHaveTextContent('Organization space');
+    expect(generalPreview).not.toHaveTextContent('3 channels');
+
+    fireEvent.blur(general);
+    fireEvent.focus(launch);
+    await waitFor(
+      () => expect(screen.getByRole('tooltip')).toHaveTextContent('Launch'),
+      { timeout: 5_000 },
+    );
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Organization space');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('1 channel');
+  });
+
   it('describes the keyboard gesture that reorders Spaces', () => {
     renderSidebar();
 
