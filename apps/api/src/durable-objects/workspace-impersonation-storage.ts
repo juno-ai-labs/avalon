@@ -46,9 +46,8 @@ export class WorkspaceImpersonationStorage {
           `INSERT INTO workspace_impersonation_relationships
              (workspace_id, impersonator_user_id, represented_user_id, authority_basis, created_at, revoked_at)
            VALUES (?, ?, ?, ?, ?, NULL)
-           ON CONFLICT(workspace_id, impersonator_user_id, represented_user_id)
-           DO UPDATE SET authority_basis = excluded.authority_basis,
-                         created_at = excluded.created_at,
+           ON CONFLICT(workspace_id, impersonator_user_id, represented_user_id, authority_basis)
+           DO UPDATE SET created_at = excluded.created_at,
                          revoked_at = NULL`,
           input.workspaceId,
           item.impersonatorUserId,
@@ -66,7 +65,9 @@ export class WorkspaceImpersonationStorage {
       `SELECT workspace_id, impersonator_user_id, represented_user_id, authority_basis, created_at, revoked_at
          FROM workspace_impersonation_relationships
         WHERE workspace_id = ? AND impersonator_user_id = ? AND represented_user_id = ?
-          AND revoked_at IS NULL`,
+          AND revoked_at IS NULL
+        ORDER BY created_at DESC, authority_basis
+        LIMIT 1`,
       workspaceId,
       impersonatorUserId,
       representedUserId,
@@ -75,14 +76,17 @@ export class WorkspaceImpersonationStorage {
   }
 
   list(workspaceId: string, impersonatorUserId: string): ImpersonationRelationship[] {
-    return this.sql.exec<RelationshipRow>(
+    const rows = this.sql.exec<RelationshipRow>(
       `SELECT workspace_id, impersonator_user_id, represented_user_id, authority_basis, created_at, revoked_at
          FROM workspace_impersonation_relationships
         WHERE workspace_id = ? AND impersonator_user_id = ? AND revoked_at IS NULL
-        ORDER BY represented_user_id`,
+        ORDER BY represented_user_id, created_at DESC, authority_basis`,
       workspaceId,
       impersonatorUserId,
-    ).toArray().map(relationship);
+    ).toArray();
+    const unique = new Map<string, RelationshipRow>();
+    for (const row of rows) unique.set(row.represented_user_id, unique.get(row.represented_user_id) ?? row);
+    return [...unique.values()].map(relationship);
   }
 
   revoke(input: {
@@ -92,6 +96,9 @@ export class WorkspaceImpersonationStorage {
     representedUserId?: string;
     now: string;
   }): { revoked: number } {
+    if (!input.authorityBasis && !input.impersonatorUserId && !input.representedUserId) {
+      throw new Error("impersonation_revocation_filter_required");
+    }
     const filters = ["workspace_id = ?", "revoked_at IS NULL"];
     const values: string[] = [input.workspaceId];
     if (input.authorityBasis) { filters.push("authority_basis = ?"); values.push(input.authorityBasis); }

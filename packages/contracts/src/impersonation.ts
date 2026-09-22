@@ -36,7 +36,10 @@ export const RevokeImpersonationRelationshipsRequestSchema = z.strictObject({
   authorityBasis: z.string().min(1).max(180).optional(),
   impersonatorUserId: UserIdSchema.optional(),
   representedUserId: UserIdSchema.optional(),
-});
+}).refine(
+  (value) => Boolean(value.authorityBasis || value.impersonatorUserId || value.representedUserId),
+  { message: "At least one revocation filter is required" },
+);
 export type RevokeImpersonationRelationshipsRequest = z.infer<typeof RevokeImpersonationRelationshipsRequestSchema>;
 
 export const SidelineDestinationSchema = z.strictObject({

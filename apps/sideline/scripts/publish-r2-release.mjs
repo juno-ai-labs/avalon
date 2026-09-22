@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -102,6 +103,10 @@ if (liveFeed && compareVersions(liveFeed.version, release.feed.version) > 0) {
 }
 
 if (liveFeed?.version === release.feed.version) {
+  const localFeedText = await readFile(release.manifestPath, 'utf8');
+  if (liveFeedText !== localFeedText) {
+    throw new Error(`Published Sideline ${release.feed.version} does not match this build`);
+  }
   for (const file of liveFeed.files) {
     await verifyPublicReleaseArtifactHash({ expectedHash: file.sha512, url: publicUrl(file.url) });
   }
