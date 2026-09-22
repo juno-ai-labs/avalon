@@ -3,6 +3,13 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WorkstreamLandingScreen } from './workstream-landing';
+import { layoutKey } from '../lib/desktop-layout';
+
+vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
+  session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
+}) }));
+const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string }[] } | undefined }));
+vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces }) }));
 
 const socket = vi.hoisted(() => ({ state: 'connecting' }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
@@ -27,7 +34,8 @@ function stream(id: string, pinPosition: number | null, lastActivityAt: string):
 }
 
 function Destination(): React.JSX.Element {
-  return <div data-testid="destination">{useLocation().pathname}</div>;
+  const location = useLocation();
+  return <div data-testid="destination">{location.pathname}{location.search}</div>;
 }
 
 function Router({ initial = '/' }: { initial?: string | { pathname: string; state: unknown } }): React.JSX.Element {
@@ -39,11 +47,46 @@ function Router({ initial = '/' }: { initial?: string | { pathname: string; stat
 
 describe('default channel landing', () => {
   beforeEach(() => {
+    localStorage.clear();
+    spaces.data = undefined;
     directory.data = undefined;
     directory.error = null;
     directory.hasMore = false;
     directory.fetchMore = vi.fn();
     socket.state = 'connecting';
+  });
+
+  it('resumes the last reachable breakout and ignores a stale Channel', async () => {
+    directory.data = [stream('recent', null, '2026-09-05'), stream('saved', null, '2026-08-01')];
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved?substream=child');
+    const view = render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved?substream=child');
+    view.unmount();
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/gone');
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
+  });
+
+  it('waits for the Space directory before resuming a saved Space', async () => {
+    directory.data = [stream('recent', null, '2026-09-05')];
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
+    const view = render(<Router />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
+    spaces.data = { items: [{ id: 'saved' }] };
+    view.rerender(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/saved');
+  });
+
+  it('pages to a saved Channel beyond the opening directory page', async () => {
+    directory.data = [stream('recent', null, '2026-09-05')];
+    directory.hasMore = true;
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved');
+    const view = render(<Router />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    directory.data = [stream('recent', null, '2026-09-05'), stream('saved', null, '2026-08-01')];
+    view.rerender(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved');
   });
 
   it('waits for the directory and opens the most recent Channel even if cached legacy pins remain', async () => {

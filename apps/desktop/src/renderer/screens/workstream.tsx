@@ -10,6 +10,7 @@ import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
 import { desktopBridge } from '../lib/platform';
+import { layoutKey } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
@@ -495,6 +496,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
+          scrollStateKey={layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`)}
           mainVisible={!guest || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
           onRefreshSidekicks={context.refreshSidekicks}

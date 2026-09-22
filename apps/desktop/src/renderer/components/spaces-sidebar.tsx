@@ -27,6 +27,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
+import { useSemanticScroll } from '../lib/desktop-layout';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
@@ -37,6 +38,7 @@ import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
 interface SpacesSidebarProps {
+  scrollStateKey?: string;
   accountSlotRef: (element: HTMLDivElement | null) => void;
   availableWidth: number;
   sidekickSlotRef: (element: HTMLDivElement | null) => void;
@@ -84,6 +86,7 @@ const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
  */
 export function SpacesSidebar({
   accountSlotRef,
+  scrollStateKey = 'rally.desktop-layout:spaces-scroll',
   availableWidth,
   sidekickSlotRef,
   collapsed,
@@ -117,6 +120,7 @@ export function SpacesSidebar({
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  useSemanticScroll(scrollRef, scrollStateKey, '[data-space-id]', ready && !loading);
   const revealedRevision = useRef<number | null>(null);
   const onNewChannelRoute = currentPath === '/workstreams/new';
   const commandRef = useRef<HTMLDivElement | null>(null);
@@ -363,6 +367,7 @@ export function SpacesSidebar({
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
                   data-space-id={space.id}
+                  data-layout-id={space.id}
                   draggable={!readOnly}
                   onDragEnd={(event: DragEvent<HTMLElement>) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
