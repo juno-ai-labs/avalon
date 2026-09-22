@@ -298,6 +298,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
+              description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
               title={workstream.title}
             />
@@ -369,6 +370,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 type="button"
               >
                 <SidebarNavigationRowContent
+                  description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
                   icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />}
                   title={child.title}
                 />
