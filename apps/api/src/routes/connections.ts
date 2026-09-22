@@ -141,7 +141,7 @@ const googleCallback = z.object({
   code: z.string().min(1).optional(),
   state: z.string().min(20),
   error: z.string().min(1).optional(),
-  picked_file_ids: z.string().max(5_000).optional(),
+  picked_file_ids: z.string().optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const slackLink = z.object({ token: z.string().min(20).max(500) });
 /**
@@ -354,7 +354,7 @@ connectionRoutes.post(
   async (c) => c.json(ConnectorResourceAuthorizationStartSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).beginResourceAuthorization(
       c.req.valid("param").id,
-      c.req.valid("json").request,
+      c.req.valid("json").target,
       desktopHandoffVersion(c),
     ),
   )),

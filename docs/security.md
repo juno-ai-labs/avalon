@@ -387,6 +387,10 @@ work-stream object, and refused by every socket-ticket issuer (see
 demo seeder asserts a cast member's authority the same way under
 `principal: "demo_seed"`, verified and refused identically; only server code
 constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
+The resource-grant callback similarly uses the server-only
+`principal: "resource_authorization"` after verifying OAuth state, connection
+authority, and current membership; ordinary participants cannot supply its
+reserved continuation-message ID.
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every work stream in that workspace and execute as the

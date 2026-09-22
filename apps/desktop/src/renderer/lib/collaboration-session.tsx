@@ -19,6 +19,8 @@ export interface PendingConnectorOAuth {
 export interface ConnectorSetupCapability {
   pendingConnectorOAuth: PendingConnectorOAuth | null;
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
+  resourceAuthorizationAttempts: Readonly<Record<string, PendingConnectorOAuth>>;
+  setResourceAuthorizationAttempt: (key: string, attempt: PendingConnectorOAuth | null) => void;
   openExternal: (url: string) => Promise<void>;
 }
 

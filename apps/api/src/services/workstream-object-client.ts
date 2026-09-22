@@ -10,6 +10,7 @@ import {
   WorkstreamSchema,
   TranscriptTurnSchema,
   WorkstreamMessageAdmissionReceiptSchema,
+  ConnectorResourceAuthorizationRequestSchema,
   type Elicitation,
   asSubstreamId,
   asWorkspaceId,
@@ -267,6 +268,12 @@ export class WorkstreamObjectClient {
     return z.object({ title: z.string(), turns: z.array(TranscriptTurnSchema) }).parse(
       await this.request({ operation: "search_turns", turnIds }),
     );
+  }
+
+  async readResourceAuthorizationRecovery(toolCallId: string) {
+    return z.strictObject({ recovery: ConnectorResourceAuthorizationRequestSchema.nullable() }).parse(
+      await this.request({ operation: "read_resource_authorization_recovery", toolCallId }),
+    ).recovery;
   }
 
   /** Detail plus its canonical ordered transcript opening snapshot. */

@@ -286,6 +286,7 @@ export interface WorkstreamConnection {
   connectorType: string;
   displayName: string;
   scope: Scope;
+  ownerUserId?: string;
   ownerName?: string;
   /** API states only; `missing` is derived by the renderer from an empty resolved list. */
   status: 'healthy' | 'reconnect_required' | 'disabled';

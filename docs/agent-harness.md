@@ -1242,6 +1242,10 @@ the mutation before its response failed validation.
 
 The harness reads that half by shape through `readStructuredFailure` in `@rally/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
+The validated `resourceAuthorization` recovery hint is also forwarded, but only
+to the durable failed-tool block for the desktop card; it is not model-visible
+provider data.
+
 Separately, Product analytics records a content-free `agent_tool_started` only
 after the execution plan is durable and replay/ambiguity checks permit a new
 invocation. It carries the canonical tool, plugin, capability, mode, run kind,

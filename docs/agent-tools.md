@@ -410,7 +410,8 @@ Two different jobs:
 
   The shared typed-failure allowlist is `reason`, `field`, `expected`,
   `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`,
-  `attachmentKind`, and `suggestedCall`. Use only the subset the tool needs;
+  `attachmentKind`, `suggestedCall`, and a validated `resourceAuthorization`
+  recovery hint. Use only the subset the tool needs;
   `reason` is the general bounded next-step field, while the last three exist for
   attachment recovery. An adapter-only `hint`, path, or provider-detail field is
   silently stripped unless contracts, runtime, and tests add it to that shared

@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   getConnectorOAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
   pendingConnectorOAuth: null as null | Record<string, unknown>,
+  resourceAuthorizationAttempts: {} as Record<string, Record<string, unknown>>,
+  setResourceAuthorizationAttempt: vi.fn(),
   reconnectConnection: vi.fn(),
   // `workspaceRole` is what the card actually gates on: the role served by
   // `GET /workspace`, not the one stamped on the desktop session, because a
@@ -59,7 +61,10 @@ vi.mock('../lib/collaboration-session', () => ({
     },
     session: mocks.session,
     connectorSetup: mocks.setupEnabled ? { pendingConnectorOAuth: mocks.pendingConnectorOAuth,
-      setPendingConnectorOAuth: mocks.setPendingConnectorOAuth, openExternal: mocks.openExternal } : null,
+      setPendingConnectorOAuth: mocks.setPendingConnectorOAuth,
+      resourceAuthorizationAttempts: mocks.resourceAuthorizationAttempts,
+      setResourceAuthorizationAttempt: mocks.setResourceAuthorizationAttempt,
+      openExternal: mocks.openExternal } : null,
   }),
 }));
 vi.mock('../lib/platform', () => ({
@@ -70,6 +75,7 @@ vi.mock('../lib/platform', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.pendingConnectorOAuth = null;
+  mocks.resourceAuthorizationAttempts = {};
   mocks.setupEnabled = true;
   mocks.workspaceRole = 'owner';
   mocks.getAvailableConnectorTypes.mockResolvedValue(['google', 'github', 'granola', 'linear', 'notion', 'slack']);
@@ -95,9 +101,11 @@ describe('connector connection resolution', () => {
       capability: 'sheets.write',
       operation: 'edit',
       resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
+      parentKind: 'workstream',
       parentId: '00000000-0000-7000-8000-000000000002',
       substreamId: '0',
       failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
+      continuationId: '00000000-0000-4000-8000-000000000040',
     };
     expect(connectorResourceAuthorizationRequest({
       toolEvent: { status: 'failed', output: { recovery } },
@@ -121,6 +129,7 @@ describe('connector connection resolution', () => {
       parentId: '00000000-0000-7000-8000-000000000002',
       substreamId: '0',
       failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
+      continuationId: '00000000-0000-4000-8000-000000000040',
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -131,6 +140,7 @@ describe('connector connection resolution', () => {
           connectorType: 'google',
           displayName: 'Google Drive + Docs + Sheets',
           scope: 'you',
+          ownerUserId: 'user-one',
           status: 'healthy',
           capabilities: ['sheets.write'],
         }]}>

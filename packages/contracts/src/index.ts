@@ -3926,26 +3926,35 @@ export const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
 export const ConnectorResourceAuthorizationHintSchema = z.strictObject({
   kind: z.literal("connector_resource_authorization"),
   provider: ConnectorOAuthProviderSchema,
-  capability: z.string().min(1).max(160),
+  capability: z.string().min(1),
   operation: z.enum(["edit"]),
   resource: z.strictObject({
-    id: z.string().min(1).max(500),
+    id: z.string().min(1),
     type: z.string().regex(/^[a-z0-9_]{1,80}$/u),
-    name: z.string().min(1).max(500),
+    name: z.string().min(1),
   }),
 });
 export type ConnectorResourceAuthorizationHint = z.infer<typeof ConnectorResourceAuthorizationHintSchema>;
 
 export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuthorizationHintSchema.extend({
   connectionId: IdSchema,
+  parentKind: ConversationParentKindSchema.default("workstream"),
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
-  failedToolInvocationId: z.string().min(1).max(97),
+  failedToolInvocationId: z.string().min(1),
+  continuationId: z.string().uuid(),
 });
 export type ConnectorResourceAuthorizationRequest = z.infer<typeof ConnectorResourceAuthorizationRequestSchema>;
 
+export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
+  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentId: IdSchema,
+  substreamId: SubstreamIdSchema,
+  failedToolInvocationId: z.string().min(1),
+});
+export type ConnectorResourceAuthorizationTarget = z.infer<typeof ConnectorResourceAuthorizationTargetSchema>;
 export const StartConnectorResourceAuthorizationRequestSchema = z.strictObject({
-  request: ConnectorResourceAuthorizationRequestSchema,
+  target: ConnectorResourceAuthorizationTargetSchema,
 });
 export type StartConnectorResourceAuthorizationRequest = z.infer<typeof StartConnectorResourceAuthorizationRequestSchema>;
 export const ConnectorResourceAuthorizationStartSchema = z.strictObject({

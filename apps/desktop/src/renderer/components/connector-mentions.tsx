@@ -97,16 +97,18 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
   const viewerIsAdmin = useViewerIsWorkspaceAdmin(collaboration);
   const connections = useConnectorConnections();
   const connection = connections?.find((candidate) => candidate.id === request.connectionId);
+  const connectionUnavailable = connections !== undefined && !connection;
   const key = `${request.connectionId}:${request.resource.id}:${request.failedToolInvocationId}`;
-  const awaiting = setup?.pendingConnectorOAuth?.source === 'resource'
-    && setup.pendingConnectorOAuth.resourceAuthorizationKey === key;
-  const status = awaiting ? setup.pendingConnectorOAuth?.resourceAuthorizationStatus : undefined;
+  const attempt = setup?.resourceAuthorizationAttempts[key];
+  const awaiting = Boolean(attempt);
+  const status = attempt?.resourceAuthorizationStatus;
   const workspaceAdminRequired = connection?.scope === 'workspace' && !viewerIsAdmin;
+  const personalOwnerRequired = connection?.scope === 'you' && connection.ownerUserId !== session?.user?.id;
   const mutation = useMutation({
     mutationFn: async () => {
       if (!api || !setup || !session?.workspace) throw new Error('Rally is not ready to authorize this resource.');
       const started = await api.startConnectorResourceAuthorization(request);
-      setup.setPendingConnectorOAuth({
+      setup.setResourceAuthorizationAttempt(key, {
         attemptId: started.attemptId,
         provider: ConnectorOAuthProviderSchema.parse(request.provider),
         region: session.workspace.region,
@@ -119,7 +121,7 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
         try {
           await setup.openExternal(started.url);
         } catch (error) {
-          setup.setPendingConnectorOAuth({
+          setup.setResourceAuthorizationAttempt(key, {
             attemptId: started.attemptId,
             provider: ConnectorOAuthProviderSchema.parse(request.provider),
             region: session.workspace.region,
@@ -135,27 +137,28 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
     },
   });
   useEffect(() => {
-    if (!awaiting || !api || !setup?.pendingConnectorOAuth || status !== 'pending') return;
+    if (!awaiting || !api || !attempt || status !== 'pending') return;
     let cancelled = false;
     const reconcile = async (): Promise<void> => {
       try {
-        const attempt = await api.getConnectorOAuthAttempt(setup.pendingConnectorOAuth!.attemptId);
-        if (cancelled || attempt.status === 'pending') return;
-        setup.setPendingConnectorOAuth({
-          ...setup.pendingConnectorOAuth!,
-          resourceAuthorizationStatus: attempt.status,
+        const latest = await api.getConnectorOAuthAttempt(attempt.attemptId);
+        if (cancelled || latest.status === 'pending') return;
+        setup.setResourceAuthorizationAttempt(key, {
+          ...attempt,
+          resourceAuthorizationStatus: latest.status,
         });
       } catch {
         // Returning focus or the realtime authorization message reconciles it again.
       }
     };
     const onFocus = (): void => { void reconcile(); };
+    void reconcile();
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
-  }, [api, awaiting, setup, status]);
+  }, [api, attempt, awaiting, key, setup, status]);
   useEffect(() => {
-    if (status === 'succeeded') onAuthorized?.(request.failedToolInvocationId);
-  }, [onAuthorized, request.failedToolInvocationId, status]);
+    if (status === 'succeeded') onAuthorized?.(request.continuationId);
+  }, [onAuthorized, request.continuationId, status]);
   const succeeded = latchedAuthorized || status === 'succeeded';
   const pending = mutation.isPending || status === 'pending';
   const providerName = request.provider === 'google'
@@ -181,17 +184,22 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
         ) : (
           <Button
             className="connector-connection-card-action button-primary"
-            disabled={!api || !setup || pending || workspaceAdminRequired}
+            disabled={!api || !setup || pending || workspaceAdminRequired || personalOwnerRequired || connectionUnavailable}
             onClick={() => mutation.mutate()}
-            title={workspaceAdminRequired ? 'Only an organization owner or admin can authorize an organization resource.' : undefined}
+            title={workspaceAdminRequired ? 'Only an organization owner or admin can authorize an organization resource.'
+              : personalOwnerRequired || connectionUnavailable ? 'Only the connection owner can authorize this resource.' : undefined}
           >
             {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            {pending ? `Waiting for ${providerName}…` : workspaceAdminRequired ? 'Admin required' : 'Allow editing'}
+            {pending ? `Waiting for ${providerName}…` : !setup ? 'Open in desktop'
+              : workspaceAdminRequired ? 'Admin required'
+              : personalOwnerRequired || connectionUnavailable ? 'Owner required' : 'Allow editing'}
           </Button>
         )}
       </div>
       {!succeeded && status === 'denied' ? <InlineError>Authorization was not granted. Try again when you’re ready.</InlineError> : null}
       {!succeeded && status === 'failed' ? <InlineError>Rally could not confirm the authorization. Try again.</InlineError> : null}
+      {!succeeded && !setup ? <InlineError>Open this channel in Rally desktop to authorize editing.</InlineError> : null}
+      {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <InlineError>Only the owner of this connection can authorize editing.</InlineError> : null}
       {!succeeded && mutation.error && status !== 'failed' ? <InlineError>Rally could not start authorization. Try again.</InlineError> : null}
     </article>
   );
