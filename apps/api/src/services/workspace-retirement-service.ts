@@ -114,10 +114,22 @@ export async function retireWorkspaceGraph(
     reason: input.reason,
   };
 
+  const demo = await env.DB.prepare(
+    "SELECT operation_id FROM demo_operations WHERE workspace_id = ?",
+  ).bind(input.workspaceId).first<{ operation_id: string }>();
+
   // Closes the workspace and captures the graph in one call. On a resumed pass
   // this returns what the first pass recorded rather than re-reading directories
   // that now refuse.
-  await workspace.beginWorkspaceRetirement(tombstone);
+  await workspace.beginWorkspaceRetirement({
+    ...tombstone,
+    ...(demo ? {
+      impersonationRevocation: {
+        workspaceId: input.workspaceId,
+        authorityBasis: `demo:${demo.operation_id}`,
+      },
+    } : {}),
+  });
   const progress = await workspace.workspaceRetirementProgress();
 
   const receipt: WorkspaceRetirementReceipt = {
@@ -236,15 +248,6 @@ export async function retireWorkspaceGraph(
   // retired object to ask it. A workspace this feature never made has no row,
   // and the update is a no-op for it.
   if (receipt.complete) {
-    const demo = await env.DB.prepare(
-      "SELECT operation_id FROM demo_operations WHERE workspace_id = ?",
-    ).bind(input.workspaceId).first<{ operation_id: string }>();
-    if (demo) {
-      await workspace.revokeImpersonationRelationships({
-        workspaceId: input.workspaceId,
-        authorityBasis: `demo:${demo.operation_id}`,
-      });
-    }
     await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
   }
 

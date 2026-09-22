@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SidelineSendRequestSchema, type SidelineCatalog } from "@rally/contracts";
 import {
   SidelineComposer,
@@ -33,16 +33,20 @@ export default function App(): React.JSX.Element {
   const [cards, setCards] = useState<SidelineCardModel[]>([newCard()]);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "denied" | "offline" | "error">("loading");
   const [statusMessage, setStatusMessage] = useState<string>();
+  const catalogGeneration = useRef(0);
 
   const load = useCallback(async () => {
     if (!session) return;
+    const generation = ++catalogGeneration.current;
     setStatus("loading");
     try {
       const next = await window.sideline.catalog();
+      if (generation !== catalogGeneration.current) return;
       setCatalog(next);
       setStatus(next.participants.length ? "ready" : "empty");
       setStatusMessage(next.participants.length ? undefined : "This Organization has no eligible participant.");
     } catch (error) {
+      if (generation !== catalogGeneration.current) return;
       const offline = isOffline(error);
       setStatus(offline ? "offline" : "error");
       setStatusMessage(offline ? "Sideline is offline. Drafts remain available." : messageOf(error));
@@ -50,8 +54,12 @@ export default function App(): React.JSX.Element {
   }, [session]);
 
   useEffect(() => {
-    void window.sideline.getSession().then(setSession);
+    const generation = catalogGeneration.current;
+    void window.sideline.getSession().then((next) => {
+      if (generation === catalogGeneration.current) setSession(next);
+    });
     return window.sideline.onSessionChanged((next) => {
+      catalogGeneration.current += 1;
       setSession(next);
       setCatalog(null);
       setCards([newCard()]);

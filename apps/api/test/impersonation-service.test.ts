@@ -19,6 +19,7 @@ const harness = vi.hoisted(() => ({
   operatorEmail: "operator@rallywith.ai",
   inactiveUserIds: new Set<string>(),
   auditFails: false,
+  resultAuditFails: false,
   createMessage: vi.fn(),
 }));
 
@@ -71,7 +72,9 @@ function environment(): Env {
       const statement: D1PreparedStatement = createTestD1PreparedStatement({
         bind: (...next): D1PreparedStatement => { values = next; return statement; },
         run: async () => {
-          if (harness.auditFails) throw new Error("audit unavailable");
+          if (harness.auditFails || (harness.resultAuditFails && sql.includes("impersonation.message.result"))) {
+            throw new Error("audit unavailable");
+          }
           harness.audit.push({ sql, values });
           harness.order.push(sql.includes("impersonation.message.attempt") ? "audit-attempt" : "audit-result");
           return createTestD1Result({ success: true, results: [], meta: { changes: 1 } });
@@ -106,6 +109,7 @@ beforeEach(() => {
   harness.operatorEmail = "operator@rallywith.ai";
   harness.inactiveUserIds.clear();
   harness.auditFails = false;
+  harness.resultAuditFails = false;
   harness.createMessage.mockReset().mockImplementation(async () => {
     harness.order.push("message-admission");
     return { turn: { turnId: "00000000-0000-7000-8000-00000000b006", createdAt: "2026-09-21T12:00:00.000Z" } };
@@ -188,5 +192,44 @@ describe("impersonation message admission", () => {
 
     expect(harness.createMessage).not.toHaveBeenCalled();
     expect(harness.order).toEqual([]);
+  });
+
+  it("records each retry resolution separately while keeping the exact-request attempt stable", async () => {
+    harness.createMessage
+      .mockRejectedValueOnce(new Error("conversation_not_ready"))
+      .mockResolvedValueOnce({
+        turn: { turnId: "00000000-0000-7000-8000-00000000b006", createdAt: "2026-09-21T12:00:00.000Z" },
+      });
+
+    await expect(new ImpersonationService(environment(), auth).send(request)).rejects.toThrow("conversation_not_ready");
+    await expect(new ImpersonationService(environment(), auth).send(request)).resolves.toMatchObject({
+      messageId: "00000000-0000-7000-8000-00000000b006",
+    });
+
+    const attempts = harness.audit.filter(({ sql }) => sql.includes("impersonation.message.attempt"));
+    const results = harness.audit.filter(({ sql }) => sql.includes("impersonation.message.result"));
+    expect(attempts.map(({ values }) => values[0])).toEqual([attempts[0]?.values[0], attempts[0]?.values[0]]);
+    expect(new Set(results.map(({ values }) => values[0]))).toHaveProperty("size", 2);
+    expect(JSON.stringify(results)).toContain("message_admission_failed");
+    expect(JSON.stringify(results)).toContain("accepted");
+  });
+
+  it("does not misclassify an accepted turn when its result audit is unavailable", async () => {
+    harness.resultAuditFails = true;
+
+    await expect(new ImpersonationService(environment(), auth).send(request)).rejects.toThrow("audit unavailable");
+
+    expect(harness.createMessage).toHaveBeenCalledOnce();
+    expect(JSON.stringify(harness.audit)).not.toContain("message_admission_failed");
+  });
+
+  it("does not put an unvalidated destination in the audit index column", async () => {
+    harness.parentKind = "space";
+
+    await expect(new ImpersonationService(environment(), auth).send(request)).rejects.toMatchObject({
+      code: "destination_not_found",
+    });
+
+    expect(harness.audit.map(({ values }) => values[3])).toEqual([null, null]);
   });
 });

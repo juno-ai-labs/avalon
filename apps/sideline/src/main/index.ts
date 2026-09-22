@@ -16,7 +16,9 @@ import { fileURLToPath } from "node:url";
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
 import { initializeSidelineUpdater } from "./updater";
 
-const API_BASE_URL = (process.env.VITE_API_GLOBAL_URL ?? "http://127.0.0.1:8787").replace(/\/$/u, "");
+const API_BASE_URL = (
+  process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
+).replace(/\/$/u, "");
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_STATE;
 const SESSION_FILE = "sideline-session.bin";
@@ -220,7 +222,9 @@ async function beginSignIn(): Promise<void> {
     body: JSON.stringify({ returnUri: SIDELINE_AUTH_CALLBACK_URI, desktopAttemptId: attemptId, desktopCodeChallenge: challenge }),
   }) as { url?: unknown };
   if (typeof started.url !== "string") throw new Error("Rally returned an invalid sign-in URL");
-  await shell.openExternal(started.url);
+  const authorizationUrl = new URL(started.url);
+  if (authorizationUrl.protocol !== "https:") throw new Error("Rally returned an invalid sign-in URL");
+  await shell.openExternal(authorizationUrl.toString());
 }
 
 async function handleCallback(raw: string): Promise<void> {
@@ -285,12 +289,17 @@ else {
     mainWindow?.show();
   });
   app.on("open-url", (event, url) => { event.preventDefault(); void handleCallback(url); });
+  app.on("activate", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+    else mainWindow = createWindow();
+  });
   void app.whenReady().then(async () => {
     app.setAsDefaultProtocolClient("sideline");
     session = VISUAL_STATE ? null : await loadSession();
     mainWindow = createWindow();
     initializeSidelineUpdater({
       isPackaged: app.isPackaged,
+      isReleaseBuild: process.env.SIDELINE_RELEASE_BUILD === "true",
       platform: process.platform,
       arch: process.arch,
       showMessageBox: (options) => mainWindow && !mainWindow.isDestroyed()
@@ -326,7 +335,11 @@ ipcMain.handle("sideline:catalog", async (event) => {
 });
 ipcMain.handle("sideline:send", async (event, raw) => {
   assertSender(event);
-  const input = SidelineSendRequestSchema.parse(raw);
+  const parsed = SidelineSendRequestSchema.parse(raw);
+  const input = SidelineSendRequestSchema.parse({
+    ...parsed,
+    app: { ...parsed.app, version: app.getVersion() },
+  });
   if (VISUAL_STATE === "sending") {
     return new Promise<SidelineSendResult>((resolve) => setTimeout(() => resolve({
       ok: true,
