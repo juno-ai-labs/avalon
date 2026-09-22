@@ -3234,6 +3234,10 @@ pre {
 .waiting-workstream-row .status-indicator { font-size: 10.5px; min-width: 0; }
 .waiting-workstream-row .status-indicator > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .waiting-workstream-projects { align-items: center; display: flex; min-width: 20px; }
+.waiting-conversation-identity { align-items: center; display: inline-flex; gap: 4px; min-width: 17px; }
+.waiting-conversation-icon { align-items: center; display: inline-flex; justify-content: center; }
+.waiting-conversation-icon .workstream-glyph-icon { height: 8px; width: 8px; }
+.waiting-conversation-arrow { color: var(--av-ref-color-neutral-8); flex: none; }
 .waiting-workstream-copy { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
 .waiting-workstream-copy strong { color: var(--av-sys-color-text-subtle); flex: 0 1 auto; font-size: 12px; font-weight: 530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .waiting-workstream-copy > span { color: var(--av-ref-color-neutral-9); flex: 1; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5499,21 +5503,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-dashboard-section-heading h2 { font-size: 16px; margin: 0; }
 .space-dashboard-section-copy { min-width: 0; }
 .space-dashboard-header-actions { display: flex; gap: 8px; }
-/* A breakout on the Space dashboard: the same row as its Channel, marked with
-   the ↳ the middle column already uses for one.
-
-   The mark sits inside the copy rather than in a grid track of its own. The
-   row's template differs between the wide and narrow layouts, so a track would
-   have had to be placed twice and would have landed in the chevron slot the
-   one time it was got wrong; inside the copy it is a flex child and the
-   arithmetic disappears. It keeps its size where the sibling spans are
-   `flex: 1`, and it survives the narrow layout where they are hidden — the
-   parent Channel's name is the first thing to drop at that width, but without
-   the mark the row would stop saying it is a breakout at all. */
-.space-breakout-row .space-breakout-mark { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; }
-@media (max-width: 560px) {
-  .space-breakout-row .space-breakout-mark { display: inline; }
-}
 .space-recovery-list { display: grid; gap: 8px; }
 /* The Organization-opening card, in the sidebar section and on the
    dashboard. One rule for both: the state is the same sentence in two
