@@ -2025,6 +2025,26 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /** Validate a move source without staging it; the destination is not active yet. */
+  preflightMembershipMoveSource(
+    request: WorkspaceSpaceMembershipRemovalRequest,
+  ): WorkspaceSpaceMutationResult {
+    if (!this.canEdit(request.userId, request.spaceId)) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const membership = this.storage.sql.exec<{ generation: number } & Record<string, SqlStorageValue>>(
+      `SELECT generation FROM space_channel_memberships
+        WHERE space_id = ? AND workstream_id = ? AND state IN ('joining', 'active')`,
+      request.spaceId,
+      request.workstreamId,
+    ).toArray()[0];
+    if (!membership) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const space = this.space(request.spaceId, request.userId);
+    return space === false
+      ? { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] }
+      : { ok: true, space };
+  }
+
   /** Stage a membership removal, refusing one that would leave no home. */
   prepareMembershipRemoval(
     request: WorkspaceSpaceMembershipRemovalRequest,

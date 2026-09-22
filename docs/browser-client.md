@@ -393,6 +393,9 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 appearance for authorized Channels and Breakouts, plus scope on their containing
 Spaces. The Chrome UI renders those fields, and the Electron guest shell consumes
 the same read-only hierarchy instead of falling back to a flat recency list.
+Child-only grants create a navigable Channel ancestor and carry the first
+authorized Breakout destination; open-conversation metadata refreshes this
+directory without polling.
 
 **Why:** A person who can open a descendant needs to identify where it lives.
 Hiding the hierarchy made access look inconsistent between hosts and was the
@@ -406,7 +409,9 @@ projection would duplicate the authority and drift from browser behavior.
 public/private scope up the ancestor chain. A read-only Space selection filters
 the Channel rail rather than opening the member Space dashboard. It does not
 grant Main, unshared Breakouts, participants, defaults, content or Space
-mutations.
+mutations. The accessible description keeps the same scope words visible beside
+each row, and read-only Channel rows expose no placement drag, reorder, pin or
+Space menu.
 
 ### 2026-09-21 — Put guest Channels in their Spaces
 

@@ -649,6 +649,10 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.spacesReady,
             );
             setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
+            // Guest hierarchy is a separately authorized associative read.
+            // The snapshot is still the realtime nudge for a membership
+            // change, but it must never carry private Space rows itself.
+            void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
           const spaceConversations = safeParseSocketEvent(

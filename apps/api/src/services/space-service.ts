@@ -566,6 +566,13 @@ export class SpaceService {
       const space = await this.summary(targetSpaceId);
       return MoveChannelBetweenSpacesResultSchema.parse({ source: space, target: space });
     }
+    const workspace = await this.workspace();
+    this.settled(await workspace.preflightSpaceMembershipMoveSource({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId: sourceSpaceId,
+      workstreamId,
+    }), "");
     const target = await this.addChannel(targetSpaceId, workstreamId);
     const source = await this.removeChannel(sourceSpaceId, workstreamId);
     return MoveChannelBetweenSpacesResultSchema.parse({ source, target });
