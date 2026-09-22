@@ -4029,15 +4029,30 @@ describe('alphabetical channels inside a space', () => {
     return wrapper as HTMLElement;
   }
 
-  it('sorts unpinned channels case-insensitively and ignores a stored manual order', () => {
+  it('sorts unpinned channels case-insensitively with a fixed locale and stable ties', () => {
     const lowercase = placedIn(workstream('ws-lowercase', 'alpha', 'completed'), hiring.id);
+    const uppercase = placedIn(workstream('ws-uppercase', 'Alpha', 'completed'), hiring.id);
+    const accented = placedIn(workstream('ws-accented', 'Åland', 'completed'), hiring.id);
+    const duplicateLater = placedIn(workstream('ws-duplicate-z', 'Same', 'completed'), hiring.id);
+    const duplicateEarlier = placedIn(workstream('ws-duplicate-a', 'Same', 'completed'), hiring.id);
     const zulu = placedIn(workstream('ws-zulu', 'Zulu', 'completed'), hiring.id);
     renderSidebar({
       ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [zulu.id, bravo.id, lowercase.id] }],
-      workstreams: [zulu, bravo, lowercase],
+      workstreams: [zulu, duplicateLater, duplicateEarlier, uppercase, bravo, lowercase, accented],
     });
 
-    expect(placementTitles()).toEqual(['alpha', 'Bravo', 'Zulu']);
+    expect(placementTitles()).toEqual(['Åland', 'alpha', 'Alpha', 'Bravo', 'Same', 'Same', 'Zulu']);
+    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    expect([...list?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? []]
+      .map((row) => row.dataset.workstreamId)).toEqual([
+      accented.id,
+      lowercase.id,
+      uppercase.id,
+      bravo.id,
+      duplicateEarlier.id,
+      duplicateLater.id,
+      zulu.id,
+    ]);
   });
 
   // A Channel can still move between Spaces; it just cannot be manually
@@ -4238,15 +4253,20 @@ describe('alphabetical channels inside a space', () => {
     expect(placementTitles()).toEqual(['Alpha', 'Bravo']);
   });
 
-  it('pins a channel dropped from the alphabetical section onto Pinned', async () => {
+  it('reveals Pinned for the first channel drag and pins the dropped channel', async () => {
     const onPinWorkstream = vi.fn(async () => true);
-    const pinnedAlpha = pinned(alpha, 0);
-    renderSidebar({ onPinWorkstream, workstreams: [pinnedAlpha, bravo] });
+    renderSidebar({ onPinWorkstream, workstreams: [alpha, bravo] });
     const transfer = channelTransfer();
+    const source = dragTarget(/Bravo/u);
 
-    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
-    fireEvent.dragOver(screen.getByRole('region', { name: 'Pinned' }), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('region', { name: 'Pinned' }), { dataTransfer: transfer });
+    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    expect(transfer.getData('application/x-rally-workstream-id')).toBe(bravo.id);
+    const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
+    expect(within(pinnedTarget).getByText('Drop to pin')).toBeInTheDocument();
+    fireEvent.dragOver(pinnedTarget, { dataTransfer: transfer });
+    fireEvent.drop(pinnedTarget, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
 
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });

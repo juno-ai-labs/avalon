@@ -291,8 +291,9 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             return <ConversationRowMenu actions={substreamActions} icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={16} />} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>;
           })}
           {pendingSubstream && (
-            /* The substream being created, in the place the directory will
-               put it: last, because children are listed oldest first. It is
+            /* An unpublished creation has no derived title to alphabetize, so
+               it deliberately follows every named Breakout and precedes New
+               breakout. Once published, it joins the alphabetical rows. It is
                not a button — there is nowhere to go, the reader is already on
                the surface this row stands for — and it carries the skeleton
                rather than the first line of the message, because the title is
