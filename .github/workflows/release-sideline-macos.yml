@@ -82,35 +82,31 @@ jobs:
       - name: Stamp the next Sideline patch version on main
         shell: bash
         env:
+          SIDELINE_RELEASE_REF: ${{ needs.plan.outputs.ref }}
           SIDELINE_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
           SIDELINE_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            git fetch origin main
-            git reset --hard origin/main
-            test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
-              echo "${SIDELINE_RELEASE_TAG} already exists; refusing to rebuild a published version" >&2
-              exit 1
-            }
-            node apps/sideline/scripts/apply-release-version.mjs "$SIDELINE_RELEASE_VERSION"
-            if git diff --quiet; then
-              echo "main already declares ${SIDELINE_RELEASE_VERSION}; resuming its unpublished release"
-              break
-            fi
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$SIDELINE_RELEASE_REF" || {
+            echo "main advanced after Sideline release planning; rerun to bind the build and API gate to the new tip" >&2
+            exit 1
+          }
+          git reset --hard "$SIDELINE_RELEASE_REF"
+          test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
+            echo "${SIDELINE_RELEASE_TAG} already exists; refusing to rebuild a published version" >&2
+            exit 1
+          }
+          node apps/sideline/scripts/apply-release-version.mjs "$SIDELINE_RELEASE_VERSION"
+          if git diff --quiet; then
+            echo "main already declares ${SIDELINE_RELEASE_VERSION}; resuming its unpublished release"
+          else
             git add apps/sideline/package.json
             git -c user.name='github-actions[bot]' \
                 -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
                 commit -m "Bump Sideline to ${SIDELINE_RELEASE_VERSION} for release"
-            if git push origin HEAD:main; then
-              break
-            fi
-            if [ "$attempt" = 3 ]; then
-              echo "Could not record Sideline ${SIDELINE_RELEASE_VERSION} on main after 3 attempts" >&2
-              exit 1
-            fi
-            echo "main moved during attempt ${attempt}; retrying"
-          done
+            git push origin HEAD:main
+          fi
 
       - id: commit
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
