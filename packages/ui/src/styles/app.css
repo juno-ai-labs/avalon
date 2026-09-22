@@ -255,12 +255,12 @@ pre {
 /* The lines both rails clip. They are listed here rather than each carrying the
    three declarations at its own rule because the set is one decision: a rail
    fades what it cannot fit, and every hierarchy row uses the shared title and
-   hint classes. */
+   activity classes. */
 .account-copy span,
 .account-copy strong,
 .automation-tile-name,
 .space-row-link > span,
-.sidebar-row-hint-text,
+.sidebar-row-activity,
 .sidebar-row-title,
 .sidebar-row-title-copy {
   animation: clipped-line-fade linear both;
@@ -1646,7 +1646,7 @@ pre {
 .resizable-sidebar.is-compact .sidebar-row-main { opacity: 0; visibility: hidden; }
 
 .sidebar-row-title,
-.sidebar-row-hint {
+.sidebar-row-activity {
   overflow: hidden;
   white-space: nowrap;
 }
@@ -1656,18 +1656,10 @@ pre {
    tinting the slot as well would state it twice — in a hue that no longer
    means unread. The weight above is what the row itself says. */
 
-.sidebar-row-hint { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: var(--av-sys-font-size-hint); gap: 3px; margin-top: var(--av-cmp-row-hint-gap); }
-/* The hint is a flex row so a scope badge can sit beside its text. A
-   work-stream description now runs to 280 characters, so the text needs a
-   clipping box of its own to fade at — without `min-width: 0` a flex item
-   refuses to shrink below its content and the panel edge cuts it instead,
-   past where the box the fade is measured against ends. */
-.sidebar-row-hint-text { min-width: 0; overflow: hidden; white-space: nowrap; }
-/* An automation nothing can start again, and one Rally stopped, both say so on
-   the row rather than only in the colour of a dot. The warning hue is the same
-   one the automation's own screen uses for the sentence behind it. */
+.sidebar-row-activity { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; line-height: 16px; }
+/* An automation nothing can start again, and one Rally stopped, both carry the
+   warning hue on the icon beside their activity. */
 .sidebar-row-icon.is-attention { color: var(--av-sys-color-warning-base); }
-.sidebar-row-hint.is-attention { color: var(--av-sys-color-warning-base); }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
 /* The chip fill is the selected-row token. On hover or current it would
    punch a second pill through the row's own fill, so the badge drops its
@@ -6379,12 +6371,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 @keyframes rail-close { from { width: var(--rail-slot); } to { width: 0; } }
 @keyframes rail-content-open { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rail-content-close { from { opacity: 1; } to { opacity: 0; } }
-.app-shell .workstream-row .sidebar-row-activity {
-  color: var(--av-sys-color-text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-}
 .rail-header { border-bottom: 0; gap: 8px; padding: 0 12px; }
 .artifact-sidebar-header {
   align-items: center;
