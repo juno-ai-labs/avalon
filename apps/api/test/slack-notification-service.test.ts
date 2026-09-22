@@ -101,8 +101,9 @@ describe("workspace Slack mention delivery", () => {
       .resolves.toBe("sent");
 
     const posted = calls.find((call) => call.method === "chat.postMessage")?.body;
-    expect(markdownBlocks(posted?.blocks).join("")).toContain(`the breakout [Mention review](${destination})`);
+    expect(markdownBlocks(posted?.blocks).join("")).toContain(`a breakout of [Mention review](${destination})`);
     expect(openInRallyButton(posted?.blocks)).toMatchObject({ url: destination });
+    expect(String(posted?.text)).toContain("a breakout of Mention review");
     expect(String(posted?.text)).toContain(`Open in Rally: ${destination}`);
   });
 
@@ -133,6 +134,34 @@ describe("workspace Slack mention delivery", () => {
     expect(openInRallyButton(posted?.blocks)).toMatchObject({ url: destination });
   });
 
+  it("names a participant-added breakout as a child of the parent channel", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, true);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const substreamId = "00000000-0000-7000-8000-000000000009";
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}/substreams/${substreamId}`;
+
+    await expect(sendWorkstreamParticipantAddedSlack(env, {
+      sourceId: "participant-1",
+      recipientUserId: recipientId,
+      recipientEmail: "ada@example.com",
+      actorName: "Author Person",
+      workspaceId,
+      workspaceName: "Avalon Studio",
+      workstreamId,
+      substreamId,
+      workstreamTitle: "Mention review",
+      workstreamObjective: "Ship the mention path.",
+      titleIsProvisional: false,
+    }, slackApiFixture(calls))).resolves.toBe("sent");
+
+    const posted = calls.find((call) => call.method === "chat.postMessage")?.body;
+    expect(markdownBlocks(posted?.blocks).join("")).toContain(
+      `added you to a breakout of [Mention review](${destination})`,
+    );
+  });
+
   it("escapes a hostile title so only the canonical Rally URL stays a markdown link", async () => {
     const database = migratedDatabase();
     const env = environment(database);
@@ -151,6 +180,43 @@ describe("workspace Slack mention delivery", () => {
     expect(markdownLinkTargets(markdown)).toEqual([destination]);
     expect(markdown).toContain("1\\. \\[Ada\\]\\(https://evil.test\\)");
     expect(markdown).toContain("Release \\`candidate\\` \\<https://example.test\\>\\]\\(https://evil.test\\)");
+  });
+
+  it("keeps push-notification text free of markdown backslash escapes", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+
+    await expect(sendWorkstreamMentionSlack(env, {
+      ...mention(),
+      authorName: "Sam (Ops)",
+      workspaceName: "acme_labs",
+      messageText: "Need a look.",
+    }, slackApiFixture(calls))).resolves.toBe("sent");
+
+    const text = String(calls.find((call) => call.method === "chat.postMessage")?.body.text);
+    expect(text).toContain("Sam (Ops) mentioned you");
+    expect(text).toContain("in acme_labs.");
+    expect(text).not.toContain("\\(");
+    expect(text).not.toContain("\\_");
+  });
+
+  it("escapes a quoted mention body so it cannot inject a second markdown link", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const destination = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
+
+    await expect(sendWorkstreamMentionSlack(env, {
+      ...mention(),
+      messageText: "`[Open in Rally](https://evil.test)`",
+    }, slackApiFixture(calls))).resolves.toBe("sent");
+
+    const markdown = markdownBlocks(calls.find((call) => call.method === "chat.postMessage")?.body.blocks).join("");
+    expect(markdownLinkTargets(markdown)).toEqual([destination]);
+    expect(markdown).toContain("\\[Open in Rally\\]\\(https://evil.test\\)");
   });
 
   it("prefers a confirmed Slack identity and does not perform email lookup", async () => {
@@ -294,7 +360,7 @@ describe("workspace Slack mention delivery", () => {
     )).resolves.toBe("sent");
 
     const posts = calls.filter((call) => call.method === "chat.postMessage");
-    expect(posts.length).toBeGreaterThan(1);
+    expect(posts).toHaveLength(8);
     expect(posts.every((post) => String(post.body.text).length <= 40_000)).toBe(true);
     expect(posts.flatMap((post) => markdownBlocks(post.body.blocks)).join("").match(/x/gu))
       .toHaveLength(messageText.length);
@@ -332,7 +398,7 @@ describe("workspace Slack mention delivery", () => {
     expect(posted).not.toContain("**Sources**");
     expect(posted).not.toContain("](https://example.com/memo)");
     expect(posted).not.toContain("\n  1. The memo");
-    expect(posted).toContain("\n1. The memo");
+    expect(posted).toContain("\n1\\. The memo");
     expect(posted).toContain("The memo — https://example.com/memo");
   });
 

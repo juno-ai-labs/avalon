@@ -444,11 +444,12 @@ As a Rally admin, I can install the same Rally app into several Slack workspaces
 As a Rally member, when I mention an active teammate in a channel or breakout, Rally sends that
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
 Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
-linking the accounts. The first message identifies the author, workspace, and channel or
-breakout — the title is a markdown link to the canonical work-stream URL, with the title and
-author name escaped as literals — quotes the complete mention text, and carries an **Open in
-Rally** button. Being added to a channel or breakout uses the same shape. If Slack cannot
-resolve or deliver it, Rally sends the existing mention email instead.
+linking the accounts. The first message identifies the author, workspace, and channel
+or — for a child — a breakout of that channel. The title is a markdown link to the
+canonical work-stream URL, names and titles are escaped as literals, the quoted body
+is escaped the same way, and the message carries an **Open in Rally** button. Being
+added to a channel or breakout uses the same shape. If Slack cannot resolve or deliver
+it, Rally sends the existing mention email instead.
 
 #### Morning Gmail briefing
 
@@ -800,13 +801,13 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ### 2026-09-22 — Person-notification DMs carry the destination as Block Kit
 
-**What changed:** Mention and "added you" Agent DMs now post through `slackMarkdownMessages`: the first message's markdown names the channel or breakout and links its title to the canonical work-stream URL, and an **Open in Rally** button sits on that same first message. Later chunks of a long body no longer wait to mention the destination. `unfurl_links` is off so Slack does not stack a generic site card on the same URL. Names and titles go through `slackMarkdownLiteral` so punctuation in a work-stream title cannot open a second link or a new block.
+**What changed:** Mention and "added you" Agent DMs now post through `slackMarkdownMessages`: the markdown names the channel, or a breakout of that channel, and links the parent title to the canonical work-stream URL, with an **Open in Rally** button on the same payload. `unfurl_links` is off so Slack does not stack a generic site card on the same URL. Names, titles, and the quoted body go through `slackMarkdownLiteral`. The push-notification `text` is built from the unescaped strings and only mrkdwn-escapes `& < >`.
 
-**Why:** The previous payload put `<url|Open in Rally>` only in `chat.postMessage`'s `text` field, at the end of the quoted body. The Agent Messages tab renders Block Kit, not that fallback, so a recipient looking at the Rally DM had no way to open the channel or breakout the notice was about. Task results already used an `actions` button; these two notices did not. Interpolating a title into Slack's markdown block with only the old mrkdwn escapes left `[label](url)`, autolinks, and a leading `1.` live, which would steal the destination the notice exists to point at.
+**Why:** The previous payload put `<url|Open in Rally>` only in `chat.postMessage`'s `text` field, at the end of the quoted body. The Agent Messages tab renders Block Kit, not that fallback, so a recipient looking at the Rally DM had no way to open the room the notice was about. The title snapshot is always the parent channel's title, so saying "the breakout Q3 planning" named the parent as if it were the child; "a breakout of" that channel is the copy that stays true without snapshotting the child. Interpolating a title or a quoted body into Slack's markdown block without a full literal escape left `[label](url)` live, including leftover `[Open in Rally](url)` from inline code after `rewriteMessageAsPlainText`. Feeding that same escaped markdown to `text` printed `Sam \(Ops\)` in the push banner.
 
-**Considered and rejected:** Keeping the mrkdwn fallback as the only link and adding a `link_shared` unfurl. Slack does not send `link_shared` for URLs the app itself posts, so the unfurl card would never attach. Putting the button on the last chunk was rejected because that is the message a reader of the root DM does not see. Escaping only `[` `]` `\` on the link label was rejected because a title of `<https://example.test>` or ``Release `candidate` `` is still syntax in this dialect.
+**Considered and rejected:** Keeping the mrkdwn fallback as the only link and adding a `link_shared` unfurl. Slack does not send `link_shared` for URLs the app itself posts, so the unfurl card would never attach. Snapshotting the breakout's own title on the effect is a contract change and out of scope of putting a tappable destination on the DM. Putting the quoted body through Slack's markdown dialect unescaped was rejected because the Agent tab would render attacker-chosen links next to Open in Rally.
 
-**What a future change has to respect:** A person-notification DM owes a destination on its first message, as a markdown title link and as a URL button, minted by `workstreamCanonicalUrl`. Do not return this path to text-only mrkdwn because the Agent view will hide it again. Names and titles interpolated into that markdown go through `slackMarkdownLiteral`; agent-authored bodies do not.
+**What a future change has to respect:** A person-notification DM owes a destination as a markdown title link and a URL button, minted by `workstreamCanonicalUrl`. Names, titles, and quoted bodies interpolated into that markdown go through `slackMarkdownLiteral`; agent-authored result bodies do not. The `text` field is a mrkdwn fallback and must not reuse the backslash-escaped markdown. Do not return this path to text-only mrkdwn because the Agent view will hide it again.
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
