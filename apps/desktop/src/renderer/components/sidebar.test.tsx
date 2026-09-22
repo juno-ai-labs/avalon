@@ -970,8 +970,9 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(within(screen.getByRole('link', { name: 'Launch' }))
-      .getByLabelText('2 breakouts need attention in Launch')).toHaveTextContent('2');
+    const launch = screen.getByRole('link', { name: 'Launch' });
+    expect(launch).toHaveAccessibleDescription(/2 breakouts need attention in Launch/u);
+    expect(within(launch).getByText('2')).toHaveAttribute('aria-hidden', 'true');
     expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText('0')).not.toBeInTheDocument();
   });
 
