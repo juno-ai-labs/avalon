@@ -71,10 +71,13 @@ release-tooling tests before claiming an Apple Silicon runner. That runner
 imports the existing Developer ID identity, builds the arm64 app with hardened
 runtime, notarizes and staples the application and DMG, verifies both ZIP and
 DMG contents, and retains the exact release directory as a GitHub artifact for
-30 days. When shared contracts changed, distribution waits for the successful
+30 days. A separate publication job downloads that artifact, so retrying a
+failed publication never repeats signing or notarization and never substitutes
+new bytes under the same versioned names. When shared contracts changed,
+distribution waits for the successful
 API deployment associated with the newest first-parent commit that introduced
 them to `main`. A manual dispatch
-uses the same planner and is the retry path for an untagged failed release;
+uses the same planner when no signed artifact exists;
 release versions are no longer bumped by hand.
 Version stamping refuses to absorb a newer `main` tip after planning, so the
 packaged contract tree and the deployment revision checked by the gate cannot
@@ -82,14 +85,24 @@ diverge; rerunning replans from that newer tip.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
-immutable after `latest-mac.yml` commits their version; pre-manifest debris from
-an interrupted build can be replaced by its retry. Only
+immutable after `latest-mac.yml` commits their version. Before that commit, a
+selected preserved artifact can reconcile objects left by an interrupted
+attempt. The publisher verifies each candidate against R2, purges the exact
+public URLs, then SHA-512 checks those same URLs. A failed check leaves the
+manifest where it was; retrying publication reads the same signed artifact.
+Only
 `latest-mac.yml` and `Sideline.dmg` are mutable, and their exact public URLs are
-purged and hash-verified after upload. The manifest moves last, after the
+purged after upload. The canonical DMG is hash-verified against R2, then fully
+SHA-512 checked at its exact public URL. The manifest moves last, after the
 versioned payloads and canonical installer are publicly verified, so a retry
 after commit verifies that the live manifest is byte-identical to the local
 release before it finishes the release tag. Both the version-stamping job and
 the final publication boundary refuse a candidate tag that already exists.
+For a failed publication after the signed artifacts were preserved, the manual
+workflow accepts the exact artifact ID, source run ID, stamped commit SHA, and
+version. That path downloads the preserved directory, checks its identity and
+stamp, publishes it with the current publisher, and tags the stamped commit
+without signing or notarizing again.
 The embedded generic-provider URL points
 only at that prefix. A signed release build on packaged Apple Silicon checks it
 at launch and every three hours, downloads in the background, and offers to
@@ -194,6 +207,30 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-22 — Retry publication from one signed artifact
+
+**What changed:** Signing and notarization now finish in an artifact-producing
+job. A separate job publishes the preserved artifact and records the tag. A
+failed publication retries only that job. The publisher checks R2 bytes, purges
+the exact public URLs, and fully hashes those same URLs before moving the feed.
+Manual recovery can select a preserved artifact by ID without rebuilding it.
+
+**Why:** The 0.1.3 publisher uploaded the correct installer and purged its exact
+URL, but the runner's PoP continued serving the previous DMG to the full-body
+hash check. The release stopped before moving the manifest. A failed-job retry
+then rebuilt different notarized bytes and hit the same stale-cache failure at
+the overwritten versioned DMG.
+
+**Considered and rejected:** A cache-busting query would check a different cache
+key, leaving the updater's exact URL unproved. Rebuilding on retry changes
+notarized bytes while reusing versioned names and can strand the CDN on a prior
+candidate. Longer retries do not fix that identity problem.
+
+**Consequences:** The manifest stays the commit point. A stale CDN response can
+still fail a publication attempt, but the next publish-only retry uses identical
+bytes. The exact updater and recovery-installer URLs must serve those bytes
+before the feed moves.
 
 ### 2026-09-22 — Current-user sends use ordinary message authority
 
