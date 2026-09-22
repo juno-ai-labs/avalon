@@ -55,10 +55,41 @@ test('the release workflow reuses the desktop trust boundary but not its public 
   assert.match(workflow, /pnpm --filter @rally\/sideline package:release/u);
   assert.match(workflow, /pnpm --filter @rally\/sideline release:publish/u);
   assert.ok(
-    workflow.indexOf('release:publish') < workflow.indexOf('git push origin'),
+    workflow.indexOf('release:publish') < workflow.lastIndexOf('git push origin'),
     'the tag must be pushed only after R2 publication succeeds',
   );
   assert.doesNotMatch(workflow, /RALLY_MAC_PROVISIONING_PROFILE/u);
+});
+
+test('the release workflow rebuilds Sideline when an installed-app input changes', async () => {
+  const workflow = await readFile(resolve(sidelineDirectory, '../../.github/workflows/release-sideline-macos.yml'), 'utf8');
+  assert.match(workflow, /^[ ]{2}push:\n[ ]{4}branches:\n[ ]{6}- main$/mu);
+  for (const path of [
+    "'apps/sideline/**'",
+    "'apps/desktop/scripts/release-lib.mjs'",
+    "'packages/contracts/**'",
+    "'packages/ui/**'",
+    "'pnpm-lock.yaml'",
+  ]) {
+    assert.match(workflow, new RegExp(`^[ ]{6}- ${path.replaceAll('*', '\\*')}$`, 'mu'));
+  }
+  assert.match(workflow, /^[ ]{2}queue: single$/mu);
+  assert.match(workflow, /node apps\/sideline\/scripts\/plan-release\.mjs/u);
+  assert.match(workflow, /node apps\/sideline\/scripts\/apply-release-version\.mjs/u);
+  assert.match(workflow, /test "\$\(git rev-parse origin\/main\)" = "\$SIDELINE_RELEASE_REF"/u);
+  assert.match(workflow, /git reset --hard "\$SIDELINE_RELEASE_REF"/u);
+  assert.doesNotMatch(workflow, /git reset --hard origin\/main/u);
+  assert.match(workflow, /--workflow deploy-api\.yml/u);
+  assert.match(workflow, /gh run watch "\$run_id".*--exit-status/u);
+  assert.ok(
+    workflow.indexOf('already exists; refusing')
+      < workflow.indexOf('node apps/sideline/scripts/apply-release-version.mjs'),
+    'every version-stamping attempt must reject an existing remote tag first',
+  );
+  assert.ok(
+    workflow.lastIndexOf('already exists; refusing') < workflow.indexOf('release:publish'),
+    'the remote tag must be checked immediately before publication',
+  );
 });
 
 test('same-version publication recovery binds the tag to the locally built bytes', async () => {
