@@ -202,7 +202,9 @@ self-impersonation grant. Selecting that participant sends through the generic
 authenticated conversation-message API, while selecting somebody else keeps
 using the relationship-gated, dual-principal impersonation endpoint. The old
 Sideline endpoint also admits a self-send through ordinary authority for
-rolling-release compatibility and records no impersonation audit for it.
+rolling-release compatibility, records no impersonation audit for it, and
+preserves the request-received timestamp for message telemetry. The composer
+labels the mixed self and represented send surface accordingly.
 
 **Why:** Acting as the signed-in user is not impersonation. Requiring a
 self-pair made an ordinary member action depend on a separate administrative
