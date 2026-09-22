@@ -6,6 +6,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { uuidFromBase58, uuidToBase58 } from '@rally/contracts/uuid-base58';
+import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -121,12 +122,15 @@ function sharedConversationPath(spaceId: string | null, parentId: string, substr
     : `/workstreams/${parentId}${substreamId === '0' ? '' : `/substreams/${substreamId}`}`;
 }
 
-export function sharedConversationLinkPath(region: string, organizationId: string, directory: Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>> | undefined, selectedSpaceId: string | null, parentId: string, substreamId: string): string {
+export function sharedConversationShareUrl(region: string, organizationId: string, directory: Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>> | undefined, selectedSpaceId: string | null, parentId: string, substreamId: string): string {
   const availableSpaces = directory?.spaces.filter((space) => space.workstreamIds.includes(parentId)) ?? [];
   const space = availableSpaces.find((item) => item.id === selectedSpaceId)
     ?? [...availableSpaces].sort((a, b) => Number(a.scope === 'personal') - Number(b.scope === 'personal') || a.id.localeCompare(b.id))[0];
-  if (space) return `/app/${region}/${uuidToBase58(organizationId)}${sharedConversationPath(space.id, parentId, substreamId)}`;
-  return `/app/workspaces/${region}/${organizationId}${sharedConversationPath(null, parentId, substreamId)}`;
+  if (space) return workstreamCanonicalUrl('https://rallywith.ai', {
+    region, workspaceId: organizationId, spaceId: space.id, workstreamId: parentId,
+    ...(substreamId === '0' ? {} : { substreamId }),
+  });
+  return new URL(`/app/workspaces/${region}/${organizationId}${sharedConversationPath(null, parentId, substreamId)}`, 'https://rallywith.ai').toString();
 }
 
 function SharedConversation({ parentId, substreamId, spaceId }: { parentId: string; substreamId: string; spaceId: string | null }): React.JSX.Element {
@@ -187,8 +191,8 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           onShowNavigation={() => undefined}
           onCopyLink={() => {
             if (!session?.workspace) return;
-            const path = sharedConversationLinkPath(session.workspace.region, session.workspace.id, directory.data, spaceId, parentId, substreamId);
-            void navigator.clipboard.writeText(new URL(path, location.origin).href);
+            const url = sharedConversationShareUrl(session.workspace.region, session.workspace.id, directory.data, spaceId, parentId, substreamId);
+            void navigator.clipboard.writeText(url);
           }}
           actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} /> : null} />} />}
   </>;

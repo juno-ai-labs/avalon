@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { expect, it } from 'vitest';
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import type { RallyApi } from '../../desktop/src/renderer/lib/api';
-import { SharedSpaceOverview, sharedConversationLinkPath } from '../src/conversation';
+import { SharedSpaceOverview, sharedConversationShareUrl } from '../src/conversation';
 
 const spaceId = '00000000-0000-7000-8000-0000000000a9';
 const channelId = '00000000-0000-7000-8000-0000000000b1';
@@ -31,6 +31,6 @@ it('does not substitute a different Space when the path names an unavailable one
 
 it('copies the canonical addressed URL from an old browser route', () => {
   const organizationId = '00000000-0000-7000-8000-0000000000a1';
-  expect(sharedConversationLinkPath('global', organizationId, directory, null, channelId, '0'))
-    .toBe(`/app/global/${uuidToBase58(organizationId)}/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(channelId)}`);
+  expect(sharedConversationShareUrl('global', organizationId, directory, null, channelId, '0'))
+    .toBe(`https://rallywith.ai/app/global/${uuidToBase58(organizationId)}/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(channelId)}`);
 });
