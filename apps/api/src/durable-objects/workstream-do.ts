@@ -389,8 +389,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           // published a delivery, because the role suppresses the directory
           // entirely. Running it anyway would hand a no-op writer rows it was
           // built never to see.
-          if (this.role.kind !== "workstream" || !applied.includes(17)) return;
-          this.retireGrantDirectoryDeliveries();
+          if (this.role.kind !== "workstream") return;
+          if (applied.includes(17)) this.retireGrantDirectoryDeliveries();
+          if (applied.includes(19)) this.replayStoredBreakoutDirectoryProjections();
         },
       }));
       await this.armNextAlarm();
@@ -2665,6 +2666,53 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         WHERE substream_id = ? AND json_extract(effect_json, '$.backgroundAgent') = 1`,
       substreamId,
     )) === null;
+  }
+
+  /**
+   * Publish the breakout projections that predate breakout forwarding.
+   *
+   * Adding `forwardsChildProjection` made every later child update reach the
+   * Organization, but a quiet breakout already stored in these tables had no
+   * update to replay it. WorkstreamDO migration 19 calls this once across the
+   * fleet. `enqueueProjection` keeps the operation idempotent for Channels
+   * whose rows already crossed the boundary, and the outbox keeps the replay
+   * durable after the migration transaction commits.
+   */
+  private replayStoredBreakoutDirectoryProjections(now = Date.now()): void {
+    const breakouts = this.parentSql.exec<{ substream_id: string; effect_json: string }>(
+      `SELECT substream_id, effect_json
+         FROM substream_directory
+        WHERE substream_id <> '0'
+          AND COALESCE(json_extract(effect_json, '$.backgroundAgent'), 0) <> 1
+        ORDER BY substream_id`,
+    ).toArray();
+    const breakoutIds = new Set(breakouts.map((row) => row.substream_id));
+    for (const row of breakouts) {
+      this.enqueueProjection(
+        `substream:${row.substream_id}:common`,
+        WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)),
+        now,
+        row.substream_id,
+      );
+    }
+    for (const row of this.parentSql.exec<{
+      substream_id: string;
+      user_id: string;
+      effect_json: string;
+    }>(
+      `SELECT substream_id, user_id, effect_json
+         FROM substream_user_directory
+        WHERE substream_id <> '0'
+        ORDER BY substream_id, user_id`,
+    ).toArray()) {
+      if (!breakoutIds.has(row.substream_id)) continue;
+      this.enqueueProjection(
+        `substream:${row.substream_id}:user:${row.user_id}`,
+        WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)),
+        now,
+        row.substream_id,
+      );
+    }
   }
 
   protected override childCommonProjections(): DirectoryCommonEffect[] {

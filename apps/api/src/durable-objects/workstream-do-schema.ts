@@ -475,4 +475,11 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   version: 18,
   description: "record the Space sources that reach a Channel and the readers each supplied",
   statements: [...WORKSTREAM_ACCESS_SCHEMA_STATEMENTS],
+}, {
+  version: 19,
+  description: "replay stored breakout projections to the Organization",
+  // The migration receipt is the once-only durable fence for the replay in
+  // WorkstreamDO's afterMigrations hook. No schema changes are required: the
+  // source projections and the parent outbox already exist.
+  statements: ["SELECT 1 AS breakout_projection_replay"],
 }];
