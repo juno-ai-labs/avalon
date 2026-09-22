@@ -15,6 +15,7 @@ interface UiState {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   spacesSidebarWidth: number;
+  spacesSidebarCollapsed: boolean;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -25,6 +26,7 @@ interface UiState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSpacesSidebarWidth: (width: number) => void;
+  setSpacesSidebarCollapsed: (collapsed: boolean) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -47,6 +49,7 @@ import { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@ra
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const SPACES_SIDEBAR_WIDTH_STORAGE_KEY = 'rally.spaces-sidebar-width';
+const SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.spaces-sidebar-collapsed';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 
 function clampSidebarWidth(width: number): number {
@@ -149,6 +152,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
   spacesSidebarWidth: loadSpacesSidebarWidth(),
+  spacesSidebarCollapsed: typeof window !== 'undefined' && (() => {
+    try { return window.localStorage.getItem(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'; }
+    catch { return false; }
+  })(),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -169,6 +176,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     const spacesSidebarWidth = clampSidebarWidth(width);
     saveSpacesSidebarWidth(spacesSidebarWidth);
     set({ spacesSidebarWidth });
+  },
+  setSpacesSidebarCollapsed: (spacesSidebarCollapsed) => {
+    try { window.localStorage.setItem(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY, String(spacesSidebarCollapsed)); }
+    catch { /* Keep the in-memory preference when local storage is unavailable. */ }
+    set({ spacesSidebarCollapsed });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it

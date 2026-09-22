@@ -4,6 +4,7 @@ import type { ApplicationIconId, DesktopApplicationIconState } from '../common/a
 import type {
   RallyDesktopBridge,
   DesktopApplicationSettings,
+  DesktopRestorableArtifactWindow,
   DesktopDeepLinkErrorNotice,
   DesktopAuthAttempt,
   DesktopDeepLinkNavigation,
@@ -183,6 +184,8 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
   popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<boolean>,
+  getRestorableArtifactWindows: () => ipcRenderer.invoke('artifact:restorable-windows') as Promise<DesktopRestorableArtifactWindow[]>,
+  forgetRestorableArtifactWindow: (id) => ipcRenderer.invoke('artifact:forget-window', id) as Promise<void>,
   getPoppedOutArtifactVersions: () =>
     ipcRenderer.invoke('artifact:popped-out-versions') as Promise<Record<string, number>>,
   closePoppedOutArtifacts: (resourceIds) =>

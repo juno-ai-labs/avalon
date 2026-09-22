@@ -4,12 +4,23 @@ import { InlineError, LoadingState } from '../components/primitives';
 import { firstLandingWorkstream, skippedWorkstreamIds } from '../lib/workstream-landing';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useSpaceDirectories } from '../lib/use-space-directories';
+import { layoutKey, readLayout } from '../lib/desktop-layout';
+import { useAppSession } from '../lib/app-session';
 
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
   const workstreams = useWorkstreamsQuery();
+  const spaces = useSpaceDirectories().active.data;
+  const { session } = useAppSession();
   const { state } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
+  const savedRoute = routeState == null && session?.workspace && session.user
+    ? readLayout(layoutKey(session.workspace.id, session.user.id, 'last-route')) : null;
+  const savedChannel = /^\/workstreams\/([^/?]+)(?:\?substream=([^&]+))?$/.exec(savedRoute ?? '');
+  let savedChannelId: string | null = null;
+  try { if (savedChannel) savedChannelId = decodeURIComponent(savedChannel[1]!); }
+  catch { /* Ignore malformed local state. */ }
   const skipped = useMemo(() => skippedWorkstreamIds(routeState), [routeState]);
   // A screen that just left for this route names what it left behind; the
   // directory has not caught up yet, and that row would otherwise be the
@@ -27,7 +38,10 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // change, which the socket does once the archive's tombstones land.
   // `fetchMore` is deliberately not a dependency: it is re-created as a page
   // settles, and re-requesting on that would be the loop.
-  const needsMore = loaded !== undefined && candidates.length === 0 && workstreams.hasMore;
+  const needsMore = loaded !== undefined && workstreams.hasMore
+    && (savedChannelId !== null
+      ? !candidates.some((row) => row.id === savedChannelId)
+      : candidates.length === 0 && !/^\/spaces\//.test(savedRoute ?? ''));
   const { fetchMore } = workstreams;
   useEffect(() => {
     if (needsMore) fetchMore();
@@ -41,5 +55,19 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   }
   if (needsMore) return <LoadingState label="Opening channels…" />;
   const first = firstLandingWorkstream(candidates);
+  // Only a bare startup landing resumes the device's last view. A deliberate
+  // leave carries state (including an empty skip list) and uses recency instead.
+  if (savedRoute) {
+    if (savedChannelId !== null && candidates.some((row) => row.id === savedChannelId)) {
+      return <Navigate replace to={savedRoute} />;
+    }
+    const space = /^\/spaces\/([^/?]+)$/.exec(savedRoute);
+    if (space && session?.workspace?.accessClass !== 'guest') {
+      if (!spaces) return <LoadingState label="Opening spaces…" />;
+      let id: string | null = null;
+      try { id = decodeURIComponent(space[1]!); } catch { /* Ignore malformed local state. */ }
+      if (spaces.items.some((row) => row.id === id)) return <Navigate replace to={savedRoute} />;
+    }
+  }
   return <Navigate replace to={first ? `/workstreams/${encodeURIComponent(first.id)}` : '/workstreams/new'} />;
 }
