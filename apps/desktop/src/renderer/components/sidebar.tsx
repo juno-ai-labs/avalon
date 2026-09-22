@@ -1239,6 +1239,7 @@ export function Sidebar({
     spaceId: string;
     workstreamId: string;
   } | null>(null);
+  const requestedDeepLinkPage = useRef<string | null>(null);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(() =>
     routeSpaceId ?? routeWorkstream?.spaceIds[0] ?? spaces?.[0]?.id ?? null);
   const previousRouteWorkstreamId = useRef<string | null>(null);
@@ -1257,12 +1258,33 @@ export function Sidebar({
     if (routeWorkstream?.spaceIds[0]) setSelectedSpaceId(routeWorkstream.spaceIds[0]);
   }, [routeSpaceId, routeWorkstream, selectedSpaceId, spaces]);
   useEffect(() => {
-    if (pendingDeepLinkNavigation === null
-      || routeWorkstream?.id !== pendingDeepLinkNavigation.workstreamId) return;
+    if (pendingDeepLinkNavigation === null) return;
+    if (routeWorkstreamId !== pendingDeepLinkNavigation.workstreamId) {
+      consumeDeepLinkWorkstreamNavigation(pendingDeepLinkNavigation.revision);
+      return;
+    }
+    if (!routeWorkstream) {
+      if (loading || loadingMoreWorkstreams) return;
+      if (hasMoreWorkstreams && onLoadMoreWorkstreams) {
+        const pageKey = `${pendingDeepLinkNavigation.revision}:${workstreams.length}`;
+        if (requestedDeepLinkPage.current === pageKey) return;
+        requestedDeepLinkPage.current = pageKey;
+        onLoadMoreWorkstreams();
+        return;
+      }
+      consumeDeepLinkWorkstreamNavigation(pendingDeepLinkNavigation.revision);
+      return;
+    }
+    if (!spacesReady) return;
+    const activeSpaceIds = new Set<string>(spaces?.map((space) => space.id));
     const spaceId = routeWorkstream.spaceIds.includes(selectedSpaceId ?? '')
+      && activeSpaceIds.has(selectedSpaceId ?? '')
       ? selectedSpaceId
-      : routeWorkstream.spaceIds[0];
-    if (!spaceId) return;
+      : routeWorkstream.spaceIds.find((candidate) => activeSpaceIds.has(candidate));
+    if (!spaceId) {
+      consumeDeepLinkWorkstreamNavigation(pendingDeepLinkNavigation.revision);
+      return;
+    }
     setSelectedSpaceId(spaceId);
     setDeepLinkReveal({
       revision: pendingDeepLinkNavigation.revision,
@@ -1270,7 +1292,22 @@ export function Sidebar({
       workstreamId: routeWorkstream.id,
     });
     consumeDeepLinkWorkstreamNavigation(pendingDeepLinkNavigation.revision);
-  }, [pendingDeepLinkNavigation, routeWorkstream, selectedSpaceId]);
+  }, [
+    hasMoreWorkstreams,
+    loading,
+    loadingMoreWorkstreams,
+    onLoadMoreWorkstreams,
+    pendingDeepLinkNavigation,
+    routeWorkstream,
+    routeWorkstreamId,
+    selectedSpaceId,
+    spaces,
+    spacesReady,
+    workstreams.length,
+  ]);
+  useEffect(() => {
+    setDeepLinkReveal((current) => current?.workstreamId === routeWorkstreamId ? current : null);
+  }, [routeWorkstreamId]);
   useEffect(() => {
     if (selectedSpaceId && spaces?.some((space) => space.id === selectedSpaceId)) return;
     setSelectedSpaceId(spaces?.[0]?.id ?? null);
@@ -1474,17 +1511,20 @@ export function Sidebar({
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
   );
+  const activeDeepLinkReveal = deepLinkReveal?.workstreamId === routeWorkstreamId
+    ? deepLinkReveal
+    : null;
   useLayoutEffect(() => {
-    if (deepLinkReveal === null
-      || deepLinkReveal.spaceId !== selectedSpaceId
-      || revealedDeepLinkRevision.current === deepLinkReveal.revision) return;
+    if (activeDeepLinkReveal === null
+      || activeDeepLinkReveal.spaceId !== selectedSpaceId
+      || revealedDeepLinkRevision.current === activeDeepLinkReveal.revision) return;
     const row = scrollRef.current?.querySelector<HTMLElement>(
-      `[data-workstream-id="${deepLinkReveal.workstreamId}"]`,
+      `[data-workstream-id="${activeDeepLinkReveal.workstreamId}"]`,
     );
     if (!row) return;
-    revealedDeepLinkRevision.current = deepLinkReveal.revision;
+    revealedDeepLinkRevision.current = activeDeepLinkReveal.revision;
     row.scrollIntoView?.({ block: 'center', behavior: 'auto' });
-  }, [deepLinkReveal, displayedWorkstreams, selectedSpaceId]);
+  }, [activeDeepLinkReveal, displayedWorkstreams, selectedSpaceId]);
   useEffect(() => {
     if (pendingChannelMoveNavigation === null) return;
     const owned = channelMoveNavigation.current;
@@ -2169,9 +2209,9 @@ export function Sidebar({
         ready={spacesReady}
         outOfDate={spacesOutOfDate}
         selectedSpaceId={selectedSpaceId}
-        revealSelection={deepLinkReveal === null ? null : {
-          revision: deepLinkReveal.revision,
-          spaceId: deepLinkReveal.spaceId,
+        revealSelection={activeDeepLinkReveal === null ? null : {
+          revision: activeDeepLinkReveal.revision,
+          spaceId: activeDeepLinkReveal.spaceId,
         }}
         spaces={placementSpaces}
         workstreams={workstreams}
