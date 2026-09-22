@@ -229,22 +229,26 @@ function applyDirectoryPage(
   page: Pick<WorkspaceWorkstreamPageEvent, 'items' | 'stateVersions' | 'directoryWaterline' | 'nextCursor'>,
 ): WorkstreamPage {
   const versions = new Map(page.stateVersions.map((version) => [version.workstreamId, version]));
-  const items = page.items.map(mapWorkstreamSummary).map((workstream) => {
+  const items = page.items.map(mapWorkstreamSummary).flatMap((workstream) => {
     const version = versions.get(workstream.id);
-    if (!version) return workstream;
-    applyVersionedWorkstreamState(queryClient, {
+    if (!version) return [workstream];
+    const applied = applyVersionedWorkstreamState(queryClient, {
       workstreamId: workstream.id,
       stateVersion: version,
       ...workstreamSummaryState(workstream),
       visible: true,
     });
+    // A page that lost the version comparison also loses the right to seed a
+    // row after a newer tombstone removed it. Falling back to its wire value is
+    // the archive disappear/reappear/disappear race.
+    if (!applied.visible) return [];
     applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
       pinPosition: workstream.pinPosition,
       spacePins: workstream.spacePins,
       lastAccessedAt: workstream.lastAccessedAt,
     }, page.directoryWaterline);
-    return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
-      ?.find((item) => item.id === workstream.id) ?? workstream;
+    return [queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+      ?.find((item) => item.id === workstream.id) ?? workstream];
   });
   return { items, nextCursor: page.nextCursor };
 }

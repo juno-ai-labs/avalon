@@ -166,6 +166,46 @@ export function evictCachedWorkstream(
   queryClient: QueryClient,
   workstreamId: string,
 ): void {
+  evictCachedWorkstreamContent(queryClient, workstreamId);
+  setCachedWorkstreams(queryClient, (current) =>
+    current?.filter((workstream) => workstream.id !== workstreamId));
+}
+
+/**
+ * Keep a confirmed archive as a hidden directory marker until its versioned
+ * tombstone arrives.
+ *
+ * Removing the row immediately leaves an empty slot that an older directory
+ * page can seed while it is still in flight. The UI does not render archived
+ * rows, but retaining this one lets the shared receiver compare that stale
+ * page with a concrete newer fact instead of briefly resurrecting the Channel.
+ * The authoritative tombstone later calls `evictCachedWorkstream` and removes
+ * the marker altogether.
+ */
+export function holdCachedWorkstreamArchive(
+  queryClient: QueryClient,
+  archived: WorkstreamSummary,
+): void {
+  if (!archived.archivedAt) {
+    // The archive route promises the committed archived row. If an older
+    // server cannot supply that fact, retain the safe historical behavior.
+    evictCachedWorkstream(queryClient, archived.id);
+    return;
+  }
+  setCachedWorkstreams(queryClient, (current) => {
+    if (!current) return [archived];
+    if (!current.some((workstream) => workstream.id === archived.id)) return [...current, archived];
+    return current.map((workstream) => workstream.id === archived.id
+      ? { ...workstream, archivedAt: archived.archivedAt, updatedAt: archived.updatedAt }
+      : workstream);
+  });
+  evictCachedWorkstreamContent(queryClient, archived.id);
+}
+
+function evictCachedWorkstreamContent(
+  queryClient: QueryClient,
+  workstreamId: string,
+): void {
   const queryPrefixes = [
     ['workstream', workstreamId],
     ['workstream-children', workstreamId],
@@ -185,8 +225,6 @@ export function evictCachedWorkstream(
   for (const queryKey of queryPrefixes) {
     queryClient.removeQueries({ queryKey });
   }
-  setCachedWorkstreams(queryClient, (current) =>
-    current?.filter((workstream) => workstream.id !== workstreamId));
   // The disk goes with the memory, or the next launch paints a transcript
   // the reader was shut out of. Every child under the parent goes too.
   forgetConversationParent(workstreamId);
@@ -238,9 +276,13 @@ export function mergeCachedWorkstreamPage(
 ): void {
   setCachedWorkstreams(queryClient, (current) => {
     if (current === undefined) return pageItems;
+    const heldArchives = new Map(current
+      .filter((workstream) => workstream.archivedAt)
+      .map((workstream) => [workstream.id, workstream]));
+    const refreshed = pageItems.map((workstream) => heldArchives.get(workstream.id) ?? workstream);
     const refreshedIds = new Set(pageItems.map((workstream) => workstream.id));
     return [
-      ...pageItems,
+      ...refreshed,
       ...current.filter((workstream) => !refreshedIds.has(workstream.id)),
     ];
   });

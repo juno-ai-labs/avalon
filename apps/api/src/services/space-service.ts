@@ -139,6 +139,14 @@ export type SpaceIntentResumeOutcome =
   | { readonly outcome: "abandoned"; readonly reason: string };
 
 /**
+ * Cloudflare permits six simultaneous outgoing connections per invocation.
+ * A member step reaches one Channel authority at a time, so six independent
+ * archive retractions can overlap without asking the runtime to queue a
+ * seventh connection for us.
+ */
+const SPACE_ARCHIVE_MEMBER_CONCURRENCY = 6;
+
+/**
  * The participant roster a walk may re-apply, refusing a summary that is not
  * the Organization's answer.
  *
@@ -584,6 +592,7 @@ export class SpaceService {
       pageReceipt: "archive_page",
       reach: "reaching",
       cursor: null,
+      concurrency: SPACE_ARCHIVE_MEMBER_CONCURRENCY,
       step: async ({ workstreamId }) => {
         await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
         return "continue";
@@ -782,6 +791,12 @@ export class SpaceService {
    * The last page writes no cursor. The caller settles the intent immediately
    * after, and a settle that does not land leaves the cursor at the start of
    * that page — so the resume redoes one page rather than the whole walk.
+   *
+   * Archive is the one walk that opts into bounded overlap: its retractions
+   * are independent, and the caller still waits for every started retraction
+   * before advancing the cursor or finalizing. `allSettled` is deliberate — a
+   * failed Channel must not leave sibling writes floating after this method
+   * rejects.
    */
   private async walkMembers(input: {
     spaceId: SpaceId;
@@ -790,13 +805,22 @@ export class SpaceService {
     pageReceipt: string;
     reach?: MemberWalkReach;
     cursor: string | null;
+    concurrency?: number;
     step: (member: SpaceMember) => Promise<"continue" | "abandon">;
   }): Promise<"walked" | "abandoned"> {
     let cursor = input.cursor;
+    const concurrency = input.concurrency ?? 1;
     for (;;) {
       const page = await this.memberPage(input.spaceId, input.reach ?? "active", cursor);
-      for (const member of page.members) {
-        if (await input.step(member) === "abandon") return "abandoned";
+      for (let offset = 0; offset < page.members.length; offset += concurrency) {
+        const results = await Promise.allSettled(
+          page.members.slice(offset, offset + concurrency).map(input.step),
+        );
+        const rejected = results.find((result) => result.status === "rejected");
+        if (rejected?.status === "rejected") throw rejected.reason;
+        if (results.some((result) => result.status === "fulfilled" && result.value === "abandon")) {
+          return "abandoned";
+        }
       }
       if (page.nextCursor === null) return "walked";
       cursor = page.nextCursor;
@@ -977,6 +1001,7 @@ export class SpaceService {
         pageReceipt: "archive_page",
         reach: "reaching",
         cursor: intent.cursor,
+        concurrency: SPACE_ARCHIVE_MEMBER_CONCURRENCY,
         step: async ({ workstreamId }) => {
           await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
           return "continue";

@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 
 import type { WorkstreamSummary } from './types';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { holdCachedWorkstreamArchive, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -92,8 +92,53 @@ describe('applyVersionedWorkstreamState', () => {
       seed,
       visible: true,
     });
-    expect(result).toEqual({ commonApplied: false, viewerApplied: false });
+    expect(result).toEqual({ commonApplied: false, viewerApplied: false, visible: true });
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Current');
+  });
+
+  it('holds a confirmed archive through a newer in-flight page, then rejects that page after the tombstone', () => {
+    const queryClient = new QueryClient();
+    const active = summary({ updatedAt: '2026-09-21T12:00:00.000Z' });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      ...workstreamSummaryState(active),
+      visible: true,
+    });
+
+    holdCachedWorkstreamArchive(queryClient, {
+      ...active,
+      archivedAt: '2026-09-21T12:00:01.000Z',
+      updatedAt: '2026-09-21T12:00:01.000Z',
+    });
+    const delayedPage = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(6, 6),
+      ...workstreamSummaryState({ ...active, title: 'Delayed page' }),
+      visible: true,
+    });
+    expect(delayedPage.visible).toBe(true);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0])
+      .toMatchObject({ title: 'Initial', archivedAt: '2026-09-21T12:00:01.000Z' });
+
+    const tombstone = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(7, 7),
+      common: {},
+      viewer: {},
+      visible: false,
+    });
+    expect(tombstone.visible).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
+
+    const staleAfterTombstone = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(6, 6),
+      ...workstreamSummaryState({ ...active, title: 'Delayed page' }),
+      visible: true,
+    });
+    expect(staleAfterTombstone.visible).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
   });
 
   it('resets both tables when an authority generation changes', () => {
