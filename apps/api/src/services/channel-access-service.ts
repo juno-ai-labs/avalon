@@ -137,6 +137,29 @@ export class ChannelAccessService {
     return (await this.observation(workstreamId)).title;
   }
 
+  /** Replace one Space source with an audience-equivalent source in one hop. */
+  async replaceEquivalentSpaceSource(
+    workstreamId: string,
+    input: {
+      sourceSpaceId: SpaceId;
+      targetSpaceId: SpaceId;
+      scope: SpaceScope;
+      participantUserIds: readonly UserId[];
+      sourceSpaceRevision: number;
+      sourceMembershipGeneration: number;
+      targetSpaceRevision: number;
+      targetMembershipGeneration: number;
+      operationId: string;
+    },
+  ): Promise<void> {
+    const result = await (await this.room(workstreamId)).replaceEquivalentSpaceAccessSource({
+      ...this.address(workstreamId),
+      ...input,
+      participantUserIds: [...input.participantUserIds],
+    });
+    if (!result.ok) throw spaceAccessError(result.code, "Channel");
+  }
+
   /**
    * Every source that currently grants a reader access to this Channel.
    *
@@ -161,6 +184,17 @@ export class ChannelAccessService {
       ...this.address(workstreamId),
       channel: observed.channel,
     });
+  }
+
+  /**
+   * Read persisted Space provenance while converging a WorkspaceDO-staged move.
+   * The durable intent is the authorization; mutable caller access is not
+   * rechecked after the move may already have changed Channel provenance.
+   */
+  async readPersistedSpaceSources(workstreamId: string): Promise<ChannelAccessSources["spaces"]> {
+    return (await this.room(workstreamId)).readPersistedSpaceAccessSources(
+      this.address(workstreamId),
+    );
   }
 
   /**

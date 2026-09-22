@@ -141,6 +141,103 @@ beforeEach(async () => {
 });
 
 describe("a Channel's Space access sources", () => {
+  it("moves equivalent Space provenance atomically without changing the effective audience", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), spaceRevision: 3, membershipGeneration: 4,
+    });
+    const operationId = "00000000-0000-7000-8000-0000000ac507";
+    const request = {
+      ...address,
+      sourceSpaceId: SPACE_A,
+      targetSpaceId: SPACE_B,
+      scope: "personal" as const,
+      participantUserIds: [OWNER, READER],
+      sourceSpaceRevision: 3,
+      sourceMembershipGeneration: 4,
+      targetSpaceRevision: 6,
+      targetMembershipGeneration: 2,
+      operationId,
+    };
+
+    expect(await channel().replaceEquivalentSpaceAccessSource(request)).toEqual({ ok: true });
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_B, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [{ space_id: SPACE_B, user_id: READER }],
+    });
+
+    // The durable receipt makes a retry return the first answer without
+    // interpreting the now-absent source as a new operation.
+    expect(await channel().replaceEquivalentSpaceAccessSource(request)).toEqual({ ok: true });
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_B, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [{ space_id: SPACE_B, user_id: READER }],
+    });
+  });
+
+  it("refuses an atomic move when the source was replaced at a newer generation", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]), spaceRevision: 3, membershipGeneration: 4,
+    });
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER, READER]), spaceRevision: 4, membershipGeneration: 5,
+    });
+
+    expect(await channel().replaceEquivalentSpaceAccessSource({
+      ...address,
+      sourceSpaceId: SPACE_A,
+      targetSpaceId: SPACE_B,
+      scope: "personal",
+      participantUserIds: [OWNER, READER],
+      sourceSpaceRevision: 3,
+      sourceMembershipGeneration: 4,
+      targetSpaceRevision: 6,
+      targetMembershipGeneration: 2,
+      operationId: "00000000-0000-7000-8000-0000000ac509",
+    })).toEqual({ ok: false, code: "space_revision_conflict" });
+    expect(await storedSources()).toMatchObject({
+      sources: [{ space_id: SPACE_A }],
+      supplied: [{ space_id: SPACE_A, user_id: READER }],
+    });
+  });
+
+  it("refuses a provenance move when the stored source audience is different", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]),
+    });
+
+    expect(await channel().replaceEquivalentSpaceAccessSource({
+      ...address,
+      sourceSpaceId: SPACE_A,
+      targetSpaceId: SPACE_B,
+      scope: "personal",
+      participantUserIds: [OWNER, OTHER],
+      sourceSpaceRevision: 1,
+      sourceMembershipGeneration: 1,
+      targetSpaceRevision: 1,
+      targetMembershipGeneration: 1,
+      operationId: "00000000-0000-7000-8000-0000000ac508",
+    })).toEqual({ ok: false, code: "space_revision_conflict" });
+    expect(await storedSources()).toMatchObject({
+      sources: [{ space_id: SPACE_A }],
+      supplied: [{ space_id: SPACE_A, user_id: READER }],
+    });
+  });
+
+  it("reads persisted Space provenance without a mutable Channel observation", async () => {
+    await seatSource({
+      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      channel: personal([OWNER]),
+    });
+
+    expect(await channel().readPersistedSpaceAccessSources(address)).toEqual([
+      { spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER] },
+    ]);
+  });
+
   it("given a personal Space, when it is applied, then it plans to seat only readers the Channel lacks", async () => {
     const seated = await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],

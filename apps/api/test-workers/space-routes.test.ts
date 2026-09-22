@@ -403,6 +403,18 @@ describe("POST /spaces/:id/channels/:workstreamId/move", () => {
       expect.objectContaining({ spaceId: target.id }),
     ]));
     expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId)).not.toContain(source.id);
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT kind, state, source_space_id, space_id
+              FROM space_intents WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1`,
+      bindings: [workstreamId],
+    })).toMatchObject({
+      rows: [{
+        kind: "move",
+        state: "settled",
+        source_space_id: source.id,
+        space_id: target.id,
+      }],
+    });
   });
 });
 

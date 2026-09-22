@@ -1,4 +1,5 @@
 import {
+  ChannelAccessSourcesSchema,
   IdSchema,
   SpaceErrorCodeSchema,
   SpaceIdSchema,
@@ -50,6 +51,16 @@ export type ObservedChannel = z.infer<typeof ObservedChannelSchema>;
 export const ReadChannelAccessSourcesRequestSchema = ChannelAccessAddressSchema.extend({
   channel: ObservedChannelSchema,
 });
+
+/**
+ * Server-internal read of only the persisted Space provenance.
+ *
+ * Recovery for a move was authorized and durably staged by WorkspaceDO. It
+ * must not turn the initiating user's mutable, current Channel access into a
+ * second authorization fence while converging that intent.
+ */
+export const ReadPersistedSpaceAccessSourcesRequestSchema = ChannelAccessAddressSchema;
+export const PersistedSpaceAccessSourcesSchema = ChannelAccessSourcesSchema.shape.spaces;
 
 export const SetChannelDirectScopeRequestSchema = ChannelAccessAddressSchema.extend({
   scope: SpaceScopeSchema,
@@ -199,6 +210,35 @@ export const ConfirmSpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(false), code: SpaceErrorCodeSchema }),
 ]);
 export type ConfirmSpaceAccessSourceResult = z.infer<typeof ConfirmSpaceAccessSourceResultSchema>;
+
+/**
+ * Replace one Space source with another when both name the exact same audience.
+ *
+ * No canonical Channel audience write belongs between these two facts: the
+ * effective scope and roster do not change. Keeping this as one WorkstreamDO
+ * transaction transfers the provenance without paying the plan/apply/confirm
+ * protocol whose only purpose is to bracket a real audience mutation.
+ */
+export const ReplaceEquivalentSpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
+  sourceSpaceId: SpaceIdSchema,
+  targetSpaceId: SpaceIdSchema,
+  scope: SpaceScopeSchema,
+  participantUserIds: z.array(UserIdSchema),
+  sourceSpaceRevision: z.number().int().positive(),
+  sourceMembershipGeneration: z.number().int().positive(),
+  targetSpaceRevision: z.number().int().positive(),
+  targetMembershipGeneration: z.number().int().positive(),
+  operationId: IdSchema,
+}).strict();
+export type ReplaceEquivalentSpaceAccessSourceRequest =
+  z.infer<typeof ReplaceEquivalentSpaceAccessSourceRequestSchema>;
+
+export const ReplaceEquivalentSpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({ ok: z.literal(false), code: SpaceErrorCodeSchema }),
+]);
+export type ReplaceEquivalentSpaceAccessSourceResult =
+  z.infer<typeof ReplaceEquivalentSpaceAccessSourceResultSchema>;
 
 export const RetractSpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
