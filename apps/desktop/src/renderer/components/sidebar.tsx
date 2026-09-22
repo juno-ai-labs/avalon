@@ -2411,7 +2411,9 @@ export function Sidebar({
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
-                {pinnedWorkstreams.length === 0 && <p className="sidebar-empty">Drop to pin</p>}
+                {pinnedWorkstreams.length === 0 && (
+                  <div className="pinned-empty-drop-surface">Drop channel here to pin</div>
+                )}
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     {...workstreamRowActions}
