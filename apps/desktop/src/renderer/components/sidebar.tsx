@@ -878,6 +878,10 @@ function WorkstreamRow({
             aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this channel' : workstream.title, drag?.position].filter(Boolean).join(', ')}
+            badge={{
+              count: workstream.breakoutAttentionCount ?? 0,
+              label: `${workstream.breakoutAttentionCount ?? 0} ${workstream.breakoutAttentionCount === 1 ? 'breakout needs' : 'breakouts need'} attention in ${workstream.title}`,
+            }}
             className={({ isActive }: { isActive: boolean }) => clsx(
               'workstream-row',
               isActive && 'is-active',

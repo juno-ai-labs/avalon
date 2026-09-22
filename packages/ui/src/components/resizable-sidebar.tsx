@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { GripVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -26,6 +27,8 @@ type ClassNameResolver = (...args: unknown[]) => string | undefined;
 
 type SidebarRowProps<Component extends ElementType> = {
   as?: Component;
+  /** A trailing count in expanded rows and an icon-corner badge in compact rows. */
+  badge?: { count: number; label: string };
 } & ComponentPropsWithoutRef<Component>;
 
 type SidebarScrollProps<Component extends ElementType> = {
@@ -46,14 +49,28 @@ type SidebarFooterProps<Component extends ElementType> = {
 export function SidebarRow<Component extends ElementType = 'button'>(
   props: SidebarRowProps<Component>,
 ): React.JSX.Element {
-  const { as, ...rest } = props;
-  const rowProps = rest as typeof rest & { className?: string | ClassNameResolver };
+  const { as, badge, children, ...rest } = props;
+  const rowProps = rest as typeof rest & {
+    'aria-describedby'?: string;
+    className?: string | ClassNameResolver;
+  };
   const className = rowProps.className;
+  const badgeVisible = Boolean(badge && badge.count > 0);
+  const badgeDescriptionId = useId();
+  const describedBy = [rowProps['aria-describedby'], badgeVisible ? badgeDescriptionId : undefined]
+    .filter(Boolean)
+    .join(' ') || undefined;
   const mergedClassName = typeof className === 'function'
     ? (...args: unknown[]): string => clsx('sidebar-row', className(...args))
     : clsx('sidebar-row', className);
   const Row: ElementType = as ?? 'button';
-  return <Row {...rest} className={mergedClassName} />;
+  return <Row {...rest} aria-describedby={describedBy} className={mergedClassName}>
+    {children}
+    {badgeVisible && <>
+      <span aria-hidden="true" className="sidebar-row-badge">{badge!.count}</span>
+      <span className="sr-only" id={badgeDescriptionId}>{badge!.label}</span>
+    </>}
+  </Row>;
 }
 
 /** The shared scrolling body below a hierarchy sidebar's header divider. */

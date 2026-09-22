@@ -644,6 +644,8 @@ export const WorkstreamSchema = z.object({
   spaceIds: z.array(SpaceIdSchema)
     .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
     .default([]),
+  /** Breakouts under this Channel that currently need this viewer. */
+  breakoutAttentionCount: z.number().int().nonnegative().optional(),
 });
 
 export const ExternalActorSchema = z.object({
@@ -2566,10 +2568,10 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
 /**
  * The Space dashboards whose page this viewer should read again.
  *
- * A nudge, not a payload: it carries no rows, no version and no count, only
- * the Spaces whose list of "conversations that need you" could have moved for
- * the socket it is sent to. The dashboard re-reads the page it is holding;
- * every other surface ignores it.
+ * A nudge with the current aggregate: it carries no rows or version, only the
+ * Spaces whose list of "conversations that need you" could have moved and the
+ * new count for each. The dashboard re-reads the page it is holding; the
+ * sidebar applies the count without rebuilding the whole Space directory.
  *
  * **Nothing durable stands behind it.** The list is re-read on mount, on
  * reconnect and on this event, so a nudge lost to a closing socket costs one
@@ -2590,6 +2592,20 @@ export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
    * Organization has no number for that to trip over.
    */
   spaceIds: z.array(IdSchema).min(1),
+  /** Current dashboard totals for the same viewer and the same named Spaces. */
+  attentionCounts: z.array(z.strictObject({
+    spaceId: SpaceIdSchema,
+    count: z.number().int().nonnegative(),
+  })).default([]),
+}).superRefine((event, context) => {
+  const named = new Set(event.spaceIds);
+  for (const [index, entry] of event.attentionCounts.entries()) {
+    if (!named.has(entry.spaceId)) context.addIssue({
+      code: "custom",
+      path: ["attentionCounts", index, "spaceId"],
+      message: "must name a Space in spaceIds",
+    });
+  }
 });
 
 /** A current state row pushed by WorkspaceDO after Queue ingestion. */

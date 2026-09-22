@@ -1676,6 +1676,7 @@ describe("WorkspaceDO space authority", () => {
     // all. Every Space read has to answer empty there rather than abort with
     // `no such table`, because the reads are on the connect payload: an
     // unguarded one does not hide the Spaces, it stops the sidebar opening.
+    await publishChannel(CHANNEL_A, null);
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec("DELETE FROM _sql_schema_migrations WHERE version > 57");
@@ -1691,6 +1692,7 @@ describe("WorkspaceDO space authority", () => {
         "space_channel_memberships", "space_intents",
         "space_bootstrap", "workspace_container_order", "workspace_space_viewers",
         "workspace_space_state", "workspace_space_directory",
+        "workspace_breakout_viewers", "workspace_breakout_directory",
       ]) sql.exec(`DROP TABLE ${table}`);
     });
     await evictDurableObject(workspace());
@@ -1722,6 +1724,9 @@ describe("WorkspaceDO space authority", () => {
       active: { waterline: 0, items: [] },
       inactive: { waterline: 0, items: [] },
     });
+    expect(sidebar.workstreams.items).toMatchObject([
+      { id: CHANNEL_A, breakoutAttentionCount: 0 },
+    ]);
     expect(sidebar.spacesReady).toBe(false);
     socket.close();
 

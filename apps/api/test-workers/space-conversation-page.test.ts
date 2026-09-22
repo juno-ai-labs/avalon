@@ -32,6 +32,7 @@ import {
   HarnessStatusSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSpaceConversationsEventSchema,
+  WorkspaceWorkstreamStateEventSchema,
   type HarnessStatus,
   type SpaceId,
   type UserId,
@@ -46,7 +47,10 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
-import { SPACE_CHANNEL_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
+import {
+  SPACE_CHANNEL_PAGE_SIZE,
+  WorkspaceSpaceStorage,
+} from "../src/durable-objects/workspace-space-storage";
 import {
   consumeEffectBodies,
   deliverParentEffects,
@@ -57,6 +61,7 @@ import {
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000d101");
 const MEMBER = asUserId("00000000-0000-7000-8000-00000000d102");
+const GUEST = asUserId("00000000-0000-7000-8000-00000000d108");
 const CHANNEL_A = asWorkstreamId("00000000-0000-7000-8000-00000000d103");
 const CHANNEL_B = asWorkstreamId("00000000-0000-7000-8000-00000000d104");
 const PRIVATE_CHANNEL = asWorkstreamId("00000000-0000-7000-8000-00000000d105");
@@ -111,6 +116,9 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'guest', 'guest')`)
+      .bind(WORKSPACE_ID, GUEST),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
@@ -366,7 +374,13 @@ let ticketSequence = 0;
  * is the production delivery path, opened the way `space-authority.test.ts`
  * opens one.
  */
-async function connectViewer(userId: UserId): Promise<{ nudges: string[][] }> {
+async function connectViewer(userId: UserId): Promise<{
+  channelUpdates: number[];
+  initialChannelCounts: number[];
+  initialSpaceCounts: number[];
+  nudgeCounts: number[][];
+  nudges: string[][];
+}> {
   ticketSequence += 1;
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
@@ -386,20 +400,39 @@ async function connectViewer(userId: UserId): Promise<{ nudges: string[][] }> {
   const socket = response.webSocket;
   socket.accept();
   const nudges: string[][] = [];
+  const nudgeCounts: number[][] = [];
+  const channelUpdates: number[] = [];
+  const initialChannelCounts: number[] = [];
+  const initialSpaceCounts: number[] = [];
   const subscribed = new Promise<void>((resolve) => {
     socket.addEventListener("message", (event) => {
       const data = JSON.parse(String(event.data)) as unknown;
       const nudge = WorkspaceSpaceConversationsEventSchema.safeParse(data);
       if (nudge.success) {
         nudges.push([...nudge.data.spaceIds]);
+        nudgeCounts.push(nudge.data.attentionCounts.map((entry) => entry.count));
         return;
       }
-      if (WorkspaceSocketSyncEventSchema.safeParse(data).success) resolve();
+      const workstreamState = WorkspaceWorkstreamStateEventSchema.safeParse(data);
+      if (workstreamState.success) {
+        if (workstreamState.data.workstream) {
+          channelUpdates.push(workstreamState.data.workstream.breakoutAttentionCount ?? 0);
+        }
+        return;
+      }
+      const sync = WorkspaceSocketSyncEventSchema.safeParse(data);
+      if (sync.success) {
+        initialChannelCounts.push(...(sync.data.sidebar?.workstreams.items ?? [])
+          .map((item) => item.breakoutAttentionCount ?? 0));
+        initialSpaceCounts.push(...(sync.data.sidebar?.spaces?.active.items ?? [])
+          .map((item) => item.attentionCount ?? 0));
+        resolve();
+      }
     });
   });
   socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
   await subscribed;
-  return { nudges };
+  return { channelUpdates, initialChannelCounts, initialSpaceCounts, nudgeCounts, nudges };
 }
 
 function inspect(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
@@ -646,6 +679,68 @@ describe("space dashboard conversation page", () => {
     // from: `nextCursor` is null exactly when the answer is complete, which is
     // what stops a client asking for a page that does not exist.
     expect(full.nextCursor).toBeNull();
+  });
+
+  it("keeps Space and Channel badge totals on the dashboard's attention predicate", async () => {
+    const spaceId = await reserve("Hiring");
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [
+      channelCommonEffect("Roadmap", { state: "needs_input" }),
+      viewerEffect(OWNER),
+    ]);
+    await place(spaceId, CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Pricing", { state: "needs_input" }),
+      viewerEffect(OWNER) as ConversationEffect,
+    ]);
+
+    const owner = await connectViewer(OWNER);
+    expect(owner.initialSpaceCounts).toContain(2);
+    expect(owner.initialChannelCounts).toContain(1);
+
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Pricing", { state: "idle" }),
+    ], 2);
+
+    await vi.waitFor(() => {
+      expect(owner.nudgeCounts.at(-1)).toEqual([1]);
+      expect(owner.channelUpdates.at(-1)).toBe(0);
+    }, { timeout: 5_000 });
+  });
+
+  it("keeps Channel badge totals inside the parent Channel and guest visibility boundaries", async () => {
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Shared Channel")]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Shared Breakout", { scope: "workspace" }),
+    ]);
+    await publishChannel(PRIVATE_CHANNEL, [
+      channelCommonEffect("Private Channel", { scope: "personal" }),
+      viewerEffect(OWNER),
+    ]);
+    await publishBreakout(PRIVATE_CHANNEL, BREAKOUT_TWO, [
+      breakoutCommonEffect("Breakout under a hidden Channel", { scope: "workspace" }),
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+
+    const counts = await runInDurableObject(workspace(), (_instance, state) => {
+      const spaces = new WorkspaceSpaceStorage(state.storage);
+      return {
+        guestWithoutGrant: spaces.breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest"),
+        memberWithoutParent: spaces.breakoutAttentionCounts(MEMBER, [PRIVATE_CHANNEL]),
+      };
+    });
+    expect(counts.guestWithoutGrant.get(CHANNEL_A)).toBeUndefined();
+    expect(counts.memberWithoutParent.get(PRIVATE_CHANNEL)).toBeUndefined();
+
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      viewerEffect(GUEST) as ConversationEffect,
+    ], 2);
+    const guestWithGrant = await runInDurableObject(workspace(), (_instance, state) => (
+      new WorkspaceSpaceStorage(state.storage)
+        .breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest")
+        .get(CHANNEL_A)
+    ));
+    expect(guestWithGrant).toBe(1);
   });
 
   it("given more conversations than one page holds, when the cursor is followed, then the walk is complete and repeats nothing", async () => {

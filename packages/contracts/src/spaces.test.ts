@@ -105,6 +105,8 @@ describe("space contracts", () => {
     expect(SpaceSummarySchema.safeParse(summary({ revision: 0 })).success).toBe(false);
     expect(SpaceSummarySchema.safeParse(summary({ channelCount: -1 })).success).toBe(false);
     expect(SpaceSummarySchema.safeParse(summary({ channelCount: 1.5 })).success).toBe(false);
+    expect(SpaceSummarySchema.safeParse(summary({ attentionCount: -1 })).success).toBe(false);
+    expect(SpaceSummarySchema.safeParse(summary({ attentionCount: 1.5 })).success).toBe(false);
     expect(SpaceSummarySchema.safeParse(summary({ systemRole: "general" })).success).toBe(true);
     expect(SpaceSummarySchema.safeParse(summary({ systemRole: "inbox" })).success).toBe(false);
     // Four Project lifecycle states have no Space equivalent: an archive is

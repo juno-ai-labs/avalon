@@ -227,6 +227,8 @@ export const SpaceSummarySchema = z.strictObject({
    * avoid.
    */
   channelCount: z.number().int().nonnegative(),
+  /** Channels and Breakouts in this Space that currently need this viewer. */
+  attentionCount: z.number().int().nonnegative().optional(),
   /** Empty for a `through_channel` viewer: a Space's defaults are not theirs to see. */
   defaultResourceIds: z.array(z.string().uuid()).default([]),
   /** Empty for a `through_channel` viewer, with {@link SpaceSummarySchema.shape.defaultResourceIds}. */

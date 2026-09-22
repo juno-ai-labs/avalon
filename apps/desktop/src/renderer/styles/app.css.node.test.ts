@@ -490,6 +490,15 @@ describe('sidebar layout motion', () => {
     expect(rule('.space-sidebar-workstreams')).not.toContain('gap:');
   });
 
+  it('keeps attention badges trailing when expanded and on the icon corner when compact', () => {
+    expect(rule('.sidebar-row-badge')).toContain('margin-left: auto;');
+    expect(rule('.sidebar-row-badge')).toContain('height: 20px;');
+    expect(rule('.sidebar-row-badge')).toContain('min-width: 20px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row-badge')).toContain('position: absolute;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row-badge')).toContain('right: 4px;');
+    expect(rule('.resizable-sidebar.is-compact .sidebar-row-badge')).toContain('top: 4px;');
+  });
+
   // The rows travel on the box's own interval, restated once on the sidebar so
   // a drag — which snaps the edge to the pointer — turns every one of them off
   // with one override rather than a rule per shape.
