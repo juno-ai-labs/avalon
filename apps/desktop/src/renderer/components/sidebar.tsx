@@ -2073,7 +2073,6 @@ export function Sidebar({
         onSelect={(spaceId) => {
           setSelectedSpaceId(spaceId);
           setSpacesCollapsed(true);
-          setSidebarCollapsed(false);
         }}
         ordering={ordering}
         ready={spacesReady}
