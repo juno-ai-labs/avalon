@@ -82,6 +82,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Breakouts')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
+    expect(screen.getByText('document · v2')).toHaveClass('sidebar-row-activity');
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toHaveClass('sidebar-row');
   });
