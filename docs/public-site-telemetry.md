@@ -3,7 +3,7 @@
 The landing links directly to the canonical macOS installer and collects no email.
 The retained access-request client submits only to `/access/requests`; email values and submission bodies never enter telemetry. `/download/` deliberately
 skips telemetry initialization so its bearer fragment cannot reach analytics.
-The macOS Beta action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
+The Download for macOS action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
 Support and Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
 
