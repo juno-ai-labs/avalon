@@ -943,7 +943,11 @@ describe('socket-first channel open', () => {
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {
     renderScreen();
 
-    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
+    expect(document.querySelectorAll('.conversation-opening-sidebar .skeleton-row')).toHaveLength(7);
+    expect(document.querySelectorAll('.conversation-opening-message')).toHaveLength(3);
+    expect(document.querySelector('.conversation-opening-composer')).not.toBeNull();
+    expect(document.querySelector('[data-testid="thinking-orb"]')).toBeNull();
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0'));
   });
 
@@ -973,7 +977,7 @@ describe('socket-first channel open', () => {
       client.setQueryData(['ordered-transcript', workstreamId], staleTranscript);
     });
 
-    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
     await act(async () => Promise.resolve());
     expect(scrollTranscriptToEnd).not.toHaveBeenCalled();
 
