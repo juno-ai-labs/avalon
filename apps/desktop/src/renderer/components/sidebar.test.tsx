@@ -619,6 +619,7 @@ describe('Sidebar channel markers', () => {
     const unreadLink = screen.getByRole('link', { name: new RegExp(unread.title, 'u') });
     expect(readLink.querySelector('time')).toBeNull();
     expect(unreadLink.querySelector('time')).toHaveAttribute('datetime', unread.lastActivityAt);
+    expect(unreadLink.querySelector('.sidebar-row-activity')).toContainElement(unreadLink.querySelector('time'));
     expect(screen.queryByText(unread.preview)).not.toBeInTheDocument();
     expect(document.querySelector('.sidebar-workstream-facepile')).toBeNull();
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
@@ -688,7 +689,7 @@ describe('Sidebar channel markers', () => {
     const row = screen.getByRole('link', { name: /Ship the launch/u });
     expect(row).toHaveClass('sidebar-row', 'workstream-row');
     expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
-    expect(row.querySelector('.sidebar-row-hint')).toBeNull();
+    expect(row.querySelector('.sidebar-row-activity')).toBeNull();
   });
 
   it('falls back once when a Space route is absent from the active directory', () => {
