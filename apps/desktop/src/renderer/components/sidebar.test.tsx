@@ -4263,12 +4263,26 @@ describe('alphabetical channels inside a space', () => {
     fireEvent.dragStart(source, { dataTransfer: transfer });
     expect(transfer.getData('application/x-rally-workstream-id')).toBe(bravo.id);
     const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
-    expect(within(pinnedTarget).getByText('Drop to pin')).toBeInTheDocument();
+    expect(within(pinnedTarget).getByText('Drop channel here to pin')).toHaveClass('pinned-empty-drop-surface');
     fireEvent.dragOver(pinnedTarget, { dataTransfer: transfer });
     fireEvent.drop(pinnedTarget, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
+  });
+
+  it('hides the empty Pinned drop surface when the Channel drag is cancelled', () => {
+    renderSidebar({ workstreams: [alpha, bravo] });
+    const transfer = channelTransfer();
+    const source = dragTarget(/Bravo/u);
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    expect(screen.getByText('Drop channel here to pin')).toBeInTheDocument();
+
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+
+    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Drop channel here to pin')).not.toBeInTheDocument();
   });
 
   it('offers placement removal for a pinned Channel in the selected Space', async () => {

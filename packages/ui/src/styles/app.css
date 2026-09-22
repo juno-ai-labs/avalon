@@ -6249,11 +6249,26 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .app-shell .sidebar .pinned-section {
   transition: margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
 }
+.pinned-empty-drop-surface {
+  align-items: center;
+  background: color-mix(in srgb, var(--av-sys-color-accent-base) 12%, transparent);
+  border-radius: var(--av-sys-size-radius-sm);
+  box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-quiet);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  font-size: 11px;
+  justify-content: center;
+  margin: 0 4px;
+  min-height: var(--av-cmp-row-height-dense);
+  padding: 0 8px;
+  text-align: center;
+}
 .app-shell .sidebar .pinned-section-line { height: 0; margin-top: 0; opacity: 0; }
 .app-shell .sidebar.is-compact .pinned-section {
   margin-bottom: 12px;
   padding-bottom: 12px;
 }
+.app-shell .sidebar.is-compact .pinned-empty-drop-surface { display: none; }
 .app-shell .sidebar.is-compact .pinned-section-line { height: var(--av-sys-size-border-hairline); margin-top: var(--av-sys-space-group-gap); opacity: 1; }
 /* A row narrows to its 54px mark: the wrapper's width travels, the row's
    padding and gap with it, and the title column — `minmax(0, 1fr)` — closes
