@@ -36,6 +36,7 @@ import {
   type HarnessStatus,
   type SpaceId,
   type UserId,
+  type WorkstreamAppearance,
   type WorkstreamId,
 } from "@rally/contracts";
 import {
@@ -132,6 +133,7 @@ async function establishWorkspace(): Promise<void> {
 }
 
 interface ChannelState {
+  appearance?: WorkstreamAppearance;
   scope?: "personal" | "workspace";
   state?: string;
   lastActivityAt?: string;
@@ -142,6 +144,7 @@ interface ChannelState {
 function channelCommonEffect(title: string, overrides: ChannelState = {}): ParentEffect {
   return {
     kind: "directory_common",
+    ...(overrides.appearance ? { appearance: overrides.appearance } : {}),
     title,
     description: "",
     preview: "",
@@ -215,6 +218,7 @@ async function publishChannel(
 }
 
 function breakoutCommonEffect(title: string, overrides: {
+  appearance?: WorkstreamAppearance;
   state?: string;
   scope?: "personal" | "workspace";
   lastActivityAt?: string;
@@ -223,6 +227,7 @@ function breakoutCommonEffect(title: string, overrides: {
 } = {}): Extract<ConversationEffect, { kind: "directory_common" }> {
   return {
     kind: "directory_common",
+    ...(overrides.appearance ? { appearance: overrides.appearance } : {}),
     title,
     description: "",
     preview: "",
@@ -694,7 +699,11 @@ describe("space dashboard conversation page", () => {
     await openChannelObject(CHANNEL_A);
     await openChannelObject(CHANNEL_B);
     await publishChannel(CHANNEL_A, [
-      channelCommonEffect("Channel A", { state: "needs_input", lastActivityAt: "2026-09-19T09:00:00.000Z" }),
+      channelCommonEffect("Channel A", {
+        appearance: { icon: "rocket", color: "blue" },
+        state: "needs_input",
+        lastActivityAt: "2026-09-19T09:00:00.000Z",
+      }),
       viewerEffect(OWNER),
     ]);
     await publishChannel(CHANNEL_B, [
@@ -704,7 +713,10 @@ describe("space dashboard conversation page", () => {
     await place(spaceId, CHANNEL_A);
     await place(spaceId, CHANNEL_B);
     await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
-      breakoutCommonEffect("Breakout at eleven", { lastActivityAt: "2026-09-19T11:00:00.000Z" }),
+      breakoutCommonEffect("Breakout at eleven", {
+        appearance: { icon: "sparkles", color: "rose" },
+        lastActivityAt: "2026-09-19T11:00:00.000Z",
+      }),
       viewerEffect(OWNER) as ConversationEffect,
     ]);
     await publishBreakout(CHANNEL_B, BREAKOUT_TWO, [
@@ -726,7 +738,13 @@ describe("space dashboard conversation page", () => {
     // link is built from.
     expect(full.items[1]).toMatchObject({
       id: BREAKOUT_ONE,
-      breakoutOf: { workstreamId: CHANNEL_A, substreamId: BREAKOUT_ONE, title: "Channel A" },
+      appearance: { icon: "sparkles", color: "rose" },
+      breakoutOf: {
+        workstreamId: CHANNEL_A,
+        substreamId: BREAKOUT_ONE,
+        title: "Channel A",
+        appearance: { icon: "rocket", color: "blue" },
+      },
     });
     expect(full.items[0]).toMatchObject({ kind: "channel", breakoutOf: null });
 
