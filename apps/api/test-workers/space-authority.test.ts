@@ -41,6 +41,7 @@ import {
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
 import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS } from "../src/durable-objects/workspace-breakout-storage";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000cf00");
@@ -1849,6 +1850,69 @@ describe("WorkspaceDO space authority", () => {
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [] });
+
+    const breakout: ParentEffect = {
+      kind: "directory_common",
+      title: "Quiet breakout",
+      description: "",
+      preview: "",
+      scope: "personal",
+      state: "needs_input",
+      systemKind: null,
+      lastActivityAt: "2026-09-19T00:00:00.000Z",
+      completedAt: null,
+      archivedAt: null,
+      createdByUserId: OWNER,
+      latestAttentionOrdinal: 0,
+      unreadTrackingStartOrdinal: 0,
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+      resourceLinks: [],
+    };
+    const breakoutEnvelope = ParentEffectEnvelopeSchema.parse({
+      kind: "parent_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: CHANNEL_A,
+      substreamId: BREAKOUT_A,
+      generation: 1,
+      messageId: messageId(),
+      partitionKey: `substream:${BREAKOUT_A}:common`,
+      sourceVersion: 1,
+      requiredProjectionVersion: null,
+      payloadHash: conversationEffectHash(breakout),
+      effect: breakout,
+    });
+    await expect(workspace().applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [breakoutEnvelope],
+    })).resolves.toMatchObject({ accepted: [] });
+    await expect(workspace().runInspectionSql({
+      sql: "SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts WHERE message_id = ?",
+      bindings: [breakoutEnvelope.messageId],
+    })).resolves.toMatchObject({ rows: [{ count: 0 }] });
+
+    // Install the exact breakout tables from migration 63 without exercising
+    // the unrelated meeting-retirement chain this fixture deliberately holds.
+    // The same delivery is then accepted: this is the Queue retry the empty
+    // acceptance preserves rather than a second publication from the Channel.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const statement of WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS) {
+        state.storage.sql.exec(statement);
+      }
+    });
+    await expect(workspace().applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [breakoutEnvelope],
+    })).resolves.toMatchObject({
+      accepted: [{ messageId: breakoutEnvelope.messageId, payloadHash: breakoutEnvelope.payloadHash }],
+    });
+    await expect(workspace().runInspectionSql({
+      sql: "SELECT title FROM workspace_breakout_directory WHERE workstream_id = ? AND substream_id = ?",
+      bindings: [CHANNEL_A, BREAKOUT_A],
+    })).resolves.toMatchObject({ rows: [{ title: "Quiet breakout" }] });
 
     const { socket, sidebar } = await connectViewer(OWNER, "cf11");
     expect(sidebar.spaces).toEqual({
