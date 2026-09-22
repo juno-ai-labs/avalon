@@ -7,6 +7,12 @@ import {
 } from "../src/services/participant-email-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
+vi.mock("../src/services/workstream-link-service", async () => {
+  const { workstreamCanonicalUrl } = await import("@rally/contracts");
+  return { canonicalWorkstreamUrl: async (env: Env, target: { region: "global"; workspaceId: string; workstreamId: string; substreamId?: string }) =>
+    workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, spaceId: "00000000-0000-7000-8000-000000000002" }) };
+});
+
 const input: WorkstreamParticipantAddedEmail = {
   sourceId: "participant:018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2:018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1:0",
   recipientUserId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1",
@@ -92,7 +98,7 @@ describe("channel participant-added email", () => {
 
     const body = sentBody(resend);
     expect(String(body.text)).toContain("You were added to a channel in Rally.");
-    expect(String(body.text)).toContain(`Open in Rally: https://rallywith.ai/app/workspaces/global/${input.workspaceId}/workstreams/`);
+    expect(String(body.text)).toContain("Open in Rally: https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
     expect(String(body.html)).toContain(">Rally</td>");
     expect(String(body.html)).toContain("Open in Rally</a>");
     expect(String(body.text)).not.toContain("Avalon");

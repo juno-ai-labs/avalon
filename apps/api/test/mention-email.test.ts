@@ -7,6 +7,12 @@ import {
 } from "../src/services/mention-email-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
+vi.mock("../src/services/workstream-link-service", async () => {
+  const { workstreamCanonicalUrl } = await import("@rally/contracts");
+  return { canonicalWorkstreamUrl: async (env: Env, target: { region: "global"; workspaceId: string; workstreamId: string; substreamId?: string }) =>
+    workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, spaceId: "00000000-0000-7000-8000-000000000002" }) };
+});
+
 const input: WorkstreamMentionEmail = {
   messageId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0",
   recipientUserId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1",
@@ -69,9 +75,9 @@ describe("channel mention email", () => {
       ],
     });
     // A mail client linkifies the canonical HTTPS link and ignores `avalon://`.
-    expect(String(body.text)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
+    expect(String(body.text)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
     expect(String(body.text)).not.toContain("avalon://");
-    expect(String(body.html)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
+    expect(String(body.html)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
     expect(String(body.text)).toContain("Reply to this email to continue the channel.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");

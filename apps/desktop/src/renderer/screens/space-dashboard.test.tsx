@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { SpaceSummarySchema, asSpaceId, type SpaceSummary } from '@rally/contracts';
+import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
+import { desktopBridge } from '../lib/platform';
 import type * as SidebarListStore from '../lib/sidebar-list-store';
 import { SpaceDashboardScreen } from './space-dashboard';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
@@ -44,7 +46,7 @@ const member = {
   timezone: 'America/Los_Angeles',
 };
 const workspace = {
-  id: 'workspace-1',
+  id: '00000000-0000-7000-8000-000000000001',
   name: 'Rally Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
@@ -149,6 +151,15 @@ describe('the Space dashboard', () => {
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
     api.updateSpacePresentation.mockImplementation(async (_id: string, input: { name: string; iconKey: string; colorKey: string }) => makeSpace({ ...input, revision: 2 }));
     api.updateSpaceAudience.mockImplementation(async (_id: string, input: { scope: 'personal' | 'workspace' }) => makeSpace({ scope: input.scope, revision: 2 }));
+  });
+
+  it('copies its addressed Space URL from the dashboard', async () => {
+    const copy = vi.spyOn(desktopBridge(), 'copyText').mockResolvedValue(undefined);
+    renderSpace();
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy space link' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(
+      `http://127.0.0.1:5174/app/global/${uuidToBase58(workspace.id)}/s/${uuidToBase58(hiring.id)}/`,
+    ));
   });
 
   // A Space is not a conversation. The backing object has a hidden main, and

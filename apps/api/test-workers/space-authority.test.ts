@@ -39,6 +39,7 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+import { canonicalWorkstreamUrl } from "../src/services/workstream-link-service";
 
 import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import { WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS } from "../src/durable-objects/workspace-breakout-storage";
@@ -831,6 +832,34 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
+  it("chooses one active Space placement for a canonical Channel link", async () => {
+    const first = await reserve("First");
+    const second = await reserve("Second");
+    await publishChannel(CHANNEL_A, null);
+    await place(second, CHANNEL_A);
+    await place(first, CHANNEL_A);
+    await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_A }))
+      .resolves.toEqual({ spaceId: [first, second].sort()[0] });
+    await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_B }))
+      .resolves.toEqual({ spaceId: null });
+    await expect(canonicalWorkstreamUrl(env, {
+      region: "global", workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_B,
+    })).resolves.toBe(new URL(
+      `/app/workspaces/global/${WORKSPACE_ID}/workstreams/${CHANNEL_B}`,
+      env.PUBLIC_WEB_BASE_URL,
+    ).toString());
+  });
+
+  it("prefers an Organization-wide placement over a personal Space for a shared Channel link", async () => {
+    const personal = await reserve("Personal", "personal");
+    const shared = await reserve("Shared", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(personal, CHANNEL_A);
+    await place(shared, CHANNEL_A);
+    await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_A }))
+      .resolves.toEqual({ spaceId: shared });
+  });
+
   it("given a Channel in a personal Space, when another member can read it, then that Space is named to them", async () => {
     const personal = await reserve("Side work", "personal");
     const organization = await reserve("Company", "workspace");
@@ -844,15 +873,15 @@ describe("WorkspaceDO space authority", () => {
     // it actually lives in rather than in a flat list of homeless rows.
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
-    })).resolves.toEqual({ spaceIds: [personal, organization].sort() });
+    })).resolves.toEqual({ spaceIds: [organization, personal] });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: MEMBER, workstreamId: CHANNEL_A,
-    })).resolves.toEqual({ spaceIds: [personal, organization].sort() });
+    })).resolves.toEqual({ spaceIds: [organization, personal] });
 
     // And on the directory row itself, which is where a client reads them.
     const { socket, sidebar } = await connectViewer(MEMBER, "cf14");
     expect(sidebar.workstreams.items).toMatchObject([
-      { id: CHANNEL_A, spaceIds: [personal, organization].sort() },
+      { id: CHANNEL_A, spaceIds: [organization, personal] },
     ]);
     socket.close();
   });

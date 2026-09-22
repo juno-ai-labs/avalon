@@ -38,8 +38,9 @@ export function invitationFromFragment(fragment: string): BrowserInvitation | nu
 }
 
 /** Child-only shares must never navigate through Main as an intermediate view. */
-export function invitationTargetPath(origin: string, region: string, target: ScopeGrantTarget): string {
-  return new URL(workstreamCanonicalUrl(origin, { region, workspaceId: target.workspaceId,
+export function invitationTargetPath(origin: string, region: string, target: ScopeGrantTarget, spaceId?: string): string {
+  if (!spaceId) return `/app/workspaces/${region}/${target.workspaceId}/workstreams/${target.parentId}${target.kind === 'conversation' && target.substreamId !== '0' ? `/substreams/${target.substreamId}` : ''}`;
+  return new URL(workstreamCanonicalUrl(origin, { region, workspaceId: target.workspaceId, spaceId,
     workstreamId: target.parentId,
     ...(target.kind === "conversation" && target.substreamId !== "0" ? { substreamId: target.substreamId } : {}),
   })).pathname;

@@ -22,6 +22,12 @@ describe('workspace-addressed links', () => {
     expect(parseWorkspaceTarget(url)).toEqual(TARGET);
   });
 
+  it('decodes Base58 Organization coordinates on new resource handoffs', () => {
+    const url = addWorkspaceTarget(new URL('rallywithai://spaces/1111117Hxt1fAWDjN7TX'), TARGET, { base58: true });
+    expect(url.pathname).toBe('/enterprise/1111117Hxt1fAWDjN7Te/spaces/1111117Hxt1fAWDjN7TX');
+    expect(parseWorkspaceTarget(url)).toEqual(TARGET);
+  });
+
   it('rejects missing, duplicated, malformed, and query-addressed coordinates', () => {
     for (const rawUrl of [
       'rallywithai://workspace/enterprise',

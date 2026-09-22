@@ -177,10 +177,20 @@ function report<TName extends TelemetryEventName>(
 
 export function normalizedTelemetryPathname(pathname: string): string {
   const path = pathname.toLowerCase().slice(0, 160);
+  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/b\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/s/:space/c/:channel/b/:breakout';
+  }
+  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/s/:space/c/:channel';
+  }
+  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/s/:space';
+  }
   if (path.startsWith('/app/workspaces/')) {
     return '/app/workspaces/:region/:workspace/workstreams/:id';
   }
   if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
+  if (path.startsWith('/app/')) return '/app/:unrecognized';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }
 
@@ -192,7 +202,7 @@ export function sitePageForPath(path: string): SitePage {
   if (path === '/404.html') return 'not_found';
   if (path.startsWith('/auth/desktop')) return 'auth_handoff';
   if (path.startsWith('/invite')) return 'invite_handoff';
-  if (path.startsWith('/app/workstreams') || path.startsWith('/app/workspaces')) return 'workstream_handoff';
+  if (path.startsWith('/app/')) return 'workstream_handoff';
   if (path.startsWith('/slack/link')) return 'slack_handoff';
   if (path.startsWith('/open')) return 'desktop_handoff';
   if (path.startsWith('/support') || path === '/slack/' || path === '/slack') return 'support';

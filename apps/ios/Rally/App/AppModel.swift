@@ -663,16 +663,22 @@ final class AppModel {
         }
     }
 
-    func copyConversationLink(substreamId: String) {
+    func copyConversationLink(substreamId: String) async {
         guard let workspace = workspaceSession?.workspace,
-              let workstreamId = currentWorkstream?.id,
+              let workstreamId = currentWorkstream?.id else { return }
+        do {
+            guard let spaceId = try await client.channelSpaceIds(id: workstreamId).first,
               let url = RallyDeepLink.canonicalURL(
                 region: workspace.region,
                 workspaceId: workspace.id,
+                spaceId: spaceId,
                 workstreamId: workstreamId,
                 substreamId: substreamId
               ) else { return }
-        UIPasteboard.general.string = url.absoluteString
+            UIPasteboard.general.string = url.absoluteString
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "That link could not be copied."
+        }
     }
 
     func send() async {

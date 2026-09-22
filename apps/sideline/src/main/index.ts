@@ -3,6 +3,7 @@ import {
   SidelineCatalogSchema,
   SidelineSendRequestSchema,
   SidelineSendResponseSchema,
+  ChannelAccessSchema,
   type Session,
 } from "@rally/contracts";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
@@ -426,9 +427,13 @@ ipcMain.handle("sideline:open-in-rally", async (event, raw) => {
   if (!session?.workspace || !raw || typeof raw !== "object") throw new Error("No active Sideline destination");
   const input = raw as { workstreamId?: unknown; substreamId?: unknown };
   if (typeof input.workstreamId !== "string" || typeof input.substreamId !== "string") throw new Error("Invalid Sideline destination");
+  const access = ChannelAccessSchema.parse(await authenticated(`/workstreams/${input.workstreamId}/access`));
+  const spaceId = [...access.spaceIds].sort()[0];
+  if (!spaceId) throw new Error("This channel has no Space to open");
   await shell.openExternal(workstreamDeepLink({
     region: session.workspace.region,
     workspaceId: session.workspace.id,
+    spaceId,
     workstreamId: input.workstreamId,
     ...(input.substreamId === "0" ? {} : { substreamId: input.substreamId }),
   }));
