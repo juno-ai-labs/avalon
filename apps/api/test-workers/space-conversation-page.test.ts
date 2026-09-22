@@ -47,7 +47,10 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
-import { SPACE_CHANNEL_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
+import {
+  SPACE_CHANNEL_PAGE_SIZE,
+  WorkspaceSpaceStorage,
+} from "../src/durable-objects/workspace-space-storage";
 import {
   consumeEffectBodies,
   deliverParentEffects,
@@ -58,6 +61,7 @@ import {
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000d101");
 const MEMBER = asUserId("00000000-0000-7000-8000-00000000d102");
+const GUEST = asUserId("00000000-0000-7000-8000-00000000d108");
 const CHANNEL_A = asWorkstreamId("00000000-0000-7000-8000-00000000d103");
 const CHANNEL_B = asWorkstreamId("00000000-0000-7000-8000-00000000d104");
 const PRIVATE_CHANNEL = asWorkstreamId("00000000-0000-7000-8000-00000000d105");
@@ -112,6 +116,9 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'guest', 'guest')`)
+      .bind(WORKSPACE_ID, GUEST),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
@@ -699,6 +706,41 @@ describe("space dashboard conversation page", () => {
       expect(owner.nudgeCounts.at(-1)).toEqual([1]);
       expect(owner.channelUpdates.at(-1)).toBe(0);
     }, { timeout: 5_000 });
+  });
+
+  it("keeps Channel badge totals inside the parent Channel and guest visibility boundaries", async () => {
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Shared Channel")]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Shared Breakout", { scope: "workspace" }),
+    ]);
+    await publishChannel(PRIVATE_CHANNEL, [
+      channelCommonEffect("Private Channel", { scope: "personal" }),
+      viewerEffect(OWNER),
+    ]);
+    await publishBreakout(PRIVATE_CHANNEL, BREAKOUT_TWO, [
+      breakoutCommonEffect("Breakout under a hidden Channel", { scope: "workspace" }),
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+
+    const counts = await runInDurableObject(workspace(), (_instance, state) => {
+      const spaces = new WorkspaceSpaceStorage(state.storage);
+      return {
+        guestWithoutGrant: spaces.breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest"),
+        memberWithoutParent: spaces.breakoutAttentionCounts(MEMBER, [PRIVATE_CHANNEL]),
+      };
+    });
+    expect(counts.guestWithoutGrant.get(CHANNEL_A)).toBeUndefined();
+    expect(counts.memberWithoutParent.get(PRIVATE_CHANNEL)).toBeUndefined();
+
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      viewerEffect(GUEST) as ConversationEffect,
+    ], 2);
+    const guestWithGrant = await runInDurableObject(workspace(), (_instance, state) => (
+      new WorkspaceSpaceStorage(state.storage)
+        .breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest")
+        .get(CHANNEL_A)
+    ));
+    expect(guestWithGrant).toBe(1);
   });
 
   it("given more conversations than one page holds, when the cursor is followed, then the walk is complete and repeats nothing", async () => {

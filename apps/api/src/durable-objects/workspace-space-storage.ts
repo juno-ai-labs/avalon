@@ -771,6 +771,7 @@ const EMPTY_DIRECTORY: SpaceDirectory = SpaceDirectorySchema.parse({ waterline: 
 /** Synchronous repository for the Space state owned by one WorkspaceDO. */
 export class WorkspaceSpaceStorage {
   private tablesPresent: boolean | null = null;
+  private breakoutTablesPresent: boolean | null = null;
 
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -800,6 +801,14 @@ export class WorkspaceSpaceStorage {
       `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_space_directory'`,
     ).toArray().length === 1;
     return this.tablesPresent;
+  }
+
+  /** Whether this object has reached the migration that created Breakout projections. */
+  private breakoutsReady(): boolean {
+    this.breakoutTablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_breakout_directory'`,
+    ).toArray().length === 1;
+    return this.breakoutTablesPresent;
   }
 
   /**
@@ -957,7 +966,7 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId)),
+      items: rows.map((row) => this.summary(row, userId, 0)),
     });
   }
 
@@ -1600,52 +1609,77 @@ export class WorkspaceSpaceStorage {
    * this viewer. This is the dashboard query's admission predicate without its
    * page bound or ordering, so a sidebar badge never counts a different state.
    */
-  attentionCount(userId: string, spaceId: string): number {
-    return this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-      `SELECT COUNT(*) AS count FROM (
-         SELECT directory.workstream_id AS conversation_id
+  attentionCounts(userId: string, spaceIds: readonly string[]): Map<string, number> {
+    const result = new Map<string, number>();
+    if (!this.ready()) return result;
+    const ids = [...new Set(spaceIds)];
+    if (ids.length === 0) return result;
+    const includeBreakouts = this.breakoutsReady();
+    const rows = this.storage.sql.exec<{
+      space_id: string;
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT space_id, COUNT(*) AS count FROM (
+         SELECT membership.space_id, directory.workstream_id AS conversation_id
            FROM space_channel_memberships membership
            JOIN workspace_workstream_directory directory
              ON directory.workstream_id = membership.workstream_id
            LEFT JOIN workspace_workstream_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
+            AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
-          WHERE membership.space_id = ?2 AND membership.state = 'active'
+          WHERE membership.space_id IN (SELECT value FROM json_each(?))
+            AND membership.state = 'active'
             AND directory.archived_at IS NULL
             AND ${channelVisibleToViewerSql("directory", "viewer")}
             AND ${liveForViewerSql("directory", "viewer")}
-         UNION ALL
-         SELECT breakout.substream_id AS conversation_id
+         ${includeBreakouts ? `UNION ALL
+         SELECT membership.space_id, breakout.substream_id AS conversation_id
            FROM space_channel_memberships membership
            JOIN workspace_workstream_directory directory
              ON directory.workstream_id = membership.workstream_id
            LEFT JOIN workspace_workstream_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
+            AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
            JOIN workspace_breakout_directory breakout
              ON breakout.workstream_id = membership.workstream_id
            LEFT JOIN workspace_breakout_viewers breakout_viewer
              ON breakout_viewer.workstream_id = breakout.workstream_id
             AND breakout_viewer.substream_id = breakout.substream_id
-            AND breakout_viewer.user_id = ?1
+            AND breakout_viewer.user_id = ?
             AND breakout_viewer.authority_generation = breakout.authority_generation
-          WHERE membership.space_id = ?2 AND membership.state = 'active'
+          WHERE membership.space_id IN (SELECT value FROM json_each(?))
+            AND membership.state = 'active'
             AND directory.archived_at IS NULL
             AND ${channelVisibleToViewerSql("directory", "viewer")}
             AND breakout.archived_at IS NULL
             AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
-            AND ${liveForViewerSql("breakout", "breakout_viewer")}
-       )`,
+            AND ${liveForViewerSql("breakout", "breakout_viewer")}` : ""}
+       ) GROUP BY space_id`,
       userId,
-      spaceId,
-    ).one().count;
+      JSON.stringify(ids),
+      ...(includeBreakouts ? [userId, userId, JSON.stringify(ids)] : []),
+    ).toArray();
+    for (const row of rows) result.set(row.space_id, row.count);
+    return result;
   }
 
-  /** Viewer-specific live Breakout totals, grouped under their parent Channel. */
-  breakoutAttentionCounts(userId: string, workstreamIds: readonly string[]): Map<string, number> {
+  attentionCount(userId: string, spaceId: string): number {
+    return this.attentionCounts(userId, [spaceId]).get(spaceId) ?? 0;
+  }
+
+  /**
+   * Viewer-specific live Breakout totals, grouped under visible parent Channels.
+   * Guests need an explicit Breakout viewer grant; members retain workspace scope.
+   */
+  breakoutAttentionCounts(
+    userId: string,
+    workstreamIds: readonly string[],
+    accessClass: "member" | "guest" = "member",
+  ): Map<string, number> {
     const result = new Map<string, number>();
+    if (!this.breakoutsReady()) return result;
     for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
       if (ids.length === 0) continue;
       const rows = this.storage.sql.exec<{
@@ -1654,16 +1688,27 @@ export class WorkspaceSpaceStorage {
       } & Record<string, SqlStorageValue>>(
         `SELECT breakout.workstream_id, COUNT(*) AS count
            FROM workspace_breakout_directory breakout
+           JOIN workspace_workstream_directory directory
+             ON directory.workstream_id = breakout.workstream_id
+           LEFT JOIN workspace_workstream_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?
+            AND viewer.authority_generation = directory.authority_generation
            LEFT JOIN workspace_breakout_viewers breakout_viewer
              ON breakout_viewer.workstream_id = breakout.workstream_id
             AND breakout_viewer.substream_id = breakout.substream_id
             AND breakout_viewer.user_id = ?
             AND breakout_viewer.authority_generation = breakout.authority_generation
           WHERE breakout.workstream_id IN (${ids.map(() => "?").join(", ")})
+            AND directory.archived_at IS NULL
+            AND ${channelVisibleToViewerSql("directory", "viewer")}
             AND breakout.archived_at IS NULL
-            AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
+            AND ${accessClass === "guest"
+              ? "breakout_viewer.listable = 1"
+              : breakoutListableToViewerSql("breakout", "breakout_viewer")}
             AND ${liveForViewerSql("breakout", "breakout_viewer")}
           GROUP BY breakout.workstream_id`,
+        userId,
         userId,
         ...ids,
       ).toArray();
@@ -3487,9 +3532,10 @@ export class WorkspaceSpaceStorage {
       workspaceId,
       userId,
     ).toArray();
+    const attentionCounts = this.attentionCounts(userId, rows.map((row) => row.space_id));
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId)),
+      items: rows.map((row) => this.summary(row, userId, attentionCounts.get(row.space_id) ?? 0)),
     });
   }
 
@@ -3545,7 +3591,9 @@ export class WorkspaceSpaceStorage {
       spaceId,
       userId,
     ).toArray()[0];
-    return row === undefined ? false : this.summary(row, userId);
+    return row === undefined
+      ? false
+      : this.summary(row, userId, this.attentionCount(userId, row.space_id));
   }
 
   /**
@@ -3567,7 +3615,7 @@ export class WorkspaceSpaceStorage {
    * disclosure `spaceIdsByChannel` used to keep a personal Space's id off a
    * Channel row to avoid.
    */
-  private summary(row: SpaceRow, userId: string): SpaceSummary {
+  private summary(row: SpaceRow, userId: string, attentionCount: number): SpaceSummary {
     const appearance = row.appearance_json
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
@@ -3591,7 +3639,7 @@ export class WorkspaceSpaceStorage {
         ? []
         : this.participantUserIds(row.space_id).map((participantId) => ({ userId: participantId })),
       channelCount: this.channelCount(row.space_id, userId, row.reach),
-      attentionCount: row.archived_at === null ? this.attentionCount(userId, row.space_id) : 0,
+      attentionCount: row.archived_at === null ? attentionCount : 0,
       defaultResourceIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "resource"),
       defaultSidekickIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "sidekick"),
       createdAt: new Date(row.created_at).toISOString(),
