@@ -185,6 +185,7 @@ export {
 export {
   slackHeaderBlock,
   slackMarkdownBlock,
+  slackMarkdownLiteral,
   slackDeliveryMarkdown,
   slackMarkdownMessages,
   slackNotificationText,
