@@ -2046,12 +2046,12 @@ and drag-and-drop continues to expose only writable destinations.
 
 ### 2026-09-21 — Only the Spaces rail auto-collapses during navigation
 
-**What changed:** Selecting a Space or opening or re-entering a Channel now
-compacts the Spaces rail without changing the Channels rail's saved
-expanded/collapsed preference. Selecting Main, a Breakout, or **New breakout**
-likewise leaves the Breakouts rail at the width the person chose. Explicit
-collapse controls, edge gestures, and responsive narrow-window compaction
-remain unchanged on every rail.
+**What changed:** In both desktop and browser navigation, selecting a Space or
+opening or re-entering a Channel now compacts the Spaces rail without changing
+the Channels rail's expanded/collapsed preference. Selecting Main, a Breakout,
+or **New breakout** likewise leaves the Breakouts rail at the width the person
+chose. Explicit collapse controls, edge gestures, and responsive narrow-window
+compaction remain unchanged on every rail.
 
 **Why:** Automatic compaction at every selection made the two contextual rails
 disappear while the person was actively navigating their contents. The Spaces
