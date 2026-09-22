@@ -374,6 +374,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     // Every Space this Channel sits in. The sidebar renders one placement per
     // id, all of them opening this same row.
     spaceIds: [...workstream.spaceIds],
+    breakoutAttentionCount: workstream.breakoutAttentionCount ?? 0,
     preview: workstream.objective,
   };
 }

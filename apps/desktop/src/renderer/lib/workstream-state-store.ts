@@ -63,6 +63,9 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       // a Space stays under the Spaces it had until the whole directory is
       // read again.
       spaceIds: workstream.spaceIds,
+      // Viewer-specific, but carried with the complete row because it is an
+      // aggregate over child conversations rather than one of Main's fields.
+      breakoutAttentionCount: workstream.breakoutAttentionCount,
     },
     viewer: {
       readThroughSequenceNumber: workstream.readThroughSequenceNumber,
@@ -130,6 +133,17 @@ function carriesNewPlacements(
     || placements.some((spaceId, index) => held[index] !== spaceId);
 }
 
+function carriesNewBreakoutAttentionCount(
+  queryClient: QueryClient,
+  input: VersionedWorkstreamState,
+  staleGeneration: boolean,
+): boolean {
+  const count = input.common.breakoutAttentionCount;
+  if (!input.visible || staleGeneration || count === undefined) return false;
+  return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+    ?.find((item) => item.id === input.workstreamId)?.breakoutAttentionCount !== count;
+}
+
 /**
  * The one receiver for both WorkspaceDO and WorkstreamDO state sockets.
  *
@@ -162,7 +176,8 @@ export function applyVersionedWorkstreamState(
     && incomingIds !== undefined
     && incomingIds.length > 0;
   if (!commonApplied && !viewerApplied && !canFillEmptyPile
-    && !carriesNewPlacements(queryClient, input, staleGeneration === true)) {
+    && !carriesNewPlacements(queryClient, input, staleGeneration === true)
+    && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)) {
     return { commonApplied, viewerApplied };
   }
 
@@ -224,6 +239,9 @@ export function applyVersionedWorkstreamState(
     // payload's to write.
     if (!commonApplied && input.common.spaceIds !== undefined) {
       patched.spaceIds = input.common.spaceIds;
+    }
+    if (!commonApplied && input.common.breakoutAttentionCount !== undefined) {
+      patched.breakoutAttentionCount = input.common.breakoutAttentionCount;
     }
     // The other half of `carriesNewPlacements`: the row is here, so take the
     // placements off it even though the rest of the common half is not this

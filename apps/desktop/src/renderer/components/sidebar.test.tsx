@@ -952,6 +952,30 @@ describe('Sidebar channel markers', () => {
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
 
+  it('draws a Breakout attention count on a Channel row and omits zero', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              { ...workstream('active-breakouts', 'Launch', 'completed'), breakoutAttentionCount: 2 },
+              { ...workstream('quiet-breakouts', 'Roadmap', 'completed'), breakoutAttentionCount: 0 },
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const launch = screen.getByRole('link', { name: 'Launch' });
+    expect(launch).toHaveAccessibleDescription(/2 breakouts need attention in Launch/u);
+    expect(within(launch).getByText('2')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText('0')).not.toBeInTheDocument();
+  });
+
   it('marks a channel this person has never opened, whatever its run is doing', async () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/unseen']}>

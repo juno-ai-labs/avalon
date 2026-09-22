@@ -1,9 +1,11 @@
 import {
+  asSpaceId,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from '@rally/contracts';
+import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
@@ -19,6 +21,7 @@ import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
+import { SPACES_QUERY_KEY } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
 
@@ -1524,6 +1527,27 @@ describe('WorkspaceSocketProvider', () => {
   // only thing that invalidates that entry while the screen is open.
   it('invalidates only the named spaces when a dashboard nudge arrives', async () => {
     const queryClient = new QueryClient();
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, {
+      waterline: 1,
+      items: [{
+        id: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
+        name: 'Hiring',
+        iconKey: 'briefcase',
+        colorKey: 'blue',
+        scope: 'workspace',
+        status: 'active',
+        systemRole: null,
+        revision: 1,
+        reach: 'organization',
+        participants: [],
+        channelCount: 2,
+        attentionCount: 0,
+        defaultResourceIds: [],
+        defaultSidekickIds: [],
+        createdAt: '2026-08-27T00:00:00.000Z',
+        updatedAt: '2026-08-27T00:00:00.000Z',
+      }],
+    });
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1552,6 +1576,10 @@ describe('WorkspaceSocketProvider', () => {
         '00000000-0000-7000-8000-0000000000f2',
         '00000000-0000-7000-8000-0000000000f3',
       ],
+      attentionCounts: [
+        { spaceId: '00000000-0000-7000-8000-0000000000f2', count: 3 },
+        { spaceId: '00000000-0000-7000-8000-0000000000f3', count: 1 },
+      ],
     }));
 
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
@@ -1563,6 +1591,7 @@ describe('WorkspaceSocketProvider', () => {
     // moved, and refetching it would be one wasted page read per message in
     // the Organization.
     expect(keys).not.toContainEqual(['space-channels', '00000000-0000-7000-8000-0000000000f4']);
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items[0]?.attentionCount).toBe(3);
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
