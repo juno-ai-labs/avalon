@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
   applyDurableObjectSqliteMigrations,
@@ -45,6 +45,16 @@ function storageFor(database: DatabaseSync, kvCall = vi.fn()): DurableObjectStor
 }
 
 describe("Durable Object SQLite migrations", () => {
+  let warn: MockInstance;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
   it("applies an append-only history idempotently without any KV calls", () => {
     const database = new DatabaseSync(":memory:");
     const kvCall = vi.fn();
@@ -82,7 +92,6 @@ describe("Durable Object SQLite migrations", () => {
 
   it("warns without blocking when an already-applied migration is edited", () => {
     const database = new DatabaseSync(":memory:");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const storage = storageFor(database);
       applyDurableObjectSqliteMigrations({
@@ -106,11 +115,11 @@ describe("Durable Object SQLite migrations", () => {
         message: "test_do_schema_hash_mismatch:1",
         component: "test_do",
         version: 1,
+        workerVersionId: "worker-two",
         recordedImplementationHash: durableObjectMigrationHash(MIGRATIONS[0]!),
         currentImplementationHash: durableObjectMigrationHash(changed[0]!),
       });
     } finally {
-      warn.mockRestore();
       database.close();
     }
   });
