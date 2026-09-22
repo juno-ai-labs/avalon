@@ -329,6 +329,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
     connectorType: connection.connectorType,
     displayName: connection.displayName,
     scope: connection.scope === 'personal' ? 'you' : 'workspace',
+    ...(connection.ownerUserId ? { ownerUserId: connection.ownerUserId } : {}),
     ...(connection.ownerName ? { ownerName: connection.ownerName } : {}),
     status: connection.status === 'needs_reconnect'
       ? 'reconnect_required'
@@ -2410,7 +2411,12 @@ export class RallyApi {
       `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?desktopHandoffVersion=2`,
       {
         method: 'POST',
-        body: { request },
+        body: { target: {
+          parentKind: request.parentKind,
+          parentId: request.parentId,
+          substreamId: request.substreamId,
+          failedToolInvocationId: request.failedToolInvocationId,
+        } },
         schema: WireConnectorResourceAuthorizationStartSchema,
       },
     );

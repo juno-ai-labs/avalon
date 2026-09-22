@@ -1383,6 +1383,7 @@ misrouted product statement now fails because the table or column is absent.
 
 ## Invariants
 
+- **Resource-grant continuation is ordinary message admission with a server-only principal.** The callback uses `resource_authorization` after verifying the grant and current membership; participants cannot claim the reserved continuation-message ID, and the admitted user message queues the next run.
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
 - **Every callable method on these classes is fenced by the retirement gate, and an unclassified one refuses on a retired object.** `applyRetirementGate` wraps the prototype chain at module load; a method retirement's own walk needs is permitted, a Queue-delivered effect receiver answers a terminal acknowledgement, and a Queue consumer, Workflow or cron pass that meets a refusal acknowledges it. [`workspace-retirement.md`](workspace-retirement.md) owns the dispositions; read it before adding an RPC or an effect receiver to any of these classes.
 - **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.

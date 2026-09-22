@@ -190,19 +190,20 @@ function resourceAuthorizationRequest(connectionId: string) {
     parentId: "00000000-0000-4000-8000-000000000020",
     substreamId: "0",
     failedToolInvocationId: "00000000-0000-4000-8000-000000000030:turn:1:tool:0",
+    continuationId: "00000000-0000-4000-8000-000000000040",
   });
 }
 
-function allowResourceConversationAccess(): void {
-  vi.spyOn(WorkstreamObjectClient.prototype, "get")
-    .mockResolvedValue({} as Awaited<ReturnType<WorkstreamObjectClient["get"]>>);
+function allowResourceConversationAccess(connectionId: string): void {
+  vi.spyOn(WorkstreamObjectClient.prototype, "readResourceAuthorizationRecovery")
+    .mockImplementation(async () => resourceAuthorizationRequest(connectionId));
 }
 
 describe("connector OAuth handoff", () => {
   it("starts a provider-neutral resource authorization with Google's exact-file Picker", async () => {
     const { auth, env, object, regional } = fixture();
-    allowResourceConversationAccess();
     const connectionId = "00000000-0000-4000-8000-000000000010";
+    allowResourceConversationAccess(connectionId);
     await insertGoogleConnection(object, env, connectionId);
     vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
       id: "sheet-1",
@@ -223,9 +224,23 @@ describe("connector OAuth handoff", () => {
     });
   });
 
+  it("rejects a target without its durable failed-tool recovery", async () => {
+    const { auth, env, object, regional } = fixture();
+    const connectionId = "00000000-0000-4000-8000-000000000010";
+    allowResourceConversationAccess(connectionId);
+    await insertGoogleConnection(object, env, connectionId);
+    await expect(new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId,
+      { ...resourceAuthorizationRequest(connectionId), failedToolInvocationId: "forged-tool" },
+      2,
+    )).rejects.toMatchObject({ status: 404, code: "resource_authorization_recovery_missing" });
+    expect(regional.prepare("SELECT COUNT(*) AS count FROM oauth_states").get()).toEqual({ count: 0 });
+  });
+
   it("enforces personal ownership and organization admin authority before a resource grant", async () => {
     const { auth, env, object } = fixture();
     const connectionId = "00000000-0000-4000-8000-000000000011";
+    allowResourceConversationAccess(connectionId);
     await insertGoogleConnection(object, env, connectionId);
     const request = resourceAuthorizationRequest(connectionId);
     await expect(new ConnectionService(env, { ...auth, userId: OTHER_USER_ID, role: "member" })
@@ -242,7 +257,7 @@ describe("connector OAuth handoff", () => {
     const { auth, env, object, regional } = fixture();
     const connectionId = "00000000-0000-4000-8000-000000000014";
     await insertGoogleConnection(object, env, connectionId);
-    vi.spyOn(WorkstreamObjectClient.prototype, "get")
+    vi.spyOn(WorkstreamObjectClient.prototype, "readResourceAuthorizationRecovery")
       .mockRejectedValue({ status: 403, code: "workstream_access_denied" });
     await expect(new ConnectionService(env, auth).beginResourceAuthorization(
       connectionId, resourceAuthorizationRequest(connectionId), 2,
@@ -252,8 +267,8 @@ describe("connector OAuth handoff", () => {
 
   it("settles a denied resource grant and refuses its consumed or expired state", async () => {
     const { auth, env, object, regional } = fixture();
-    allowResourceConversationAccess();
     const connectionId = "00000000-0000-4000-8000-000000000012";
+    allowResourceConversationAccess(connectionId);
     await insertGoogleConnection(object, env, connectionId);
     vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json({
       id: "sheet-1", name: "Ellen Buckley Assessment", mimeType: "application/vnd.google-apps.spreadsheet", isAppAuthorized: false,
@@ -284,8 +299,8 @@ describe("connector OAuth handoff", () => {
 
   it("completes the exact Picker file with canonical naming and a member-authored continuation", async () => {
     const { auth, env, object } = fixture();
-    allowResourceConversationAccess();
     const connectionId = "00000000-0000-4000-8000-000000000013";
+    allowResourceConversationAccess(connectionId);
     await insertGoogleConnection(object, env, connectionId);
     const storedCredentials = object.prepare("SELECT encrypted_credentials FROM connector_connections WHERE id = ?")
       .get(connectionId);
@@ -319,7 +334,7 @@ describe("connector OAuth handoff", () => {
         auth: expect.objectContaining({ userId: USER_ID, principal: "resource_authorization" }),
         input: expect.objectContaining({
           text: "Document “Canonical Ellen Buckley Assessment” was authorized.",
-          clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).failedToolInvocationId}`,
+          clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).continuationId}`,
           runMode: "queue",
         }),
       }]);
@@ -333,8 +348,8 @@ describe("connector OAuth handoff", () => {
 
   it("admits the same continuation without Picker when the file is already authorized", async () => {
     const { auth, env, object, regional } = fixture();
-    allowResourceConversationAccess();
     const connectionId = "00000000-0000-4000-8000-000000000015";
+    allowResourceConversationAccess(connectionId);
     await insertGoogleConnection(object, env, connectionId);
     vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
       id: "sheet-1",
@@ -346,18 +361,15 @@ describe("connector OAuth handoff", () => {
     const admit = vi.spyOn(WorkstreamObjectClient.prototype, "createMessage")
       .mockResolvedValue({} as Awaited<ReturnType<WorkstreamObjectClient["createMessage"]>>);
     const started = await new ConnectionService(env, auth).beginResourceAuthorization(
-      connectionId, {
-        ...resourceAuthorizationRequest(connectionId),
-        resource: { id: "sheet-1", type: "repository", name: "Untrusted display name" },
-      }, 2,
+      connectionId, resourceAuthorizationRequest(connectionId), 2,
     );
     expect(started).toMatchObject({ status: "succeeded", url: null });
     expect(admit).toHaveBeenCalledWith(expect.objectContaining({
       text: "Document “Canonical Ellen Buckley Assessment” was authorized.",
-      clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).failedToolInvocationId}`,
+      clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).continuationId}`,
     }));
     expect(regional.prepare("SELECT consumed_at FROM oauth_states").get())
-      .toMatchObject({ consumed_at: null });
+      .toMatchObject({ consumed_at: expect.any(String) });
     expect((await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId)).status).toBe("succeeded");
   });
 

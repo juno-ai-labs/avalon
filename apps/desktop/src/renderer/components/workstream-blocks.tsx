@@ -2561,7 +2561,7 @@ export function MessageBlock({
         {resourceAuthorization ? (
           <ConnectorResourceAuthorizationCard
             request={resourceAuthorization}
-            latchedAuthorized={Boolean(authorizedResourceToolIds?.has(resourceAuthorization.failedToolInvocationId))}
+            latchedAuthorized={Boolean(authorizedResourceToolIds?.has(resourceAuthorization.continuationId))}
             {...(onResourceAuthorized ? { onAuthorized: onResourceAuthorized } : {})}
           />
         ) : connectionCard && connectionCardProvider ? (

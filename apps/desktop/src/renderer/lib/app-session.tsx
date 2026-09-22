@@ -219,6 +219,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const pendingConnectorOAuthRef = useRef(pendingConnectorOAuth);
   pendingConnectorOAuthRef.current = pendingConnectorOAuth;
+  const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
+  const resourceAuthorizationAttemptsRef = useRef(resourceAuthorizationAttempts);
+  resourceAuthorizationAttemptsRef.current = resourceAuthorizationAttempts;
+  const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
+    setResourceAuthorizationAttempts((current) => {
+      const next = { ...current };
+      if (attempt) next[key] = attempt;
+      else delete next[key];
+      return next;
+    });
+  }, []);
   const [booting, setBooting] = useState(true);
   const [exchangingTicket, setExchangingTicket] = useState(false);
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
@@ -977,6 +988,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'connector-result') {
         const connectorName = intent.provider ? connectorProviderNames[intent.provider] : null;
         const applyConnectorResult = async (): Promise<void> => {
+          const resourceEntry = Object.entries(resourceAuthorizationAttemptsRef.current).find(([, attempt]) =>
+            attempt.provider === intent.provider && attempt.attemptId === intent.attemptId);
+          if (resourceEntry) {
+            const [key, attempt] = resourceEntry;
+            setResourceAuthorizationAttempt(key, {
+              ...attempt,
+              resourceAuthorizationStatus: intent.status === 'connected' ? 'succeeded'
+                : intent.status === 'denied' ? 'denied' : 'failed',
+            });
+            setDeepLinkError(null);
+            return;
+          }
           const pending = pendingConnectorOAuthRef.current;
           const pendingMatches = pending !== null
             && pending.provider === intent.provider
@@ -985,18 +1008,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               pending.workspaceId === intent.target.workspaceId
               && pending.region === intent.target.region
             ));
-          if (pendingMatches && pending.source === 'resource') {
-            if (intent.status === 'connected') {
-              setDeepLinkError(null);
-              setPendingConnectorOAuth({ ...pending, resourceAuthorizationStatus: 'succeeded' });
-            } else {
-              setPendingConnectorOAuth({
-                ...pending,
-                resourceAuthorizationStatus: intent.status === 'denied' ? 'denied' : 'failed',
-              });
-            }
-            return;
-          }
           if (intent.status === 'connected') {
             setDeepLinkError(null);
             await Promise.all([
@@ -1230,7 +1241,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const createSidekick = useCallback(() => bridge.openSidekicks(NEW_SIDEKICK_TARGET), [bridge]);
   const connectorSetup = useMemo(() => ({ pendingConnectorOAuth, setPendingConnectorOAuth,
-    openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth]);
+    resourceAuthorizationAttempts, setResourceAuthorizationAttempt,
+    openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt]);
   return <AppSessionContext.Provider value={value}>
     <CollaborationSessionProvider api={api} session={session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;

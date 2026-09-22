@@ -45,6 +45,7 @@ import type {
   ConnectorOAuthProvider,
   ConnectorOAuthStart,
   ConnectorResourceAuthorizationRequest,
+  ConnectorResourceAuthorizationTarget,
   ConnectorResourceAuthorizationStart,
   CreateCustomMcpConnectionRequestSchema,
   CreateWebhookConnectionRequestSchema,
@@ -769,18 +770,22 @@ export class ConnectionService {
 
   async beginResourceAuthorization(
     connectionId: string,
-    request: ConnectorResourceAuthorizationRequest,
+    target: ConnectorResourceAuthorizationTarget,
     desktopHandoffVersion: 1 | 2,
   ): Promise<ConnectorResourceAuthorizationStart> {
     const auth = this.requireAuth();
-    if (request.connectionId !== connectionId) {
-      throw new ApiError(422, "resource_authorization_connection_mismatch", "The authorization request names a different connection");
+    const conversation = WorkstreamObjectClient.forParent(
+      this.env, auth, target.parentKind, target.parentId, target.substreamId,
+    );
+    const request = await conversation.readResourceAuthorizationRecovery(target.failedToolInvocationId);
+    if (!request || request.connectionId !== connectionId
+      || request.parentKind !== target.parentKind || request.parentId !== target.parentId
+      || request.substreamId !== target.substreamId
+      || request.failedToolInvocationId !== target.failedToolInvocationId) {
+      throw new ApiError(404, "resource_authorization_recovery_missing", "This failed edit no longer has an authorization action");
     }
     const row = await this.loadAuthorized(connectionId);
     this.assertConnectionEnabled(row);
-    if (row.status !== "healthy") {
-      throw new ApiError(409, "connection_reconnect_required", "Reconnect this connector account first");
-    }
     if (row.connector_type !== request.provider) {
       throw new ApiError(422, "resource_authorization_provider_mismatch", "The authorization request names a different provider");
     }
@@ -791,8 +796,6 @@ export class ConnectionService {
     if (!adapter.resourceAuthorization) {
       throw new ApiError(422, "resource_authorization_unsupported", "This connector cannot authorize individual resources");
     }
-    // The failed tool block may outlive the viewer's access to its conversation.
-    await new WorkstreamObjectClient(this.env, auth, request.parentId, request.substreamId).get();
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
     const state = randomToken(32);
@@ -806,19 +809,6 @@ export class ConnectionService {
       connectionId,
       request,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    await this.persistOAuthStart({
-      attemptId,
-      provider: request.provider,
-      state,
-      statePayload,
-      auth,
-      expiresAt,
-      scope: row.scope,
-      capabilityCount: 1,
-      reconnect: false,
-      desktopHandoffVersion,
-      purpose: "resource_authorization",
-    });
     const context = await this.context(row);
     const inspected = await withAuthorizedConnection(
       this.env,
@@ -831,26 +821,35 @@ export class ConnectionService {
         signal: AbortSignal.timeout(30_000),
       }),
     );
+    const authorization = inspected.authorized ? null : await adapter.resourceAuthorization.begin({
+      state, codeChallenge: challenge, capability: request.capability,
+      operation: request.operation, resource: inspected.resource,
+    });
+    await this.persistOAuthStart({
+      attemptId, provider: request.provider, state, statePayload, auth, expiresAt,
+      scope: row.scope, capabilityCount: 1, reconnect: false,
+      desktopHandoffVersion, purpose: "resource_authorization",
+    });
     if (inspected.authorized) {
-      await this.admitResourceAuthorizationMessage(auth, request, inspected.resource);
-      await this.finishOAuthAttempt(auth.workspaceId, attemptId, "succeeded", { connectionId });
+      try {
+        await this.admitResourceAuthorizationMessage(auth, request, inspected.resource);
+        await workspaceRegionalDatabase(this.env).prepare(
+          `UPDATE oauth_states SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`,
+        ).bind(nowIso(), state).run();
+        await this.finishOAuthAttempt(auth.workspaceId, attemptId, "succeeded", { connectionId });
+      } catch (error) {
+        await this.finishOAuthAttempt(auth.workspaceId, attemptId, "failed", { errorCode: "resource_authorization_admission_failed" });
+        throw error;
+      }
       return { attemptId, status: "succeeded", url: null };
     }
-    const authorization = await adapter.resourceAuthorization.begin({
-      state,
-      codeChallenge: challenge,
-      capability: request.capability,
-      operation: request.operation,
-      resource: inspected.resource,
-    });
-    return { attemptId, status: "pending", url: authorization.url };
+    return { attemptId, status: "pending", url: authorization!.url };
   }
 
   async authorizationPurpose(provider: string, state: string): Promise<string | null> {
     const row = await workspaceRegionalDatabase(this.env).prepare(
-      `SELECT purpose FROM oauth_states WHERE id = ? AND provider = ? AND region = ?
-       AND consumed_at IS NULL AND expires_at > ?`,
-    ).bind(state, provider, this.env.AVALON_REGION, nowIso()).first<{ purpose: string }>();
+      `SELECT purpose FROM oauth_states WHERE id = ? AND provider = ? AND region = ?`,
+    ).bind(state, provider, this.env.AVALON_REGION).first<{ purpose: string }>();
     return row?.purpose ?? null;
   }
 
@@ -882,8 +881,7 @@ export class ConnectionService {
       throw new ApiError(401, "invalid_oauth_state", "The connector connection changed during authorization");
     }
     this.assertConnectionEnabled(connection);
-    if (connection.status !== "healthy"
-      || stateData.request.connectionId !== connection.id
+    if (stateData.request.connectionId !== connection.id
       || stateData.provider !== provider
       || stateData.request.provider !== provider
       || !parseJson<string[]>(connection.granted_scopes_json, []).includes(stateData.request.capability)) {
@@ -940,9 +938,15 @@ export class ConnectionService {
     const noun = resource.type === "document"
       ? "Document"
       : `${resource.type.charAt(0).toUpperCase()}${resource.type.slice(1)}`;
-    await new WorkstreamObjectClient(this.env, auth, request.parentId, request.substreamId).createMessage({
-      text: `${noun} “${resource.name}” was authorized.`,
-      clientMessageId: `resource-authorization:${request.failedToolInvocationId}`,
+    // Provider titles are data, even though the authorization receipt is a
+    // human-authored message. Keep them inside one quoted line.
+    const name = resource.name.replace(/[\p{Cc}\p{Cf}]/gu, " ")
+      .replace(/[“”]/gu, "'").replace(/\s+/gu, " ").trim();
+    await WorkstreamObjectClient.forParent(
+      this.env, auth, request.parentKind, request.parentId, request.substreamId,
+    ).createMessage({
+      text: `${noun} “${name}” was authorized.`,
+      clientMessageId: `resource-authorization:${request.continuationId}`,
       mentions: [],
       confirmedParticipantUserIds: [],
       attachmentIds: [],

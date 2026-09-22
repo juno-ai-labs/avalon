@@ -23,7 +23,7 @@ import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { defineLocalCacheSlice, localCacheScope } from './local-cache';
 import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
-import { useCollaborationSession } from './collaboration-session';
+import { useCollaborationSession, type ConnectorSetupCapability } from './collaboration-session';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { readDevicePreferences } from './device-preferences';
@@ -48,6 +48,7 @@ let observedLeaveWorkspace: ((
 ) => Promise<unknown>) | null = null;
 let observedPendingConnectorOAuth: AppSessionValue['pendingConnectorOAuth'] = null;
 let observedSetPendingConnectorOAuth: AppSessionValue['setPendingConnectorOAuth'] | null = null;
+let observedSetResourceAuthorizationAttempt: ConnectorSetupCapability['setResourceAuthorizationAttempt'] | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -132,6 +133,7 @@ function SessionProbe(): React.JSX.Element {
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
+  observedSetResourceAuthorizationAttempt = collaboration.connectorSetup?.setResourceAuthorizationAttempt ?? null;
   return (
     <>
       <output data-testid="collaboration-context">{collaboration.api === context.api && collaboration.session === context.session && collaboration.connectorSetup !== null ? 'shared' : 'mismatch'}</output>
@@ -143,7 +145,8 @@ function SessionProbe(): React.JSX.Element {
       <output data-testid="session-token">{session?.accessToken ?? 'none'}</output>
       <output data-testid="session-role">{session?.workspace?.role ?? 'none'}</output>
       <output data-testid="pending-connector-attempt">{context.pendingConnectorOAuth?.attemptId ?? 'none'}</output>
-      <output data-testid="pending-resource-status">{context.pendingConnectorOAuth?.resourceAuthorizationStatus ?? 'none'}</output>
+      <output data-testid="pending-resource-status">{collaboration.connectorSetup?.resourceAuthorizationAttempts['connection:file:tool']?.resourceAuthorizationStatus ?? 'none'}</output>
+      <output data-testid="other-resource-status">{collaboration.connectorSetup?.resourceAuthorizationAttempts['connection:file:other']?.resourceAuthorizationStatus ?? 'none'}</output>
       <output data-testid="deep-link-error">{deepLinkError ?? 'none'}</output>
     </>
   );
@@ -195,6 +198,7 @@ function resetDesktopBridge(): void {
   observedLeaveWorkspace = null;
   observedPendingConnectorOAuth = null;
   observedSetPendingConnectorOAuth = null;
+  observedSetResourceAuthorizationAttempt = null;
   bridge.getRuntimeConfig.mockResolvedValue({
     appVersion: 'test',
     isPackaged: true,
@@ -1165,15 +1169,20 @@ describe('single-platform desktop identity routing', () => {
       workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     renderProvider();
     expect(await screen.findByText('global:Organization A')).toBeVisible();
-    await act(async () => observedSetPendingConnectorOAuth!({
+    await act(async () => observedSetResourceAuthorizationAttempt!('connection:file:tool', {
       source: 'resource', provider: 'google', region: 'global', workspaceId, attemptId,
       resourceAuthorizationKey: 'connection:file:tool', resourceAuthorizationStatus: 'pending',
+    }));
+    await act(async () => observedSetResourceAuthorizationAttempt!('connection:file:other', {
+      source: 'resource', provider: 'google', region: 'global', workspaceId, attemptId: 'b'.repeat(43),
+      resourceAuthorizationKey: 'connection:file:other', resourceAuthorizationStatus: 'pending',
     }));
     await dispatchDeepLink(
       `rallywithai://workspace/global/${workspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${attemptId}&provider=google`,
     );
     await waitFor(() => expect(screen.getByTestId('pending-resource-status')).toHaveTextContent('succeeded'));
-    expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent(attemptId);
+    expect(screen.getByTestId('other-resource-status')).toHaveTextContent('pending');
+    expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('none');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     expect(bridge.openSettings).not.toHaveBeenCalled();
   });
@@ -1187,7 +1196,7 @@ describe('single-platform desktop identity routing', () => {
       workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
     renderProvider();
     expect(await screen.findByText('global:Organization A')).toBeVisible();
-    await act(async () => observedSetPendingConnectorOAuth!({
+    await act(async () => observedSetResourceAuthorizationAttempt!('connection:file:tool', {
       source: 'resource', provider: 'google', region: 'global', workspaceId, attemptId,
       resourceAuthorizationKey: 'connection:file:tool', resourceAuthorizationStatus: 'pending',
     }));

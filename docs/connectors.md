@@ -1372,8 +1372,12 @@ conversation loop resume from its durable transcript.
 **Consequences:** The callback's sealed state establishes a short-lived
 `resource_authorization` principal for ordinary message admission; the room
 re-checks current membership because a browser callback has no login session.
+The start endpoint reads the failed-tool recovery from the room rather than
+trusting a client echo, and the room reserves continuation-message IDs for that
+principal. Desktop attempt status is per card so concurrent grants do not occupy
+the ordinary connection-setup slot.
 Only editable resources whose adapter can prove a missing app
-grant receive the CTA. Read-only resources and unhealthy connections keep their
+grant receive the CTA. Read-only resources and disabled connections keep their
 existing failures. Future providers implement the adapter hook rather than adding
 desktop or transcript special cases.
 
