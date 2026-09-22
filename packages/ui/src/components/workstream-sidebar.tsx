@@ -248,6 +248,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
             aria-description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
+            badge={{ count: workstream.needsAttention ? 1 : 0, label: `Main conversation needs attention in ${workstream.title}` }}
             type="button"
             onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
@@ -264,6 +265,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
                 aria-label={`Go to breakout: ${child.title}`}
                 aria-description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
+                badge={{ count: child.needsAttention ? 1 : 0, label: `Breakout ${child.title} needs attention` }}
                 className={clsx(
                   'workstream-context-row workstream-conversation-row',
                   currentSubstreamId === child.substreamId && 'is-current',

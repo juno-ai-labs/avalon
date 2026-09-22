@@ -3233,6 +3233,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         substreamId: child.substreamId,
         title: child.title,
         ...(child.appearance ? { appearance: child.appearance } : {}),
+        ...(child.harnessStatus ? { harnessStatus: child.harnessStatus } : {}),
+        ...(child.unreadCount !== undefined ? { unreadCount: child.unreadCount } : {}),
+        ...(child.youAreMentioned !== undefined ? { youAreMentioned: child.youAreMentioned } : {}),
+        ...(child.unseen !== undefined ? { unseen: child.unseen } : {}),
         createdByUserId: child.createdByUserId,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),
@@ -3256,13 +3260,17 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   private visiblePrivateChildrenForUser(userId: string): ListVisiblePrivateChildrenResult["children"] {
     return this.parentSql.exec<{
       substream_id: string; title: string; effect_json: string | null;
+      user_effect_json: string | null;
       created_by_user_id: string; created_at: number; updated_at: number;
     }>(
       `SELECT child.substream_id, child.title, directory.effect_json,
+              viewer.effect_json AS user_effect_json,
               child.created_by_user_id, child.created_at, child.updated_at
          FROM conversation_children child
          JOIN private_child_memberships member ON member.substream_id = child.substream_id
          LEFT JOIN substream_directory directory ON directory.substream_id = child.substream_id
+         LEFT JOIN substream_user_directory viewer
+           ON viewer.substream_id = child.substream_id AND viewer.user_id = member.user_id
         WHERE child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
           AND member.user_id = ? AND member.active = 1
         ORDER BY child.created_at, child.substream_id`,
@@ -3272,8 +3280,17 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       title: child.title,
       ...(child.effect_json
         ? (() => {
-            const appearance = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json)).appearance;
-            return appearance ? { appearance } : {};
+            const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
+            return {
+              ...(common.appearance ? { appearance: common.appearance } : {}),
+              harnessStatus: harnessStatus(common.state),
+            };
+          })()
+        : {}),
+      ...(child.user_effect_json
+        ? (() => {
+            const viewer = WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(child.user_effect_json));
+            return { unreadCount: viewer.unreadCount, youAreMentioned: viewer.youAreMentioned, unseen: viewer.unseen ?? false };
           })()
         : {}),
       createdByUserId: UserIdSchema.parse(child.created_by_user_id),
@@ -3294,6 +3311,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     ).toArray()) {
       this.advancePrivateChildrenVersion(row.user_id, now);
     }
+  }
+
+  protected override onChildUserProjection(substreamId: string, userId: string, now: number): void {
+    if (substreamId !== "0") this.advancePrivateChildrenVersion(userId, now);
   }
 
   /**
