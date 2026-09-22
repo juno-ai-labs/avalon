@@ -129,7 +129,7 @@ beforeEach(() => {
 
 describe("impersonation message admission", () => {
   it("lists the operator through ordinary authority without requiring a self-pair", async () => {
-    harness.relationships.push({ representedUserId: representedId });
+    harness.relationships.push({ representedUserId: operatorId }, { representedUserId: representedId });
 
     const catalog = await new ImpersonationService(environment(), auth).catalog();
 
@@ -168,12 +168,15 @@ describe("impersonation message admission", () => {
     harness.relationship = null;
     const selfRequest = SidelineSendRequestSchema.parse({ ...request, representedUserId: operatorId });
 
-    await new ImpersonationService(environment(), auth).send(selfRequest);
+    await new ImpersonationService(environment(), auth).send(selfRequest, 1_795_000_000_000);
 
     expect(harness.representedAuth).toMatchObject({ userId: operatorId });
     expect(harness.representedAuth?.principal).toBeUndefined();
     expect(harness.order).toEqual(["message-admission"]);
     expect(harness.audit).toEqual([]);
+    expect(harness.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      telemetryRequestReceivedAt: 1_795_000_000_000,
+    }));
   });
 
   it("rejects stale represented membership before destination admission", async () => {

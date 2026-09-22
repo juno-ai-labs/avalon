@@ -143,13 +143,17 @@ export class ImpersonationService {
       }))).flat();
       return { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl, destinations };
     };
-    const represented = (await Promise.all(relationships
-      .filter((relationship) => relationship.representedUserId !== operator.userId)
-      .map(async (relationship) => {
-        const member = await this.activeMember(relationship.representedUserId);
-        return member ? participant(member, representedAuth(this.operator, member)) : null;
-      }))).filter((value): value is NonNullable<typeof value> => value !== null);
-    const participants = [await participant(operator, this.operator), ...represented];
+    const [operatorParticipant, representedCandidates] = await Promise.all([
+      participant(operator, this.operator),
+      Promise.all(relationships
+        .filter((relationship) => relationship.representedUserId !== operator.userId)
+        .map(async (relationship) => {
+          const member = await this.activeMember(relationship.representedUserId);
+          return member ? participant(member, representedAuth(this.operator, member)) : null;
+        })),
+    ]);
+    const represented = representedCandidates.filter((value): value is NonNullable<typeof value> => value !== null);
+    const participants = [operatorParticipant, ...represented];
 
     return SidelineCatalogSchema.parse({
       workspace: { id: this.operator.workspaceId, name: workspace.name },
@@ -158,7 +162,7 @@ export class ImpersonationService {
     });
   }
 
-  async send(input: SidelineSendRequest): Promise<SidelineSendResponse> {
+  async send(input: SidelineSendRequest, requestReceivedAt?: number): Promise<SidelineSendResponse> {
     if (input.representedUserId === this.operator.userId) {
       await this.requireOperator();
       const conversations = new ConversationService(this.env, this.operator);
@@ -174,6 +178,7 @@ export class ImpersonationService {
         confirmedParticipantUserIds: [],
         attachmentIds: [],
         telemetryOperationId: input.idempotencyKey,
+        ...(requestReceivedAt !== undefined ? { telemetryRequestReceivedAt: requestReceivedAt } : {}),
         telemetryJourney: "message_send",
       });
       return SidelineSendResponseSchema.parse({
