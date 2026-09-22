@@ -96,7 +96,8 @@ import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-car
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
-import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
+import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -138,6 +139,76 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
     role: session.workspace.role,
     ...(session.workspace.accessClass ? { accessClass: session.workspace.accessClass } : {}),
   };
+}
+
+/**
+ * The shape of a conversation while its first socket snapshot is in flight.
+ *
+ * This is the real conversation geometry, not a centered interstitial. Keeping
+ * the channel rail, header, feed and composer in place makes opening feel like
+ * content arriving into an already-open room and prevents the whole pane from
+ * being redrawn around the snapshot.
+ */
+export function ConversationOpeningSkeleton({
+  label,
+  sidebar = false,
+}: {
+  label: string;
+  sidebar?: boolean;
+}): React.JSX.Element {
+  return (
+    <div aria-busy="true" aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
+      {sidebar && (
+        <aside aria-hidden="true" className="workstream-context-sidebar conversation-opening-sidebar">
+          <div className="conversation-opening-sidebar-header">
+            <span className="skeleton-bar conversation-opening-sidebar-mark" />
+            <span className="skeleton-bar conversation-opening-sidebar-title" />
+          </div>
+          <div className="conversation-opening-sidebar-scroll">
+            <SidebarSkeletonRows count={4} />
+            <span className="skeleton-bar skeleton-group-label" />
+            <SidebarSkeletonRows count={3} />
+          </div>
+        </aside>
+      )}
+      <div aria-hidden="true" className="workstream-screen conversation-opening-feed">
+        <header className="workstream-header conversation-opening-header">
+          <span className="skeleton-bar conversation-opening-header-mark" />
+          <span className="skeleton-bar conversation-opening-header-title" />
+          <span className="skeleton-bar conversation-opening-header-action" />
+        </header>
+        <div className="transcript-scroll">
+          <div className="transcript-column conversation-opening-messages">
+            <div className="conversation-opening-message">
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-avatar" />
+                <span className="skeleton-bar conversation-opening-name" />
+              </div>
+              <span className="skeleton-bar conversation-opening-line" />
+              <span className="skeleton-bar conversation-opening-line is-short" />
+            </div>
+            <div className="conversation-opening-message is-human">
+              <span className="skeleton-bar conversation-opening-bubble" />
+              <span className="skeleton-bar conversation-opening-bubble is-short" />
+            </div>
+            <div className="conversation-opening-message">
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-avatar" />
+                <span className="skeleton-bar conversation-opening-name is-short" />
+              </div>
+              <span className="skeleton-bar conversation-opening-line is-medium" />
+              <span className="skeleton-bar conversation-opening-line" />
+              <span className="skeleton-bar conversation-opening-line is-short" />
+            </div>
+          </div>
+        </div>
+        <div className="composer-dock conversation-opening-composer-dock">
+          <div className="skeleton-bar conversation-opening-composer" />
+        </div>
+      </div>
+      <span className="sr-only">{label}</span>
+    </div>
+  );
 }
 
 /** Resolve WorkspaceDO's foreground IDs through the roster for the inspector. */
@@ -2090,7 +2161,12 @@ export function ConversationSurface({
         />
       );
     }
-    return <OpeningState label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`} />;
+    return (
+      <ConversationOpeningSkeleton
+        label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
+        sidebar={renderSidebar !== undefined}
+      />
+    );
   }
 
   const detail = routedDetail;
