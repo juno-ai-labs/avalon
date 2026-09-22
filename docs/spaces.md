@@ -283,10 +283,13 @@ currently applies it only to the Organization's Space rail. Unpinned Channels
 in the selected Space and Breakouts under a Channel ignore stored `space` and
 `channel` arrangements and sort by title with case-insensitive comparison.
 Pinned Channels remain manually ordered in their separate pinned section; an
-unpinned alphabetical row may be dragged into that section to pin it, but rows
-cannot be rearranged inside either alphabetical list. The broader wire and
-storage shapes remain accepted so this presentation change does not require a
-destructive migration or a coordinated compatibility cutover.
+unpinned alphabetical row may be dragged into that section to pin it. When the
+section is empty, starting that drag reveals a drop surface directly beneath
+the **Pinned** heading. In the compact middle rail, the text surface is hidden
+like other text-only empty states; the Pinned section remains a drop target.
+Rows cannot be rearranged inside either alphabetical list. The broader wire
+and storage shapes remain accepted so this presentation change does not
+require a destructive migration or a coordinated compatibility cutover.
 
 **On the wire, `organization` carries no id at all.** A request is already
 addressed to one Organization — the authority takes the workspace from the
