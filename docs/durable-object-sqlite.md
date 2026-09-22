@@ -99,12 +99,13 @@ The ledger itself is created inside the first pending group. Migration hashes
 include execution mode because mode changes semantics; the one pre-mode
 published work-stream migration carries an explicit legacy marker only because
 its old wrapper already ran it under the identical mode. Tests cover rollback,
-resume, invalid legacy declarations, and hash matching. A migration may name an
-exact compatible implementation hash only to recover a released receipt whose
-SQL is proven schema-equivalent; this is a narrow historical exception, must be
-pinned in the owning migration test, and does not permit a general bypass or an
-edit to the canonical published statement. Every unnamed mismatch still fails
-closed. A populated-v27
+resume, invalid legacy declarations, and hash mismatch warnings. A recorded
+implementation hash that differs from the current migration emits the structured
+`durable_object_schema_hash_mismatch` console warning and construction continues.
+The runner leaves the original receipt untouched so the diagnostic remains
+truthful. This availability rule does not make edited migration history safe:
+only an appended migration can converge old and new object schemas, and an
+actual SQL failure still aborts the transaction. A populated-v27
 fixture exercises the earlier enforcement-on groups and resource-table rebuild;
 a separate populated-v32 fixture crosses the destructive transcript rebuild.
 Both upgrade through the real workerd Durable Object storage pipeline and prove
@@ -114,6 +115,13 @@ removed. The historical fixture and its upgrade run in separate object events:
 the old schema must commit before the new worker wakes, both because that is the
 production lifecycle and because a forward migration must begin from the
 committed graph a deployed object actually contains.
+
+This behavior is shared by every Rally object with an implementation-hash
+receipt: `SubstreamAgent`, `WorkstreamDO` (including the `SpaceDO` binding),
+`WorkspaceDO`, `SidekickDO`, and `ArtifactHostDO` all call this runner. The
+migration tracker's `MigrationRegistry` uses a separate version-only bootstrap,
+`MigrationProbeDO` is intentionally empty, and an artifact facet's schema is
+model-owned data; none of those three has a hash-mismatch error state to relax.
 
 ## Transactions and object events
 
@@ -347,6 +355,32 @@ after its return type has been erased to `unknown` or `any`; dynamically indexed
 methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
+
+### 2026-09-21 — A migration fingerprint cannot take an object offline
+
+**What changed:** A stored implementation hash that differs from the current
+migration now emits a structured console warning containing the component,
+version, recorded hash, and current hash, then lets initialization continue.
+The exact-receipt compatibility escape hatch is removed because every mismatch
+has the same non-blocking behavior.
+
+**Why:** A comment-only edit to ArtifactHostDO migration 1 made every existing
+live page unavailable even though its schema was usable. The fingerprint caught
+the edit, but turning that evidence into a permanent constructor failure made a
+diagnostic guard more destructive than the condition it diagnosed.
+
+**Considered and rejected:** Maintaining an allowlist for each harmless edit.
+That still makes an unanticipated mismatch an outage and requires recovery code
+before users can reach otherwise valid state. Removing the fingerprint entirely
+would lose the evidence needed to find migration-history mistakes.
+
+**Consequences:** Hash drift remains visible in Workers Logs for every Rally
+object that has a hashed migration receipt, and the persisted receipt remains
+unchanged, but drift is no longer a migration failure reported to the fleet
+tracker. Objects without hash receipts had no corresponding error path to
+change. Append-only migrations remain mandatory: if schemas are actually
+incompatible, the concrete SQL operation that cannot run still fails with its
+real error instead of a checksum proxy.
 
 ### 2026-09-21 — Admit one proven schema-equivalent migration receipt
 

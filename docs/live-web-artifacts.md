@@ -539,6 +539,25 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
 
+### 2026-09-21 — Receipt drift cannot block a live page
+
+**What changed:** ArtifactHostDO no longer needs a one-off compatible receipt.
+Like every migrated object, it logs a structured warning when a stored migration
+hash differs from the current implementation and continues initialization.
+
+**Why:** The preceding repair restored the known comment-only fingerprint, but
+an allowlist still made the next unexpected receipt difference a permanent user
+outage. A migration-history diagnostic must not replace a usable live page with
+an opaque 500.
+
+**Considered and rejected:** Expanding the ArtifactHostDO hash allowlist as new
+differences appear. That responds only after users are already blocked and makes
+availability depend on classifying every past edit before deployment.
+
+**Consequences:** The canonical artifact migration hashes stay pinned, and hash
+drift retains both fingerprints in Workers Logs without blocking viewer-code
+minting. Concrete SQL and schema failures still surface their own errors.
+
 ### 2026-09-21 — Restore the published artifact-host migration receipt
 
 **What changed:** ArtifactHostDO migration 1 is restored byte-for-byte, and a
