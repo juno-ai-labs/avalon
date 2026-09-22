@@ -563,6 +563,9 @@ describe('public Rally site', () => {
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
     expect(normalizedTelemetryPathname(
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te',
+    )).toBe('/app/:region/:organization/s/:space/c/:channel/b/:breakout');
+    expect(normalizedTelemetryPathname(
       '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
@@ -660,8 +663,10 @@ describe('canonical work-stream links', () => {
     // path resolve at all. Losing it turns every shared link into a 404.
     expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
     expect(redirects).toContain('/app/workspaces/*  /app/workstreams/  200');
+    expect(redirects).toContain('/app/*  /app/workstreams/  200');
     expect(config).toContain('app/workstreams/index.html');
     expect(page).toContain('id="open-rally"');
+    expect(page).toContain('id="resource-kind"');
     expect(page).toContain('noindex, nofollow');
     expect(page).toContain('<script type="module" src="/src/workstream-link.ts"></script>');
   });
@@ -683,6 +688,7 @@ describe('canonical work-stream links', () => {
     const headers = readProjectFile('public/_headers');
 
     expect(headers).toContain('/app/workstreams/*');
+    expect(headers).toContain('/app/*');
     expect(headers.slice(headers.indexOf('/app/workstreams/*'))).toContain('Cache-Control: no-store');
   });
 });

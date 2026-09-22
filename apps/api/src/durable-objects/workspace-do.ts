@@ -594,6 +594,8 @@ import {
   SpaceDefaultTargetFailureRequestSchema,
   WorkspaceChannelSpacesRequestSchema,
   WorkspaceChannelSpacesResultSchema,
+  WorkspaceCanonicalChannelSpaceRequestSchema,
+  WorkspaceCanonicalChannelSpaceResultSchema,
   WorkspaceSpaceStagedRequestSchema,
   WorkspaceSpaceAudienceNoteRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
@@ -628,6 +630,8 @@ import {
   type SpaceDefaultTargetFailureRequest,
   type WorkspaceChannelSpacesRequest,
   type WorkspaceChannelSpacesResult,
+  type WorkspaceCanonicalChannelSpaceRequest,
+  type WorkspaceCanonicalChannelSpaceResult,
   type WorkspaceSpaceStagedRequest,
   type WorkspaceSpaceAudienceNoteRequest,
   type WorkspaceSpaceBootstrapStatus,
@@ -6407,6 +6411,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     return WorkspaceChannelSpacesResultSchema.parse({
       spaceIds: this.spaceStorage().channelSpaceIds(request.userId, request.workstreamId),
+    });
+  }
+
+  /** Resolve the stable Space coordinate for a server-minted Channel URL. */
+  async canonicalChannelSpace(
+    input: WorkspaceCanonicalChannelSpaceRequest,
+  ): Promise<WorkspaceCanonicalChannelSpaceResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceCanonicalChannelSpaceRequestSchema,
+      input,
+      "canonical_channel_space",
+    );
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceCanonicalChannelSpaceResultSchema.parse({
+      spaceId: this.spaceStorage().canonicalChannelSpaceId(request.workstreamId),
     });
   }
 

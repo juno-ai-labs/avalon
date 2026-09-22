@@ -225,6 +225,7 @@ function headerElement(
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
         presentUserIds={overrides.presentUserIds ?? []}
+      spaceId="00000000-0000-7000-8000-000000000002"
       socketState="connected"
       workstream={workstream}
       workspaceTarget={{
@@ -357,7 +358,7 @@ describe('WorkstreamHeader origin affordances', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy channel link' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      `https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/${workstreamId}`,
+      "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ",
     ));
     expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('rallywithai://'));
   });

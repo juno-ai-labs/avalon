@@ -97,7 +97,7 @@ or focus event accepts.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the
-shared-conversation directory and canonical workstream and child links
+shared-conversation directory and canonical Space, Channel, and Breakout links
 activate the addressed workspace and mount the shared feed. No setup or onboarding
 view is part of this client.
 
@@ -386,6 +386,17 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-22 — Read hierarchical shared-resource URLs
+
+The browser now decodes Base58 Organization, Space, Channel, and Breakout path
+segments and keeps the selected Space in its shared-navigation rail. Accepted
+invitations resolve each destination's Space from the recipient's authorized
+directory before constructing its link. Earlier browser URLs remain readable.
+
+The browser does not infer placement from a Channel UUID: the many-to-many
+relationship belongs to WorkspaceDO, and an invented Space would misrepresent
+the destination.
 
 ### 2026-09-21 — Shared descendants carry their ancestor presentation
 

@@ -395,6 +395,7 @@ struct MessageRow: View {
 
 struct UserBubble: View {
     var message: RallyChatMessage
+    @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
 
     var body: some View {

@@ -5,6 +5,7 @@ import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-q
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { CookieClientSession } from '@rally/contracts/client-session';
+import { uuidFromBase58, uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -75,12 +76,22 @@ function useBrowserSidebar(initiallyCompact: boolean): {
 }
 
 function SharedConversationRoute(): React.JSX.Element {
-  const { parentId, substreamId = '0' } = useParams();
-  return <SharedConversation key={`${parentId}:${substreamId}`} />;
+  const { spaceId, parentId, substreamId = '0' } = useParams();
+  const canonical = useLocation().pathname.startsWith('/s/');
+  const decodedSpaceId = canonical ? uuidFromBase58(spaceId ?? '') : null;
+  const decodedParentId = canonical ? uuidFromBase58(parentId ?? '') : parentId;
+  const decodedSubstreamId = canonical && substreamId !== '0' ? uuidFromBase58(substreamId) : substreamId;
+  if (!decodedParentId || !decodedSubstreamId || (canonical && !decodedSpaceId)) return <InlineError>This link is invalid.</InlineError>;
+  return <SharedConversation key={`${decodedParentId}:${decodedSubstreamId}`} parentId={decodedParentId} substreamId={decodedSubstreamId} spaceId={decodedSpaceId} />;
 }
 
-function SharedConversation(): React.JSX.Element {
-  const { parentId, substreamId = '0' } = useParams();
+function sharedConversationPath(spaceId: string | null, parentId: string, substreamId: string): string {
+  return spaceId
+    ? `/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(parentId)}${substreamId === '0' ? '' : `/b/${uuidToBase58(substreamId)}`}`
+    : `/workstreams/${parentId}${substreamId === '0' ? '' : `/substreams/${substreamId}`}`;
+}
+
+function SharedConversation({ parentId, substreamId, spaceId }: { parentId: string; substreamId: string; spaceId: string | null }): React.JSX.Element {
   const navigate = useNavigate();
   const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
@@ -126,7 +137,7 @@ function SharedConversation(): React.JSX.Element {
           mainActions={{ onShare: (target) => setSharingSubstream(target.substreamId) }}
           substreamActions={{ onShare: (target) => setSharingSubstream(target.substreamId), onArchive: (target) => setArchiveTarget(target.substreamId) }}
           selectedSubstreamId={substreamId} presentUserIds={context.presentUserIds}
-          onSelectSubstream={(id) => navigate(`/workstreams/${parentId}${id === '0' ? '' : `/substreams/${id}`}`)}
+          onSelectSubstream={(id) => navigate(sharedConversationPath(spaceId, parentId, id))}
           onParticipants={context.openParticipantDialog} onFocusTranscript={context.focusTranscript}
           onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekickFailure={context.sidekickFailure}
           onSidekickMenuOpen={context.loadSidekickOptions} onRefreshSidekicks={context.refreshSidekicks}
@@ -145,12 +156,15 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   const { session } = useCollaborationSession();
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
-  const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
+  const legacyParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
+  const canonicalRoute = /^\/s\/([^/]+)(?:\/c\/([^/]+))?/u.exec(pathname);
+  const routeParentId = legacyParentId ?? (canonicalRoute?.[2] ? uuidFromBase58(canonicalRoute[2]) : null);
   const spacesSidebar = useBrowserSidebar(Boolean(routeParentId));
   const channelsSidebar = useBrowserSidebar(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(() => canonicalRoute ? uuidFromBase58(canonicalRoute[1]!) : null);
   const sidebarLayout = browserSidebarLayout({
     channelOpen: routeParentId !== null,
     channelsCollapsed: channelsSidebar.compact,
@@ -183,6 +197,8 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   }, [directory.data]);
   useEffect(() => {
     setSelectedSpaceId((current) => {
+      const routeSpaceId = canonicalRoute ? uuidFromBase58(canonicalRoute[1]!) : null;
+      if (routeSpaceId && navigationSpaces.some((space) => space.id === routeSpaceId)) return routeSpaceId;
       if (routeParentId) {
         const currentSpace = navigationSpaces.find((space) =>
           space.id === current && space.workstreamIds.includes(routeParentId));
@@ -192,7 +208,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       }
       return navigationSpaces.some((space) => space.id === current) ? current : navigationSpaces[0]?.id ?? null;
     });
-  }, [navigationSpaces, routeParentId]);
+  }, [navigationSpaces, routeParentId, pathname]);
   useEffect(() => {
     if (!routeParentId) {
       spacesSidebar.setCompact(false);
@@ -216,12 +232,13 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
   const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
-  const openWorkstream = (parentId: string) => {
+  const openWorkstream = (parentId: string, requestedSpaceId = selectedSpaceId) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
     const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
     if (!first) return;
     spacesSidebar.setCompact(true);
-    const targetPath = `/workstreams/${parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`;
+    const spaceId = canonicalHost && requestedSpaceId && requestedSpaceId !== SHARED_CHANNELS_SPACE_ID ? requestedSpaceId : null;
+    const targetPath = sharedConversationPath(spaceId, parentId, first.substreamId);
     if (pathname !== targetPath) navigate(targetPath);
   };
   const selectSpace = (spaceId: string) => {
@@ -234,7 +251,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       !workstream.archived && workstream.conversations.some((conversation) => !conversation.archived));
     const target = firstActive ?? containedWorkstreams[0];
     spacesSidebar.setCompact(true);
-    if (target) openWorkstream(target.parentId);
+    if (target) openWorkstream(target.parentId, spaceId);
   };
   return <>
     <ResizableSidebar
@@ -312,9 +329,10 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       {workstreams.map((workstream) => {
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
         if (!first) return null;
-        return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
+        const rowPath = sharedConversationPath(canonicalHost && selectedSpace?.id !== SHARED_CHANNELS_SPACE_ID ? selectedSpace?.id ?? null : null, workstream.parentId, first.substreamId);
+        return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === rowPath ? ' is-active' : ''}`} onClick={() => {
           spacesSidebar.setCompact(true);
-        }} key={workstream.parentId} to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
+        }} key={workstream.parentId} to={rowPath}>
           <NavigationRowContent activity={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </SidebarRow>;
       })}
@@ -348,6 +366,8 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   return <div className="browser-workspace workspace-shell">
     <SharedNavigation api={api} onSignOut={onSignOut} />
     <main className="browser-feed main-pane"><Routes>
+      <Route path="/s/:spaceId/c/:parentId" element={<SharedConversationRoute />} />
+      <Route path="/s/:spaceId/c/:parentId/b/:substreamId" element={<SharedConversationRoute />} />
       <Route path="/workstreams/:parentId" element={<SharedConversationRoute />} />
       <Route path="/workstreams/:parentId/substreams/:substreamId" element={<SharedConversationRoute />} />
       <Route path="*" element={<div className="browser-empty"><h1>Shared conversations</h1><p>Choose a conversation to start collaborating.</p></div>} />
@@ -365,7 +385,10 @@ export default function BrowserConversation({ session, onSignOut }: { session: C
   ]);
   useLayoutEffect(() => { api.setSession(session); }, [api, session]);
   if (!session.workspace) return <p>Open a shared conversation to continue.</p>;
-  const basename = `/app/workspaces/${session.workspace.region}/${session.workspace.id}`;
+  const canonicalBase = `/app/${session.workspace.region}/${uuidToBase58(session.workspace.id)}`;
+  const basename = location.pathname.startsWith(`${canonicalBase}/`)
+    ? canonicalBase
+    : `/app/workspaces/${session.workspace.region}/${session.workspace.id}`;
   return <QueryClientProvider client={queryClient}>
     <CollaborationSessionProvider api={api} session={session}>
       <Tooltip.Provider><SpeechPlaybackProvider api={api}>
