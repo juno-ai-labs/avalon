@@ -49,11 +49,35 @@ const supportPagePaths = [
 const parseJsonc = (source: string): unknown =>
   JSON.parse(source.replace(/^\s*\/\/.*$/gmu, ''));
 
+/**
+ * The landing is static HTML, so it inlines `@thesvg/react/<brand>`'s `mono`
+ * path rather than mounting a React component. This is the check that the
+ * inlined `d` is still that pack's art, not a Lucide stand-in or a second SVG
+ * file. See `docs/using-company-brand-icons.md`.
+ */
+function thesvgMonoPath(brand: string): string {
+  const pnpm = new URL('../../../node_modules/.pnpm/', import.meta.url);
+  const dir = readdirSync(pnpm).find((name) => name.startsWith('@thesvg+react@'));
+  if (!dir) {
+    throw new Error('pnpm did not install @thesvg/react');
+  }
+  const source = readFileSync(
+    new URL(`${dir}/node_modules/@thesvg/react/dist/${brand}.js`, pnpm),
+    'utf8',
+  );
+  const path = /"mono":\{[\s\S]*?"d":"([^"]+)"/u.exec(source)?.[1];
+  if (!path) {
+    throw new Error(`@thesvg/react/${brand} has no mono path`);
+  }
+  return path;
+}
+
 describe('public Rally site', () => {
   it('offers the canonical installer without a signup dialog or clickable demo artifact', () => {
     const page = readProjectFile('index.html');
+    const appleMark = `<svg class="button-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${thesvgMonoPath('apple')}"/></svg>`;
     expect(page).toContain(
-      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>Download for macOS</a>',
+      `href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>${appleMark} Download for Mac</a>`,
     );
     expect(page).not.toContain('id="access-request"');
     expect(page).not.toContain('<dialog');
