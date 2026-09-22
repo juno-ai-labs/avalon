@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
@@ -798,6 +799,37 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(screen.getByRole('link', { name: /Route reset/u }));
     expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
     expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
+  });
+
+  it('centers the containing Space and active Channel when a deep link opens', async () => {
+    const other = space('00000000-0000-7000-8000-0000000000a1', 'Other');
+    const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
+    const target = placedIn(workstream('deep-linked-channel', 'Deep linked', 'completed'), hiring.id);
+    const neighbor = placedIn(workstream('ordinary-navigation', 'Ordinary navigation', 'completed'), hiring.id);
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    });
+    markDeepLinkWorkstreamNavigation(target.id);
+
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+            spaces={[other, hiring]} workspace={workspace} workstreams={[target, neighbor]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(scrolled).toHaveLength(2));
+    expect(scrolled.map((row) => row.getAttribute('data-space-id')).filter(Boolean)).toEqual([hiring.id]);
+    expect(scrolled.map((row) => row.getAttribute('data-workstream-id')).filter(Boolean)).toEqual([target.id]);
+    for (const call of vi.mocked(Element.prototype.scrollIntoView).mock.calls) {
+      expect(call[0]).toEqual({ block: 'center', behavior: 'auto' });
+    }
+
+    fireEvent.click(screen.getByRole('link', { name: /Ordinary navigation/u }));
+    expect(scrolled).toHaveLength(2);
   });
 
   it('does not start navigation telemetry when the active channel row is clicked again', () => {

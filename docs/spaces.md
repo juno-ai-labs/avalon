@@ -1923,6 +1923,25 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-22 — Deep links reveal their hierarchy selection
+
+**What changed:** A desktop deep link to a Channel now carries a renderer-local
+navigation signal until the destination directory is mounted. Once the Channel
+row is available, the left rail selects a containing Space and both that Space
+row and the active Channel row are centered in their respective scroll views,
+clamped naturally near either end of a short list. Ordinary in-app navigation
+does not recenter either rail.
+
+**Why:** The route alone selected the Channel surface, but it could leave the
+Space rail describing a different container and both selected rows outside the
+visible part of long navigation lists. Treating every route change as a reveal
+was rejected because clicking an already visible row should not move the lists
+under the reader.
+
+**Consequences:** The signal is retained across an Organization switch until
+the matching directory row arrives, and repeated deep links to the already-open
+Channel rearm the reveal even though the hash itself does not change.
+
 ### 2026-09-22 — Space selection keeps the Spaces rail open
 
 **What changed:** Selecting a Space in the desktop's left rail now keeps that
