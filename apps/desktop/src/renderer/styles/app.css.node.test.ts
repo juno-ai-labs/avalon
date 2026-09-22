@@ -1271,6 +1271,14 @@ describe('Channel row geometry', () => {
     expect(rule('.waiting-workstream-row time')).toContain('grid-column: 5;');
     expect(rule('.waiting-workstream-row > svg')).toContain('grid-column: 6;');
   });
+
+  it('keeps a flexible title track after the identity at narrow widths', () => {
+    const narrow = stylesheet.match(/@media \(max-width: 560px\) \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+    expect(ruleWithin(narrow, '.waiting-workstream-row'))
+      .toContain('grid-template-columns: auto auto minmax(0, 1fr) 15px;');
+    expect(ruleWithin(narrow, '.waiting-workstream-row > svg'))
+      .toContain('grid-column: 4;');
+  });
 });
 
 describe('raised popover interaction states', () => {
