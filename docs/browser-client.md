@@ -130,10 +130,12 @@ are split into timer-range-safe waits by `session-timer.ts`.
 The shared navigation uses the same adjacent Space and Channel rails, contextual
 Channel sidebar, header, resource rows, Sidekick controls and account trigger as
 desktop, from `@rally/ui`. The browser's versioned navigation directory contains
-only Space marks and containment edges for Channels that their canonical
-WorkstreamDO has independently re-authorized. A child-only share names its Channel
-so the Breakout can be placed correctly, but still omits Main and every unshared
-Breakout. Selecting a Space filters the Channel rail and opens the first active
+only authorized containment plus the associative presentation metadata above it:
+name, icon, colour and public/private scope for Space, Channel and Breakout.
+Canonical WorkstreamDO independently re-authorizes every Channel and Breakout;
+the metadata grants no parent transcript, roster, defaults or write capability.
+A child-only share names and styles its Channel so the Breakout can be placed
+correctly, but still omits Main and every unshared Breakout. Selecting a Space filters the Channel rail and opens the first active
 authorized conversation across its Channels, falling back to archived content only
 when the Space has no active conversation. A Channel with no visible Space placement
 stays reachable in a local **Shared channels** group. Workspace identity uses the
@@ -384,6 +386,25 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-21 — Shared descendants carry their ancestor presentation
+
+**What changed:** `/sharing/navigation` now includes public/private scope and
+appearance for authorized Channels and Breakouts, plus scope on their containing
+Spaces. The Chrome UI renders those fields, and the Electron guest shell consumes
+the same read-only hierarchy instead of falling back to a flat recency list.
+
+**Why:** A person who can open a descendant needs to identify where it lives.
+Hiding the hierarchy made access look inconsistent between hosts and was the
+premise behind refusing otherwise-valid Channel moves.
+
+**Considered and rejected:** Loading the member Space directory for guests would
+expose unrelated Spaces and management fields. Keeping a separate Electron-only
+projection would duplicate the authority and drift from browser behavior.
+
+**Consequences:** Shared navigation reveals exactly name, icon, colour and
+public/private scope up the ancestor chain. It does not grant Main, unshared
+Breakouts, participants, defaults, content or Space mutations.
 
 ### 2026-09-21 — Put guest Channels in their Spaces
 

@@ -232,9 +232,9 @@ named Spaces plus the caller's own request: if any of them is Organization-wide
 the Channel opens `workspace` and the requested participants are kept as
 participants; otherwise it opens personal over the union of the Spaces' rosters
 and the caller's. A requested participant who is in none of the named Spaces'
-rosters is refused with `409 space_audience_incompatible` rather than silently
-seated — the Channel would otherwise open with a reader the Space that holds it
-cannot account for. The Spaces' `defaultResourceIds` are unioned with the
+rosters is seated directly in the Channel; that descendant access exposes only
+the containing Spaces' presentation metadata through associative reach and does
+not make them a Space participant. The Spaces' `defaultResourceIds` are unioned with the
 caller's origin resources, so a Channel started in a Space begins with what that
 Space hands down.
 
@@ -502,6 +502,24 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-21 — Direct Channel participants need not join its Spaces
+
+**What changed:** Creation accepts a requested Channel participant who is not on
+any containing personal Space roster. Their Channel access grants only
+associative ancestor presentation metadata.
+
+**Why:** Space membership and Channel readership are separate permissions. The
+old refusal forced broader Space membership merely to make the hierarchy
+discoverable.
+
+**Considered and rejected:** Automatically joining the participant to every
+Space would grant rosters, defaults and Space writes beyond the requested
+Channel access.
+
+**Consequences:** Creation still derives the Channel audience as the union of
+its direct request and Space sources. Ancestor visibility does not widen the
+Space audience.
 
 ### 2026-09-20 — Name and place a Channel before composing it
 

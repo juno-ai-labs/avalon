@@ -129,12 +129,9 @@ interface CreateOptions {
  * conversation with its real audience in one write, instead of a private
  * Channel that becomes public a round trip later.
  *
- * A requested participant no personal Space lists is refused rather than
- * seated. The rule `resolveProjectWorkstreamStart` held is the rule a Space
- * holds: a personal Space decides who is in its Channels, and a launcher that
- * could add somebody outside every roster would be widening the Space's
- * audience through one of its Channels. It cannot fire when any named Space is
- * Organization-wide, because then everybody is a reader already.
+ * A direct participant may sit outside every personal Space roster. Their
+ * Channel access grants associative visibility of the containing Spaces'
+ * presentation metadata; it does not make them a Space participant.
  */
 export function resolveSpaceWorkstreamStart(input: {
   spaces: readonly SpaceSummary[];
@@ -152,16 +149,6 @@ export function resolveSpaceWorkstreamStart(input: {
     direct: { scope: input.scope, participantUserIds: requested.map(asUserId) },
     sources,
   });
-  if (audience.scope === "personal") {
-    const seated = new Set(sources.flatMap((source) => source.participantUserIds as string[]));
-    if (requested.some((userId) => !seated.has(userId))) {
-      throw new ApiError(
-        409,
-        "space_audience_incompatible",
-        "Add that person to the space before starting this channel",
-      );
-    }
-  }
   return {
     scope: audience.scope,
     // An Organization-wide Channel keeps the roster the caller asked for: the
