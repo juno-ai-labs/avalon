@@ -1112,7 +1112,8 @@ the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
 Channel from the selected Channel rail onto another Space is one server-side
-move request. The server establishes the destination membership before
+move request. The server first validates that the selected source is writable
+and contains the Channel without staging a mutation, then establishes the destination membership before
 withdrawing the selected source, preserving the invariant that every Channel
 has a home if the second operation is interrupted. The response waits for those
 two access-authority writes and their durable receipts; realtime republication,
@@ -1935,14 +1936,17 @@ target, not a claim established by capability-double timing.
 
 ### 2026-09-21 — Move Channels server-side and make ancestor metadata associative
 
-**What changed:** Cross-Space movement is one server request. The server settles
-the destination before retracting the source, while the client patches the two
+**What changed:** Cross-Space movement is one server request. The server validates
+the source without mutation, then settles the destination before retracting it,
+while the client patches the two
 Space summaries and Channel placement immediately from that response. Removal
 and archive no longer perform the obsolete audience-discoverability preflight.
 Any person who may read a Channel or Breakout now receives the name, icon,
 colour and public/private scope of its Channel and Space ancestors in desktop
 and browser navigation. Realtime and directory convergence run after the
-durable membership answer instead of extending its latency.
+durable membership answer instead of extending its latency. Guest hierarchy
+refreshes reuse existing Organization and open-conversation socket nudges, and
+breakout-only grants synthesize their Channel ancestor without requiring Main.
 
 **Why:** Client composition paid two HTTP boundaries, repeated authority reads,
 then waited for a directory refetch. The discoverability refusal also encoded
@@ -1955,10 +1959,13 @@ wrong. Making ancestor visibility imply participation was rejected because it
 would disclose rosters, defaults and content and grant writes merely from a
 descendant share.
 
-**Consequences:** The synchronous boundary is durable staging plus the two
+**Consequences:** The synchronous boundary is one local source preflight,
+durable staging plus the two
 Channel access-source writes, in destination-first order. An interruption can
 leave an extra placement but never a homeless Channel. Ancestor reads are
-metadata-only and `through_channel`; all controls remain withheld.
+metadata-only and `through_channel`; all controls remain withheld. Live socket
+Channel fields win over an older associative read; the latter owns containment,
+authorized conversation destinations, and missing ancestor rows.
 
 ### 2026-09-21 — Sidebar recovery stays actionable and free of warnings
 

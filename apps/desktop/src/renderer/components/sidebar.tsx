@@ -617,6 +617,7 @@ function WorkstreamRow({
   onOpen,
   spaces,
   motionMove,
+  spacesReadOnly = false,
 }: {
   debugEnabled: boolean;
   drag?: WorkstreamRowDrag;
@@ -637,6 +638,7 @@ function WorkstreamRow({
   /** The active Space directory: where this Channel could go, and where it is. */
   spaces: SpaceSummary[];
   motionMove?: boolean;
+  spacesReadOnly?: boolean;
 }): React.JSX.Element {
   const location = useLocation();
   const collaboration = useOptionalCollaborationSession();
@@ -645,6 +647,9 @@ function WorkstreamRow({
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const markerStatus = workstreamMarkerStatus(workstream);
+  const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
+    ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
+    : ''}`;
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -714,7 +719,7 @@ function WorkstreamRow({
   // who could see its row read a stale or incomplete list here. Keep every
   // visible Space and put the existing-placement or access reason on the
   // disabled choice; `addableSpaces` remains the capability used by drag.
-  const spaceOptions = isProductChannel
+  const spaceOptions = isProductChannel && !spacesReadOnly
     ? spaces.map((space) => {
         const selected = workstream.spaceIds.includes(space.id);
         const readOnly = space.reach === 'through_channel';
@@ -901,7 +906,6 @@ function WorkstreamRow({
               if (event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
               closePreview();
-              const destination = `/workstreams/${workstream.id}`;
               if (location.pathname === destination) return;
               onOpen?.();
               const socketContext = socketOpenContext();
@@ -918,7 +922,7 @@ function WorkstreamRow({
               );
               markSurfaceEntrypoint(workstream.pinPosition === null ? 'sidebar_recent' : 'sidebar_pinned');
             }}
-            to={`/workstreams/${workstream.id}`}
+            to={destination}
           >
             <NavigationRowContent id={workstream.id} title={workstream.title} appearance={workstream.appearance} naming={naming}
               marks={<>{workstream.scope === 'workspace' && <PublicMarker />}{markerStatus !== 'completed' &&
@@ -1810,11 +1814,12 @@ export function Sidebar({
     <WorkstreamRow
       {...workstreamRowActions}
       debugEnabled={debugEnabled}
-      {...(drag ? { drag } : {})}
+      {...(drag && !spacesReadOnly ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
       motionMove={motionMoveIntent.current?.id === workstream.id
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
-      {...(placementSpaceId !== undefined ? { placementSpaceId } : {})}
+      {...(placementSpaceId !== undefined && !spacesReadOnly ? { placementSpaceId } : {})}
+      spacesReadOnly={spacesReadOnly}
       spaces={placementSpaces}
       workspace={workspace}
       workstream={workstream}
@@ -2242,18 +2247,18 @@ export function Sidebar({
             // heading a few pixels above the first one — would silently throw
             // the arrangement away.
             <section
-              aria-describedby={PINNED_DRAG_HINT_ID}
+              aria-describedby={spacesReadOnly ? undefined : PINNED_DRAG_HINT_ID}
               aria-labelledby="pinned-heading"
               className="sidebar-section pinned-section"
               data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}
               // The rows inside are the slots this list's drag is measured
               // against; the placements under a Space carry the same mark.
               data-reorder-list=""
-              onDragOver={(event) => {
+              onDragOver={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
               }}
-              onDrop={(event) => {
+              onDrop={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
                 if (pinnedDrag.current) pinnedDrag.current = { ...pinnedDrag.current, dropped: true };
               }}
@@ -2267,21 +2272,22 @@ export function Sidebar({
                   as a per-row description it lands inside each link's
                   accessible name, so somebody arrowing through the list hears
                   the whole instruction again before every title. */}
-              <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+              {!spacesReadOnly && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
                 Hold Alt and press the up or down arrow to move a pinned channel.
-              </p>
+              </p>}
               <SidebarList>
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     {...workstreamRowActions}
                     debugEnabled={debugEnabled}
-                    drag={pinnedRowDrag(pinned, index)}
+                    {...(!spacesReadOnly ? { drag: pinnedRowDrag(pinned, index) } : {})}
                     key={pinned.id}
-                    {...(selectedSpaceId !== null ? { placementSpaceId: selectedSpaceId } : {})}
+                    {...(selectedSpaceId !== null && !spacesReadOnly ? { placementSpaceId: selectedSpaceId } : {})}
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     motionMove={motionMoveIntent.current?.id === pinned.id
                       && motionMoveIntent.current.pinned}
                     spaces={placementSpaces}
+                    spacesReadOnly={spacesReadOnly}
                     workspace={workspace}
                     workstream={pinned}
                   />
