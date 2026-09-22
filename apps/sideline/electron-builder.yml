@@ -17,7 +17,7 @@ publish:
 afterAllArtifactBuild: scripts/finalize-macos-release.mjs
 mac:
   category: public.app-category.productivity
-  icon: ../desktop/resources/icon.icns
+  icon: resources/icon.icns
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
