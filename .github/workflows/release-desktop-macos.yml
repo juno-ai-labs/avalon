@@ -315,6 +315,28 @@ jobs:
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               tag -a "$RELEASE_TAG" -m "Rally ${RELEASE_TAG#v}" HEAD
 
+      # Checking only whether the secret is nonempty cannot detect an expired
+      # or under-scoped token. Create and immediately remove a non-release tag
+      # against the exact commit this job will package. This reaches GitHub's
+      # workflow-bearing-ref permission check before signing or publication,
+      # while the branch-only workflow trigger keeps the probe inert.
+      - name: Prove the release token can publish workflow-bearing tags
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.DESKTOP_RELEASE_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_remote="https://x-access-token:${RELEASE_GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          preflight_ref="refs/tags/rally-release-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_preflight() {
+            git -c http.https://github.com/.extraheader= push "$release_remote" ":$preflight_ref" >/dev/null 2>&1 || true
+          }
+          trap cleanup_preflight EXIT
+          git -c http.https://github.com/.extraheader= push "$release_remote" "HEAD:$preflight_ref"
+          git -c http.https://github.com/.extraheader= push "$release_remote" ":$preflight_ref"
+          trap - EXIT
+
       - name: Require native Apple Silicon
         run: test "$(uname -m)" = arm64
 
@@ -474,8 +496,7 @@ jobs:
           RELEASE_GITHUB_TOKEN: ${{ secrets.DESKTOP_RELEASE_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git push \
-            -c http.https://github.com/.extraheader= \
+          git -c http.https://github.com/.extraheader= push \
             "https://x-access-token:${RELEASE_GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "refs/tags/$RELEASE_TAG"
 
