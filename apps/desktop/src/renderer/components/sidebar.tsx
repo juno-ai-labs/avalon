@@ -1201,6 +1201,20 @@ export function Sidebar({
   }, [controlledSpacesCollapsed, onSpacesCollapsedChange]);
   const routeSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   const routeWorkstreamId = /^\/workstreams\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
+  const currentRoute = `${location.pathname}${location.search}${location.hash}`;
+  const currentRouteRef = useRef(currentRoute);
+  currentRouteRef.current = currentRoute;
+  const channelMoveNavigationGeneration = useRef(0);
+  const channelMoveNavigation = useRef<{
+    destination: string | null;
+    origin: string;
+    token: number;
+  } | null>(null);
+  const [pendingChannelMoveNavigation, setPendingChannelMoveNavigation] = useState<{
+    index: number;
+    token: number;
+    workstreamId: string;
+  } | null>(null);
   const routeWorkstream = routeWorkstreamId
     ? workstreams.find((workstream) => workstream.id === routeWorkstreamId)
     : undefined;
@@ -1430,6 +1444,42 @@ export function Sidebar({
   const unpinnedWorkstreams = activePlacementOrder === null
     ? storedUnpinnedWorkstreams
     : orderByStoredIds(storedUnpinnedWorkstreams, activePlacementOrder, (workstream) => workstream.id);
+  const displayedWorkstreams = useMemo(
+    () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
+    [pinnedWorkstreams, unpinnedWorkstreams],
+  );
+  useEffect(() => {
+    if (pendingChannelMoveNavigation === null) return;
+    const owned = channelMoveNavigation.current;
+    if (owned?.token !== pendingChannelMoveNavigation.token) {
+      setPendingChannelMoveNavigation(null);
+      return;
+    }
+    if (currentRouteRef.current !== owned.origin) {
+      channelMoveNavigation.current = null;
+      setPendingChannelMoveNavigation(null);
+      return;
+    }
+    const remaining = displayedWorkstreams.filter(
+      (workstream) => workstream.id !== pendingChannelMoveNavigation.workstreamId,
+    );
+    const next = remaining[pendingChannelMoveNavigation.index]
+      ?? remaining[pendingChannelMoveNavigation.index - 1];
+    if (!next && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
+    const destination = next
+      ? `/workstreams/${encodeURIComponent(next.id)}`
+      : '/workstreams/new';
+    owned.destination = destination;
+    setPendingChannelMoveNavigation(null);
+    void navigate(destination, { replace: true });
+  }, [
+    currentRoute,
+    displayedWorkstreams,
+    hasMoreWorkstreams,
+    loadingMoreWorkstreams,
+    navigate,
+    pendingChannelMoveNavigation,
+  ]);
   // Whether this session has the hierarchy at all. A host that hands over no
   // directory is the guest shell, where Space discovery is deferred — see
   // `spaces` above — and that shell keeps the flat, time-grouped list this
@@ -2039,6 +2089,61 @@ export function Sidebar({
     void navigate(`/spaces/${created.id}`);
   }, [navigate, onCreateSpace]);
 
+  const moveChannelFromSelectedSpace = useCallback((
+    sourceSpaceId: string,
+    targetSpaceId: string,
+    workstreamId: string,
+  ): Promise<void> => {
+    // Decide against the rows as they are drawn before the optimistic cache
+    // patch removes the dragged Channel. Moving the open Channel continues
+    // downward through the selected Space, falls back upward at the bottom,
+    // and opens the New channel home when that placement was the last one.
+    let navigationToken: number | null = null;
+    if (sourceSpaceId === selectedSpaceId && routeWorkstreamId === workstreamId) {
+      const index = displayedWorkstreams.findIndex((workstream) => workstream.id === workstreamId);
+      const next = index < 0
+        ? undefined
+        : displayedWorkstreams[index + 1] ?? displayedWorkstreams[index - 1];
+      const destination = next
+        ? `/workstreams/${encodeURIComponent(next.id)}`
+        : (selectedSpace?.channelCount ?? 0) <= 1 ? '/workstreams/new' : null;
+      navigationToken = channelMoveNavigationGeneration.current + 1;
+      channelMoveNavigationGeneration.current = navigationToken;
+      channelMoveNavigation.current = {
+        destination,
+        origin: currentRoute,
+        token: navigationToken,
+      };
+      if (destination === null) {
+        setPendingChannelMoveNavigation({ index, token: navigationToken, workstreamId });
+      } else {
+        void navigate(destination, { replace: true });
+      }
+    }
+    return onMoveChannelToSpace(sourceSpaceId, targetSpaceId, workstreamId).catch((cause: unknown) => {
+      const owned = channelMoveNavigation.current;
+      if (navigationToken !== null && owned?.token === navigationToken) {
+        setPendingChannelMoveNavigation((current) => (
+          current?.token === navigationToken ? null : current
+        ));
+        if (owned.destination !== null
+          && (currentRouteRef.current === owned.destination || currentRouteRef.current === owned.origin)) {
+          void navigate(owned.origin, { replace: true });
+        }
+        channelMoveNavigation.current = null;
+      }
+      throw cause;
+    });
+  }, [
+    displayedWorkstreams,
+    currentRoute,
+    navigate,
+    onMoveChannelToSpace,
+    routeWorkstreamId,
+    selectedSpace?.channelCount,
+    selectedSpaceId,
+  ]);
+
   // Active standalone Sidekicks occupy the strip. Until one exists, its empty
   // slot remains the dashed New Sidekick action; the whole section stays absent
   // only while the workspace answer is still loading.
@@ -2075,7 +2180,7 @@ export function Sidebar({
         onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
         onOrderPreviewChange={setSpaceOrderPreview}
-        onMoveChannel={onMoveChannelToSpace}
+        onMoveChannel={moveChannelFromSelectedSpace}
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
         onRestore={onRestoreSpace}
