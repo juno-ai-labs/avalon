@@ -807,9 +807,16 @@ export class SpaceService {
     pageReceipt: string;
     reach?: MemberWalkReach;
     cursor: string | null;
-    concurrency?: number;
-    step: (member: SpaceMember) => Promise<"continue" | "abandon">;
-  }): Promise<"walked" | "abandoned"> {
+  } & (
+    | {
+      concurrency?: undefined;
+      step: (member: SpaceMember) => Promise<"continue" | "abandon">;
+    }
+    | {
+      concurrency: number;
+      step: (member: SpaceMember) => Promise<"continue">;
+    }
+  )): Promise<"walked" | "abandoned"> {
     let cursor = input.cursor;
     const concurrency = input.concurrency ?? 1;
     for (;;) {
