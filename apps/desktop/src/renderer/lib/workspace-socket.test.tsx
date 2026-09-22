@@ -833,6 +833,73 @@ describe('WorkspaceSocketProvider', () => {
     });
   });
 
+  it('does not let a stale directory page resurrect a row after its tombstone', async () => {
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
+    function Probe(): null {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => { listWorkstreams = workspaceSocket.listWorkstreams; }, [workspaceSocket.listWorkstreams]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001">
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const workstream = {
+      ...summary(),
+      workspaceId: '00000000-0000-7000-8000-000000000001',
+      objective: 'Already archived',
+      emailAddress: null,
+      createdByUserId: null,
+      createdAt: '2026-09-21T11:00:00.000Z',
+      updatedAt: '2026-09-21T11:30:00.000Z',
+      archivedAt: null,
+      systemKind: null,
+    };
+    const stateVersion = {
+      commonEventId: '00000000-0000-7000-8000-000000000007',
+      viewerEventId: '00000000-0000-7000-8001-000000000004',
+      authorityGeneration: 1,
+      commonWaterline: 7,
+      viewerWaterline: 4,
+    };
+    act(() => socket.message({
+      type: 'workspace_workstream_state',
+      occurredAt: '2026-09-21T11:30:00.000Z',
+      workstreamId: workstream.id,
+      stateVersion: { ...stateVersion, commonWaterline: 8 },
+      workstream: null,
+    }));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? []).toEqual([]);
+
+    let result: Promise<unknown> | null = null;
+    act(() => { result = listWorkstreams!({ limit: 250, includeSystem: false }); });
+    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as { requestId: string };
+    act(() => socket.message({
+      type: 'workspace_workstream_page',
+      requestId: command.requestId,
+      directoryWaterline: 7,
+      nextCursor: null,
+      stateVersions: [{ workstreamId: workstream.id, ...stateVersion }],
+      items: [workstream],
+    }));
+
+    await expect(result).resolves.toEqual({ items: [], nextCursor: null });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? []).toEqual([]);
+  });
+
   it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
