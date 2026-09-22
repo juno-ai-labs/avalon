@@ -54,15 +54,20 @@ GitHub `desktop-release` environment, public download origin, and R2 bucket. It
 does not share Rally's bundle identifier, release version, update manifest, or
 object prefix.
 
-The **Release Sideline for macOS** workflow is deliberately dispatched by hand.
-It freezes the selected commit, requires the stable semantic version in
-`apps/sideline/package.json` not to have a `sideline-v<version>` tag, then runs
-lint, typecheck, Sideline tests, and the portable release-tooling tests before
-claiming an Apple Silicon runner. That runner imports the existing Developer ID
-identity, builds the arm64 app with hardened runtime, notarizes and staples the
-application and DMG, verifies both ZIP and DMG contents, and retains the exact
-release directory as a GitHub artifact for 30 days. Increase Sideline's package
-version before dispatching another release.
+The **Release Sideline for macOS** workflow runs when a merge to `main` changes
+the Sideline app, its shared UI or contracts, workspace install/build inputs, or
+the shared macOS release helpers it consumes. Inside one non-cancelling release
+queue, a cheap planner compares the current tip with the newest reachable
+`sideline-v<version>` tag. It skips a stale queued run with no remaining release
+inputs, keeps `0.1.0` for the first release, and otherwise advances Sideline's
+patch version. The workflow commits that version to `main`, freezes the exact
+commit, then runs lint, typecheck, Sideline tests, and the portable
+release-tooling tests before claiming an Apple Silicon runner. That runner
+imports the existing Developer ID identity, builds the arm64 app with hardened
+runtime, notarizes and staples the application and DMG, verifies both ZIP and
+DMG contents, and retains the exact release directory as a GitHub artifact for
+30 days. A manual dispatch uses the same planner and is the retry path for an
+untagged failed release; release versions are no longer bumped by hand.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
@@ -173,6 +178,25 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-21 — Relevant main changes automatically rebuild Sideline
+
+**What changed:** Sideline's macOS release workflow now watches its application,
+shared UI and contracts, workspace build inputs, and shared desktop release
+helpers. A queued planner uses the last Sideline tag as a watermark, advances an
+independent patch version, and skips stale runs whose inputs were already built.
+
+**Why:** Sideline already had an isolated R2 update channel, but its manual-only
+workflow could leave installed copies behind changes that had merged to the
+application or a shared dependency.
+
+**Considered and rejected:** Releasing every queued trigger without a watermark
+would publish empty versions when a prior run included a newer main tip. Reusing
+Rally's version or release record would couple two independent update channels.
+
+**Consequences:** A relevant merge can claim the signed macOS release lane and
+publish an update without a human version bump. The release tag remains the
+durable build watermark, and failed untagged versions remain resumable.
 
 ### 2026-09-21 — One platform relationship feeds the first represented-action surface
 
