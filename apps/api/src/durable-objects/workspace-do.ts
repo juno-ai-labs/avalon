@@ -609,6 +609,10 @@ import {
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
+  WorkspaceSpaceMembershipMovePlanResultSchema,
+  WorkspaceSpaceMembershipMoveRequestSchema,
+  WorkspaceSpaceMembershipMoveResultSchema,
+  WorkspaceSpaceMembershipMoveSettleRequestSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMembershipRemovalRequestSchema,
   WorkspaceSpaceMembershipRequestSchema,
@@ -639,6 +643,10 @@ import {
   type WorkspaceSpaceListRequest,
   type WorkspaceSpaceMembersRequest,
   type WorkspaceSpaceMembersResult,
+  type WorkspaceSpaceMembershipMovePlanResult,
+  type WorkspaceSpaceMembershipMoveRequest,
+  type WorkspaceSpaceMembershipMoveResult,
+  type WorkspaceSpaceMembershipMoveSettleRequest,
   type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMembershipRemovalRequest,
   type WorkspaceSpaceMembershipRequest,
@@ -3591,6 +3599,58 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX workspace_impersonation_relationships_targets_idx
       ON workspace_impersonation_relationships(workspace_id, impersonator_user_id, revoked_at, represented_user_id)`,
     ...workspaceIdentityFencesFor("workspace_impersonation_relationships"),
+  ],
+}, {
+  version: 68,
+  description: "durable atomic moves between spaces",
+  statements: [
+    `CREATE TABLE space_intents_v68 (
+      operation_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN (
+        'add', 'remove', 'move', 'audience', 'archive', 'restore'
+      )),
+      space_id TEXT NOT NULL,
+      workstream_id TEXT,
+      space_revision INTEGER NOT NULL CHECK (space_revision > 0),
+      membership_generation INTEGER CHECK (membership_generation IS NULL OR membership_generation > 0),
+      source_space_id TEXT,
+      source_space_revision INTEGER CHECK (source_space_revision IS NULL OR source_space_revision > 0),
+      source_membership_generation INTEGER CHECK (
+        source_membership_generation IS NULL OR source_membership_generation > 0
+      ),
+      delivery_generation INTEGER CHECK (delivery_generation IS NULL OR delivery_generation > 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'settled', 'cancelled')),
+      cursor TEXT,
+      last_error_code TEXT,
+      receipts_json TEXT NOT NULL CHECK (json_valid(receipts_json)),
+      requested_by_user_id TEXT NOT NULL,
+      not_before INTEGER NOT NULL,
+      attempts INTEGER NOT NULL CHECK (attempts >= 0),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (
+        (kind = 'move' AND source_space_id IS NOT NULL
+          AND source_space_revision IS NOT NULL AND source_membership_generation IS NOT NULL)
+        OR (kind <> 'move' AND source_space_id IS NULL
+          AND source_space_revision IS NULL AND source_membership_generation IS NULL)
+      )
+    ) STRICT`,
+    `INSERT INTO space_intents_v68 (
+       operation_id, kind, space_id, workstream_id, space_revision,
+       membership_generation, source_space_id, source_space_revision,
+       source_membership_generation, delivery_generation, state, cursor,
+       last_error_code, receipts_json, requested_by_user_id, not_before,
+       attempts, created_at, updated_at
+     )
+     SELECT operation_id, kind, space_id, workstream_id, space_revision,
+            membership_generation, NULL, NULL, NULL, delivery_generation, state,
+            cursor, last_error_code, receipts_json, requested_by_user_id,
+            not_before, attempts, created_at, updated_at
+       FROM space_intents`,
+    `DROP TABLE space_intents`,
+    `ALTER TABLE space_intents_v68 RENAME TO space_intents`,
+    `CREATE INDEX space_intents_unsettled_idx
+      ON space_intents(state, not_before, operation_id)`,
   ],
 }];
 
@@ -6619,17 +6679,91 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  async preflightSpaceMembershipMoveSource(
-    input: WorkspaceSpaceMembershipRemovalRequest,
-  ): Promise<WorkspaceSpaceMutationResult> {
+  async prepareSpaceMembershipMove(
+    input: WorkspaceSpaceMembershipMoveRequest,
+  ): Promise<WorkspaceSpaceMembershipMovePlanResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "preflight_space_membership_move_source");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    return WorkspaceSpaceMutationResultSchema.parse(
-      this.spaceStorage().preflightMembershipMoveSource(request),
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipMoveRequestSchema,
+      input,
+      "prepare_space_membership_move",
     );
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const storage = this.spaceStorage();
+    if (!storage.ready()) {
+      return { ok: false, code: "space_bootstrap_pending", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
+      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    if (!this.directoryVisible(request.userId, request.workstreamId)) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const result = WorkspaceSpaceMembershipMovePlanResultSchema.parse(
+      storage.prepareMembershipMove(
+        request,
+        uuidV7(),
+        Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      ),
+    );
+    if (result.ok && result.equivalentAudience) await this.armNextAlarm();
+    return result;
+  }
+
+  async finalizeSpaceMembershipMove(
+    input: WorkspaceSpaceMembershipMoveSettleRequest,
+  ): Promise<WorkspaceSpaceMembershipMoveResult> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipMoveSettleRequestSchema,
+      input,
+      "finalize_space_membership_move",
+    );
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const storage = this.spaceStorage();
+    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
+      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
+      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const moved = storage.finalizeMembershipMove(request);
+    if (moved === "conflict") {
+      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    if (moved === false) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    this.publishSpaceSnapshot();
+    this.publishSpaceConversationsChanged({
+      spaceIdsThroughChannel: new Map([[
+        request.workstreamId,
+        [request.sourceSpaceId, request.targetSpaceId],
+      ]]),
+    });
+    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
+    return WorkspaceSpaceMembershipMoveResultSchema.parse({ ok: true, ...moved });
+  }
+
+  async cancelSpaceMembershipMove(
+    input: WorkspaceSpaceMembershipMoveSettleRequest,
+  ): Promise<{ cancelled: true }> {
+    await this.initialized;
+    const request = parseRpcInput(
+      WorkspaceSpaceMembershipMoveSettleRequestSchema,
+      input,
+      "cancel_space_membership_move",
+    );
+    this.assertWorkspace(request.workspaceId);
+    this.spaceStorage().cancelMembershipMove(request);
+    this.publishSpaceSnapshot();
+    await this.armNextAlarm();
+    return { cancelled: true };
   }
 
   async finalizeSpaceMembershipRemoval(

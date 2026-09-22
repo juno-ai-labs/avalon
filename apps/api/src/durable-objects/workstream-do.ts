@@ -226,6 +226,8 @@ import {
   ConfirmSpaceAccessSourceResultSchema,
   NoteChannelDirectReaderRequestSchema,
   ReadChannelAccessSourcesRequestSchema,
+  ReplaceEquivalentSpaceAccessSourceRequestSchema,
+  ReplaceEquivalentSpaceAccessSourceResultSchema,
   RetractSpaceAccessSourceRequestSchema,
   RetractSpaceAccessSourceResultSchema,
   SetChannelDirectScopeRequestSchema,
@@ -262,6 +264,12 @@ function spaceAccessSourceSuperseded(
   return existing.spaceRevision > staged.spaceRevision
     || (existing.spaceRevision === staged.spaceRevision
       && existing.membershipGeneration > staged.membershipGeneration);
+}
+
+function sameUserIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(left);
+  return expected.size === right.length && right.every((userId) => expected.has(userId));
 }
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1021,6 +1029,82 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         operationId: request.operationId,
         now,
       }),
+    });
+  }
+
+  /**
+   * Move unchanged audience provenance from one Space id to another.
+   *
+   * The caller has already proved the two live Spaces have the same scope and
+   * roster. This object proves its stored source agrees before changing it,
+   * then transfers both the source and every reader it seated in one SQLite
+   * transaction. No SubstreamAgent call is needed because no effective reader
+   * changes.
+   */
+  async replaceEquivalentSpaceAccessSource(
+    input: z.infer<typeof ReplaceEquivalentSpaceAccessSourceRequestSchema>,
+  ): Promise<z.infer<typeof ReplaceEquivalentSpaceAccessSourceResultSchema>> {
+    await this.initialized;
+    const request = parseRpcInput(
+      ReplaceEquivalentSpaceAccessSourceRequestSchema,
+      input,
+      "replace_equivalent_space_access_source",
+    );
+    this.assertParent(request.workspaceId, request.parentId);
+    const access = this.channelAccess();
+    const now = Date.now();
+    return access.operate({
+      operationId: request.operationId,
+      request: {
+        kind: "replace_equivalent_space_source",
+        sourceSpaceId: request.sourceSpaceId,
+        targetSpaceId: request.targetSpaceId,
+        scope: request.scope,
+        participantUserIds: request.participantUserIds,
+        targetSpaceRevision: request.targetSpaceRevision,
+        targetMembershipGeneration: request.targetMembershipGeneration,
+      },
+      resultSchema: ReplaceEquivalentSpaceAccessSourceResultSchema,
+      now,
+      body: () => {
+        const source = access.source(request.sourceSpaceId);
+        const target = access.source(request.targetSpaceId);
+        const audienceMatches = (candidate: typeof source): boolean => candidate !== null
+          && candidate.scope === request.scope
+          && sameUserIds(candidate.participantUserIds, request.participantUserIds);
+        if (!source) {
+          return audienceMatches(target)
+            ? { ok: true as const }
+            : { ok: false as const, code: "space_not_found" as const };
+        }
+        if (!audienceMatches(source) || (target && !audienceMatches(target))) {
+          return { ok: false as const, code: "space_revision_conflict" as const };
+        }
+        if (spaceAccessSourceSuperseded(target, {
+          spaceRevision: request.targetSpaceRevision,
+          membershipGeneration: request.targetMembershipGeneration,
+        })) {
+          return { ok: false as const, code: "space_revision_conflict" as const };
+        }
+        const supplied = [...new Set([
+          ...access.suppliedReaders(request.sourceSpaceId),
+          ...access.suppliedReaders(request.targetSpaceId),
+        ])];
+        access.upsertSource({
+          spaceId: request.targetSpaceId,
+          scope: request.scope,
+          participantUserIds: request.participantUserIds,
+          spaceRevision: request.targetSpaceRevision,
+          membershipGeneration: request.targetMembershipGeneration,
+          operationId: request.operationId,
+          now,
+        });
+        access.recordSuppliedReaders(request.targetSpaceId, supplied);
+        if (request.sourceSpaceId !== request.targetSpaceId) {
+          access.deleteSource(request.sourceSpaceId);
+        }
+        return { ok: true as const };
+      },
     });
   }
 
