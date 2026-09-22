@@ -67,7 +67,8 @@ imports the existing Developer ID identity, builds the arm64 app with hardened
 runtime, notarizes and staples the application and DMG, verifies both ZIP and
 DMG contents, and retains the exact release directory as a GitHub artifact for
 30 days. When shared contracts changed, distribution waits for the successful
-API deployment associated with the newest contract commit. A manual dispatch
+API deployment associated with the newest first-parent commit that introduced
+them to `main`. A manual dispatch
 uses the same planner and is the retry path for an untagged failed release;
 release versions are no longer bumped by hand.
 Version stamping refuses to absorb a newer `main` tip after planning, so the
@@ -87,7 +88,9 @@ the final publication boundary refuse a candidate tag that already exists.
 The embedded generic-provider URL points
 only at that prefix. A signed release build on packaged Apple Silicon checks it
 at launch and every three hours, downloads in the background, and offers to
-restart after the update is ready. Development, unsigned local packages,
+restart after the update is ready. Its application menu also exposes **Check
+for Updates…** for an immediate manual check through the same updater. The item
+remains visible but disabled when updates are unavailable. Development, unsigned local packages,
 non-macOS, and non-arm64 builds never contact the production feed.
 
 ## Invariants
@@ -184,6 +187,36 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-21 — Sideline release recovery and app identity
+
+**What changed:** Sideline's release planner now searches first-parent history
+when identifying a shared-contract change, then accepts the newest main-line
+API deployment whose commit contains that change. Sideline also owns its
+supplied macOS icon and exposes a standard **Check for Updates…** menu command
+backed by the existing updater.
+
+**Why:** A merge commit can contain a contract change from its second parent,
+but deployment workflows run for the merge SHA pushed to `main`, not the
+feature-branch commit. Following unrestricted history selected that
+feature-branch SHA and blocked the resumable `0.1.1` release even after its API
+deployment succeeded.
+An exact merge-SHA match could fail again when the API deployment queue
+collapsed that run into a newer main-line deployment containing the same
+contracts.
+Sideline otherwise inherited Rally's icon and gave operators no visible way to
+request the updater check that already happened automatically.
+
+**Considered and rejected:** Dispatching or fabricating an API deployment for
+the feature SHA would bind release coordination to a commit that never entered
+`main`. Removing the gate would restore the client-before-API race it prevents.
+
+**Consequences:** Contract-driven Sideline releases wait on the newest API run
+that contains the main-line contract change, including a successor run selected
+by the API deployment queue. The existing unpublished version remains the retry
+authority and does not need to be reverted. Installed release builds are
+visually distinct and can request an update check from the application menu
+without changing download or restart behavior.
 
 ### 2026-09-21 — Relevant main changes automatically rebuild Sideline
 

@@ -38,6 +38,8 @@ test('Sideline update feed rejects artifact paths', () => {
 test('packaging embeds the Sideline identity and its disjoint R2 update prefix', async () => {
   const config = await readFile(resolve(sidelineDirectory, 'electron-builder.yml'), 'utf8');
   assert.match(config, /^appId: ai\.rallywith\.sideline$/mu);
+  assert.match(config, /^\s*icon: resources\/icon\.icns$/mu);
+  assert.doesNotMatch(config, /desktop\/resources\/icon\.icns/u);
   assert.match(config, /^\s*url: https:\/\/downloads\.rallywith\.ai\/sideline\/stable\/darwin\/arm64$/mu);
   assert.match(config, /^\s*schemes:\n\s*- sideline$/mu);
   assert.doesNotMatch(
@@ -79,7 +81,9 @@ test('the release workflow rebuilds Sideline when an installed-app input changes
   assert.match(workflow, /test "\$\(git rev-parse origin\/main\)" = "\$SIDELINE_RELEASE_REF"/u);
   assert.match(workflow, /git reset --hard "\$SIDELINE_RELEASE_REF"/u);
   assert.doesNotMatch(workflow, /git reset --hard origin\/main/u);
-  assert.match(workflow, /--workflow deploy-api\.yml/u);
+  assert.match(workflow, /actions\/workflows\/deploy-api\.yml\/runs/u);
+  assert.match(workflow, /git merge-base --is-ancestor "\$SIDELINE_API_DEPLOYMENT_REF" "\$candidate_sha"/u);
+  assert.doesNotMatch(workflow, /--commit "\$SIDELINE_API_DEPLOYMENT_REF"/u);
   assert.match(workflow, /gh run watch "\$run_id".*--exit-status/u);
   assert.ok(
     workflow.indexOf('already exists; refusing')

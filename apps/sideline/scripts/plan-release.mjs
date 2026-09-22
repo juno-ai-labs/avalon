@@ -128,9 +128,9 @@ export function planSidelineRelease({
   );
 }
 
-function gitOutput(args) {
+function gitOutput(args, cwd = repositoryDirectory) {
   return execFileSync('/usr/bin/git', args, {
-    cwd: repositoryDirectory,
+    cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
@@ -168,8 +168,10 @@ function changedPathsSince(tag, headSha) {
   }
 }
 
-function latestContractCommit(headSha) {
-  return gitOutput(['log', '-1', '--format=%H', headSha, '--', 'packages/contracts']);
+export function latestContractCommit(headSha, cwd = repositoryDirectory) {
+  return gitOutput([
+    'log', '-1', '--first-parent', '--format=%H', headSha, '--', 'packages/contracts',
+  ], cwd);
 }
 
 function report(plan) {

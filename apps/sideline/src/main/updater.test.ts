@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { initializeSidelineUpdater } from "./updater";
+import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
 
 function updaterDouble() {
   const listeners = new Map<string, (...args: never[]) => void>();
@@ -32,6 +32,11 @@ describe("initializeSidelineUpdater", () => {
       log: { info: vi.fn(), error: vi.fn() },
     });
     expect(result.enabled).toBe(false);
+    expect(sidelineUpdateMenuItem(result)).toMatchObject({
+      id: "sideline-check-for-updates",
+      label: "Check for Updates…",
+      enabled: false,
+    });
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
   });
 
@@ -69,6 +74,14 @@ describe("initializeSidelineUpdater", () => {
     expect(updater.autoDownload).toBe(true);
     expect(updater.allowDowngrade).toBe(false);
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    const menuItem = sidelineUpdateMenuItem(result);
+    expect(menuItem).toMatchObject({
+      id: "sideline-check-for-updates",
+      label: "Check for Updates…",
+      enabled: true,
+    });
+    menuItem.click();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
     updater.listeners.get("update-downloaded")?.({ version: "0.2.0" } as never);
     await vi.waitFor(() => expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
       message: "Sideline is ready to update",
