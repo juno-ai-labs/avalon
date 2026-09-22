@@ -17,6 +17,7 @@ import {
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
+  ConnectorResourceAuthorizationStartSchema as WireConnectorResourceAuthorizationStartSchema,
   CursorPageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
@@ -41,6 +42,8 @@ import {
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
+  type ConnectorResourceAuthorizationRequest,
+  type ConnectorResourceAuthorizationStart,
   type CustomMcpConnectionSettings,
   type CustomMcpToolPolicy,
   type Elicitation as WireElicitation,
@@ -2398,6 +2401,19 @@ export class RallyApi {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
     });
+  }
+
+  async startConnectorResourceAuthorization(
+    request: ConnectorResourceAuthorizationRequest,
+  ): Promise<ConnectorResourceAuthorizationStart> {
+    return this.request(
+      `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?desktopHandoffVersion=2`,
+      {
+        method: 'POST',
+        body: { request },
+        schema: WireConnectorResourceAuthorizationStartSchema,
+      },
+    );
   }
 
   async testConnection(id: string) {

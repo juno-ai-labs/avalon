@@ -1815,6 +1815,28 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-22 — A provider callback can admit an ordinary member message
+
+**What changed:** Product request auth accepts a server-only
+`resource_authorization` principal. The Worker establishes it from consumed
+OAuth state after checking the existing connector grant; the room re-checks
+current membership before admitting the normal human turn. The callback's
+correlation ID is not treated as a login session.
+
+**Why:** The provider returns to a browser callback without the desktop login
+session. Presenting a synthetic session ID would make the room refuse the
+authorization message as revoked, so no continuation run could start.
+
+**Considered and rejected:** Reusing the general connector principal would
+hide which authority was verified. This callback proves a one-resource grant,
+not a linked external sender.
+
+**Consequences:** The message keeps its authorizing member as its author and
+uses a client message ID tied to the failed tool invocation. A repeated
+callback or already-authorized recovery cannot admit a second turn for that
+failure. Only server code may construct this principal; socket tickets still
+require a login session.
+
 ### 2026-09-22 — Command-only clients can use ordinary message admission
 
 **What changed:** The conversation API exposes authenticated message admission

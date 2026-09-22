@@ -10,6 +10,7 @@ import {
   ConnectionToolCountSchema,
   ConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema,
+  ConnectorResourceAuthorizationStartSchema,
   CreateCustomMcpConnectionRequestSchema,
   CreateWebhookConnectionRequestSchema,
   CustomMcpConnectionSettingsSchema,
@@ -18,6 +19,7 @@ import {
   GitHubRepositoryAccessSettingsSchema,
   IdSchema,
   ScopeSchema,
+  StartConnectorResourceAuthorizationRequestSchema,
   UpdateGitHubRepositoryAccessSettingsSchema,
 } from "@rally/contracts";
 import type { ConnectorOAuthProvider } from "@rally/contracts";
@@ -139,6 +141,7 @@ const googleCallback = z.object({
   code: z.string().min(1).optional(),
   state: z.string().min(20),
   error: z.string().min(1).optional(),
+  picked_file_ids: z.string().max(5_000).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const slackLink = z.object({ token: z.string().min(20).max(500) });
 /**
@@ -344,6 +347,18 @@ connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAtte
   c.json(ConnectorOAuthAttemptSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId))),
 );
+connectionRoutes.post(
+  "/:id/resource-authorizations/start",
+  zValidator("param", idParam),
+  zValidator("json", StartConnectorResourceAuthorizationRequestSchema),
+  async (c) => c.json(ConnectorResourceAuthorizationStartSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).beginResourceAuthorization(
+      c.req.valid("param").id,
+      c.req.valid("json").request,
+      desktopHandoffVersion(c),
+    ),
+  )),
+);
 connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -465,6 +480,35 @@ connectionCallbackRoutes.get("/github/callback", zValidator("query", googleCallb
 });
 connectionCallbackRoutes.get("/google/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
+  const service = new ConnectionService(c.env);
+  if (await service.authorizationPurpose("google", query.state) === "resource_authorization") {
+    c.header("Cache-Control", "no-store");
+    try {
+      const target = query.error
+        ? await service.completeResourceAuthorizationDenial("google", query.state)
+        : await service.completeResourceAuthorization(
+            "google",
+            query.code!,
+            query.state,
+            query.picked_file_ids?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+          );
+      return c.redirect(desktopHandoffUrl(c.env, target), 302);
+    } catch (error) {
+      const failure = classifyConnectorOAuthCallbackFailure(error);
+      logEvent(c, failure.level, "connector_resource_authorization_callback_failed", {
+        provider: "google",
+        code: failure.errorCode,
+        ...failure.diagnostics,
+      });
+      const target = await recoverConnectorCallback(
+        c,
+        "google",
+        failure.errorCode,
+        () => service.failProviderAttempt("google", query.state, failure.errorCode),
+      );
+      return c.redirect(desktopHandoffUrl(c.env, target), 302);
+    }
+  }
   return connectorCallback(c, "google", query, (service, code, state) => service.completeGoogle(code, state));
 });
 connectionCallbackRoutes.get("/linear/callback", zValidator("query", googleCallback), async (c) => {

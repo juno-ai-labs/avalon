@@ -2,8 +2,11 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
+  ConnectorOAuthProviderSchema,
+  ConnectorResourceAuthorizationRequestSchema,
   connectorConnectionCardInputFromToolEvent,
   type ConnectorConnectionCardInput,
+  type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
@@ -12,6 +15,7 @@ import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
   CANVA_CONNECTION_DISCLOSURE,
   connectorProviderById,
+  connectorProviders,
   isOAuthConnectorProvider,
   type OAuthConnectorProviderCatalogEntry,
 } from '../lib/connector-catalog';
@@ -67,6 +71,130 @@ export function connectorConnectionCardInput(message: {
   toolEvent?: { name: string; input?: unknown; output?: unknown; summary?: string; status?: string };
 }): ConnectorConnectionCardInput | null {
   return connectorConnectionCardInputFromToolEvent(message.toolEvent);
+}
+
+export function connectorResourceAuthorizationRequest(message: {
+  toolEvent?: { output?: unknown; status?: string };
+}): ConnectorResourceAuthorizationRequest | null {
+  if (message.toolEvent?.status !== 'failed') return null;
+  const output = message.toolEvent.output;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+  const parsed = ConnectorResourceAuthorizationRequestSchema.safeParse(
+    (output as Record<string, unknown>).recovery,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized = false, onAuthorized }: {
+  request: ConnectorResourceAuthorizationRequest;
+  latchedAuthorized?: boolean;
+  onAuthorized?: (failedToolInvocationId: string) => void;
+}): React.JSX.Element {
+  const collaboration = useOptionalCollaborationSession();
+  const setup = collaboration?.connectorSetup;
+  const api = collaboration?.api;
+  const session = collaboration?.session;
+  const viewerIsAdmin = useViewerIsWorkspaceAdmin(collaboration);
+  const connections = useConnectorConnections();
+  const connection = connections?.find((candidate) => candidate.id === request.connectionId);
+  const key = `${request.connectionId}:${request.resource.id}:${request.failedToolInvocationId}`;
+  const awaiting = setup?.pendingConnectorOAuth?.source === 'resource'
+    && setup.pendingConnectorOAuth.resourceAuthorizationKey === key;
+  const status = awaiting ? setup.pendingConnectorOAuth?.resourceAuthorizationStatus : undefined;
+  const workspaceAdminRequired = connection?.scope === 'workspace' && !viewerIsAdmin;
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!api || !setup || !session?.workspace) throw new Error('Rally is not ready to authorize this resource.');
+      const started = await api.startConnectorResourceAuthorization(request);
+      setup.setPendingConnectorOAuth({
+        attemptId: started.attemptId,
+        provider: ConnectorOAuthProviderSchema.parse(request.provider),
+        region: session.workspace.region,
+        workspaceId: session.workspace.id,
+        source: 'resource',
+        resourceAuthorizationKey: key,
+        resourceAuthorizationStatus: started.status,
+      });
+      if (started.url) {
+        try {
+          await setup.openExternal(started.url);
+        } catch (error) {
+          setup.setPendingConnectorOAuth({
+            attemptId: started.attemptId,
+            provider: ConnectorOAuthProviderSchema.parse(request.provider),
+            region: session.workspace.region,
+            workspaceId: session.workspace.id,
+            source: 'resource',
+            resourceAuthorizationKey: key,
+            resourceAuthorizationStatus: 'failed',
+          });
+          throw error;
+        }
+      }
+      return started;
+    },
+  });
+  useEffect(() => {
+    if (!awaiting || !api || !setup?.pendingConnectorOAuth || status !== 'pending') return;
+    let cancelled = false;
+    const reconcile = async (): Promise<void> => {
+      try {
+        const attempt = await api.getConnectorOAuthAttempt(setup.pendingConnectorOAuth!.attemptId);
+        if (cancelled || attempt.status === 'pending') return;
+        setup.setPendingConnectorOAuth({
+          ...setup.pendingConnectorOAuth!,
+          resourceAuthorizationStatus: attempt.status,
+        });
+      } catch {
+        // Returning focus or the realtime authorization message reconciles it again.
+      }
+    };
+    const onFocus = (): void => { void reconcile(); };
+    window.addEventListener('focus', onFocus);
+    return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
+  }, [api, awaiting, setup, status]);
+  useEffect(() => {
+    if (status === 'succeeded') onAuthorized?.(request.failedToolInvocationId);
+  }, [onAuthorized, request.failedToolInvocationId, status]);
+  const succeeded = latchedAuthorized || status === 'succeeded';
+  const pending = mutation.isPending || status === 'pending';
+  const providerName = request.provider === 'google'
+    ? 'Google'
+    : `${request.provider.charAt(0).toUpperCase()}${request.provider.slice(1)}`;
+  const providerEntry = connectorProviders.find((entry) =>
+    entry.provider === request.provider
+    && (entry.capabilities as readonly string[]).includes(request.capability));
+  const providerMark = providerEntry && 'mark' in providerEntry ? providerEntry.mark : null;
+  const resourceNoun = request.resource.type === 'document'
+    ? 'file'
+    : request.resource.type.replaceAll('_', ' ');
+  return (
+    <article className="connector-connection-card connector-resource-authorization-card" aria-label={`${providerName} resource authorization`}>
+      <div className="connector-connection-card-header">
+        {providerMark ? <ConnectorProviderIcon mark={providerMark} /> : null}
+        <div className="connector-connection-card-body">
+          <strong>{providerName} needs you to allow Rally to edit this {resourceNoun}.</strong>
+          <p>{request.resource.name}</p>
+        </div>
+        {succeeded ? (
+          <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Authorized</span>
+        ) : (
+          <Button
+            className="connector-connection-card-action button-primary"
+            disabled={!api || !setup || pending || workspaceAdminRequired}
+            onClick={() => mutation.mutate()}
+            title={workspaceAdminRequired ? 'Only an organization owner or admin can authorize an organization resource.' : undefined}
+          >
+            {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+            {pending ? `Waiting for ${providerName}…` : workspaceAdminRequired ? 'Admin required' : 'Allow editing'}
+          </Button>
+        )}
+      </div>
+      {!succeeded && status === 'denied' ? <InlineError>Authorization was not granted. Try again when you’re ready.</InlineError> : null}
+      {!succeeded && status === 'failed' ? <InlineError>Rally could not confirm the authorization. Try again.</InlineError> : null}
+      {!succeeded && mutation.error && status !== 'failed' ? <InlineError>Rally could not start authorization. Try again.</InlineError> : null}
+    </article>
+  );
 }
 
 export function connectorConnectionCardSelectionKey(request: ConnectorConnectionCardInput): string {

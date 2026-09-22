@@ -1,12 +1,13 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { ConnectorResourceAuthorizationRequestSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 import { addWorkspaceTarget, parseWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
-import { sealString } from "../src/lib/crypto";
+import { encryptString, sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
@@ -20,6 +21,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function testRsaPrivateKey(): Promise<string> {
@@ -69,7 +71,18 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       status TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      role TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id)
+    );
   `);
+  regional.prepare(
+    `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+     VALUES (?, ?, 'active', 'owner')`,
+  ).run(WORKSPACE_ID, USER_ID);
   const workspace = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID,
     regionalDatabase: regional,
@@ -86,6 +99,8 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
+      CONNECTOR_CREDENTIALS_KEY: "test-connector-credentials-key",
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
@@ -148,7 +163,204 @@ function insertConnection(object: DatabaseSync, id: string): void {
   ).run(id, WORKSPACE_ID, new Date().toISOString(), new Date().toISOString(), `plugin_linear_${id.slice(-4)}`);
 }
 
+async function insertGoogleConnection(object: DatabaseSync, env: Env, id: string): Promise<void> {
+  const encrypted = await encryptString(
+    JSON.stringify({ accessToken: "google-access-token" }),
+    env.CONNECTOR_CREDENTIALS_KEY,
+    id,
+  );
+  object.prepare(
+    `INSERT INTO connector_connections
+     (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+      display_name, encrypted_credentials, credential_iv, credential_key_version,
+      granted_scopes_json, status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
+     VALUES (?, ?, 'google', 'personal', ?, 'google-account', 'Google', ?, ?, 1,
+             '["sheets.write"]', 'healthy', '{}', '{}', ?, ?, 'plugin_google')`,
+  ).run(id, WORKSPACE_ID, USER_ID, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
+}
+
+function resourceAuthorizationRequest(connectionId: string) {
+  return ConnectorResourceAuthorizationRequestSchema.parse({
+    kind: "connector_resource_authorization",
+    provider: "google",
+    connectionId,
+    capability: "sheets.write",
+    operation: "edit",
+    resource: { id: "sheet-1", type: "document", name: "Ellen Buckley Assessment" },
+    parentId: "00000000-0000-4000-8000-000000000020",
+    substreamId: "0",
+    failedToolInvocationId: "00000000-0000-4000-8000-000000000030:turn:1:tool:0",
+  });
+}
+
+function allowResourceConversationAccess(): void {
+  vi.spyOn(WorkstreamObjectClient.prototype, "get")
+    .mockResolvedValue({} as Awaited<ReturnType<WorkstreamObjectClient["get"]>>);
+}
+
 describe("connector OAuth handoff", () => {
+  it("starts a provider-neutral resource authorization with Google's exact-file Picker", async () => {
+    const { auth, env, object, regional } = fixture();
+    allowResourceConversationAccess();
+    const connectionId = "00000000-0000-4000-8000-000000000010";
+    await insertGoogleConnection(object, env, connectionId);
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
+      id: "sheet-1",
+      name: "Ellen Buckley Assessment",
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      isAppAuthorized: false,
+      capabilities: { canEdit: true },
+    })));
+    const started = await new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId, resourceAuthorizationRequest(connectionId), 2,
+    );
+    expect(started.status).toBe("pending");
+    const url = new URL(started.url!);
+    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/drive.file");
+    expect(url.searchParams.get("file_ids")).toBe("sheet-1");
+    expect(regional.prepare("SELECT purpose FROM oauth_states").get()).toEqual({
+      purpose: "resource_authorization",
+    });
+  });
+
+  it("enforces personal ownership and organization admin authority before a resource grant", async () => {
+    const { auth, env, object } = fixture();
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    await insertGoogleConnection(object, env, connectionId);
+    const request = resourceAuthorizationRequest(connectionId);
+    await expect(new ConnectionService(env, { ...auth, userId: OTHER_USER_ID, role: "member" })
+      .beginResourceAuthorization(connectionId, request, 2))
+      .rejects.toMatchObject({ status: 404, code: "connection_not_found" });
+    object.prepare("UPDATE connector_connections SET scope = 'workspace', owner_user_id = NULL WHERE id = ?")
+      .run(connectionId);
+    await expect(new ConnectionService(env, { ...auth, userId: OTHER_USER_ID, role: "member" })
+      .beginResourceAuthorization(connectionId, request, 2))
+      .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
+  });
+
+  it("refuses to open the provider flow after conversation access is lost", async () => {
+    const { auth, env, object, regional } = fixture();
+    const connectionId = "00000000-0000-4000-8000-000000000014";
+    await insertGoogleConnection(object, env, connectionId);
+    vi.spyOn(WorkstreamObjectClient.prototype, "get")
+      .mockRejectedValue({ status: 403, code: "workstream_access_denied" });
+    await expect(new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId, resourceAuthorizationRequest(connectionId), 2,
+    )).rejects.toMatchObject({ status: 403, code: "workstream_access_denied" });
+    expect(regional.prepare("SELECT COUNT(*) AS count FROM oauth_states").get()).toEqual({ count: 0 });
+  });
+
+  it("settles a denied resource grant and refuses its consumed or expired state", async () => {
+    const { auth, env, object, regional } = fixture();
+    allowResourceConversationAccess();
+    const connectionId = "00000000-0000-4000-8000-000000000012";
+    await insertGoogleConnection(object, env, connectionId);
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json({
+      id: "sheet-1", name: "Ellen Buckley Assessment", mimeType: "application/vnd.google-apps.spreadsheet", isAppAuthorized: false,
+      capabilities: { canEdit: true },
+    })));
+    const started = await new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId, resourceAuthorizationRequest(connectionId), 2,
+    );
+    const state = new URL(started.url!).searchParams.get("state")!;
+    const callback = new ConnectionService(env);
+    const target = new URL(await callback.completeResourceAuthorizationDenial("google", state));
+    expect(target.searchParams.get("status")).toBe("denied");
+    expect((await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId)).status).toBe("denied");
+    await expect(callback.completeResourceAuthorizationDenial("google", state))
+      .rejects.toMatchObject({ status: 401, code: "invalid_oauth_state" });
+    expect(regional.prepare("SELECT consumed_at FROM oauth_states WHERE id = ?").get(state))
+      .toMatchObject({ consumed_at: expect.any(String) });
+
+    const next = await new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId, resourceAuthorizationRequest(connectionId), 2,
+    );
+    const expired = new URL(next.url!).searchParams.get("state")!;
+    regional.prepare("UPDATE oauth_states SET expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?")
+      .run(expired);
+    await expect(callback.completeResourceAuthorizationDenial("google", expired))
+      .rejects.toMatchObject({ status: 401, code: "invalid_oauth_state" });
+  });
+
+  it("completes the exact Picker file with canonical naming and a member-authored continuation", async () => {
+    const { auth, env, object } = fixture();
+    allowResourceConversationAccess();
+    const connectionId = "00000000-0000-4000-8000-000000000013";
+    await insertGoogleConnection(object, env, connectionId);
+    const storedCredentials = object.prepare("SELECT encrypted_credentials FROM connector_connections WHERE id = ?")
+      .get(connectionId);
+    let granted = false;
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockImplementation(async (input) => {
+      if (String(input).includes("oauth2.googleapis.com/token")) {
+        granted = true;
+        return Response.json({ access_token: "temporary-picker-token", token_type: "Bearer", expires_in: 3600 });
+      }
+      return Response.json({
+        id: "sheet-1", name: "Canonical Ellen Buckley Assessment", mimeType: "application/vnd.google-apps.spreadsheet", isAppAuthorized: granted,
+        capabilities: { canEdit: true },
+      });
+    }));
+    const admitted: Array<{ auth: AuthContext; input: unknown }> = [];
+    const spy = vi.spyOn(WorkstreamObjectClient.prototype, "createMessage")
+      .mockImplementation(async function (this: WorkstreamObjectClient, input) {
+        admitted.push({ auth: (this as unknown as { auth: AuthContext }).auth, input });
+        return {} as Awaited<ReturnType<WorkstreamObjectClient["createMessage"]>>;
+      });
+    try {
+      const started = await new ConnectionService(env, auth).beginResourceAuthorization(
+        connectionId, resourceAuthorizationRequest(connectionId), 2,
+      );
+      const state = new URL(started.url!).searchParams.get("state")!;
+      const target = new URL(await new ConnectionService(env).completeResourceAuthorization(
+        "google", "picker-code", state, ["sheet-1"],
+      ));
+      expect(target.searchParams.get("status")).toBe("connected");
+      expect(admitted).toEqual([{
+        auth: expect.objectContaining({ userId: USER_ID, principal: "resource_authorization" }),
+        input: expect.objectContaining({
+          text: "Document “Canonical Ellen Buckley Assessment” was authorized.",
+          clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).failedToolInvocationId}`,
+          runMode: "queue",
+        }),
+      }]);
+      expect((await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId)).status).toBe("succeeded");
+      expect(object.prepare("SELECT encrypted_credentials FROM connector_connections WHERE id = ?")
+        .get(connectionId)).toEqual(storedCredentials);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("admits the same continuation without Picker when the file is already authorized", async () => {
+    const { auth, env, object, regional } = fixture();
+    allowResourceConversationAccess();
+    const connectionId = "00000000-0000-4000-8000-000000000015";
+    await insertGoogleConnection(object, env, connectionId);
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
+      id: "sheet-1",
+      name: "Canonical Ellen Buckley Assessment",
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      isAppAuthorized: true,
+      capabilities: { canEdit: true },
+    })));
+    const admit = vi.spyOn(WorkstreamObjectClient.prototype, "createMessage")
+      .mockResolvedValue({} as Awaited<ReturnType<WorkstreamObjectClient["createMessage"]>>);
+    const started = await new ConnectionService(env, auth).beginResourceAuthorization(
+      connectionId, {
+        ...resourceAuthorizationRequest(connectionId),
+        resource: { id: "sheet-1", type: "repository", name: "Untrusted display name" },
+      }, 2,
+    );
+    expect(started).toMatchObject({ status: "succeeded", url: null });
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Document “Canonical Ellen Buckley Assessment” was authorized.",
+      clientMessageId: `resource-authorization:${resourceAuthorizationRequest(connectionId).failedToolInvocationId}`,
+    }));
+    expect(regional.prepare("SELECT consumed_at FROM oauth_states").get())
+      .toMatchObject({ consumed_at: null });
+    expect((await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId)).status).toBe("succeeded");
+  });
+
   it("starts Canva desktop authorization without feature flags", async () => {
     const { auth, env } = fixture();
     const redirectUri = "http://127.0.0.1:4321/callback";

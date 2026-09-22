@@ -317,11 +317,15 @@ export interface IdentityAuthContext {
    * correlation value and the objects verify the member it acts as against
    * current membership (`docs/spaces.md`).
    *
-   * Only server code constructs either value. The auth middleware builds its
+   * A consumed resource-authorization callback also has no login session. The
+   * Worker verifies its sealed provider state, connection, and membership,
+   * then the room re-checks membership under `"resource_authorization"`.
+   *
+   * Only server code constructs these values. The auth middleware builds its
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "demo_seed" | "impersonation";
+  principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization";
   /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
