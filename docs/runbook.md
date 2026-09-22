@@ -1026,7 +1026,28 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the commits the pull request adds to its base branch. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
 
 - `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the Electron desktop test suite (`pnpm --filter @rally/desktop test`), and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks configured regional APIs, publishes the immutable payloads, promotes the release manifest, and records the release config on `main`. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
-- `.github/workflows/release-sideline-macos.yml` automatically releases after a `main` change to Sideline, its shared UI/contracts, workspace build inputs, or the shared macOS release helpers. Its singleton planner compares the current tip with the latest `sideline-v<version>` tag, skips a stale run with no outstanding inputs, and stamps the next Sideline patch version itself; do not bump `apps/sideline/package.json` by hand. A manual dispatch runs that same plan to retry an untagged failed release. Stamping is bound to the exact planned `main` tip and fails for a replan if that tip advances, keeping the packaged contract tree aligned with the API deployment gate. The workflow freezes the stamped commit, repeats workspace lint/typecheck plus Sideline and release-tooling tests, then reuses the `desktop-release` Developer ID/notary/Cloudflare credentials. Contract-driven releases wait for the API deployment associated with the newest contract commit, and every publication rechecks that its candidate tag is still unused. It publishes and verifies the signed arm64 ZIP, DMG, blockmaps, update manifest, and canonical installer under `sideline/stable/darwin/arm64/` in the same R2 bucket, retains the release directory for 30 days, and pushes the Sideline tag only after publication succeeds. It does not change Rally's release record or landing site.
+- `.github/workflows/release-sideline-macos.yml` automatically releases after a
+  `main` change to Sideline, its shared UI/contracts, workspace build inputs, or
+  the shared macOS release helpers. Its singleton planner compares the current
+  tip with the latest `sideline-v<version>` tag, skips a stale run with no
+  outstanding inputs, and stamps the next Sideline patch version itself; do
+  not bump `apps/sideline/package.json` by hand. Stamping is bound to the exact
+  planned `main` tip and fails for a replan if that tip advances, keeping the
+  packaged contract tree aligned with the API deployment gate. The workflow
+  freezes the stamped commit, repeats workspace lint/typecheck plus Sideline
+  and release-tooling tests, and waits for the matching API deployment when
+  contracts changed. It builds, signs, notarizes, and preserves one release
+  artifact, then publishes that artifact in a separate job. Retrying a failed
+  publication job reuses the same bytes. When a signed artifact exists but the
+  original run cannot be resumed, dispatch the workflow with its artifact ID,
+  run ID, stamped commit SHA, and version to publish those preserved bytes.
+  Publication verifies the signed arm64 ZIP, DMG, blockmaps, update manifest,
+  and canonical installer under `sideline/stable/darwin/arm64/` in the release
+  R2 bucket before pushing the Sideline tag. The `desktop-release` environment's
+  `CLOUDFLARE_ZONE_ID` must identify the `rallywith.ai` zone that owns
+  `downloads.rallywith.ai`; a successful purge against a different zone leaves
+  old installer bytes in the CDN. This workflow does not change Rally's release
+  record or landing site.
 
 ### Deploying the Sidekick class rename
 
