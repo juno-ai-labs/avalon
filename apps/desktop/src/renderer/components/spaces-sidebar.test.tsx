@@ -118,6 +118,17 @@ describe('SpacesSidebar', () => {
       .toHaveAccessibleDescription('Hold Alt and press the Up or Down Arrow key to reorder a space.');
   });
 
+  it('reports a refused Space reorder in an acknowledged error dialog', async () => {
+    renderSidebar({ onReorder: async () => { throw new Error('Could not save the order'); } });
+
+    fireEvent.keyDown(screen.getByRole('link', { name: 'Launch' }), { altKey: true, key: 'ArrowUp' });
+
+    const dialog = await screen.findByRole('dialog', { name: 'Spaces could not be reordered' });
+    expect(within(dialog).getByText('The spaces are back in the order they were in. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
+    expect(screen.queryByText('Could not save the order')).not.toBeInTheDocument();
+  });
+
   it('does not accept a Channel drop on a read-only Space', () => {
     const onMoveChannel = vi.fn(async () => undefined);
     const readOnly = { ...space('shared', 'Shared', 1), reach: 'through_channel' as const };
@@ -200,7 +211,7 @@ describe('SpacesSidebar', () => {
     await waitFor(() => expect(target).toHaveClass('is-channel-drop-accepted'));
   });
 
-  it('does not show accepted feedback when a Channel move is refused', async () => {
+  it('shows an acknowledged error dialog when a Channel move is refused', async () => {
     const onMoveChannel = vi.fn(async () => { throw new Error('space_access_denied'); });
     renderSidebar({ onMoveChannel });
     const transfer = {
@@ -214,7 +225,10 @@ describe('SpacesSidebar', () => {
 
     fireEvent.drop(target, { dataTransfer: transfer });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('That channel couldn\u2019t be moved.');
+    const dialog = await screen.findByRole('dialog', { name: 'Channel could not be moved' });
+    expect(dialog).toHaveTextContent('The channel is still in the space it came from. Try again in a moment.');
+    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
+    expect(document.querySelector('.spaces-sidebar-error')).not.toBeInTheDocument();
     expect(target).not.toHaveClass('is-channel-drop-accepted');
   });
 
@@ -337,12 +351,13 @@ describe('SpacesSidebar', () => {
     expect(compact.onWidthChange).not.toHaveBeenCalled();
   });
 
-  it('keeps stale rows visible and offers the directory retry', () => {
+  it('keeps stale rows visible and offers a refresh row without warning copy', () => {
     const onRetry = vi.fn();
     renderSidebar({ onRetry, outOfDate: true });
 
     expect(screen.getByRole('link', { name: 'General' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 

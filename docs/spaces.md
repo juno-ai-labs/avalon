@@ -1877,6 +1877,38 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-21 — Sidebar recovery stays actionable and free of warnings
+
+**What changed:** Reorder, placement and cross-rail move failures no longer
+render error copy as a row inside either Space or Channel sidebar. They open one
+acknowledged error dialog with stable action-specific copy, an **OK** action and
+focus on that action; the optimistic arrangement still falls back to the order
+the authority last confirmed. Errors that belong to an already-open edit or
+archive dialog remain in that dialog. A stale Space directory likewise keeps
+its last known rows, but now presents a normal **Refresh** row instead of an
+inline warning and retry block. The same recovery row replaces stale-data copy
+in the Sidekick section, including when no Sidekick rows arrived.
+
+**Why:** Navigation is persistent product structure, so inserting transient
+failure text into it makes an operational error look like a Space or Channel
+and shifts the very list the person was arranging. A modal interruption is the
+honest shape for a failed gesture that needs acknowledgement, and a shared
+dialog primitive keeps new sidebar actions from reintroducing inline errors.
+When no error needs acknowledgement, the sidebar exposes recovery as an action
+rather than writing diagnostic state into persistent navigation.
+
+**Considered and rejected:** Leaving stable warning copy in the rail was
+rejected because it still becomes persistent navigation content. Clearing the
+directory until a reconnect succeeds was rejected because the last confirmed
+rows remain more truthful and useful than an empty hierarchy.
+
+**Consequences:** New sidebar mutations must route failures through the shared
+acknowledgement dialog rather than append copy to a list. Stale directory
+states keep confirmed rows and expose the shared Refresh row; the Space
+directory's action remains a socket reconnect rather than a second fetch path.
+
+PR [#919](https://github.com/juno-ai-labs/avalon/pull/919).
+
 ### 2026-09-21 — A cross-rail drag moves its Channel
 
 **What changed:** Dragging a Channel from the selected Space's center rail onto

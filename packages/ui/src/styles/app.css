@@ -1337,10 +1337,6 @@ pre {
 .space-row-link > span { overflow: hidden; white-space: nowrap; }
 .space-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
 .space-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
-/* A stale directory's notice and its retry sit where the placements would,
-   so the section keeps its shape while it is out of date. */
-.space-sidebar-stale { align-items: center; display: flex; gap: 8px; padding: 2px 4px 0 8px; }
-.space-sidebar-stale > p { color: var(--av-sys-color-text-muted); flex: 1; font-size: 11px; margin: 0; min-width: 0; }
 /* Placements start where the accordion column ends, so they share a
    leading edge with the Space icon rather than sitting under the name.
    The 18px is the accordion column in `.space-sidebar-row`; keep them
@@ -7562,7 +7558,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    drawn a little inside it so the shape's own points are not the row's edge. */
 .workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
 .sidekick-section-list > li { align-items: center; display: flex; }
-.sidekick-section-list > li > .workstream-context-row { min-width: 0; }
+.sidekick-section-list > li > .workstream-context-row { flex: 1; min-width: 0; }
 
 /* The avatars shrink into the square with their overlap; the presence
    border's own fade is restated so the size rule does not replace it. */

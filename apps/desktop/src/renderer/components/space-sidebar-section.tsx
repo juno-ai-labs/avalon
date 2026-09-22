@@ -9,6 +9,7 @@ import {
   type SpaceSummary,
 } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
 import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/components/space-row';
 import { SidebarList } from '@rally/ui/components/resizable-sidebar';
 
@@ -16,6 +17,7 @@ import { compareWorkstreamRecency } from '../lib/format';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { Button, IconButton, InlineError, Modal } from './primitives';
+import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamRowDrag } from './sidebar';
 import type { WorkstreamSummary } from '../lib/types';
@@ -27,14 +29,23 @@ import type { WorkstreamSummary } from '../lib/types';
  * shares persistent navigation with unrelated requests, so a server diagnostic
  * rendered here reads as Space content long after the action that was refused.
  * A named refusal goes through `spaceFailureCopy` with every other Space
- * surface; these two are what is left when there is no code to name — and they
- * say more than the shared sentence can, because "Spaces couldn't be
- * reordered" also accounts for the row that just snapped back.
+ * surface; these action-specific fallbacks are what is left when there is no
+ * code to name. The title says what failed, while the acknowledged dialog's
+ * copy says what happened to the optimistic row or placement.
  */
-const spaceSectionFallbackCopy = {
-  reorder: 'Spaces couldn’t be reordered.',
-  reorder_channels: 'The channels in that space couldn’t be reordered.',
-  add_channel: 'That channel couldn’t be added to the space.',
+const spaceSectionFailure = {
+  reorder: {
+    title: 'Spaces could not be reordered',
+    copy: 'The spaces are back in the order they were in. Try again in a moment.',
+  },
+  reorder_channels: {
+    title: 'Channels could not be reordered',
+    copy: 'The channels in that space are back in the order they were in. Try again in a moment.',
+  },
+  add_channel: {
+    title: 'Channel could not be added to that space',
+    copy: 'The channel is still in the spaces it was in. Try again in a moment.',
+  },
 } as const;
 
 /** The transfer type a Channel row writes, and the only one a Space accepts. */
@@ -65,7 +76,7 @@ interface SpaceSidebarSectionProps {
   /**
    * The rows on screen are the last ones the socket delivered and a refresh
    * failed. They stay — an emptier sidebar is a worse lie than a stale one —
-   * and say so.
+   * beside a normal refresh action.
    */
   outOfDate: boolean;
   onRetry: () => void;
@@ -162,7 +173,7 @@ export function SpaceSidebarSection({
         ? 'This space is no longer available to archive.'
         : null;
   const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
-  const [sectionFailure, setSectionFailure] = useState<string | null>(null);
+  const [sectionFailure, setSectionFailure] = useState<AcknowledgedError | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
   /**
@@ -272,7 +283,10 @@ export function SpaceSidebarSection({
       // The arrangement is dropped rather than kept: the section then shows
       // what the server actually holds, which is what this person's other
       // windows are showing.
-      setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder));
+      setSectionFailure({
+        title: spaceSectionFailure.reorder.title,
+        copy: spaceFailureSentence(cause, spaceSectionFailure.reorder.copy),
+      });
     } finally {
       // Only while this call's arrangement is the one on screen. Two moves in
       // quick succession overlap — two Alt+Arrows on a focused row is one
@@ -288,7 +302,10 @@ export function SpaceSidebarSection({
     try {
       await onReorder({ container: { kind: 'space', id: spaceId }, itemIds: ids });
     } catch (cause) {
-      setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder_channels));
+      setSectionFailure({
+        title: spaceSectionFailure.reorder_channels.title,
+        copy: spaceFailureSentence(cause, spaceSectionFailure.reorder_channels.copy),
+      });
     } finally {
       // Only while this call's arrangement is the one on screen. Two moves in
       // quick succession overlap, and clearing unconditionally would snap the
@@ -352,12 +369,7 @@ export function SpaceSidebarSection({
             <p className="sr-only" id="spaces-reorder-help">
               Hold Alt and press the up or down arrow to move a space, or a channel within its space.
             </p>
-            {outOfDate && (
-              <div className="space-sidebar-stale">
-                <p role="status">These spaces may be out of date.</p>
-                <Button onClick={onRetry}>Try again</Button>
-              </div>
-            )}
+            {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
             {ordered.map((space, index) => {
               const destination = `/spaces/${space.id}`;
               const active = location.pathname === destination || location.pathname.startsWith(`${destination}/`);
@@ -545,7 +557,10 @@ export function SpaceSidebarSection({
                       // merges rather than replacing.
                       if (placementIds.includes(workstreamId)) return;
                       void onAddChannel(space.id, workstreamId).catch((cause: unknown) => {
-                        setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.add_channel));
+                        setSectionFailure({
+                          title: spaceSectionFailure.add_channel.title,
+                          copy: spaceFailureSentence(cause, spaceSectionFailure.add_channel.copy),
+                        });
                       });
                     },
                   }}
@@ -605,8 +620,11 @@ export function SpaceSidebarSection({
             })}
           </SidebarList>
         )}
-        {sectionFailure && <InlineError>{sectionFailure}</InlineError>}
       </section>
+      <AcknowledgedErrorDialog
+        error={sectionFailure}
+        onAcknowledge={() => setSectionFailure(null)}
+      />
       <Modal
         footer={<>
           <Button disabled={archiveSaving} onClick={closeArchive}>Cancel</Button>
