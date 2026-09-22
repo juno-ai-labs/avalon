@@ -3987,12 +3987,22 @@ describe('reordering the channels inside a space', () => {
     );
   }
 
-  function renderSidebarAt(workstreamId: string, rows: WorkstreamSummary[]): void {
+  function renderSidebarAt(
+    workstreamId: string,
+    rows: WorkstreamSummary[],
+    props: Partial<React.ComponentProps<typeof Sidebar>> = {},
+    initialEntries = [`/workstreams/${workstreamId}`],
+  ): void {
     function RouteProbe(): React.JSX.Element {
-      return <output aria-label="Current route">{useLocation().pathname}</output>;
+      const probeLocation = useLocation();
+      const probeNavigate = useNavigate();
+      return <>
+        <output aria-label="Current route">{probeLocation.pathname}</output>
+        <button type="button" onClick={() => void probeNavigate(-1)}>Test back</button>
+      </>;
     }
     render(
-      <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+      <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
@@ -4002,6 +4012,7 @@ describe('reordering the channels inside a space', () => {
             spaces={[hiring, launch]}
             workspace={workspace}
             workstreams={rows}
+            {...props}
           />
           <RouteProbe />
         </Tooltip.Provider>
@@ -4091,6 +4102,83 @@ describe('reordering the channels inside a space', () => {
 
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent('/workstreams/new'));
+  });
+
+  it('restores the moved Channel route when the server refuses the move', async () => {
+    let refuseMove: ((cause: Error) => void) | undefined;
+    renderSidebarAt(alpha.id, [alpha, bravo], {
+      onMoveChannelToSpace: () => new Promise<void>((_, reject) => {
+        refuseMove = reject;
+      }),
+    });
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}`));
+
+    await act(async () => refuseMove?.(new Error('space_access_denied')));
+    await waitFor(() => expect(document.querySelector('output[aria-label="Current route"]'))
+      .toHaveTextContent(`/workstreams/${alpha.id}`));
+  });
+
+  it('waits for an unloaded lower Channel instead of opening Channel home', async () => {
+    let revealNext: (() => void) | undefined;
+    function Harness(): React.JSX.Element {
+      const [rows, setRows] = useState<WorkstreamSummary[]>([alpha]);
+      revealNext = () => setRows([bravo]);
+      return <Sidebar
+        {...defaultActions}
+        automations={[]}
+        loadingMoreWorkstreams
+        onMoveChannelToSpace={async () => undefined}
+        onSignOut={vi.fn()}
+        spaces={[{ ...hiring, channelCount: 2 }, launch]}
+        workspace={workspace}
+        workstreams={rows}
+      />;
+    }
+    function RouteProbe(): React.JSX.Element {
+      return <output aria-label="Current route">{useLocation().pathname}</output>;
+    }
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${alpha.id}`]}>
+        <Tooltip.Provider>
+          <Harness />
+          <RouteProbe />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${alpha.id}`);
+
+    act(() => revealNext?.());
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}`));
+  });
+
+  it('replaces the moved Channel in history', async () => {
+    renderSidebarAt(
+      alpha.id,
+      [alpha, bravo],
+      {},
+      [`/spaces/${hiring.id}`, `/workstreams/${alpha.id}`],
+    );
+    const transfer = channelTransfer();
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/workstreams/${bravo.id}`));
+    fireEvent.click(screen.getByRole('button', { name: 'Test back' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
+      .toHaveTextContent(`/spaces/${hiring.id}`));
   });
 
   it('does not advertise a cross-space move from a read-only source Space', () => {
