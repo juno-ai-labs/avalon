@@ -337,10 +337,10 @@ The Organization's list is additionally *updated in place* rather than rewritten
 because its rows are what the directory join needs to exist at all.
 
 **Authorization is what every other Space write has**: an active non-guest
-member of this Organization, through `spaceRefusalCode(..., "write")`. A
-Breakout's order is not a Space fact, and it is kept behind the same gate
-deliberately — the rows live in this object, they ride the Space snapshot, and a
-second authorization rule for one of three kinds is a second thing to get wrong.
+member of this Organization, through `spaceRefusalCode(..., "write")`. Legacy
+Space- and Channel-container arrangements remain accepted behind that same gate
+for compatibility, although the desktop no longer uses them to arrange its
+alphabetical Channel and Breakout rails.
 
 **One delivery shape.** The whole ordering rides the per-viewer
 `workspace_space_snapshot` and the connect payload that seeds it, as one
@@ -348,13 +348,13 @@ second authorization rule for one of three kinds is a second thing to get wrong.
 this person has arranged. A list rather than a map because the key is a *pair*,
 and a map would have to encode it into a string every reader parses back. The
 Organization's own list is in there too, although the Space directory beside it
-already arrives sorted by the same rows. That redundancy is the point: with it
-the client has one rule — apply the stored order to the list you are drawing —
-and without it the Spaces would be the one list whose arrangement came from the
-order the server happened to serialize, which is not something a drag can move
-optimistically or roll back. A write republishes the whole ordering to every
-socket this person holds, which is what makes a drag in one window move the
-list in another without a reload.
+already arrives sorted by the same rows. That redundancy lets the Space rail
+apply one optimistic order and roll it back without relying on server
+serialization order. `space` and `channel` entries remain in the payload as
+compatibility data but are ignored by the desktop's alphabetical Channel and
+Breakout rails. A write republishes the whole ordering to every socket this
+person holds, which is what makes a Space drag in one window move the list in
+another without a reload.
 
 **It republishes to that person's sockets and to nobody else's, and it still
 advances the Organization's one waterline.** The two look inconsistent and are
@@ -1132,10 +1132,10 @@ directory nudges, default delivery and recovery-alarm cleanup converge
 asynchronously. **Add to space** remains explicitly additive.
 
 **A Space this reader reaches only through a Channel in it is an ordinary
-row.** Mark, colour, name, expansion, its placements — limited to the Channels
-this reader can see, because that is what `spaceIds` on each row says — and the
-arrangement they have put those placements in. What it does not carry is a
-control: no **+**, no row action that writes, and it is not a drop target. A
+row.** Mark, colour, name, expansion, and its alphabetical placements — limited
+to the Channels this reader can see, because that is what `spaceIds` on each
+row says. What it does not carry is a control: no **+**, no row action that
+writes, and it is not a drop target. A
 Channel released on it is ignored the way one released on a Space it is already
 in is ignored — the gesture changed nothing, and there is nothing here for a
 refusal to name. **Add to space** is the exception in presentation, not in
@@ -1325,11 +1325,11 @@ Space to move its placement or into the pinned section to pin it.
   `PATCH /workstreams/<spaceId>` archives General behind the Space authority's
   back.
 - **One person's order for one container is stored under that container, and
-  read by nobody else.** The rows are per viewer and reach only that viewer's
-  own sockets. A Breakout's order is stored unchecked because this object cannot
-  see a Channel's children; that is safe precisely because nothing but the
-  person's own sidebar ever reads it, and a second reader would make an
-  unvalidated id somebody else's problem.
+  delivered to nobody else.** The rows are per viewer and reach only that
+  viewer's own sockets. Compatibility Channel-container order is accepted
+  unchecked because this object cannot see a Channel's children; current React
+  rails ignore it, and any future consumer must continue to treat ids absent
+  from its own authorized directory as nonexistent.
 - **A membership is invisible until it is finalized.** A `joining` row is not
   counted, not listed, and not on the snapshot. Publishing one before its
   audience was applied would show a placement to people who were granted
@@ -1916,14 +1916,16 @@ afterwards.
 
 ## Changelog
 
-### 2026-09-22 — Channels and Breakouts use alphabetical navigation order
+### 2026-09-22 — Desktop Channels and shared React Breakouts use alphabetical navigation order
 
-**What changed:** The selected Space's unpinned Channels and every Channel's
-Breakouts now sort case-insensitively by title. Main remains the first row in
-the Breakout rail and **New breakout** remains last. Pinned Channels keep their
+**What changed:** The desktop selected Space's unpinned Channels and the shared
+React Channel rail's Breakouts now sort case-insensitively by title with one
+fixed locale and stable identity tie-break. Main remains the first row in the
+Breakout rail and **New breakout** remains last. Pinned Channels keep their
 separate manually ordered section, and an unpinned Channel can be dragged from
-the alphabetical list into Pinned; the alphabetical Channel and Breakout lists
-no longer offer pointer or keyboard reordering.
+the alphabetical list into Pinned even when that section starts empty; the
+alphabetical Channel and Breakout lists no longer offer pointer or keyboard
+reordering.
 
 **Why:** Activity and per-person arrangements made the hierarchy move between
 visits and disagree between people. These rails are navigation directories, so
@@ -1937,8 +1939,10 @@ contract was also rejected: the rows are harmless compatibility data and a
 destructive migration is not needed for a presentation change.
 
 **Consequences:** `space` and `channel` container orders may remain stored but
-are ignored by these desktop rails. Only the Space rail and Pinned section
-currently expose manual ordering; cross-Space Channel movement is unchanged.
+are ignored by these desktop/shared-React rails. Only the Space rail and Pinned
+section currently expose manual ordering; cross-Space Channel movement is
+unchanged. Native iOS has its own navigation presentation and is not governed
+by this React component contract.
 
 ### 2026-09-22 — Cross-Space drops leave the source rail immediately
 

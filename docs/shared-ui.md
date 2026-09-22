@@ -55,24 +55,19 @@ top-right corner when compact; zero renders nothing. Hosts supply the count and
 accessible label, while the shared row owns placement so Space and Channel
 hosts cannot drift.
 
-Two lists here are arranged by hand, and both follow the split. `SpacePlacementList`
-marks itself `data-reorder-list`: a host's row finds the slots it is being
-measured against through that mark rather than by knowing whose list it is in,
-which is what lets the desktop's pinned section and a Space's placements share
-one row and one drag. The Breakout rail takes an optional `substreamDrag` and
-draws the order it is given, reporting the gesture and nothing else — the
-arrangement is stored per person on the Organization, so it is the host's. A
-host that omits it draws rows that are not draggable at all, which is what a
-guest gets: their write is refused by the same gate every Space write is behind,
-and a gesture that can only fail is worse than no gesture.
+`SpacePlacementList` marks itself `data-reorder-list`: a host's row finds the
+slots it is being measured against through that mark rather than by knowing
+whose list it is in, which is what lets the desktop's pinned section and a
+Space's placements share one row and one drag. Its `onDragEnd` callback takes a
+`cancelled` flag and reads the browser's `none` operation as a release nothing
+accepted, including Escape and release outside the list.
 
-Every one of these `onDragEnd` callbacks takes a `cancelled` flag, and each
-reads it the same way: the drag operation the browser reports is `none` when
-nothing accepted the release, which is what `Escape` and a release outside the
-list both look like. It is one reading rather than four because it decides
-whether a gesture somebody backed out of is written to every session they have
-open, and the list that was missing it wrote the arrangement the pointer
-happened to build on its way past.
+The Breakout rail owns a different, host-neutral rule: Main first,
+case-insensitive fixed-locale alphabetical Breakouts, an unpublished creation
+after all named Breakouts, and **New breakout** last. Hosts provide directory
+rows and navigation callbacks, not an order or drag API. Exact title ties end
+with the stable Breakout id, so source activity and runtime locale cannot move a
+destination between visits or hosts.
 
 The Space components follow the same split, one step further. A `SpaceRow` draws
 the geometry, the accordion, an optional host-owned context menu and the motion
@@ -148,6 +143,26 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-22 — The shared Breakout rail owns stable alphabetical order
+
+**What changed:** `WorkstreamSidebar` sorts named Breakouts with the shared
+fixed-locale title comparator, keeps Main first and creation last, and no longer
+accepts or reports `substreamDrag` gestures.
+
+**Why:** A navigation directory should put the same destination in the same
+place between visits and across the desktop and browser hosts. Host-owned
+personal order made the shared component's visible behavior depend on adapter
+state and preserved a gesture that contradicted alphabetical navigation.
+
+**Considered and rejected:** Leaving ordering to each host would let the browser
+and desktop drift while using the same component. Runtime-locale collation and
+base-only title comparison were also rejected because locale differences and
+equal titles would fall back to source activity order.
+
+**Consequences:** Hosts cannot rearrange Breakouts through this component.
+Stored Channel-container arrangements remain compatibility data, and native iOS
+is outside this React shared-component contract.
 
 ### 2026-09-21 — Sideline composes shared presentation as a third host
 
