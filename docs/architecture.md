@@ -70,7 +70,9 @@ docs/                      Product, architecture, security, setup, runbooks
    state on close in the device's `userData` directory; a later creation restores
    them into a current display's work area, falling back to the default size
    when no valid state exists. This includes reopening after a macOS window close
-   without quitting the app. Settings and the Sidekicks window also close on
+   without quitting the app; [`main-window-state.md`](main-window-state.md) owns
+   the temporary details-rail width and small-display limits. Settings and the
+   Sidekicks window also close on
    **Escape**, a convenience rather than the platform gesture, and only when no
    IME composition, dialog, select menu, or unsaved text field has a nearer
    claim on the keystroke; `renderer/lib/window-escape.ts` is the one predicate
