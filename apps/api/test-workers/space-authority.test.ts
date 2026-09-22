@@ -1353,7 +1353,11 @@ describe("WorkspaceDO space authority", () => {
       sourceMembershipGeneration: plan.sourceMembershipGeneration,
       targetSpaceRevision: plan.target.revision,
       targetMembershipGeneration: plan.targetMembershipGeneration,
-    })).resolves.toMatchObject({ ok: true, target: { id: target, channelCount: 1 } });
+    })).resolves.toMatchObject({
+      ok: true,
+      source: { id: source, channelCount: 0 },
+      target: { id: target, channelCount: 1 },
+    });
   });
 
   it("given overlapping moves, when the newer target wins, then the older target cannot activate", async () => {

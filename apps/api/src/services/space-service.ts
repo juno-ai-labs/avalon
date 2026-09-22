@@ -650,15 +650,21 @@ export class SpaceService {
     const access = new ChannelAccessService(this.env, this.auth);
     const targetRoster = rosterOf(replanned.target);
     const current = await access.readSources(settle.workstreamId);
+    const stagedTarget = current.spaces.find((source) => source.spaceId === settle.targetSpaceId);
     // If the cheap swap already removed the source, restore it before
-    // rebuilding the destination. Every interruption then leaves at least one
-    // durable Space source and the next resume can repeat this sequence.
-    if (!current.spaces.some((source) => source.spaceId === settle.sourceSpaceId)) {
+    // rebuilding the destination. Restore only the audience already persisted
+    // on the target by that swap: the source Space may have widened since
+    // prepare, and seating its live roster here would grant those new readers
+    // the Channel for the duration of recovery. If neither source exists,
+    // there is nothing safe to reconstruct; applying the live destination is
+    // itself the next canonical, destination-first step.
+    if (stagedTarget
+      && !current.spaces.some((source) => source.spaceId === settle.sourceSpaceId)) {
       await access.applySpaceSource(settle.workstreamId, {
         spaceId: settle.sourceSpaceId,
-        scope: replanned.source.scope,
-        participantUserIds: rosterOf(replanned.source),
-        spaceRevision: replanned.source.revision,
+        scope: stagedTarget.scope,
+        participantUserIds: stagedTarget.participantUserIds,
+        spaceRevision: settle.sourceSpaceRevision,
         membershipGeneration: settle.sourceMembershipGeneration,
         operationId: uuidV7(),
       });

@@ -1838,9 +1838,11 @@ rejected because the plan may have gone stale across the object hop.
 SubstreamAgent write. A mismatch returns a named conflict and the service uses
 the original move intent's durable audience-convergence path. If the replacement
 already removed the source before WorkspaceDO detects a stale revision, recovery
-temporarily restores that source, rebuilds the destination through the canonical
-plan/apply/confirm protocol, and only then retracts it. Replaying the same
-operation id returns its durable first result without moving attribution twice.
+temporarily restores that source from the audience already persisted on the
+target — never the source Space's possibly widened live roster — rebuilds the
+destination through the canonical plan/apply/confirm protocol, and only then
+retracts it. Replaying the same operation id returns its durable first result
+without moving attribution twice.
 
 ### 2026-09-21 — Migration fingerprint drift no longer blocks an authority
 
