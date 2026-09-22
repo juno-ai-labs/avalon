@@ -599,6 +599,8 @@ export class SpaceService {
         targetSpaceId,
         scope: prepared.target.scope,
         participantUserIds: rosterOf(prepared.target),
+        sourceSpaceRevision: prepared.source.revision,
+        sourceMembershipGeneration: prepared.sourceMembershipGeneration,
         targetSpaceRevision: prepared.target.revision,
         targetMembershipGeneration: prepared.targetMembershipGeneration,
         operationId: prepared.operationId,
@@ -649,8 +651,8 @@ export class SpaceService {
     };
     const access = new ChannelAccessService(this.env, this.auth);
     const targetRoster = rosterOf(replanned.target);
-    const current = await access.readSources(settle.workstreamId);
-    const stagedTarget = current.spaces.find((source) => source.spaceId === settle.targetSpaceId);
+    const current = await access.readPersistedSpaceSources(settle.workstreamId);
+    const stagedTarget = current.find((source) => source.spaceId === settle.targetSpaceId);
     // If the cheap swap already removed the source, restore it before
     // rebuilding the destination. Restore only the audience already persisted
     // on the target by that swap: the source Space may have widened since
@@ -659,7 +661,7 @@ export class SpaceService {
     // there is nothing safe to reconstruct; applying the live destination is
     // itself the next canonical, destination-first step.
     if (stagedTarget
-      && !current.spaces.some((source) => source.spaceId === settle.sourceSpaceId)) {
+      && !current.some((source) => source.spaceId === settle.sourceSpaceId)) {
       await access.applySpaceSource(settle.workstreamId, {
         spaceId: settle.sourceSpaceId,
         scope: stagedTarget.scope,

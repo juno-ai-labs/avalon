@@ -162,6 +162,11 @@ function channelDoubles(log: string[]) {
           participantUserIds: Array<typeof OWNER>;
         }>,
       })),
+      readPersistedSpaceAccessSources: vi.fn(async () => [] as Array<{
+        spaceId: typeof SPACE_ID;
+        scope: "personal" | "workspace";
+        participantUserIds: Array<typeof OWNER>;
+      }>),
       retractSpaceAccessSource: vi.fn(async (input: { parentId: string }) => {
         log.push(`retract:${input.parentId}`);
         return { ok: true, plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] } };
@@ -343,6 +348,14 @@ describe("SpaceService lifecycle fan-out", () => {
     });
 
     expect(log).toEqual(["prepare", `replace:${SPACE_ID}:${TARGET_SPACE_ID}`, "finalize"]);
+    expect(channels.room.replaceEquivalentSpaceAccessSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSpaceRevision: 3,
+        sourceMembershipGeneration: 4,
+        targetSpaceRevision: 3,
+        targetMembershipGeneration: 2,
+      }),
+    );
     expect(channels.conversation.handleProductRequest).not.toHaveBeenCalled();
     expect(channels.room.applySpaceAccessSource).not.toHaveBeenCalled();
     expect(channels.room.retractSpaceAccessSource).not.toHaveBeenCalled();
@@ -381,10 +394,12 @@ describe("SpaceService lifecycle fan-out", () => {
       }),
     });
     const channels = channelDoubles(log);
-    channels.room.readAccessSources = vi.fn(async () => ({
-      direct: { scope: "workspace", participantUserIds: [], observed: true },
-      spaces: [{ spaceId: SPACE_ID, scope: "workspace", participantUserIds: [OWNER, MEMBER] }],
-    }));
+    channels.room.readManagementAccess = vi.fn(async () => {
+      throw new Error("recovery_must_not_reauthorize");
+    });
+    channels.room.readPersistedSpaceAccessSources = vi.fn(async () => [
+      { spaceId: SPACE_ID, scope: "workspace", participantUserIds: [OWNER, MEMBER] },
+    ]);
     channels.room.replaceEquivalentSpaceAccessSource = vi.fn(async () => ({
       ok: false, code: "space_revision_conflict",
     }));
@@ -397,6 +412,11 @@ describe("SpaceService lifecycle fan-out", () => {
     });
 
     expect(workspace.cancelSpaceMembershipMove).not.toHaveBeenCalled();
+    expect(channels.room.readManagementAccess).not.toHaveBeenCalled();
+    expect(channels.room.readPersistedSpaceAccessSources).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      parentId: CHANNEL_ID,
+    });
     expect(log).toEqual([
       `retract:${CHANNEL_ID}`,
       `apply:${CHANNEL_ID}:2`,
@@ -604,14 +624,11 @@ describe("SpaceService intent resumption", () => {
       }),
     });
     const channels = channelDoubles(log);
-    channels.room.readAccessSources = vi.fn(async () => ({
-      direct: { scope: "workspace", participantUserIds: [], observed: true },
-      spaces: [{
-        spaceId: TARGET_SPACE_ID,
-        scope: "personal" as const,
-        participantUserIds: [OWNER],
-      }],
-    }));
+    channels.room.readPersistedSpaceAccessSources = vi.fn(async () => [{
+      spaceId: TARGET_SPACE_ID,
+      scope: "personal" as const,
+      participantUserIds: [OWNER],
+    }]);
 
     await expect(new SpaceService(serviceEnv({
       workspace, conversation: channels.conversation, room: channels.room,
