@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
+import { conversationNeedsViewer } from '@rally/contracts';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
@@ -54,6 +55,7 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { normalizeHarnessStatus } from '../lib/api';
 
 type WorkstreamSidebarFailure =
   | 'copy_link'
@@ -179,6 +181,21 @@ export function WorkstreamScreen(): React.JSX.Element {
             : {}),
         }
       : child);
+  const railChildren = namedChildren?.map((child) => {
+    const selectedDetail = child.substreamId === selectedSubstreamId ? openChild.data : undefined;
+    return {
+      ...child,
+      ...(selectedDetail ? { needsAttention: conversationNeedsViewer(selectedDetail) }
+        : 'harnessStatus' in child && child.harnessStatus
+          ? { needsAttention: conversationNeedsViewer({
+              harnessStatus: normalizeHarnessStatus(child.harnessStatus),
+              hasUnread: (child.unreadCount ?? 0) > 0,
+              youAreMentioned: child.youAreMentioned,
+              unseen: child.unseen,
+            }) }
+          : {}),
+    };
+  });
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
   // one clear the other's subject out from under it.
@@ -187,7 +204,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuFailure, setSubstreamMenuFailure] = useState<WorkstreamSidebarFailure | null>(null);
-  const railChildren = namedChildren;
   const selectedAppearance = selectedSubstreamId === '0'
     ? parent.data?.appearance
     : railChildren?.find((child) => child.substreamId === selectedSubstreamId)?.appearance
@@ -512,7 +528,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
           sidekickFailure={context.sidekickFailure}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, needsAttention: selectedSubstreamId === '0' ? conversationNeedsViewer(context.detail) : parent.data ? conversationNeedsViewer(parent.data) : undefined, privateChildren: railChildren }}
           creatingSubstream={creation?.parentId === id && launching !== null
             ? { reservedSubstreamId: reservedChildId }
             : null}

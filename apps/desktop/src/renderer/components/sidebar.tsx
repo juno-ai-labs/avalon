@@ -30,7 +30,7 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
@@ -44,7 +44,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Modal, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
@@ -657,7 +657,6 @@ function WorkstreamRow({
   const [managingAccess, setManagingAccess] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
-  const markerStatus = workstreamMarkerStatus(workstream);
   const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
     ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
     : ''}`;
@@ -941,8 +940,7 @@ function WorkstreamRow({
             to={destination}
           >
             <NavigationRowContent id={workstream.id} title={workstream.title} appearance={workstream.appearance} naming={naming}
-              marks={<>{workstream.scope === 'workspace' && <PublicMarker />}{markerStatus !== 'completed' &&
-                <span className="workstream-row-status"><StatusDot compact status={markerStatus} tooltip /></span>}</>}
+              marks={workstream.scope === 'workspace' ? <PublicMarker /> : undefined}
               titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
               activity={workstream.hasUnread ? <RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} /> : undefined} />
             {/* The manual order is the whole point of the section, and a

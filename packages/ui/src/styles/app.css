@@ -6037,17 +6037,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   grid-template-columns: 36px minmax(0, 1fr) auto;
 }
 
-.workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
-.workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
-.workstream-row .workstream-row-status .status-dot {
-  height: 6px;
-  inset: auto;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 6px;
-}
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
 .settings-navigation-group button,
 .settings-search-results > button,
@@ -6120,18 +6109,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   font-weight: 420;
   letter-spacing: 0;
   line-height: var(--av-sys-font-leading-base);
-}
-.app-shell .workstream-row-status {
-  bottom: 0;
-  right: 0;
-}
-.app-shell .workstream-row-status .status-indicator {
-  height: 14px;
-  width: 14px;
-}
-.app-shell .workstream-row .workstream-row-status .status-dot {
-  height: 8px;
-  width: 8px;
 }
 .app-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
 .app-shell .sidebar-group:first-child { margin-top: 0; }
