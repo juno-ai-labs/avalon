@@ -25,9 +25,9 @@ the original row, request time, and frozen acknowledgement sender/subject/body. 
 failed request sends through the existing Resend service, reduced to plain text
 by the shared renderer and sent with no HTML part. Success records provider acceptance; development records `skipped` and
 never calls the provider. An acknowledged duplicate returns the same accepted
-response without sending another message. The widget runs invisibly: Cloudflare
-shows its checkbox only to a visitor it decides has to interact, so most visitors
-never see a challenge.
+response without sending another message. The endpoint still requires and verifies
+a Turnstile proof from any future authorized client; the current landing page does
+not initialize that client or a browser widget.
 
 Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens; `listDownloadGrants` resolves that email by joining `source_id` against whichever table the grant's `source` names — `access_requests` for `manual`/`access_invitation`, `workspace_invitations` for `workspace_invitation` — so a workspace-invitation grant is findable by the invitee's email rather than always rendering as an unattributed standalone link. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
 associate one with a request. This creates a `manual` grant and returns its URL
@@ -344,7 +344,7 @@ continues to advance entirely through desktop publication.
 
 **Considered and rejected:** A dialog wrapping the existing intake form preserved private acquisition but contradicted the requested direct-download behavior. It has been removed; the homepage no longer initializes its verification widget.
 
-**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. Keep the stable installer URL aligned with the release configuration. Trust/support links and regional telemetry stay intact.
+**Consequences:** Installer distribution from the homepage is public; workspace membership and invitation-token download controls remain unchanged. Existing request records, intake endpoints, and Ace operations are retained. The homepage uses the fixed canonical installer alias that desktop publication advances independently of the release record. Trust/support links and regional telemetry stay intact.
 
 Shipped in #892.
 
