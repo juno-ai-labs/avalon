@@ -26,6 +26,7 @@ import { contractCompleteEnv } from "./helpers/worker-env";
 
 const CURRENT = "rallywithai://auth/complete";
 const LEGACY = "avalon://auth/complete";
+const SIDELINE = "sideline://auth/complete";
 const ATTEMPT = "a".repeat(43);
 
 /** Captures whatever `beginIdentity` binds, so the stored return URI is readable. */
@@ -73,6 +74,24 @@ describe("desktop sign-in across the scheme rename", () => {
     });
 
     expect(bound()).toContain(CURRENT);
+  });
+
+  it("accepts only Sideline's exact dedicated callback", async () => {
+    const { env, bound } = identityFixture();
+    await new AuthService(env).beginIdentity({
+      returnUri: SIDELINE,
+      desktopAttemptId: ATTEMPT,
+      desktopCodeChallenge: ATTEMPT,
+    });
+    expect(bound()).toContain(SIDELINE);
+
+    for (const returnUri of ["sideline://auth/elsewhere", "sideline://evil/complete"]) {
+      await expect(new AuthService(identityFixture().env).beginIdentity({
+        returnUri,
+        desktopAttemptId: ATTEMPT,
+        desktopCodeChallenge: ATTEMPT,
+      })).rejects.toMatchObject({ code: "invalid_return_uri" });
+    }
   });
 
   it("still refuses a return URI that is not the configured destination", async () => {

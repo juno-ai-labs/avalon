@@ -1,0 +1,158 @@
+name: Release Sideline for macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sideline-macos-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.value }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - id: version
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/sideline/package.json').version")"
+          node -e "const value=process.argv[1]; if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value)) throw new Error('Sideline version must be stable semver')" "$version"
+          tag="sideline-v${version}"
+          test -z "$(git ls-remote --tags origin "refs/tags/${tag}")" || { echo "${tag} already exists" >&2; exit 1; }
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm lint
+
+      - name: Typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm typecheck
+
+      - name: Test Sideline
+        run: pnpm --filter @rally/sideline test
+
+  release:
+    needs: verify
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: desktop-release
+    permissions:
+      contents: write
+    env:
+      CSC_NAME: Juno AI Labs Inc. (7ZLT6A8W25)
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_TEAM_ID: 7ZLT6A8W25
+      SIDELINE_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
+      SIDELINE_RELEASE_PREFIX: sideline/stable/darwin/arm64
+      SIDELINE_RELEASE_BASE_URL: https://downloads.rallywith.ai
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.commit }}
+          persist-credentials: true
+
+      - name: Require native Apple Silicon
+        run: test "$(uname -m)" = arm64
+
+      - name: Set deterministic release date
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Import Developer ID identity
+        shell: bash
+        env:
+          RALLY_CSC_LINK: ${{ secrets.CSC_LINK }}
+          RALLY_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/sideline-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          source_p12="$RUNNER_TEMP/sideline-signing-source.p12"
+          identity_pem="$RUNNER_TEMP/sideline-signing-identity.pem"
+          legacy_p12="$RUNNER_TEMP/sideline-signing-legacy.p12"
+          printf '%s' "$RALLY_CSC_LINK" | openssl base64 -d -A > "$source_p12"
+          openssl pkcs12 -in "$source_p12" -password "pass:$RALLY_CSC_KEY_PASSWORD" -nodes -out "$identity_pem"
+          openssl pkcs12 -export -in "$identity_pem" -password "pass:$RALLY_CSC_KEY_PASSWORD" \
+            -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -out "$legacy_p12"
+          rm -f "$identity_pem" "$source_p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$legacy_p12" -k "$keychain" -P "$RALLY_CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$legacy_p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          printf '%s\n' "$identities"
+          test "$(printf '%s\n' "$identities" | grep -F -c 'Developer ID Application: Juno AI Labs Inc. (7ZLT6A8W25)' || true)" = 1
+
+      - name: Build, sign, notarize, staple, and verify
+        run: pnpm --filter @rally/sideline package:release
+
+      - name: Preserve signed release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sideline-${{ needs.verify.outputs.version }}-macOS
+          path: apps/sideline/release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish update feed and installer to R2
+        run: pnpm --filter @rally/sideline release:publish
+
+      - name: Record the published release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$RELEASE_TAG" -m "Sideline ${RELEASE_TAG#sideline-v}" HEAD
+          git push origin "refs/tags/${RELEASE_TAG}"
