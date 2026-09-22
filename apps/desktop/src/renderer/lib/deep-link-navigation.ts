@@ -17,9 +17,10 @@ const listeners = new Set<() => void>();
  * row. During an Organization switch the link arrives before the destination
  * shell and its Space directory are mounted.
  */
-export function markDeepLinkWorkstreamNavigation(workstreamId: string): void {
+export function markDeepLinkWorkstreamNavigation(workstreamId: string): DeepLinkWorkstreamNavigation {
   pending = { revision: ++revision, workstreamId };
   listeners.forEach((listener) => listener());
+  return pending;
 }
 
 export function useDeepLinkWorkstreamNavigation(): DeepLinkWorkstreamNavigation | null {
