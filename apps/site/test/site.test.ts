@@ -68,7 +68,7 @@ describe('public Rally site', () => {
   it('offers the configured canonical installer without a signup dialog or clickable demo artifact', () => {
     const page = readProjectFile('index.html');
     const config = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')));
-    expect(page).toContain(`href="${desktopDmgUrl(config)}" download>macOS Beta</a>`);
+    expect(page).toContain(`href="${desktopDmgUrl(config)}" download>Download for macOS</a>`);
     expect(page).not.toContain('id="access-request"');
     expect(page).not.toContain('<dialog');
     expect(page).not.toContain('<details');
