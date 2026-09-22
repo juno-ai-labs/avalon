@@ -26,7 +26,7 @@ import {
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
-import type { IpcMainInvokeEvent, WebContents } from 'electron';
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions, WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
@@ -4224,6 +4224,8 @@ const settingsWindowController = new SettingsWindowController({
     });
     settingsWindow = window;
 
+    installEditableTextMenu(window);
+
     installWindowDiagnostics(window, 'settings');
     window.setMenuBarVisibility(false);
     // Both wired before the load starts, because both can fire during it:
@@ -4320,6 +4322,7 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
   });
 
   const sidekicksWebContentsId = sidekicksWindow.webContents.id;
+  installEditableTextMenu(sidekicksWindow);
   sidekicksWindow.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(sidekicksWebContentsId));
   sidekicksWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
@@ -4355,6 +4358,39 @@ function installApplicationMenu(): void {
     },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** Give editable fields the operating system's text actions. Feed and sidebar
+ * context menus are owned by the renderer and never reach this branch. */
+function installEditableTextMenu(window: BrowserWindow): void {
+  const contents = window.webContents;
+  contents.on('context-menu', (_event, params) => {
+    if (!params.isEditable) return;
+
+    const template: MenuItemConstructorOptions[] = [];
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions) {
+        template.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) });
+      }
+      if (params.dictionarySuggestions.length > 0) template.push({ type: 'separator' });
+      template.push({
+        label: 'Learn Spelling',
+        click: () => { contents.session.addWordToSpellCheckerDictionary(params.misspelledWord); },
+      });
+      template.push({ type: 'separator' });
+    }
+
+    template.push(
+      { role: 'undo', enabled: params.editFlags.canUndo },
+      { role: 'redo', enabled: params.editFlags.canRedo },
+      { type: 'separator' },
+      { role: 'cut', enabled: params.editFlags.canCut },
+      { role: 'copy', enabled: params.editFlags.canCopy },
+      { role: 'paste', enabled: params.editFlags.canPaste },
+      { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+    );
+    Menu.buildFromTemplate(template).popup({ window });
+  });
 }
 
 async function createMainWindow(): Promise<void> {
@@ -4404,6 +4440,8 @@ async function createMainWindow(): Promise<void> {
     },
   });
   const mainWindowWebContentsId = mainWindow.webContents.id;
+
+  installEditableTextMenu(mainWindow);
 
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('render-process-gone', (_event, details) => {

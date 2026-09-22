@@ -59,6 +59,10 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   streaming; a human body names it *Speak*, not *Speak response*. Look Up and
   Share are macOS-only, behind trusted IPC. Share sends the selected or
   whole-message rendered plain text, never the stored markdown.
+- Editable text fields in the main, Sidekicks, and settings windows use an
+  Electron native context menu for spelling suggestions, dictionary learning,
+  and editing commands. The main process installs it only for editable targets;
+  message prose and sidebar rows retain their renderer-owned menus.
 - `packages/ui/src/components/primitives.tsx` owns `Tip` and
   `TipGroup`: a hover explanation, and the group a row of controls shares one
   delay and one provider through. A new tooltip comes from there rather than
