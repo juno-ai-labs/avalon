@@ -6,6 +6,7 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamSummary } from './types';
 import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreams, useWorkstreamsQuery } from './use-workstreams-query';
 import { holdCachedWorkstreamArchive, setCachedWorkstreams } from './workstreams-cache';
+import { WORKSTREAM_STATE_WATERLINES_KEY } from './workstream-state-store';
 
 const listWorkstreams = vi.hoisted(() => vi.fn());
 const socket = vi.hoisted(() => ({
@@ -252,6 +253,51 @@ describe('useWorkstreamsQuery', () => {
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
       expect(observer.result.current?.map((item) => item.id)).toEqual(['workstream-1', 'workstream-2']);
+    });
+
+    it('does not republish an archived first-page row after a later page finishes', async () => {
+      pagedList();
+      const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+      landConnectPayload(rerender, {
+        items: [summary('workstream-1', 'First page')],
+        nextCursor: 'cursor-1',
+      });
+      await waitFor(() => expect(result.current.data).toHaveLength(1));
+      act(() => result.current.fetchMore());
+      await waitFor(() => expect(result.current.data).toHaveLength(2));
+
+      let releaseSecondPage: ((page: {
+        items: WorkstreamSummary[];
+        nextCursor: null;
+      }) => void) | undefined;
+      listWorkstreams.mockReset();
+      listWorkstreams.mockImplementation((input: { before?: string }) => input.before
+        ? new Promise((resolve) => {
+          releaseSecondPage = resolve;
+        })
+        : Promise.resolve({
+          items: [summary('workstream-1', 'Stale first page')],
+          nextCursor: 'cursor-1',
+        }));
+
+      act(() => {
+        void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+      });
+      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(2));
+      act(() => {
+        queryClient.setQueryData(WORKSTREAM_STATE_WATERLINES_KEY, {
+          'workstream-1': { visible: false },
+        });
+        setCachedWorkstreams(queryClient, (current) =>
+          current?.filter((workstream) => workstream.id !== 'workstream-1'));
+      });
+      act(() => releaseSecondPage?.({
+        items: [summary('workstream-2', 'Second page')],
+        nextCursor: null,
+      }));
+
+      await waitFor(() => expect(result.current.isFetching).toBe(false));
+      expect(result.current.data?.map((workstream) => workstream.id)).toEqual(['workstream-2']);
     });
 
     // A later payload must not drag the cursor back to the end of page one
