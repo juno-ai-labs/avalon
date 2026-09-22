@@ -191,15 +191,19 @@ existing `rallywithai:` deep link for the main app.
 ### 2026-09-21 — Sideline release recovery and app identity
 
 **What changed:** Sideline's release planner now searches first-parent history
-when identifying the API deployment for shared-contract changes. Sideline also
-owns its supplied macOS icon and exposes a standard **Check for Updates…** menu
-command backed by the existing updater.
+when identifying a shared-contract change, then accepts the newest main-line
+API deployment whose commit contains that change. Sideline also owns its
+supplied macOS icon and exposes a standard **Check for Updates…** menu command
+backed by the existing updater.
 
 **Why:** A merge commit can contain a contract change from its second parent,
 but deployment workflows run for the merge SHA pushed to `main`, not the
 feature-branch commit. Following unrestricted history selected that
 feature-branch SHA and blocked the resumable `0.1.1` release even after its API
 deployment succeeded.
+An exact merge-SHA match could fail again when the API deployment queue
+collapsed that run into a newer main-line deployment containing the same
+contracts.
 Sideline otherwise inherited Rally's icon and gave operators no visible way to
 request the updater check that already happened automatically.
 
@@ -207,11 +211,12 @@ request the updater check that already happened automatically.
 the feature SHA would bind release coordination to a commit that never entered
 `main`. Removing the gate would restore the client-before-API race it prevents.
 
-**Consequences:** Contract-driven Sideline releases wait on the API run that
-GitHub actually created for the main-line merge. The existing unpublished
-version remains the retry authority and does not need to be reverted. Installed
-release builds are visually distinct and can request an update check from the
-application menu without changing download or restart behavior.
+**Consequences:** Contract-driven Sideline releases wait on the newest API run
+that contains the main-line contract change, including a successor run selected
+by the API deployment queue. The existing unpublished version remains the retry
+authority and does not need to be reverted. Installed release builds are
+visually distinct and can request an update check from the application menu
+without changing download or restart behavior.
 
 ### 2026-09-21 — Relevant main changes automatically rebuild Sideline
 
