@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browserSidebarLayout, channelsOpenRouteFence } from '../src/sidebar-layout';
+import { browserSidebarLayout } from '../src/sidebar-layout';
 
 describe('browserSidebarLayout', () => {
   it('protects the conversation and compact Breakout rail at a narrow desktop width', () => {
@@ -34,13 +34,5 @@ describe('browserSidebarLayout', () => {
       spacesConstrained: false,
       spacesWidth: 280,
     });
-  });
-});
-
-describe('channelsOpenRouteFence', () => {
-  it('does not arm a stale fence for navigation within the current Channel', () => {
-    expect(channelsOpenRouteFence('channel-1', 'channel-1', true)).toBeNull();
-    expect(channelsOpenRouteFence('channel-1', 'channel-2', true)).toBe('channel-2');
-    expect(channelsOpenRouteFence('channel-1', 'channel-2', false)).toBeNull();
   });
 });

@@ -30,7 +30,6 @@ const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.m
  * state, including the opening skeleton shown before Channel data arrives.
  */
 export function useWorkstreamSidebarGeometry(): {
-  collapse: () => void;
   compact: boolean;
   constrained: boolean;
   onResize: (requested: number) => void;
@@ -86,7 +85,6 @@ export function useWorkstreamSidebarGeometry(): {
     try { localStorage.setItem(WIDTH_KEY, String(next)); } catch { /* Best-effort device preference. */ }
   };
   return {
-    collapse: () => saveCollapsed(true),
     compact,
     constrained,
     onResize,
@@ -227,7 +225,6 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   mainActions?: ConversationRowActions | undefined;
 }): React.JSX.Element {
   const {
-    collapse,
     compact,
     constrained,
     onResize,
@@ -298,7 +295,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
             type="button"
-            onClick={() => { collapse(); onSelectSubstream?.('0'); onFocusTranscript(); }}
+            onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
@@ -334,7 +331,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                   substreamDrag?.draggingSubstreamId === child.substreamId && 'is-dragging',
                 )}
                 draggable={substreamDrag !== undefined}
-                onClick={() => { collapse(); onSelectSubstream?.(child.substreamId); }}
+                onClick={() => onSelectSubstream?.(child.substreamId)}
                 onDragStart={substreamDrag ? (event) => {
                   // Chromium refuses to start a drag with an empty payload,
                   // and the id is what any other surface would want anyway.
@@ -425,7 +422,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 'workstream-context-row workstream-new-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
-              onClick={() => { collapse(); onNewSubstream(); }}
+              onClick={onNewSubstream}
+              title="New breakout"
               type="button"
             >
               <SidebarNavigationRowContent
