@@ -1952,7 +1952,9 @@ Each icon opens the same identity tooltip used by the Channel rail. Breakout
 projections now preserve their selected appearance, and the Space page joins
 the parent Channel's appearance into the Breakout row. WorkspaceDO migration
 69 adds the nullable projection column; older rows use the id-derived fallback
-until their next projection arrives.
+until their next projection arrives. A breakout projection can still be
+accepted against the older table while an Organization is held before the
+appearance migration; that write omits the new column until it exists.
 
 **Why:** The icons make a Breakout's relationship to its Channel scannable
 alongside the existing `in Channel` text. Reusing the rail's marks and tooltip
