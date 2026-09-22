@@ -3,7 +3,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { ServerSocketEventSchema } from "@rally/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
   applyWorkstreamObjectSchema,
@@ -173,6 +173,16 @@ function objectStorage(
 }
 
 describe("the Workstream Durable Object relational schema", () => {
+  let warn: MockInstance;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
   it("keeps every shipped migration fingerprint through v32 immutable", () => {
     expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS
       .filter((migration) => migration.version <= 32)
@@ -1091,7 +1101,6 @@ describe("the Workstream Durable Object relational schema", () => {
   it("warns but remains available for a changed implementation receipt", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       applyWorkstreamObjectSchema(storage, "worker-one");
       database.prepare(
@@ -1106,7 +1115,6 @@ describe("the Workstream Durable Object relational schema", () => {
         recordedImplementationHash: "changed",
       }));
     } finally {
-      warn.mockRestore();
       database.close();
     }
   });

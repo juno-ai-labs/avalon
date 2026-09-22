@@ -50,8 +50,8 @@ const BOOTSTRAP_MIGRATIONS_TABLE = `
  *
  * This input shape is already persisted by the original WorkstreamRoom
  * migration runner. Keep it stable: descriptions are operator metadata, while
- * changing this algorithm would strand existing object databases even when
- * their applied SQL is exactly the published history.
+ * changing this algorithm would report drift against every existing object and
+ * make the persisted receipts incomparable with the published history.
  */
 export function durableObjectMigrationHash(migration: DurableObjectSqliteMigration): string {
   // The suffix is absent for every migration shipped before execution modes
@@ -158,6 +158,7 @@ export function applyDurableObjectSqliteMigrations(
           message: `${options.component}_schema_hash_mismatch:${migration.version}`,
           component: options.component,
           version: migration.version,
+          workerVersionId: options.workerVersionId,
           recordedImplementationHash: existingHash,
           currentImplementationHash: currentHash,
         });
