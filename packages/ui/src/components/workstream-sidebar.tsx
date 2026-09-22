@@ -262,7 +262,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
-              description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
+              activity={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
               title={workstream.title}
             />
@@ -282,7 +282,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
                 type="button"
               >
                 <SidebarNavigationRowContent
-                  description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
+                  activity={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
                   icon={<WorkstreamMark appearance={child.appearance} id={child.substreamId} size={20} />}
                   title={child.title}
                 />
@@ -389,7 +389,7 @@ function ResourceSection({ label, resources, onOpen }: { label: string; resource
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
       <SidebarRow className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
         <SidebarNavigationRowContent
-          description={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
+          activity={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
           icon={<ResourceIcon resource={resource} />}
           title={resource.title}
         />

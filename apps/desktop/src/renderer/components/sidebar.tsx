@@ -939,7 +939,7 @@ function WorkstreamRow({
               marks={<>{workstream.scope === 'workspace' && <PublicMarker />}{markerStatus !== 'completed' &&
                 <span className="workstream-row-status"><StatusDot compact status={markerStatus} tooltip /></span>}</>}
               titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
-              activity={workstream.hasUnread ? <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} /> : undefined} />
+              activity={workstream.hasUnread ? <RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} /> : undefined} />
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
                 looking at it. The position — and only the position — rides on

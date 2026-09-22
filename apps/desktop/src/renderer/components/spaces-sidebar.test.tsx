@@ -83,6 +83,8 @@ describe('SpacesSidebar', () => {
     expect(sidebar.querySelector('.spaces-sidebar-scroll')).toHaveClass('sidebar-scroll');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: 'General' })).toHaveClass('sidebar-row');
+    expect(within(screen.getByRole('link', { name: 'General' })).getByText('Public space'))
+      .toHaveClass('sidebar-row-activity');
     expect(screen.queryByText('3 channels')).not.toBeInTheDocument();
     expect(screen.queryByText('1 channel')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Launch' }));

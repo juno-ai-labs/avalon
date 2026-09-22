@@ -264,7 +264,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
             className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
             key={space.id} onClick={() => selectSpace(space.id)} type="button">
             <SidebarNavigationRowContent
-              description={description}
+              activity={description}
               icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
               title={space.name}
             />
@@ -315,7 +315,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
         return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
           spacesSidebar.setCompact(true);
         }} key={workstream.parentId} to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
-          <NavigationRowContent description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
+          <NavigationRowContent activity={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </SidebarRow>;
       })}
       </SidebarList></SidebarScroll>

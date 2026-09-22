@@ -164,6 +164,24 @@ equal titles would fall back to source activity order.
 Stored Channel-container arrangements remain compatibility data, and native iOS
 is outside this React shared-component contract.
 
+### 2026-09-22 — Hierarchy rows have one secondary-text contract
+
+**What changed:** `SidebarNavigationRowContent` now accepts one optional
+`activity` value beneath its title. The shared component owns that line's muted
+type and spacing for Space, Channel, Breakout, resource and Sidekick rows.
+
+**Why:** The shared row exposed both `description` and `activity` for the same
+visual slot. Descriptions inherited a seven-pixel hint margin while timestamps
+did not, so adjacent hierarchy rows had two title-to-secondary-text rhythms.
+
+**Considered and rejected:** Preserving both names and merely matching their
+CSS. Two props for one slot would keep an unnecessary choice at every caller
+and allow their presentation to drift again.
+
+**Consequences:** Secondary row copy is activity regardless of whether it names
+scope, time, state or resource metadata. Callers provide content; the shared row
+alone decides its presentation.
+
 ### 2026-09-21 — Sideline composes shared presentation as a third host
 
 **What changed:** `@rally/ui` now owns the represented-message card stack,

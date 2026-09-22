@@ -443,7 +443,7 @@ export function SpacesSidebar({
                   onClick={() => onSelect(space.id)}
                 >
                   <SidebarNavigationRowContent
-                    description={space.scope === 'workspace' ? 'Public space' : 'Private space'}
+                    activity={space.scope === 'workspace' ? 'Public space' : 'Private space'}
                     icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
                     title={space.name}
                   />

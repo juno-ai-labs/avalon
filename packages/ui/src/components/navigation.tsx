@@ -8,33 +8,33 @@ export function NavigationFrame({ className, ...props }: ComponentProps<'aside'>
 }
 
 /** Shared visual content for a Space or Channel navigation row. */
-export function SidebarNavigationRowContent({ icon, title, description, marks, titlePrefix, activity, naming }: {
+export function SidebarNavigationRowContent({ icon, title, marks, titlePrefix, activity, naming }: {
   icon: ReactNode;
   title: ReactNode;
-  description?: ReactNode;
   marks?: ReactNode;
   titlePrefix?: ReactNode;
   activity?: ReactNode;
   naming?: boolean;
 }): React.JSX.Element {
+  const activityIsEmpty = activity === undefined || activity === null
+    || typeof activity === 'boolean' || activity === '';
   return <>
     <span className="sidebar-row-icon">{icon}{marks}</span>
     <span className="sidebar-row-main">
       <span className="sidebar-row-title"><span className="sidebar-row-title-copy">
         {titlePrefix}{naming ? <TitleSkeleton /> : title}
       </span></span>
-      {description === undefined ? activity : <span className="sidebar-row-hint">{description}</span>}
+      {activityIsEmpty ? null : <span className="sidebar-row-activity">{activity}</span>}
     </span>
   </>;
 }
 
-export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity, description }: {
+export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity }: {
   id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
-  marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode; description?: ReactNode;
+  marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode;
 }): React.JSX.Element {
   return <SidebarNavigationRowContent
     activity={activity}
-    description={description}
     icon={<WorkstreamGlyph appearance={appearance} id={id} size={36} />}
     marks={marks}
     naming={naming}
