@@ -349,6 +349,21 @@ describe('composer width', () => {
   });
 });
 
+describe('conversation opening skeleton geometry', () => {
+  it('uses the settled composer capsule dimensions', () => {
+    const openingComposer = rule('.conversation-opening-composer');
+    expect(openingComposer).not.toBeNull();
+    expect(openingComposer).toContain('height: 44px;');
+    expect(openingComposer).toContain('max-width: var(--composer-width);');
+  });
+
+  it('does not restate the shared sidebar header height', () => {
+    expect(rule('.conversation-opening-sidebar-header')).toBeNull();
+    expect(rule('.sidebar-row.sidebar-header')).toContain('height: 43px;');
+    expect(rule('.sidebar-horizontal-line')).toContain('height: var(--av-sys-size-border-hairline);');
+  });
+});
+
 describe('secondary surface focus and layout', () => {
   it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
     expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');

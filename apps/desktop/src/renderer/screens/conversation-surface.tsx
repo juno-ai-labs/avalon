@@ -96,7 +96,10 @@ import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-car
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
-import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
+import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
+import { useWorkstreamSidebarGeometry } from '@rally/ui/components/workstream-sidebar';
+import { SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -138,6 +141,102 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
     role: session.workspace.role,
     ...(session.workspace.accessClass ? { accessClass: session.workspace.accessClass } : {}),
   };
+}
+
+/**
+ * The shape of a conversation while its first socket snapshot is in flight.
+ *
+ * This is the real conversation geometry, not a centered interstitial. Keeping
+ * the channel rail, header, feed and composer in place makes opening feel like
+ * content arriving into an already-open room and prevents the whole pane from
+ * being redrawn around the snapshot.
+ */
+function ConversationOpeningSidebar(): React.JSX.Element {
+  const { compact, sidebarRef, width } = useWorkstreamSidebarGeometry();
+  return (
+    <aside
+      aria-hidden="true"
+      className={clsx('resizable-sidebar workstream-context-sidebar conversation-opening-sidebar', compact && 'is-compact')}
+      ref={sidebarRef}
+      style={{ flexBasis: width }}
+    >
+      <SidebarTitleHeader
+        className="workstream-context-toolbar window-drag conversation-opening-sidebar-header"
+        icon={<span className="skeleton-bar conversation-opening-sidebar-mark" />}
+        title={<span className="skeleton-bar conversation-opening-sidebar-title" />}
+      />
+      <SidebarScroll className="workstream-context-scroll conversation-opening-sidebar-scroll">
+        <SidebarSkeletonRows count={4} />
+        <span className="skeleton-bar skeleton-group-label" />
+        <SidebarSkeletonRows count={3} />
+      </SidebarScroll>
+    </aside>
+  );
+}
+
+export function ConversationOpeningSkeleton({
+  label,
+  parentKind,
+  sidebar = false,
+}: {
+  label: string;
+  parentKind: ConversationParentKind;
+  sidebar?: boolean;
+}): React.JSX.Element {
+  return (
+    <div aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
+      {sidebar && <ConversationOpeningSidebar />}
+      <div aria-hidden="true" className={clsx(
+        'workstream-screen conversation-opening-feed',
+        parentKind === 'automation' && 'automation-screen',
+      )}>
+        {parentKind === 'automation' ? (
+          <header className="sidekick-conversation-heading window-drag conversation-opening-header">
+            <span className="skeleton-bar conversation-opening-header-title" />
+          </header>
+        ) : (
+          <header className="grokbot-workstream-header window-drag conversation-opening-header">
+            <div className="grokbot-conversation-title conversation-opening-channel-title">
+              <span className="skeleton-bar conversation-opening-header-mark" />
+              <span className="skeleton-bar conversation-opening-header-title" />
+            </div>
+            <div className="grokbot-header-actions">
+              <span className="skeleton-bar conversation-opening-header-action" />
+            </div>
+          </header>
+        )}
+        <div className="transcript-scroll">
+          <div className="transcript-column conversation-opening-messages">
+            <div className="conversation-opening-message">
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-avatar" />
+                <span className="skeleton-bar conversation-opening-name" />
+              </div>
+              <span className="skeleton-bar conversation-opening-line" />
+              <span className="skeleton-bar conversation-opening-line is-short" />
+            </div>
+            <div className="conversation-opening-message is-human">
+              <span className="skeleton-bar conversation-opening-bubble" />
+              <span className="skeleton-bar conversation-opening-bubble is-short" />
+            </div>
+            <div className="conversation-opening-message">
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-avatar" />
+                <span className="skeleton-bar conversation-opening-name is-short" />
+              </div>
+              <span className="skeleton-bar conversation-opening-line is-medium" />
+              <span className="skeleton-bar conversation-opening-line" />
+              <span className="skeleton-bar conversation-opening-line is-short" />
+            </div>
+          </div>
+        </div>
+        <div className="composer-dock conversation-opening-composer-dock">
+          <div className="skeleton-bar conversation-opening-composer" />
+        </div>
+      </div>
+      <span className="sr-only">{label}</span>
+    </div>
+  );
 }
 
 /** Resolve WorkspaceDO's foreground IDs through the roster for the inspector. */
@@ -2091,7 +2190,13 @@ export function ConversationSurface({
         />
       );
     }
-    return <OpeningState label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`} />;
+    return (
+      <ConversationOpeningSkeleton
+        label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
+        parentKind={parentKind}
+        sidebar={renderSidebar !== undefined}
+      />
+    );
   }
 
   const detail = routedDetail;
