@@ -153,6 +153,13 @@ nobody. Abandoning a preparation retires the workspace and leaves everyone who
 was seated in it with one less workspace, exactly as retiring a published demo
 does.
 
+After seating, preparation writes the complete ordered pair set of
+workspace-scoped **can impersonate** relationships, including every self-pair,
+through the generic WorkspaceDO writer. The operation id is their authority
+basis, so retirement revokes only the edges this demo produced. The runtime
+authorization path is owned by [impersonation](impersonation.md) and never reads
+the demo register.
+
 ### Seeding a demo from a pack
 
 A pack is versioned data behind a schema: a cast of *roles*, and ordered steps
@@ -697,6 +704,27 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-21 — Demo preparation produces platform impersonation relationships
+
+**What changed:** The seating phase idempotently creates every ordered
+**can impersonate** pair, including self-pairs, and retirement revokes the edges
+whose authority basis names that demo operation.
+
+**Why:** Sideline needs live operator-timed participant turns after preparation,
+but demo status cannot become a second authorization system. The generic
+relationship lets preparation supply authority without owning its runtime use.
+
+**Considered and rejected:** Authorizing from `demo_operations` at send time or
+reusing `demo_seed`. The first makes a register into live permission state; the
+second bypasses ordinary addressing and uses scripted inference.
+
+**Consequences:** Seating and relationship creation remain one idempotent phase,
+and demo retirement must revoke only its own authority basis while preserving
+prior messages and audit evidence. Runtime impersonation must not read this
+module's register.
+
+Design: `docs/PRDs/2026-09-19_impersonation-platform/prd.md`.
 
 ### 2026-09-17 — Admit seeded uploads as attachment messages
 

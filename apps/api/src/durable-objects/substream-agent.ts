@@ -422,7 +422,7 @@ const ProductAuthSchema = z.strictObject({
   // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
   // member who never signs in, verified the same way. Both are constructed
   // only by server code; `IdentityAuthContext.principal` says why.
-  principal: z.enum(["connector", "demo_seed"]).optional(),
+  principal: z.enum(["connector", "demo_seed", "impersonation"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -3339,7 +3339,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    // Any non-session principal — `connector`, `demo_seed` — is verified by
+    // Any non-session principal — `connector`, `demo_seed`, `impersonation` — is verified by
     // membership rather than by a session row. The enum on `principal` is the
     // gate: a value added to it inherits this branch.
     const nonSessionPrincipal = request.auth.principal !== undefined;
@@ -3351,7 +3351,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         sessionId: request.auth.sessionId,
       }));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
-      const refusal = nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
+      const refusal = request.auth.principal === "impersonation"
+        ? "impersonation_member_revoked"
+        : nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
       span.setError(refusal);
       // The message rides to `WorkstreamObjectClient.decode`, whose fallback
       // ("The work stream could not be loaded") misdescribes a refused send.

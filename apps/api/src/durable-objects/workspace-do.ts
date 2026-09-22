@@ -118,6 +118,11 @@ import {
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
+import {
+  RevokeImpersonationRelationshipsRequestSchema,
+  UpsertImpersonationRelationshipsRequestSchema,
+} from "@rally/contracts";
+import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
 import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
@@ -905,6 +910,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
+  "workspace_impersonation_relationships",
   // Claims live on `claimWebhookReceipt`; the only generic statements left
   // naming this table are the connection service's pre-cutover branches, which
   // run only when WORKSPACE_DOS is unbound and so never reach this object.
@@ -3569,6 +3575,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX workspace_workstream_pins_order_idx
       ON workspace_workstream_pins(user_id, space_id, position, workstream_id)`,
   ],
+}, {
+  version: 67,
+  description: "directed workspace impersonation relationships",
+  statements: [
+    `CREATE TABLE workspace_impersonation_relationships (
+      workspace_id TEXT NOT NULL,
+      impersonator_user_id TEXT NOT NULL,
+      represented_user_id TEXT NOT NULL,
+      authority_basis TEXT NOT NULL CHECK (length(authority_basis) BETWEEN 1 AND 180),
+      created_at TEXT NOT NULL,
+      revoked_at TEXT,
+      PRIMARY KEY (workspace_id, impersonator_user_id, represented_user_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_impersonation_relationships_targets_idx
+      ON workspace_impersonation_relationships(workspace_id, impersonator_user_id, revoked_at, represented_user_id)`,
+    ...workspaceIdentityFencesFor("workspace_impersonation_relationships"),
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4222,6 +4245,63 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   protected override migrationsReady(): Promise<void> {
     return this.initialized;
+  }
+
+  /** Generic platform writer. Producers supply the authority basis; no demo fact is read here. */
+  async upsertImpersonationRelationships(input: unknown): Promise<{ active: number }> {
+    await this.initialized;
+    const request = UpsertImpersonationRelationshipsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return new WorkspaceImpersonationStorage(this.state.storage).upsert({
+      ...request,
+      now: new Date().toISOString(),
+    });
+  }
+
+  /** Exact directed authorization read for an impersonation-aware surface. */
+  async authorizeImpersonation(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      impersonatorUserId: UserIdSchema,
+      representedUserId: UserIdSchema,
+    }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return {
+      relationship: new WorkspaceImpersonationStorage(this.state.storage).authorize(
+        request.workspaceId,
+        request.impersonatorUserId,
+        request.representedUserId,
+      ),
+    };
+  }
+
+  /** Active targets only. Membership is deliberately rechecked by the regional service. */
+  async listImpersonationRelationships(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      impersonatorUserId: UserIdSchema,
+    }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return {
+      relationships: new WorkspaceImpersonationStorage(this.state.storage)
+        .list(request.workspaceId, request.impersonatorUserId),
+    };
+  }
+
+  /** Revocation by exact pair or producer-owned authority basis. */
+  async revokeImpersonationRelationships(input: unknown): Promise<{ revoked: number }> {
+    await this.initialized;
+    const request = RevokeImpersonationRelationshipsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return new WorkspaceImpersonationStorage(this.state.storage).revoke({
+      workspaceId: request.workspaceId,
+      ...(request.authorityBasis ? { authorityBasis: request.authorityBasis } : {}),
+      ...(request.impersonatorUserId ? { impersonatorUserId: request.impersonatorUserId } : {}),
+      ...(request.representedUserId ? { representedUserId: request.representedUserId } : {}),
+      now: new Date().toISOString(),
+    });
   }
 
   /** Internal host RPCs: callers resolve execution/resource authority before changing membership. */
