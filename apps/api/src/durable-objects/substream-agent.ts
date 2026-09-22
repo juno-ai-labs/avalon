@@ -420,9 +420,11 @@ const ProductAuthSchema = z.strictObject({
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
   // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
-  // member who never signs in, verified the same way. Both are constructed
-  // only by server code; `IdentityAuthContext.principal` says why.
-  principal: z.enum(["connector", "demo_seed", "impersonation"]).optional(),
+  // member who never signs in, verified the same way. A provider callback
+  // uses `"resource_authorization"` after its state and grant are verified.
+  // These are constructed only by server code; `IdentityAuthContext.principal`
+  // says why.
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -3339,7 +3341,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    // Any non-session principal — `connector`, `demo_seed`, `impersonation` — is verified by
+    // Any non-session principal — `connector`, `demo_seed`, `impersonation`, or
+    // `resource_authorization` after a consumed provider callback — is verified by
     // membership rather than by a session row. The enum on `principal` is the
     // gate: a value added to it inherits this branch.
     const nonSessionPrincipal = request.auth.principal !== undefined;

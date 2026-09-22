@@ -111,6 +111,8 @@ export {
   type ConnectorAdapter,
   type ConnectorAuthorizationCallbackInput,
   type ConnectorAuthorizationInput,
+  type ConnectorResourceAuthorizationAdapter,
+  type ConnectorResourceAuthorizationResource,
   type ConnectorConnectionContext,
   type ConnectorPollResult,
   type ConnectorPollingActivityResult,
@@ -2292,6 +2294,91 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       supportsWatches: true,
       supportsPolling: true,
       supportsWebhooks: false
+    },
+
+    resourceAuthorization: {
+      async begin(input) {
+        const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+        url.searchParams.set("client_id", config.clientId);
+        url.searchParams.set("redirect_uri", config.redirectUri);
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("scope", "https://www.googleapis.com/auth/drive.file");
+        url.searchParams.set("state", input.state);
+        url.searchParams.set("code_challenge", input.codeChallenge);
+        url.searchParams.set("code_challenge_method", "S256");
+        url.searchParams.set("access_type", "online");
+        url.searchParams.set("include_granted_scopes", "false");
+        url.searchParams.set("prompt", "consent");
+        url.searchParams.set("trigger_onepick", "true");
+        url.searchParams.set("file_ids", input.resource.id);
+        return { url: url.toString() };
+      },
+      async inspect(input) {
+        const response = await api(
+          input.connection,
+          googleDriveMetadataUrl(input.resource.id).toString(),
+          { signal: input.signal },
+          [404],
+        );
+        if (response.status === 404) {
+          throw new ConnectorError("unsupported_capability", "Google could not confirm access to this file");
+        }
+        const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+        const capabilities = readRecord(metadata, "capabilities");
+        const name = readString(metadata, "name");
+        const expectedMimeType = input.capability === "sheets.write"
+          ? "application/vnd.google-apps.spreadsheet"
+          : input.capability === "docs.write"
+            ? "application/vnd.google-apps.document"
+            : null;
+        if (readString(metadata, "id") !== input.resource.id
+          || !name
+          || !expectedMimeType
+          || readString(metadata, "mimeType") !== expectedMimeType
+          || capabilities === null
+          || readBoolean(capabilities, "canEdit") !== true) {
+          throw new ConnectorError("unsupported_capability", "This file cannot be edited by the connected Google account");
+        }
+        return {
+          authorized: readBoolean(metadata, "isAppAuthorized") === true,
+          resource: {
+            id: input.resource.id,
+            type: "document",
+            name,
+          },
+        };
+      },
+      async complete(input) {
+        if (input.pickedResourceIds.length !== 1 || input.pickedResourceIds[0] !== input.resource.id) {
+          throw new ConnectorError("invalid_payload", "Google authorized a different file", {
+            reason: "resource_authorization_mismatch",
+          });
+        }
+        const response = await fetcher("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code: input.code,
+            client_id: config.clientId,
+            client_secret: config.clientSecret,
+            redirect_uri: config.redirectUri,
+            grant_type: "authorization_code",
+            code_verifier: input.codeVerifier,
+          }),
+          signal: input.signal,
+        });
+        const token = await safeJsonBounded(response, 256_000);
+        if (!response.ok || !readString(token, "access_token")) {
+          throw new ConnectorError("provider_error", "Google resource authorization failed", token);
+        }
+        const inspected = await this.inspect(input);
+        if (!inspected.authorized) {
+          throw new ConnectorError("unauthorized", "Google did not authorize this file for Rally", {
+            reason: "resource_authorization_not_effective",
+          });
+        }
+        return inspected.resource;
+      },
     },
 
     async beginAuthorization(input) {
@@ -4485,13 +4572,21 @@ async function assertGoogleDriveFileWritable(
   const isAppAuthorized = readBoolean(metadata, "isAppAuthorized") === true;
   const canEdit = capabilities ? readBoolean(capabilities, "canEdit") === true : false;
   if (isAppAuthorized && canEdit) return;
-  throw googleDriveFileNotWritableError(fileId, isAppAuthorized, canEdit);
+  throw googleDriveFileNotWritableError(
+    fileId,
+    isAppAuthorized,
+    canEdit,
+    readString(metadata, "name") ?? "Untitled file",
+    actual === expected ? (expected === "spreadsheet" ? "sheets.write" : "docs.write") : undefined,
+  );
 }
 
 function googleDriveFileNotWritableError(
   fileId: string,
   isAppAuthorized: boolean,
-  canEdit: boolean
+  canEdit: boolean,
+  name?: string,
+  capability?: "docs.write" | "sheets.write",
 ): ConnectorError {
   return new ConnectorError(
     "unsupported_capability",
@@ -4501,7 +4596,16 @@ function googleDriveFileNotWritableError(
       reason: "drive_file_not_writable",
       fileId,
       isAppAuthorized,
-      canEdit
+      canEdit,
+      ...(!isAppAuthorized && canEdit && name && capability ? {
+        resourceAuthorization: {
+          kind: "connector_resource_authorization",
+          provider: "google",
+          capability,
+          operation: "edit",
+          resource: { id: fileId, type: "document", name },
+        },
+      } : {}),
     }
   );
 }

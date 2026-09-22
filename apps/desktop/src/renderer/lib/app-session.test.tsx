@@ -143,6 +143,7 @@ function SessionProbe(): React.JSX.Element {
       <output data-testid="session-token">{session?.accessToken ?? 'none'}</output>
       <output data-testid="session-role">{session?.workspace?.role ?? 'none'}</output>
       <output data-testid="pending-connector-attempt">{context.pendingConnectorOAuth?.attemptId ?? 'none'}</output>
+      <output data-testid="pending-resource-status">{context.pendingConnectorOAuth?.resourceAuthorizationStatus ?? 'none'}</output>
       <output data-testid="deep-link-error">{deepLinkError ?? 'none'}</output>
     </>
   );
@@ -1152,6 +1153,49 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://workspace/global/${workspaceId}/auth/complete?status=denied&error=access_denied&attempt=${attemptId}&provider=slack`,
     );
     await waitFor(() => expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('none'));
+    expect(bridge.openSettings).not.toHaveBeenCalled();
+  });
+
+  it('returns a resource grant to its channel card without opening Connections', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000023';
+    const attemptId = 'a'.repeat(43);
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
+    bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
+    renderProvider();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
+    await act(async () => observedSetPendingConnectorOAuth!({
+      source: 'resource', provider: 'google', region: 'global', workspaceId, attemptId,
+      resourceAuthorizationKey: 'connection:file:tool', resourceAuthorizationStatus: 'pending',
+    }));
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${attemptId}&provider=google`,
+    );
+    await waitFor(() => expect(screen.getByTestId('pending-resource-status')).toHaveTextContent('succeeded'));
+    expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent(attemptId);
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    expect(bridge.openSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps a denied resource grant as a retryable card state', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000023';
+    const attemptId = 'a'.repeat(43);
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
+    bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
+    renderProvider();
+    expect(await screen.findByText('global:Organization A')).toBeVisible();
+    await act(async () => observedSetPendingConnectorOAuth!({
+      source: 'resource', provider: 'google', region: 'global', workspaceId, attemptId,
+      resourceAuthorizationKey: 'connection:file:tool', resourceAuthorizationStatus: 'pending',
+    }));
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/auth/complete?status=denied&error=access_denied&attempt=${attemptId}&provider=google`,
+    );
+    await waitFor(() => expect(screen.getByTestId('pending-resource-status')).toHaveTextContent('denied'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     expect(bridge.openSettings).not.toHaveBeenCalled();
   });
 

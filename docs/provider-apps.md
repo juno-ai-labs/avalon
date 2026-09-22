@@ -85,7 +85,11 @@ Cloud OAuth 2.0 *Web application* clients in the same Google Cloud project:
    Sheets connections.
 
 Enable these APIs in the project that owns the connector client: Gmail API, Google
-Calendar API, Google Drive API, Google Docs API, Google Sheets API.
+Calendar API, Google Drive API, Google Docs API, Google Sheets API, and Google
+Picker API. Enable Drive UI integration for the connector client; Rally's
+resource-authorization flow uses the desktop/mobile one-file Picker with the
+existing connector callback URI, `drive.file`, and the exact target file ID. The
+Picker opens in the system browser rather than an Electron webview.
 
 Register these exact hosted authorized redirect URIs:
 
@@ -444,6 +448,26 @@ repository. What can be:
   what this document says. A change here that is not exercised there is unverified.
 
 ## Changelog
+
+### 2026-09-22 — Google resource authorization uses one-file Picker
+
+**What changed:** The connector client now supports the desktop/mobile Picker
+flow for granting `drive.file` access to one existing Doc or Sheet. Rally requests
+only that scope, disables inherited grants, filters to the failed resource, and
+verifies the existing connector can edit it before continuing.
+
+**Why:** Google separates a user's editor permission from the OAuth client's
+per-file authorization. Reconnecting the whole account cannot express the missing
+resource grant and risks changing an otherwise healthy connection.
+
+**Considered and rejected:** Embedding Picker in Electron or merging the
+temporary Picker token into the connection. Google's desktop flow belongs in the
+system browser, and the temporary token must not narrow or replace the durable
+Mail/Calendar or Drive connector credential.
+
+**Consequences:** Operators must enable Google Picker API and Drive UI integration
+for the existing connector OAuth client. The registered callback URI and approved
+scope set do not change.
 
 ### 2026-09-19 — Keep Canva registration and launch approval distinct
 

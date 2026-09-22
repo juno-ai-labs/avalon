@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { CONNECTOR_CONNECTION_CARD_WIRE_NAME } from '@rally/contracts';
+import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, ConnectorResourceAuthorizationRequestSchema } from '@rally/contracts';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import {
   ConnectorConnectionCard,
+  ConnectorResourceAuthorizationCard,
   ConnectorConnectionsProvider,
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
+  connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 
 const mocks = vi.hoisted(() => ({
@@ -30,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   workspaceRole: 'owner' as 'owner' | 'admin' | 'member',
   setPendingConnectorOAuth: vi.fn(),
   startProviderConnection: vi.fn(),
+  startConnectorResourceAuthorization: vi.fn(),
 }));
 
 vi.mock('../lib/collaboration-session', () => ({
@@ -52,6 +55,7 @@ vi.mock('../lib/collaboration-session', () => ({
       }),
       reconnectConnection: mocks.reconnectConnection,
       startProviderConnection: mocks.startProviderConnection,
+      startConnectorResourceAuthorization: mocks.startConnectorResourceAuthorization,
     },
     session: mocks.session,
     connectorSetup: mocks.setupEnabled ? { pendingConnectorOAuth: mocks.pendingConnectorOAuth,
@@ -74,10 +78,73 @@ beforeEach(() => {
     attemptId: 'attempt-one',
     url: 'https://slack.com/oauth/test',
   });
+  mocks.startConnectorResourceAuthorization.mockResolvedValue({
+    attemptId: 'a'.repeat(43),
+    status: 'pending',
+    url: 'https://accounts.google.com/o/oauth2/v2/auth',
+  });
   mocks.openExternal.mockResolvedValue(undefined);
 });
 
 describe('connector connection resolution', () => {
+  it('restores a resource authorization card only from a valid failed tool result', () => {
+    const recovery = {
+      kind: 'connector_resource_authorization',
+      provider: 'google',
+      connectionId: '00000000-0000-7000-8000-000000000001',
+      capability: 'sheets.write',
+      operation: 'edit',
+      resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
+      parentId: '00000000-0000-7000-8000-000000000002',
+      substreamId: '0',
+      failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
+    };
+    expect(connectorResourceAuthorizationRequest({
+      toolEvent: { status: 'failed', output: { recovery } },
+    })).toEqual(recovery);
+    expect(connectorResourceAuthorizationRequest({
+      toolEvent: { status: 'completed', output: { recovery } },
+    })).toBeNull();
+    expect(connectorResourceAuthorizationRequest({
+      toolEvent: { status: 'failed', output: { recovery: { ...recovery, operation: 'delete' } } },
+    })).toBeNull();
+  });
+
+  it('renders and starts the generic resource authorization recovery', async () => {
+    const request = ConnectorResourceAuthorizationRequestSchema.parse({
+      kind: 'connector_resource_authorization' as const,
+      provider: 'google',
+      connectionId: '00000000-0000-7000-8000-000000000001',
+      capability: 'sheets.write',
+      operation: 'edit' as const,
+      resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
+      parentId: '00000000-0000-7000-8000-000000000002',
+      substreamId: '0',
+      failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[{
+          id: request.connectionId,
+          modelPluginId: 'plugin_google',
+          connectorType: 'google',
+          displayName: 'Google Drive + Docs + Sheets',
+          scope: 'you',
+          status: 'healthy',
+          capabilities: ['sheets.write'],
+        }]}>
+          <ConnectorResourceAuthorizationCard request={request} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('Google needs you to allow Rally to edit this file.')).toBeInTheDocument();
+    expect(screen.getByText('Ellen Buckley Assessment')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Allow editing' }));
+    await waitFor(() => expect(mocks.startConnectorResourceAuthorization).toHaveBeenCalledWith(request), { timeout: 5_000 });
+    expect(mocks.openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth');
+  });
+
   it('omits connector setup and its discovery request in a lite collaboration host', () => {
     mocks.setupEnabled = false;
     const { container } = render(<ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'personal' }} />);

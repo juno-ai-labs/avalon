@@ -985,6 +985,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               pending.workspaceId === intent.target.workspaceId
               && pending.region === intent.target.region
             ));
+          if (pendingMatches && pending.source === 'resource') {
+            if (intent.status === 'connected') {
+              setDeepLinkError(null);
+              setPendingConnectorOAuth({ ...pending, resourceAuthorizationStatus: 'succeeded' });
+            } else {
+              setPendingConnectorOAuth({
+                ...pending,
+                resourceAuthorizationStatus: intent.status === 'denied' ? 'denied' : 'failed',
+              });
+            }
+            return;
+          }
           if (intent.status === 'connected') {
             setDeepLinkError(null);
             await Promise.all([
