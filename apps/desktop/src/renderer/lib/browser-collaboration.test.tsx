@@ -116,19 +116,19 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
   try {
     expect(await screen.findByRole('button', { name: 'Product' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('link', { name: 'Channel Alpha, Private channel' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
     expect(screen.queryByRole('link', { name: 'Channel Beta' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Research' }));
-    expect(await screen.findByRole('link', { name: 'Channel Beta, Public channel' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Channel Alpha, Private channel' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Channel Beta' })).toHaveAttribute('aria-description', 'Public channel');
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
     expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`);
     expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
 
     await waitFor(() => expect(BrowserSocket.instances.length).toBeGreaterThan(0));
     await act(async () => { BrowserSocket.instances.at(-1)!.open(); });
     expect(await screen.findByRole('button', { name: 'Go to breakout: Breakout Beta' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(screen.getByRole('link', { name: 'Channel Alpha, Private channel' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Channel Alpha' }));
     await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${parent}/substreams/${child}`));
     expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Product' })).toHaveAttribute('aria-pressed', 'false');
@@ -152,6 +152,6 @@ it('keeps an authorized Channel reachable when no visible Space contains it', as
     expect(await screen.findByRole('button', { name: 'Shared channels' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('1 channel')).toBeVisible();
     expect(screen.queryByText(/Associated/u)).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Channel Alpha, Private channel' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
   } finally { view.unmount(); }
 });
