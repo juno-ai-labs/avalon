@@ -1,6 +1,32 @@
 name: Release Sideline for macOS
 
 on:
+  push:
+    branches:
+      - main
+    # The installed Sideline app, the shared source it bundles, and the release
+    # helpers that produce its signed update payload. The planner checks the
+    # complete diff from the last Sideline tag after entering the release queue,
+    # so a collapsed run cannot strand an earlier relevant change.
+    paths:
+      - 'apps/sideline/**'
+      - 'apps/desktop/scripts/apple-notarization.mjs'
+      - 'apps/desktop/scripts/apply-release-version.mjs'
+      - 'apps/desktop/scripts/blockmap.mjs'
+      - 'apps/desktop/scripts/entry-point.mjs'
+      - 'apps/desktop/scripts/finalize-macos-release.mjs'
+      - 'apps/desktop/scripts/release-cache.mjs'
+      - 'apps/desktop/scripts/release-cloudflare.mjs'
+      - 'apps/desktop/scripts/release-lib.mjs'
+      - 'packages/contracts/**'
+      - 'packages/ui/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.npmrc'
+      - '.github/workflows/release-sideline-macos.yml'
   workflow_dispatch:
 
 permissions:
@@ -9,32 +35,81 @@ permissions:
 concurrency:
   group: sideline-macos-release
   cancel-in-progress: false
+  queue: single
 
 jobs:
-  verify:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
     outputs:
-      commit: ${{ steps.commit.outputs.sha }}
-      version: ${{ steps.version.outputs.value }}
-      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.plan.outputs.should_release }}
+      ref: ${{ steps.plan.outputs.ref }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      requires_api_deploy: ${{ steps.plan.outputs.requires_api_deploy }}
+      api_deployment_ref: ${{ steps.plan.outputs.api_deployment_ref }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
+      - name: Fetch the release watermark and current main tip
+        run: git fetch --tags origin main
+
+      - name: Plan from the tip after entering the singleton queue
+        run: git checkout --detach origin/main
+
+      - id: plan
+        run: node apps/sideline/scripts/plan-release.mjs
+
+  verify:
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: true
+
+      - name: Stamp the next Sideline patch version on main
+        shell: bash
+        env:
+          SIDELINE_RELEASE_REF: ${{ needs.plan.outputs.ref }}
+          SIDELINE_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SIDELINE_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$SIDELINE_RELEASE_REF" || {
+            echo "main advanced after Sideline release planning; rerun to bind the build and API gate to the new tip" >&2
+            exit 1
+          }
+          git reset --hard "$SIDELINE_RELEASE_REF"
+          test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
+            echo "${SIDELINE_RELEASE_TAG} already exists; refusing to rebuild a published version" >&2
+            exit 1
+          }
+          node apps/sideline/scripts/apply-release-version.mjs "$SIDELINE_RELEASE_VERSION"
+          if git diff --quiet; then
+            echo "main already declares ${SIDELINE_RELEASE_VERSION}; resuming its unpublished release"
+          else
+            git add apps/sideline/package.json
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Bump Sideline to ${SIDELINE_RELEASE_VERSION} for release"
+            git push origin HEAD:main
+          fi
+
       - id: commit
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - id: version
-        shell: bash
-        run: |
-          version="$(node -p "require('./apps/sideline/package.json').version")"
-          node -e "const value=process.argv[1]; if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value)) throw new Error('Sideline version must be stable semver')" "$version"
-          tag="sideline-v${version}"
-          test -z "$(git ls-remote --tags origin "refs/tags/${tag}")" || { echo "${tag} already exists" >&2; exit 1; }
-          echo "value=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -61,8 +136,31 @@ jobs:
       - name: Test Sideline
         run: pnpm --filter @rally/sideline test
 
+      - name: Require the matching API deployment for shared contracts
+        if: needs.plan.outputs.requires_api_deploy == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIDELINE_API_DEPLOYMENT_REF: ${{ needs.plan.outputs.api_deployment_ref }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow deploy-api.yml \
+            --commit "$SIDELINE_API_DEPLOYMENT_REF" \
+            --event push \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')"
+          test -n "$run_id" || {
+            echo "No API deployment run exists for contract commit ${SIDELINE_API_DEPLOYMENT_REF}" >&2
+            exit 1
+          }
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
   release:
-    needs: verify
+    needs: [plan, verify]
+    if: needs.plan.outputs.should_release == 'true'
     runs-on: macos-26
     timeout-minutes: 90
     environment: desktop-release
@@ -139,10 +237,20 @@ jobs:
       - name: Preserve signed release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Sideline-${{ needs.verify.outputs.version }}-macOS
+          name: Sideline-${{ needs.plan.outputs.version }}-macOS
           path: apps/sideline/release/release/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Confirm the release tag is still unpublished
+        shell: bash
+        env:
+          SIDELINE_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
+            echo "${SIDELINE_RELEASE_TAG} already exists; refusing to overwrite its published artifacts" >&2
+            exit 1
+          }
 
       - name: Publish update feed and installer to R2
         run: pnpm --filter @rally/sideline release:publish
@@ -150,7 +258,7 @@ jobs:
       - name: Record the published release tag
         shell: bash
         env:
-          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \

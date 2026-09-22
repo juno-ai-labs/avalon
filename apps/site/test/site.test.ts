@@ -601,6 +601,8 @@ describe('public Rally site', () => {
     const attempt = 'a'.repeat(43);
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
+    const sidelineSuccessTarget = `sideline://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
+    const sidelineErrorTarget = `sideline://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
     const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&attempt=${attempt}&provider=linear`;
     const targetedConnectorSuccess = `avalon://workspace/enterprise/00000000-0000-7000-8000-000000000009/auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&attempt=${attempt}&provider=linear`;
     const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=enterprise&attempt=${attempt}&status=denied&error=oauth_denied`;
@@ -610,6 +612,8 @@ describe('public Rally site', () => {
 
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
+    expect(parseDesktopTarget(asFragment(sidelineSuccessTarget))).toBe(sidelineSuccessTarget);
+    expect(parseDesktopTarget(asFragment(sidelineErrorTarget))).toBe(sidelineErrorTarget);
     expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
     expect(parseDesktopTarget(asFragment(targetedConnectorSuccess))).toBe(targetedConnectorSuccess);
     expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
@@ -622,6 +626,7 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=us&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
+    expect(parseDesktopTarget(asFragment(`sideline://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}&extra=value`))).toBeNull();
     expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear')))
       .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear');
