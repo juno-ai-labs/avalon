@@ -47,11 +47,13 @@ import {
 } from '@rally/contracts/citations';
 import {
   ConnectorConnectionCard,
+  ConnectorResourceAuthorizationCard,
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
   connectorConnectionCardProvider,
   connectorConnectionCardSelectionKey,
+  connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -2502,6 +2504,8 @@ interface MessageBlockProps {
   connectorConnectionCards?: boolean;
   connectedConnectorSelections?: ReadonlySet<string>;
   onConnectorConnected?: (selectionKey: string) => void;
+  authorizedResourceToolIds?: ReadonlySet<string>;
+  onResourceAuthorized?: (failedToolInvocationId: string) => void;
 }
 
 export function MessageBlock({
@@ -2521,6 +2525,8 @@ export function MessageBlock({
   connectorConnectionCards = false,
   connectedConnectorSelections,
   onConnectorConnected,
+  authorizedResourceToolIds,
+  onResourceAuthorized,
 }: MessageBlockProps): React.JSX.Element {
   const presentations = useContext(MemberPresentationContext);
   const profileUserId = message.authorType === 'human' ? message.author?.id
@@ -2545,11 +2551,20 @@ export function MessageBlock({
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') {
+    const resourceAuthorization = connectorConnectionCards
+      ? connectorResourceAuthorizationRequest(message)
+      : null;
     const connectionCard = connectorConnectionCards ? connectorConnectionCardInput(message) : null;
     const connectionCardProvider = connectionCard ? connectorConnectionCardProvider(connectionCard) : null;
     return (
       <div className="transcript-event" id={`message-${message.id}`}>
-        {connectionCard && connectionCardProvider ? (
+        {resourceAuthorization ? (
+          <ConnectorResourceAuthorizationCard
+            request={resourceAuthorization}
+            latchedAuthorized={Boolean(authorizedResourceToolIds?.has(resourceAuthorization.failedToolInvocationId))}
+            {...(onResourceAuthorized ? { onAuthorized: onResourceAuthorized } : {})}
+          />
+        ) : connectionCard && connectionCardProvider ? (
           <ConnectorConnectionCard
             latchedConnected={Boolean(connectedConnectorSelections?.has(
               connectorConnectionCardSelectionKey(connectionCard),

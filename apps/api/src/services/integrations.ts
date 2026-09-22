@@ -70,6 +70,8 @@ import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationActivationV1Schema,
   AutomationDetailSchema,
+  ConnectorResourceAuthorizationHintSchema,
+  ConnectorResourceAuthorizationRequestSchema,
   ModelPluginIdSchema,
   WorkstreamReadResourceOutputSchema,
   WorkstreamSearchResourceOutputSchema,
@@ -4232,11 +4234,28 @@ export async function runWorkstreamHarness(
             const pluginActivityId = plugin.activityId;
             const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
             await ensureTranscriptToolParents(event);
+            const connectionId = event.pluginId.startsWith("connection:")
+              ? event.pluginId.slice("connection:".length)
+              : null;
+            const resourceAuthorization = ConnectorResourceAuthorizationHintSchema.safeParse(
+              event.data?.details?.resourceAuthorization,
+            );
+            const recovery = connectionId && resourceAuthorization.success
+              ? ConnectorResourceAuthorizationRequestSchema.safeParse({
+                    ...resourceAuthorization.data,
+                    connectionId,
+                    parentId: input.parentId,
+                    substreamId: input.substreamId ?? "0",
+                    failedToolInvocationId: event.toolCallId,
+                  })
+              : null;
+            const participantSafeResult = recovery?.success ? { recovery: recovery.data } : undefined;
             await orderedTranscript.upsertToolLifecycle({
               toolCallId: event.toolCallId,
               pluginId: event.pluginId,
               toolName: event.toolName,
               status: ambiguous || planAlreadyAmbiguous ? "ambiguous" : "failed",
+              ...(participantSafeResult ? { participantSafeResult } : {}),
               error: event.error,
               occurredAtUtc: new Date().toISOString(),
             });

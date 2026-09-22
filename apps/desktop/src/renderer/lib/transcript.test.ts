@@ -3093,6 +3093,46 @@ describe('plugin runs stay current as the transcript changes', () => {
 });
 
 describe('a tool row takes its plugin name from the run', () => {
+  it('keeps a failed connector resource recovery in the normalized tool row', () => {
+    const recovery = {
+      kind: 'connector_resource_authorization', provider: 'google',
+      capability: 'sheets.write', operation: 'edit',
+      resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
+      connectionId: '9c1f0000-0000-4000-8000-000000000001',
+      parentId: '9c1f0000-0000-4000-8000-000000000002',
+      substreamId: '0',
+      failedToolInvocationId: '9c1f0000-0000-4000-8000-000000000003:turn:1:tool:0',
+    };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 't1', entryKind: 'conversation',
+          actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+          createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'tool', blockId: 'b0', blockIndex: 0,
+            toolCallId: recovery.failedToolInvocationId,
+            pluginId: `connection:${recovery.connectionId}`,
+            toolName: 'sheets_update_cells', callIndex: 0, status: 'failed',
+            participantSafeInput: null, participantSafeResult: { recovery },
+            error: 'Google file is read-only for Rally', activityId: null,
+          }],
+          activityId: null,
+        }], activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    };
+    expect(orderedTranscriptMessages(snapshot, 'w').find((message) =>
+      message.messageType === 'tool_event')?.toolEvent).toMatchObject({
+      status: 'failed', output: { recovery },
+    });
+  });
+
   it('groups a connector block the activity tree could not name', () => {
     // The production shape for a connector: `connection:<uuid>` on the block,
     // no plugin activity, no `turn.activityId`. Without a name `pluginGroup`

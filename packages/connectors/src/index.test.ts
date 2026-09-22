@@ -2699,6 +2699,87 @@ describe("connectors", () => {
     ]);
   });
 
+  it("authorizes exactly one existing Drive file without replacing connector credentials", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      requests.push(url);
+      if (url.hostname === "oauth2.googleapis.com") {
+        return googleJson({ access_token: "one-pick-access", expires_in: 3600, token_type: "Bearer" });
+      }
+      return googleJson({
+        id: "sheet-1",
+        name: "Ellen Buckley Assessment",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        isAppAuthorized: true,
+        capabilities: { canEdit: true },
+      });
+    };
+    const adapter = googleAdapter(fetcher);
+    const request = {
+      capability: "sheets.write",
+      operation: "edit" as const,
+      resource: { id: "sheet-1", type: "document", name: "Existing sheet" },
+    };
+    const started = await adapter.resourceAuthorization!.begin({
+      ...request,
+      state: "state-for-google-resource-authorization",
+      codeChallenge: "challenge-for-google-resource-authorization",
+    });
+    const url = new URL(started.url);
+    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/drive.file");
+    expect(url.searchParams.get("include_granted_scopes")).toBe("false");
+    expect(url.searchParams.get("prompt")).toBe("consent");
+    expect(url.searchParams.get("trigger_onepick")).toBe("true");
+    expect(url.searchParams.get("file_ids")).toBe("sheet-1");
+
+    const connection = googleConnection(["sheets.write"]);
+    await expect(adapter.resourceAuthorization!.complete({
+      ...request,
+      code: "picker-code",
+      codeVerifier: "v".repeat(32),
+      pickedResourceIds: ["sheet-1"],
+      connection,
+      signal: neverAborts(),
+    })).resolves.toEqual({ id: "sheet-1", type: "document", name: "Ellen Buckley Assessment" });
+    expect(connection.credentials).toEqual({ accessToken: "google-access-token" });
+    expect(requests.map((candidate) => candidate.hostname)).toEqual([
+      "oauth2.googleapis.com",
+      "www.googleapis.com",
+    ]);
+  });
+
+  it("rejects a Google resource authorization that picked another file", async () => {
+    const adapter = googleAdapter(async () => { throw new Error("provider must not be called"); });
+    await expect(adapter.resourceAuthorization!.complete({
+      code: "picker-code",
+      codeVerifier: "v".repeat(32),
+      pickedResourceIds: ["sheet-2"],
+      capability: "sheets.write",
+      operation: "edit",
+      resource: { id: "sheet-1", type: "document", name: "Existing sheet" },
+      connection: googleConnection(["sheets.write"]),
+      signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "invalid_payload" });
+  });
+
+  it("refuses a resource grant when the connected Google account cannot edit the file", async () => {
+    const adapter = googleAdapter(async () => googleJson({
+      id: "sheet-1",
+      name: "Read-only sheet",
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      isAppAuthorized: false,
+      capabilities: { canEdit: false },
+    }));
+    await expect(adapter.resourceAuthorization!.inspect({
+      capability: "sheets.write",
+      operation: "edit",
+      resource: { id: "sheet-1", type: "document", name: "Read-only sheet" },
+      connection: googleConnection(["sheets.write"]),
+      signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "unsupported_capability" });
+  });
+
   it("leaves the provider failure alone when Drive cannot say what the id is", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
@@ -2769,6 +2850,8 @@ describe("connectors", () => {
       if (url.pathname.endsWith("/files/doc-not-authorized")) {
         return googleJson({
           id: "doc-not-authorized",
+          name: "Existing doc",
+          mimeType: "application/vnd.google-apps.document",
           isAppAuthorized: false,
           capabilities: { canEdit: true }
         });
@@ -2778,6 +2861,15 @@ describe("connectors", () => {
           id: "sheet-user-read-only",
           isAppAuthorized: true,
           capabilities: { canEdit: false }
+        });
+      }
+      if (url.pathname.endsWith("/files/doc-unsupported-mime")) {
+        return googleJson({
+          id: "doc-unsupported-mime",
+          name: "A PDF",
+          mimeType: "application/pdf",
+          isAppAuthorized: false,
+          capabilities: { canEdit: true }
         });
       }
       if (url.pathname.endsWith("/files/doc-hidden-from-app")) {
@@ -2812,7 +2904,18 @@ describe("connectors", () => {
       signal
     })).rejects.toMatchObject({
       code: "unsupported_capability",
-      details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: true }
+      details: {
+        reason: "drive_file_not_writable",
+        isAppAuthorized: false,
+        canEdit: true,
+        resourceAuthorization: {
+          kind: "connector_resource_authorization",
+          provider: "google",
+          capability: "docs.write",
+          operation: "edit",
+          resource: { id: "doc-not-authorized", type: "document", name: "Existing doc" },
+        },
+      }
     });
     await expect(adapter.executeTool("sheets.update_values", {
       spreadsheetId: "sheet-user-read-only",
@@ -2825,6 +2928,17 @@ describe("connectors", () => {
     })).rejects.toMatchObject({
       code: "unsupported_capability",
       details: { reason: "drive_file_not_writable", isAppAuthorized: true, canEdit: false }
+    });
+    await expect(adapter.executeTool("docs.append_text", {
+      documentId: "doc-unsupported-mime",
+      text: "Do not write"
+    }, {
+      connection: googleConnection(["docs.write"]),
+      principal,
+      signal
+    })).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family" }
     });
     await expect(adapter.executeTool("docs.append_text", {
       documentId: "doc-hidden-from-app",
