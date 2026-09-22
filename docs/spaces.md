@@ -849,6 +849,11 @@ anything product-shaped can refuse. Every Space read therefore goes through
 the Channel badge aggregate independently answers empty until the Breakout
 projection tables exist;
 every Space *write* is refused by name with `space_bootstrap_pending`.
+Breakout directory projections are also writes, but their Queue contract has a
+retryable answer: while those tables are absent, WorkspaceDO omits the envelope
+from `accepted` and writes no receipt. The activity consumer then retries the
+same envelope after migration 63 instead of permanently dropping a quiet
+Breakout's once-only migration replay.
 
 The two exceptions are paginated and therefore cannot ride the socket: a Space's
 member Channels (`GET /spaces/:id/channels`) and a Channel's access sources
@@ -1956,6 +1961,32 @@ the live Space hierarchy arrives, walks existing directory pages until the
 matching Channel row is found, and is discarded if the target is absent or the
 reader navigates elsewhere. Repeated deep links to the already-open Channel
 rearm the reveal even though the hash itself does not change.
+
+### 2026-09-22 — Pre-Space Organizations retain breakout projection retries
+
+**What changed:** WorkspaceDO now leaves a breakout directory envelope
+unaccepted, without writing its receipt, while meeting-notes cleanup holds the
+Organization before migration 63 and its breakout tables do not exist. The
+activity consumer's existing incomplete-acceptance check retries the same
+envelope after the Organization advances.
+
+**Why:** WorkstreamDO migration 19 emits each quiet existing Breakout only once.
+The earlier compatibility guard accepted and dropped every breakout projection
+while the destination tables were absent, which was tolerable for ordinary live
+updates that later supersede the row but permanently lost that once-only
+backfill. Those Breakouts would therefore remain absent from Space pages and
+Channel attention badges even after both migrations completed.
+
+**Considered and rejected:** Receipting the replay and relying on a future child
+update repeats the bug for quiet Breakouts. Adding a second backfill mechanism
+or destination-readiness RPC to every Channel duplicates the Queue's existing
+retry contract and adds a cross-object check to the source migration.
+
+**Consequences:** A breakout projection that reaches an Organization still at
+schema 57 retries instead of terminating successfully. Other directory effects
+in the same request retain their normal acceptance, and once migration 63 is
+present the unchanged receipt and projection fences apply the retry exactly
+once.
 
 ### 2026-09-22 — Space selection keeps the Spaces rail open
 

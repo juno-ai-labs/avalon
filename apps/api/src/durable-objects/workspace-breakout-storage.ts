@@ -194,11 +194,12 @@ export class WorkspaceBreakoutStorage {
    *
    * The same guard, for the same reason, as `WorkspaceSpaceStorage.ready`: an
    * Organization held at schema 57 by the meeting-notes retirement runs on a
-   * database with none of these tables, and a breakout projection arriving for
-   * it must be accepted and dropped rather than fail its whole Queue batch
-   * forever. The Channel that produced it will re-publish nothing, but the
-   * effect is a projection — the next one supersedes it — so losing one is a
-   * stale row until the next message rather than a lost fact.
+   * database with none of these tables. The caller must leave a breakout
+   * projection unaccepted in that state: a live child update will eventually
+   * supersede an ordinary dropped projection, but WorkstreamDO migration 19 is
+   * a once-only replay for quiet existing breakouts and has no later update to
+   * rely on. An incomplete acceptance makes the Queue retry after migration 63
+   * creates the destination tables.
    */
   ready(): boolean {
     this.tablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(

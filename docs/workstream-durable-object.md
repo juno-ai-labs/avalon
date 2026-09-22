@@ -1151,6 +1151,9 @@ never acquired an Organization row and could not contribute to its Channel's
 attention badge. The migration receipt is the once-only fleet fence, the
 parent outbox is still the durable delivery boundary, and the projection-key
 hash makes the replay a no-op for a breakout that had already crossed it.
+An Organization whose meeting-notes cleanup still holds it before migration 63
+leaves the delivery unaccepted rather than receipting a drop, so the activity
+Queue retries once the breakout tables exist.
 [`spaces.md`](spaces.md#breakouts-reach-the-organization) owns what the
 Organization does with them, which today is one list on one screen.
 `AutomationDO`
@@ -1846,19 +1849,20 @@ one object operation and publish the same canonical effects.
 
 ### 2026-09-22 — Existing breakouts enter the Organization projection
 
-**What changed:** WorkstreamDO migration 19 replays the current common and
-per-viewer projections for every stored non-main, non-background conversation
-through the existing per-breakout projection keys and durable parent outbox.
+**What changed:** WorkstreamDO migration 19 replays the current common
+projection and each matching user projection for every stored non-main,
+non-background conversation through the existing per-breakout projection keys
+and durable parent outbox.
 The migration receipt makes the fleet pass once-only; an existing projection
 key with the same payload hash makes it idempotent for breakouts that were
 already forwarded.
 
 **Why:** Breakout forwarding was introduced as behavior on the next child
 projection. Existing quiet breakouts already had their current projections in
-their Channel's `substream_directory` tables, but nothing caused those rows to
-cross the new boundary. WorkspaceDO therefore counted only breakouts that
-changed after rollout, leaving Channel attention badges at zero for older
-breakouts.
+their Channel's `substream_directory` and `substream_user_directory` tables,
+but nothing caused those rows to cross the new boundary. WorkspaceDO therefore
+counted only breakouts that changed after rollout, leaving Channel attention
+badges at zero for older breakouts.
 
 **Considered and rejected:** Rebuilding a missing Channel count when its
 sidebar row is read. That would put cross-object RPCs on the navigation read
@@ -1869,9 +1873,11 @@ so replaying their ordinary outbox handoff is the smaller authority-preserving
 repair.
 
 **Consequences:** Applying the migration may enqueue one common row plus one
-row per stored viewer for each existing breakout. Queue delivery and
-WorkspaceDO's receipts retain their normal retry behavior, and later breakout
-changes continue through the same keys without a second backfill mechanism.
+row per stored matching user projection for each existing breakout. An
+Organization still held before its breakout tables leaves those messages
+unaccepted so the Queue retries them; ready Organizations retain their normal
+receipt behavior. Later breakout changes continue through the same keys without
+a second backfill mechanism.
 
 ### 2026-09-22 — Equivalent Space moves transfer provenance without touching the audience
 
