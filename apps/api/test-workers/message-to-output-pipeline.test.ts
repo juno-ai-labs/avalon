@@ -2519,6 +2519,46 @@ describe("a member's message travels the whole pipeline", () => {
     });
   });
 
+  it("admits one ordinary human continuation from a resource authorization callback", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const failedToolInvocationId = `${crypto.randomUUID()}:turn:1:tool:0`;
+    const input = {
+      text: "Document “Ellen Buckley Assessment” was authorized.",
+      clientMessageId: `resource-authorization:${failedToolInvocationId}`,
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+      runMode: "queue",
+      forcedHarnessOrigin: "resource_authorization",
+    };
+    const auth = { ...AUTH, sessionId: "resource-authorization:callback", principal: "resource_authorization" };
+    const before = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count);
+
+    const spoof = await product(stub, { operation: "create_message", auth: AUTH, input });
+    expect(spoof.status).toBe(403);
+
+    const first = await product(stub, { operation: "create_message", auth, input });
+    const replay = await product(stub, { operation: "create_message", auth, input });
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect((replay.body.turn as { turnId: string }).turnId)
+      .toBe((first.body.turn as { turnId: string }).turnId);
+    await expect.poll(() => runInDurableObject(stub, (_instance, state) => {
+      const turn = state.storage.sql.exec<{ author_user_id: string; actor: string }>(
+        `SELECT author_user_id, actor FROM participant_transcript_turns WHERE client_message_id = ?`,
+        input.clientMessageId,
+      ).toArray()[0];
+      const runs = state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count;
+      return { turn, runs };
+    }), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toEqual({
+      turn: { author_user_id: USER_ID, actor: "human" },
+      runs: before + 1,
+    });
+  });
+
   describe("participant projection delivery", () => {
     useHeldEffectQueue();
     it("migrates authoritative private-child membership and keeps Main mutations independently scoped", async () => {

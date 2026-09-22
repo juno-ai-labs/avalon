@@ -44,6 +44,9 @@ import type {
   ConnectorOAuthAttempt,
   ConnectorOAuthProvider,
   ConnectorOAuthStart,
+  ConnectorResourceAuthorizationRequest,
+  ConnectorResourceAuthorizationTarget,
+  ConnectorResourceAuthorizationStart,
   CreateCustomMcpConnectionRequestSchema,
   CreateWebhookConnectionRequestSchema,
   CustomMcpConnectionSettings,
@@ -52,7 +55,13 @@ import type {
   UpdateGitHubRepositoryAccessSettings,
   Scope,
 } from "@rally/contracts";
-import { CustomMcpConnectionConfigSchema, asUserId, asWorkspaceId } from "@rally/contracts";
+import {
+  ConnectorResourceAuthorizationRequestSchema,
+  ConnectorOAuthProviderSchema,
+  CustomMcpConnectionConfigSchema,
+  asUserId,
+  asWorkspaceId,
+} from "@rally/contracts";
 import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
@@ -93,6 +102,7 @@ import {
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
+import { WorkstreamObjectClient } from "./workstream-object-client";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -756,6 +766,193 @@ export class ConnectionService {
     });
     if (!authorization) throw new ApiError(503, "google_oauth_unavailable", "Google authorization is unavailable");
     return { url: authorization.url, attemptId };
+  }
+
+  async beginResourceAuthorization(
+    connectionId: string,
+    target: ConnectorResourceAuthorizationTarget,
+    desktopHandoffVersion: 1 | 2,
+  ): Promise<ConnectorResourceAuthorizationStart> {
+    const auth = this.requireAuth();
+    const conversation = WorkstreamObjectClient.forParent(
+      this.env, auth, target.parentKind, target.parentId, target.substreamId,
+    );
+    const request = await conversation.readResourceAuthorizationRecovery(target.failedToolInvocationId);
+    if (!request || request.connectionId !== connectionId
+      || request.parentKind !== target.parentKind || request.parentId !== target.parentId
+      || request.substreamId !== target.substreamId
+      || request.failedToolInvocationId !== target.failedToolInvocationId) {
+      throw new ApiError(404, "resource_authorization_recovery_missing", "This failed edit no longer has an authorization action");
+    }
+    const row = await this.loadAuthorized(connectionId);
+    this.assertConnectionEnabled(row);
+    if (row.connector_type !== request.provider) {
+      throw new ApiError(422, "resource_authorization_provider_mismatch", "The authorization request names a different provider");
+    }
+    if (!parseJson<string[]>(row.granted_scopes_json, []).includes(request.capability)) {
+      throw new ApiError(403, "resource_authorization_capability_missing", "This connection does not grant the requested capability");
+    }
+    const adapter = this.registry().get(row.connector_type);
+    if (!adapter.resourceAuthorization) {
+      throw new ApiError(422, "resource_authorization_unsupported", "This connector cannot authorize individual resources");
+    }
+    const verifier = randomToken(64);
+    const challenge = await sha256(verifier);
+    const state = randomToken(32);
+    const attemptId = randomToken(32);
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const statePayload = await sealString(JSON.stringify({
+      provider: request.provider,
+      attemptId,
+      verifier,
+      scope: row.scope,
+      connectionId,
+      request,
+    }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
+    const context = await this.context(row);
+    const inspected = await withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(30_000) },
+      (connection) => adapter.resourceAuthorization!.inspect({
+        capability: request.capability,
+        operation: request.operation,
+        resource: request.resource,
+        connection,
+        signal: AbortSignal.timeout(30_000),
+      }),
+    );
+    const authorization = inspected.authorized ? null : await adapter.resourceAuthorization.begin({
+      state, codeChallenge: challenge, capability: request.capability,
+      operation: request.operation, resource: inspected.resource,
+    });
+    await this.persistOAuthStart({
+      attemptId, provider: request.provider, state, statePayload, auth, expiresAt,
+      scope: row.scope, capabilityCount: 1, reconnect: false,
+      desktopHandoffVersion, purpose: "resource_authorization",
+    });
+    if (inspected.authorized) {
+      try {
+        await this.admitResourceAuthorizationMessage(auth, request, inspected.resource);
+        await workspaceRegionalDatabase(this.env).prepare(
+          `UPDATE oauth_states SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`,
+        ).bind(nowIso(), state).run();
+        await this.finishOAuthAttempt(auth.workspaceId, attemptId, "succeeded", { connectionId });
+      } catch (error) {
+        await this.finishOAuthAttempt(auth.workspaceId, attemptId, "failed", { errorCode: "resource_authorization_admission_failed" });
+        throw error;
+      }
+      return { attemptId, status: "succeeded", url: null };
+    }
+    return { attemptId, status: "pending", url: authorization!.url };
+  }
+
+  async authorizationPurpose(provider: string, state: string): Promise<string | null> {
+    const row = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT purpose FROM oauth_states WHERE id = ? AND provider = ? AND region = ?`,
+    ).bind(state, provider, this.env.AVALON_REGION).first<{ purpose: string }>();
+    return row?.purpose ?? null;
+  }
+
+  async completeResourceAuthorization(
+    provider: ConnectorOAuthProvider,
+    code: string,
+    state: string,
+    pickedResourceIds: readonly string[],
+  ): Promise<string> {
+    const row = await this.consumeProviderState(provider, state, "resource_authorization");
+    const stateData = z.strictObject({
+      provider: ConnectorOAuthProviderSchema,
+      attemptId: z.unknown().optional(),
+      verifier: z.string().min(43),
+      scope: z.enum(["personal", "workspace"]),
+      connectionId: z.string().uuid(),
+      request: ConnectorResourceAuthorizationRequestSchema,
+    }).parse(JSON.parse(
+      await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
+    ));
+    await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
+    const attemptId = oauthAttemptIdValue(stateData.attemptId);
+    if (!attemptId) throw new ApiError(401, "invalid_oauth_state", "The resource authorization attempt is invalid");
+    const connection = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
+    ).bind(stateData.connectionId, row.workspace_id, provider).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Connector connection not found");
+    if (connection.scope !== stateData.scope || (connection.scope === "personal" && connection.owner_user_id !== row.user_id)) {
+      throw new ApiError(401, "invalid_oauth_state", "The connector connection changed during authorization");
+    }
+    this.assertConnectionEnabled(connection);
+    if (stateData.request.connectionId !== connection.id
+      || stateData.provider !== provider
+      || stateData.request.provider !== provider
+      || !parseJson<string[]>(connection.granted_scopes_json, []).includes(stateData.request.capability)) {
+      throw new ApiError(409, "resource_authorization_context_changed", "The connector authorization changed during the provider flow");
+    }
+    const adapter = this.registry().get(provider);
+    if (!adapter.resourceAuthorization) {
+      throw new ApiError(422, "resource_authorization_unsupported", "This connector cannot authorize individual resources");
+    }
+    const context = await this.context(connection);
+    const resource = await withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(30_000) },
+      (authorized) => adapter.resourceAuthorization!.complete({
+        code,
+        codeVerifier: stateData.verifier,
+        pickedResourceIds,
+        capability: stateData.request.capability,
+        operation: stateData.request.operation,
+        resource: stateData.request.resource,
+        connection: authorized,
+        signal: AbortSignal.timeout(30_000),
+      }),
+    );
+    const membership = await this.env.DB.prepare(
+      `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(row.workspace_id, row.user_id).first<{ role: AuthContext["role"] }>();
+    if (!membership) throw new ApiError(403, "workspace_membership_required", "Your workspace membership is no longer active");
+    const auth: AuthContext = {
+      sessionId: `resource-authorization:${attemptId}`,
+      userId: asUserId(String(row.user_id)),
+      workspaceId: asWorkspaceId(String(row.workspace_id)),
+      region: this.env.AVALON_REGION,
+      role: membership.role,
+      principal: "resource_authorization",
+    };
+    await this.admitResourceAuthorizationMessage(auth, stateData.request, resource);
+    await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId: connection.id });
+    return this.connectorAttemptTarget({
+      provider,
+      status: "succeeded",
+      attemptId,
+      connectionId: connection.id,
+      workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
+    });
+  }
+
+  private async admitResourceAuthorizationMessage(
+    auth: AuthContext,
+    request: ConnectorResourceAuthorizationRequest,
+    resource: { id: string; type: string; name: string },
+  ): Promise<void> {
+    const noun = resource.type === "document"
+      ? "Document"
+      : `${resource.type.charAt(0).toUpperCase()}${resource.type.slice(1)}`;
+    // Provider titles are data, even though the authorization receipt is a
+    // human-authored message. Keep them inside one quoted line.
+    const name = resource.name.replace(/[\p{Cc}\p{Cf}]/gu, " ")
+      .replace(/[“”]/gu, "'").replace(/\s+/gu, " ").trim();
+    await WorkstreamObjectClient.forParent(
+      this.env, auth, request.parentKind, request.parentId, request.substreamId,
+    ).createMessage({
+      text: `${noun} “${name}” was authorized.`,
+      clientMessageId: `resource-authorization:${request.continuationId}`,
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+      runMode: "queue",
+      forcedHarnessOrigin: "resource_authorization",
+    });
   }
 
   async completeGoogle(code: string, state: string): Promise<string> {
@@ -1629,6 +1826,20 @@ export class ConnectionService {
     });
   }
 
+  async completeResourceAuthorizationDenial(provider: ConnectorOAuthProvider, state: string): Promise<string> {
+    const row = await this.consumeProviderState(provider, state, "resource_authorization");
+    const attemptId = await this.oauthAttemptIdFromState(row);
+    await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "denied", { errorCode: "oauth_denied" });
+    return this.connectorAttemptTarget({
+      provider,
+      status: "denied",
+      attemptId,
+      errorCode: "oauth_denied",
+      workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
+    });
+  }
+
   async failProviderAttempt(
     provider: ConnectorOAuthProvider,
     state: string,
@@ -1637,7 +1848,7 @@ export class ConnectionService {
     const row = await this.env.DB.prepare(
       `SELECT * FROM oauth_states
        WHERE id = ? AND provider = ? AND region = ?
-         AND purpose IN ('connector', 'github_install')`,
+         AND purpose IN ('connector', 'github_install', 'resource_authorization')`,
     ).bind(state, provider, this.env.AVALON_REGION).first<Record<string, unknown>>();
     if (!row) {
       return unknownConnectorAttemptFailureTarget(this.env, {
@@ -3592,7 +3803,7 @@ export class ConnectionService {
   private async persistOAuthStart(input: {
     attemptId: string;
     provider: ConnectorOAuthProvider;
-    purpose?: "connector" | "github_install";
+    purpose?: "connector" | "github_install" | "resource_authorization";
     state: string;
     statePayload: string;
     auth: AuthContext;

@@ -687,6 +687,39 @@ export interface ConnectorAuthorizationCallbackInput extends Record<string, unkn
   connectionScope?: Scope;
 }
 
+export interface ConnectorResourceAuthorizationResource {
+  id: string;
+  type: string;
+  name: string;
+}
+
+export interface ConnectorResourceAuthorizationAdapter {
+  begin(input: {
+    state: string;
+    codeChallenge: string;
+    capability: string;
+    operation: "edit";
+    resource: ConnectorResourceAuthorizationResource;
+  }): Promise<{ url: string }>;
+  complete(input: {
+    code: string;
+    codeVerifier: string;
+    pickedResourceIds: readonly string[];
+    capability: string;
+    operation: "edit";
+    resource: ConnectorResourceAuthorizationResource;
+    connection: AuthorizedConnectorConnection;
+    signal: AbortSignal;
+  }): Promise<ConnectorResourceAuthorizationResource>;
+  inspect(input: {
+    capability: string;
+    operation: "edit";
+    resource: ConnectorResourceAuthorizationResource;
+    connection: AuthorizedConnectorConnection;
+    signal: AbortSignal;
+  }): Promise<{ authorized: boolean; resource: ConnectorResourceAuthorizationResource }>;
+}
+
 /**
  * Trusted, provider-level metadata used to construct one model plugin for each
  * installed credential. Every field in this descriptor must be a static,
@@ -818,6 +851,8 @@ export interface ConnectorAdapter {
   messagingAgent?: ConnectorMessagingAgentAdapter;
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
   handleAuthorizationCallback?(input: ConnectorAuthorizationCallbackInput): Promise<Record<string, unknown>>;
+  /** Optional provider flow for granting this existing connection one named resource. */
+  resourceAuthorization?: ConnectorResourceAuthorizationAdapter;
   refreshCredentials?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>>;
   revoke?(connection: AuthorizedConnectorConnection, signal: AbortSignal): Promise<void>;
   webhookActivity?: ConnectorWebhookActivitySource;
