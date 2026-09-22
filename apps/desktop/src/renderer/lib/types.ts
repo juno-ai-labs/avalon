@@ -213,7 +213,12 @@ export interface WorkstreamSummary {
  */
 export interface SpaceConversationSummary extends WorkstreamSummary {
   kind: 'channel' | 'breakout';
-  breakoutOf: { workstreamId: string; substreamId: string; title: string } | null;
+  breakoutOf: {
+    workstreamId: string;
+    substreamId: string;
+    title: string;
+    appearance?: WorkstreamAppearance;
+  } | null;
 }
 
 export interface Participant extends WorkspaceMember {

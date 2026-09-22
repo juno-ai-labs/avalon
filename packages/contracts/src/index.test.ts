@@ -1533,7 +1533,13 @@ describe("resource version provenance", () => {
       ...workstream,
       id: breakoutId,
       kind: "breakout" as const,
-      breakoutOf: { workstreamId: workstream.id, substreamId: breakoutId, title: "Launch" },
+      appearance: { icon: "sparkles", color: "rose" },
+      breakoutOf: {
+        workstreamId: workstream.id,
+        substreamId: breakoutId,
+        title: "Launch",
+        appearance: { icon: "rocket", color: "blue" },
+      },
     };
     expect(SpaceConversationSchema.safeParse(breakout).success).toBe(true);
     expect(SpaceConversationSchema.safeParse({ ...breakout, breakoutOf: null }).success).toBe(false);

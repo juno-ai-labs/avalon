@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, RotateCcw } from 'lucide-react';
+import { IconChevronsRight } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import {
@@ -9,6 +10,8 @@ import {
   type SpaceSummary,
 } from '@rally/contracts';
 import { SpaceAppearancePicker } from '@rally/ui/components/space-appearance-picker';
+import { ConversationIdentityTip } from '@rally/ui/components/conversation-identity-tip';
+import { WorkstreamGlyph, WorkstreamMark } from '@rally/ui/components/workstream-glyph';
 import {
   SpaceDashboardHeader,
   SpaceDashboardSection,
@@ -297,8 +300,28 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                       to={`/workstreams/${conversation.breakoutOf.workstreamId}?substream=${conversation.breakoutOf.substreamId}`}
                     >
                       <StatusDot status={workstreamMarkerStatus(conversation)} />
+                      <span aria-hidden="true" className="waiting-conversation-identity">
+                        <ConversationIdentityTip
+                          icon={<WorkstreamMark appearance={conversation.breakoutOf.appearance} id={conversation.breakoutOf.workstreamId} size={16} />}
+                          name={conversation.breakoutOf.title}
+                          side="top"
+                        >
+                          <span className="waiting-conversation-icon">
+                            <WorkstreamGlyph appearance={conversation.breakoutOf.appearance} id={conversation.breakoutOf.workstreamId} size={17} />
+                          </span>
+                        </ConversationIdentityTip>
+                        <IconChevronsRight className="waiting-conversation-arrow" size={16} stroke={1.7} />
+                        <ConversationIdentityTip
+                          icon={<WorkstreamMark appearance={conversation.appearance} id={conversation.id} size={16} />}
+                          name={conversation.title}
+                          side="top"
+                        >
+                          <span className="waiting-conversation-icon">
+                            <WorkstreamMark appearance={conversation.appearance} id={conversation.id} size={11} />
+                          </span>
+                        </ConversationIdentityTip>
+                      </span>
                       <span className="waiting-workstream-copy">
-                        <span aria-hidden="true" className="space-breakout-mark">↳</span>
                         <strong>{conversation.title}</strong>
                         <span>in {conversation.breakoutOf.title}</span>
                       </span>
@@ -306,6 +329,17 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                     </NavLink>
                   : <NavLink className="waiting-workstream-row" key={conversation.id} to={`/workstreams/${conversation.id}`}>
                       <StatusDot status={workstreamMarkerStatus(conversation)} />
+                      <span aria-hidden="true" className="waiting-conversation-identity">
+                        <ConversationIdentityTip
+                          icon={<WorkstreamMark appearance={conversation.appearance} id={conversation.id} size={16} />}
+                          name={conversation.title}
+                          side="top"
+                        >
+                          <span className="waiting-conversation-icon">
+                            <WorkstreamGlyph appearance={conversation.appearance} id={conversation.id} size={17} />
+                          </span>
+                        </ConversationIdentityTip>
+                      </span>
                       <span className="waiting-workstream-copy"><strong>{conversation.title}</strong>{conversation.preview && <span>{conversation.preview}</span>}</span>
                       <RelativeTime value={conversation.lastActivityAt} />
                     </NavLink>)}
