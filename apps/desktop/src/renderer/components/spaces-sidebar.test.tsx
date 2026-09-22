@@ -229,7 +229,7 @@ describe('SpacesSidebar', () => {
     await waitFor(() => expect(onMoveChannel).toHaveBeenCalledWith('general', 'launch', 'channel-1'));
     expect(transfer.dropEffect).toBe('move');
     expect(target).not.toHaveClass('is-channel-drop-target');
-    expect(target).not.toHaveClass('is-channel-drop-accepted');
+    expect(target).toHaveClass('is-channel-drop-accepted');
 
     settleMove?.();
     await waitFor(() => expect(target).toHaveClass('is-channel-drop-accepted'));

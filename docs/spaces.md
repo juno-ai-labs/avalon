@@ -1906,6 +1906,32 @@ afterwards.
 
 ## Changelog
 
+### 2026-09-22 — Cross-Space drops leave the source rail immediately
+
+**What changed:** Moving a Channel between Spaces now patches its placement in
+the desktop cache as soon as the drop is accepted and rolls that patch back if
+the server refuses it. The destination pulse begins with the drop rather than
+after the network response. If the moved Channel is open, navigation continues
+to the next Channel down in the selected Space, otherwise the one above; moving
+the Space's last Channel opens the New channel home.
+
+**Why:** Waiting for the authority round trip left the dragged row in its old
+Space after the gesture and made the destination feedback arrive late. Once the
+row disappears immediately, an open route also needs an explicit adjacent
+destination instead of continuing to display a Channel the selected rail no
+longer contains.
+
+**Considered and rejected:** Waiting for success before changing either rail or
+route preserves a literal server-confirmed view, but makes a direct manipulation
+feel unresponsive and leaves the current screen out of step with the optimistic
+sidebar. Choosing the globally most recent Channel was rejected because the
+gesture is scoped to the selected Space and already has a visible local order.
+
+**Consequences:** A refusal restores the source placement and presents the
+existing acknowledged failure dialog. The route transition is decided from the
+pre-drop displayed order, with lower preferred over upper, and replaces the
+current history entry so Back cannot reopen the displaced selection.
+
 ### 2026-09-21 — Space archive Channel retractions overlap within the platform envelope
 
 **What changed:** A Space archive now retracts its source from as many as six

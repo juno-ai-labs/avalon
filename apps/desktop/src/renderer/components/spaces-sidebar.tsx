@@ -397,9 +397,19 @@ export function SpacesSidebar({
                     setChannelDropTargetId(null);
                     setFailure(null);
                     event.dataTransfer.dropEffect = 'move';
+                    // The row leaves the source rail optimistically, so the
+                    // destination acknowledges the same drop immediately. A
+                    // server refusal still restores the placement and opens
+                    // the failure dialog; the pulse describes the gesture,
+                    // not network latency.
+                    flashAcceptedChannelDrop(space.id);
                     void onMoveChannel(sourceSpaceId, space.id, workstreamId)
-                      .then(() => flashAcceptedChannelDrop(space.id))
                       .catch((cause: unknown) => {
+                        if (acceptedChannelDropTimer.current !== null) {
+                          clearTimeout(acceptedChannelDropTimer.current);
+                          acceptedChannelDropTimer.current = null;
+                        }
+                        setAcceptedChannelDropTargetId((current) => current === space.id ? null : current);
                         setFailure({
                           title: 'Channel could not be moved',
                           copy: spaceFailureSentence(
