@@ -32,4 +32,6 @@ it("opens a child-only share directly and represents Main through the canonical 
     .toMatch(/^\/app\/global\/[^/]+\/s\/[^/]+\/c\/[^/]+\/b\/[^/]+$/u);
   expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: "0" }), space))
     .toMatch(/^\/app\/global\/[^/]+\/s\/[^/]+\/c\/[^/]+$/u);
+  expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: child })))
+    .toBe(`/app/workspaces/global/${workspace}/workstreams/${parent}/substreams/${child}`);
 });

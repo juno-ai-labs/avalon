@@ -350,8 +350,14 @@ pointed at the wrong team.
 The iPhone now reads Base58 hierarchical universal links and copies Channel and
 Breakout URLs in the same public shape as desktop. Because its current history
 model has no selected Space, Copy link asks the existing Channel access endpoint
-for current placements and chooses the stable first Space ID; it does not add a
+for current placements and chooses an Organization-wide Space before a personal
+one, with ID as the tie-break; it does not add a
 second Space directory to the iPhone solely for link construction.
+Space-only URLs remain on the web with a desktop-only explanation: the iPhone
+does not yet have a Space dashboard. Until a release with the new parser is
+available, its association claims only legacy Channel paths. New canonical
+Channel and Breakout links enter through the site, which hands old builds an
+addressed legacy deep link; the new universal-link claim can be enabled later.
 
 ### 2026-09-21 — Remove global pin controls from Space-less history
 

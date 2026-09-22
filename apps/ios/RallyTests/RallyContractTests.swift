@@ -89,6 +89,15 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(main.absoluteString, "https://rallywith.ai/app/eu/1111117Hxt1fAWDjN7Te/s/1111117Hxt1fAWDjN7WQ/c/CduMrko5vpzwph2okTVLJ")
     }
 
+    func testAddressedSchemeFromWebHandoff() throws {
+        let url = try XCTUnwrap(URL(string: "rallywithai://workspace/global/1111117Hxt1fAWDjN7Te/spaces/1111117Hxt1fAWDjN7WQ/channels/CduMrko5vpzwph2okTVLJ/breakouts/1111117Hxt1fAWDjN7W8"))
+        let target = try XCTUnwrap(RallyDeepLink.workstreamTarget(from: url))
+        XCTAssertEqual(target.workspaceId, "00000000-0000-7000-8000-000000000009")
+        XCTAssertEqual(target.spaceId, "00000000-0000-7000-8000-0000000000a9")
+        XCTAssertEqual(target.workstreamId, "019fec70-fba0-7b0e-9f7a-3dd1ef56520f")
+        XCTAssertEqual(target.substreamId, "00000000-0000-7000-8000-000000000099")
+    }
+
     func testIgnoresUnrelatedHTTPS() throws {
         let url = try XCTUnwrap(URL(string: "https://rallywith.ai/trust/privacy"))
         XCTAssertNil(RallyDeepLink.workstreamId(from: url))

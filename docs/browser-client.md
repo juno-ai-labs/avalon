@@ -135,9 +135,12 @@ name, icon, colour and public/private scope for Space, Channel and Breakout.
 Canonical WorkstreamDO independently re-authorizes every Channel and Breakout;
 the metadata grants no parent transcript, roster, defaults or write capability.
 A child-only share names and styles its Channel so the Breakout can be placed
-correctly, but still omits Main and every unshared Breakout. Selecting a Space filters the Channel rail and opens the first active
-authorized conversation across its Channels, falling back to archived content only
-when the Space has no active conversation. A Channel with no visible Space placement
+correctly, but still omits Main and every unshared Breakout. Selecting a Space
+filters the Channel rail. On legacy paths it opens the first active authorized
+conversation across its Channels, falling back to archived content only when
+none is active. Canonical Space roots show a read-only overview of the Space
+and its shared Channels; selecting a Space on the canonical host opens that
+overview. A Channel with no visible Space placement
 stays reachable in a local **Shared channels** group. Workspace identity uses the
 existing account/badge treatment; no workspace icon/color settings are introduced.
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
@@ -393,10 +396,6 @@ The browser now decodes Base58 Organization, Space, Channel, and Breakout path
 segments and keeps the selected Space in its shared-navigation rail. Accepted
 invitations resolve each destination's Space from the recipient's authorized
 directory before constructing its link. Earlier browser URLs remain readable.
-
-The browser does not infer placement from a Channel UUID: the many-to-many
-relationship belongs to WorkspaceDO, and an invented Space would misrepresent
-the destination.
 
 ### 2026-09-21 — Shared descendants carry their ancestor presentation
 

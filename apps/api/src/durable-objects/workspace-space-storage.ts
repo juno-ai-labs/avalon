@@ -1834,7 +1834,7 @@ export class WorkspaceSpaceStorage {
           WHERE membership.state = 'active' AND space.archived_at IS NULL
             AND ${spaceVisibleToViewerSql("space", "viewer")}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
-          ORDER BY membership.workstream_id, membership.space_id`,
+          ORDER BY membership.workstream_id, (space.scope = 'personal'), membership.space_id`,
         userId,
         userId,
         ...chunk,
@@ -1862,7 +1862,7 @@ export class WorkspaceSpaceStorage {
         WHERE membership.workstream_id = ?
           AND membership.state = 'active'
           AND space.archived_at IS NULL
-        ORDER BY membership.space_id
+        ORDER BY (space.scope = 'personal'), membership.space_id
         LIMIT 1`,
       workstreamId,
     ).toArray()[0]?.space_id ?? null;
