@@ -26,7 +26,7 @@ import { usePersonalOrder } from '../lib/use-space-directories';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
-import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { WorkstreamSidebar, type ConversationRowTarget } from '../components/workstream-sidebar';
 import { SidekickPicker } from '../components/sidekick-picker';
 import { PENDING_SUBSTREAM_DRAFT_ID, type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
@@ -352,7 +352,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (target.substreamId === '0') {
         const updated = await api.archiveWorkstream(target.parentId);
         reportParentAction(updated, 'archive');
-        evictCachedWorkstream(queryClient, target.parentId);
+        holdCachedWorkstreamArchive(queryClient, updated);
       } else await api.setSubstreamArchived(target.parentId, target.substreamId, true);
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setArchiveTarget(null);
