@@ -30,7 +30,7 @@ import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '..
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
-import { Button, IconButton, InlineError, Modal } from './primitives';
+import { Button, IconButton, InlineError, Modal, Tip } from './primitives';
 import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
@@ -248,6 +248,7 @@ export function SpacesSidebar({
           </IconButton>}
           {ready && <NewWorkstreamMenu
             canCreateSpace
+            tooltipLabel="New channel or space"
             spaces={spaces}
             onCreateChannel={onCreateChannel}
             onCreateSpace={onCreateSpace}
@@ -255,7 +256,7 @@ export function SpacesSidebar({
           >
             <button
               aria-hidden={collapsed}
-              aria-label="New channel"
+              aria-label="New channel or space"
               className={clsx('sidebar-new-button window-no-drag', onNewChannelRoute && 'is-active')}
               tabIndex={collapsed ? -1 : undefined}
               type="button"
@@ -268,6 +269,7 @@ export function SpacesSidebar({
         {ready && <div className="sidebar-commandbar spaces-sidebar-commandbar window-no-drag" ref={commandRef}>
           {collapsed && <NewWorkstreamMenu
             tooltipSide="right"
+            tooltipLabel="New channel or space"
             canCreateSpace
             spaces={spaces}
             onCreateChannel={onCreateChannel}
@@ -275,7 +277,7 @@ export function SpacesSidebar({
             onImportChannel={onImportChannel}
           >
             <button
-              aria-label="New channel"
+              aria-label="New channel or space"
               className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewChannelRoute && 'is-active')}
               data-motion-insert=""
               data-motion-key="action:new"
@@ -284,7 +286,9 @@ export function SpacesSidebar({
               <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
             </button>
           </NewWorkstreamMenu>}
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          <Tip describesTrigger={false} label="Search" side={collapsed ? 'right' : 'bottom'}>
+            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          </Tip>
         </div>}
         {ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.
