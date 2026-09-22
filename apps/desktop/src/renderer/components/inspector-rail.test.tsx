@@ -1267,9 +1267,11 @@ describe('a channel’s Sidekicks in the main workstream rail', () => {
   beforeEach(() => {
     useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
   });
-  it('says nothing about a room with none; the sidebar is where emptiness is stated', () => {
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[]} /></Tooltip.Provider>);
-    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
+  it('keeps the Sidekicks heading for an empty answer and a pending one', () => {
+    const { rerender } = render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[]} /></Tooltip.Provider>);
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
+    rerender(<Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>);
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
   });
   it('shows the room’s Sidekicks and removes the one that offers it', () => {
     const onRemove = vi.fn();
