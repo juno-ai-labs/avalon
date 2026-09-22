@@ -1897,6 +1897,18 @@ dialog primitive keeps new sidebar actions from reintroducing inline errors.
 When no error needs acknowledgement, the sidebar exposes recovery as an action
 rather than writing diagnostic state into persistent navigation.
 
+**Considered and rejected:** Leaving stable warning copy in the rail was
+rejected because it still becomes persistent navigation content. Clearing the
+directory until a reconnect succeeds was rejected because the last confirmed
+rows remain more truthful and useful than an empty hierarchy.
+
+**Consequences:** New sidebar mutations must route failures through the shared
+acknowledgement dialog rather than append copy to a list. Stale directory
+states keep confirmed rows and expose the shared Refresh row; the Space
+directory's action remains a socket reconnect rather than a second fetch path.
+
+PR [#919](https://github.com/juno-ai-labs/avalon/pull/919).
+
 ### 2026-09-21 — A cross-rail drag moves its Channel
 
 **What changed:** Dragging a Channel from the selected Space's center rail onto
