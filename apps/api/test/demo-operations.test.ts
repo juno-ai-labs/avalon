@@ -71,6 +71,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("creates every ordered impersonation pair for a seated demo, including self-pairs", () => {
+  const relationships = __demoPreparationTesting.demoImpersonationRelationships(
+    [PRESENTER_ID, PRIYA_ID, MARCUS_ID],
+    OPERATION_ID,
+  );
+  expect(relationships).toHaveLength(9);
+  expect(new Set(relationships.map((item) => `${item.impersonatorUserId}->${item.representedUserId}`)).size).toBe(9);
+  expect(relationships).toContainEqual({
+    impersonatorUserId: PRESENTER_ID,
+    representedUserId: PRESENTER_ID,
+    authorityBasis: `demo:${OPERATION_ID}`,
+  });
+  expect(relationships).toContainEqual({
+    impersonatorUserId: MARCUS_ID,
+    representedUserId: PRIYA_ID,
+    authorityBasis: `demo:${OPERATION_ID}`,
+  });
+});
+
 /** The cast as the operator gives it: an account per role, chosen from colleagues. */
 function cast(): Record<string, string> {
   return { priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID };

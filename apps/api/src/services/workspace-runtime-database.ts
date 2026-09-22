@@ -144,6 +144,10 @@ export const WORKSPACE_LOCAL_TABLES = [
   "workstream_email_receipts",
   "realtime_transcription_ticket_receipts",
   "realtime_transcription_sessions",
+  // Impersonation authority is reachable only through typed WorkspaceDO RPC.
+  // Keeping it in the router prevents an accidental generic statement from
+  // falling through to regional D1 as a misleading missing-table failure.
+  "workspace_impersonation_relationships",
 ] as const;
 
 const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({

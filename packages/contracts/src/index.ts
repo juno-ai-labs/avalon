@@ -47,6 +47,7 @@ export * from "./conversation-parent";
 export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
+export * from "./impersonation";
 export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./workstream-appearance";

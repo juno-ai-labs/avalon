@@ -1,8 +1,9 @@
 # Shared collaboration UI
 
-`@rally/ui` owns the collaboration presentation used by desktop and prepared for the lite
-browser in the next stacked change (#825). Desktop's current UI is the reference; a browser host supplies fewer
-actions to the same components rather than drawing a second design.
+`@rally/ui` owns the collaboration presentation used by desktop, the lite
+browser, and the Sideline internal host. Desktop's current UI is the reference;
+each smaller host supplies fewer actions to the same components rather than
+drawing a second design.
 
 ## Where the code lives
 
@@ -17,6 +18,8 @@ actions to the same components rather than drawing a second design.
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
   queries. Existing import sites re-export shared primitives during migration.
+- Sideline composes `SidelineComposer` and `SearchSelect`; its adapter owns
+  authentication, catalog reads, send requests, and native Rally handoff.
 - The next stacked browser host supplies email entry, cookie session restoration,
   its scoped directory and selected-conversation data. Those screens are not in #824.
 
@@ -146,6 +149,26 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-09-21 — Sideline composes shared presentation as a third host
+
+**What changed:** `@rally/ui` now owns the represented-message card stack,
+searchable selectors, semantic request states, and token-based styling consumed
+by Sideline.
+
+**Why:** A small internal sidecar still needs Rally's theme, accessibility, and
+interaction behavior. Copying the desktop stylesheet would make every visual
+fix depend on synchronizing another product-shaped implementation.
+
+**Considered and rejected:** Sidecar-local controls and CSS. They would turn a
+host adapter into a second design system even though the host-specific work is
+only authentication, native lifecycle, and API calls.
+
+**Consequences:** Sideline presentation remains browser-safe and callback-driven;
+authority, Electron, and network code cannot enter the shared component. Future
+host-neutral card improvements belong here.
+
+Design: `docs/PRDs/2026-09-19_impersonation-platform/prd.md`.
+
 ### 2026-09-21 — Collapse footers become one layout primitive
 
 **What changed:** The Space, Channel and Breakout sidebars now compose
@@ -231,7 +254,6 @@ caps the Space rail to the remaining room, and forces the Channel rail compact
 when its remembered width no longer fits. Returning to the workspace root
 restores both outer rails; same-Channel navigation cannot leave a route fence
 armed for later history navigation.
-
 ### 2026-09-21 — Hierarchy row cadence lives in one shared list
 
 **What changed:** `SidebarList` owns the vertical spacing between hierarchy
