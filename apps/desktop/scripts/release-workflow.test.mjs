@@ -480,6 +480,48 @@ test('the release tag is pushed after publication and before the release record'
   assert.ok(pushedTag < recordedConfig, 'The tag must be pushed before the release config is recorded');
 });
 
+test('the release checks and uses a workflow-capable credential only for tag authority', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const tokenCheck = workflow.slice(
+    workflow.indexOf('- name: Require the release token that can publish workflow-bearing tags'),
+    workflow.indexOf('- name: Check out the exact release commit'),
+  );
+  const tokenProof = workflow.slice(
+    workflow.indexOf('- name: Prove the release token can publish workflow-bearing tags'),
+    workflow.indexOf('- name: Require native Apple Silicon'),
+  );
+  const tagPush = workflow.slice(
+    workflow.indexOf('- name: Publish the release tag'),
+    workflow.indexOf('- name: Record the published release config'),
+  );
+  const recordPush = workflow.slice(workflow.indexOf('- name: Record the published release config'));
+
+  assert.match(tokenCheck, /^ {8}if: needs\.plan\.outputs\.create_tag == 'true'$/mu);
+  assert.match(tokenCheck, /secrets\.DESKTOP_RELEASE_GITHUB_TOKEN != ''/u);
+  assert.match(tokenProof, /^ {8}if: needs\.plan\.outputs\.create_tag == 'true'$/mu);
+  assert.match(tokenProof, /secrets\.DESKTOP_RELEASE_GITHUB_TOKEN/u);
+  assert.match(tokenProof, /git -c http\.https:\/\/github\.com\/\.extraheader= push "\$release_remote" "HEAD:\$preflight_ref"/u);
+  assert.match(tokenProof, /git -c http\.https:\/\/github\.com\/\.extraheader= push "\$release_remote" ":\$preflight_ref"/u);
+  assert.doesNotMatch(tokenProof, /--dry-run/u);
+  assert.match(tagPush, /secrets\.DESKTOP_RELEASE_GITHUB_TOKEN/u);
+  assert.match(tagPush, /git -c http\.https:\/\/github\.com\/\.extraheader= push/u);
+  assert.match(tagPush, /https:\/\/x-access-token:\$\{RELEASE_GITHUB_TOKEN\}@github\.com\/\$\{GITHUB_REPOSITORY\}\.git/u);
+  assert.doesNotMatch(recordPush, /DESKTOP_RELEASE_GITHUB_TOKEN/u);
+  assert.match(recordPush, /git -C "\$sync" push origin HEAD:main/u);
+});
+
+test('the workflow proves release-tag authority before any release build begins', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const localTag = workflow.indexOf('- name: Create the release tag locally');
+  const tokenProof = workflow.indexOf('- name: Prove the release token can publish workflow-bearing tags');
+  const packagedRelease = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
+  const published = workflow.indexOf('- name: Publish immutable payloads and promote the release manifest');
+
+  assert.ok(localTag < tokenProof, 'The permission probe must target the exact frozen release commit');
+  assert.ok(tokenProof < packagedRelease, 'The token must be proved before the release build begins');
+  assert.ok(tokenProof < published, 'The token must be proved before immutable payloads become live');
+});
+
 test('the release records its site config back on the default branch', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const recordStep = workflow.slice(workflow.indexOf('- name: Record the published release config'));
