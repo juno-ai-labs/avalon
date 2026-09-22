@@ -47,6 +47,9 @@
 /app/workstreams/*
   Cache-Control: no-store
 
+/app/*
+  Cache-Control: no-store
+
 /download/*
   Cache-Control: no-store
   Referrer-Policy: no-referrer

@@ -83,12 +83,11 @@ export function resolveLocalDatabase(directory, entries) {
 /**
  * A representative body per recipient, so the preview shows the template under
  * the shapes that actually stress it: a section that needs them, several that
- * do not, links, a quote, bold, and one long bullet.
+ * do not, a quote, bold, and one long bullet. Space placement is not in D1,
+ * so the preview cannot safely invent a canonical Channel URL.
  */
 export function sampleBody(input) {
-  const link = (title, id) => id
-    ? `[${title}](https://rallywith.ai/app/workspaces/global/${input.workspaceId}/workstreams/${id})`
-    : `**${title}**`;
+  const link = (title) => `**${title}**`;
   const sections = input.workstreams.slice(0, 3).map((workstream, index) => index === 0
     ? [
         `## ${workstream.title}`,

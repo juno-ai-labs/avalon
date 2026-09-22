@@ -345,6 +345,14 @@ pointed at the wrong team.
 
 ## Changelog
 
+### 2026-09-22 — Copy hierarchical resource links
+
+The iPhone now reads Base58 hierarchical universal links and copies Channel and
+Breakout URLs in the same public shape as desktop. Because its current history
+model has no selected Space, Copy link asks the existing Channel access endpoint
+for current placements and chooses the stable first Space ID; it does not add a
+second Space directory to the iPhone solely for link construction.
+
 ### 2026-09-21 — Remove global pin controls from Space-less history
 
 The iOS history list no longer displays, pins, or unpins Channels. Pin state is

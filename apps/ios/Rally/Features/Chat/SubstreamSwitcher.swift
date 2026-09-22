@@ -192,7 +192,7 @@ struct SubstreamListScreen: View {
             Label("Rename", systemImage: "pencil")
         }
         Button {
-            model.copyConversationLink(substreamId: SubstreamAddress.main)
+            Task { await model.copyConversationLink(substreamId: SubstreamAddress.main) }
         } label: {
             Label("Copy channel link", systemImage: "link")
         }
@@ -212,7 +212,7 @@ struct SubstreamListScreen: View {
             Label("Rename", systemImage: "pencil")
         }
         Button {
-            model.copyConversationLink(substreamId: child.substreamId)
+            Task { await model.copyConversationLink(substreamId: child.substreamId) }
         } label: {
             Label("Copy breakout link", systemImage: "link")
         }

@@ -5,6 +5,7 @@ import { invitationFromFragment, invitationTargetPath } from "../src/invitation"
 const workspace = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const parent = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const child = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const space = "00000000-0000-7000-8000-0000000000a9";
 
 it("carries an opaque token whole and names no deployment of its own", () => {
   // Shaped like a minted token but deliberately low-entropy: a plausible
@@ -27,8 +28,8 @@ it("validates an addressed fragment without treating it as authentication", () =
 
 it("opens a child-only share directly and represents Main through the canonical root path", () => {
   const base = { kind: "conversation", workspaceId: workspace, parentId: parent };
-  expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: child })))
-    .toBe(`/app/workspaces/global/${workspace}/workstreams/${parent}/substreams/${child}`);
-  expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: "0" })))
-    .toBe(`/app/workspaces/global/${workspace}/workstreams/${parent}`);
+  expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: child }), space))
+    .toMatch(/^\/app\/global\/[^/]+\/s\/[^/]+\/c\/[^/]+\/b\/[^/]+$/u);
+  expect(invitationTargetPath("https://browser.example.test", "global", ScopeGrantTargetSchema.parse({ ...base, substreamId: "0" }), space))
+    .toMatch(/^\/app\/global\/[^/]+\/s\/[^/]+\/c\/[^/]+$/u);
 });

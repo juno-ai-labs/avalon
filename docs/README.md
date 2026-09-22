@@ -150,7 +150,7 @@ update it in the same change.
 | [`slack-integration.md`](slack-integration.md) | The Slack Agent connector's product boundary, tools, and event handling. |
 | [`slack-permissions.md`](slack-permissions.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |
 | [`workstream-email-addresses.md`](workstream-email-addresses.md) | The permanent per-work-stream and per-automation address format at `automation.rallywith.ai` and its derivation, the inbound path that starts a run from a mail through one `admitInboundEmail` call, its sender screen, and the notification sender. A run posts its own result into the room that owns its automation; [`automation-lifecycle.md`](automation-lifecycle.md) owns that. Read before changing how mail reaches an automation. |
-| [`workstream-links.md`](workstream-links.md) | The canonical workspace-addressed work-stream link, its legacy readers, why resource and workspace IDs sit in the path, and the site rewrite that serves it. Read before emitting or parsing a work-stream link anywhere. |
+| [`workstream-links.md`](workstream-links.md) | Canonical Organization/Space/Channel/Breakout links with Base58 UUIDs, legacy readers, and the public-site handoff rewrite. Read before emitting or parsing a resource link anywhere. |
 
 ## Development, verification, and operations
 

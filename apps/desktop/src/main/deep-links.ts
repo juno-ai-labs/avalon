@@ -1,4 +1,4 @@
-import { parseWorkstreamLinkTarget, workstreamDeepLinkFromParsedTarget } from "@rally/contracts/workstream-links";
+import { parseSpaceLinkPathTarget, parseWorkstreamLinkTarget, spaceDeepLink, workstreamDeepLinkFromParsedTarget } from "@rally/contracts/workstream-links";
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 
 /** The exact native URL shapes the main process will deliver to a renderer. */
@@ -31,7 +31,9 @@ export function workstreamHttpsDeepLink(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl);
     if (!['https://rallywith.ai', 'https://www.rallywith.ai'].includes(url.origin)
-      || url.username || url.password || !/^\/app\/(workspaces|workstreams)\//.test(url.pathname)) return null;
+      || url.username || url.password || !url.pathname.startsWith('/app/')) return null;
+    const space = !url.search && !url.hash ? parseSpaceLinkPathTarget(url.pathname) : null;
+    if (space) return spaceDeepLink(space);
     const target = parseWorkstreamLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
     return target ? workstreamDeepLinkFromParsedTarget(target) : null;
   } catch { return null; }
