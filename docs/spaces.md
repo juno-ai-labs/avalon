@@ -2044,6 +2044,21 @@ Future unavailable Space states must remain visible there with a specific
 disabled reason; the server's `through_channel` refusal remains the authority,
 and drag-and-drop continues to expose only writable destinations.
 
+### 2026-09-21 — Only the Spaces rail auto-collapses during navigation
+
+**What changed:** Selecting a Space or opening or re-entering a Channel now
+compacts the Spaces rail without changing the Channels rail's saved
+expanded/collapsed preference. Selecting Main, a Breakout, or **New breakout**
+likewise leaves the Breakouts rail at the width the person chose. Explicit
+collapse controls, edge gestures, and responsive narrow-window compaction
+remain unchanged on every rail.
+
+**Why:** Automatic compaction at every selection made the two contextual rails
+disappear while the person was actively navigating their contents. The Spaces
+rail is the hierarchy level navigation moves away from, so it alone recovers
+conversation width automatically; the Channels and Breakouts rails stay under
+direct user control.
+
 ### 2026-09-20 — Archive is available from a live Space row
 
 **What changed:** An editable, non-General Space row opens a context menu whose
@@ -2141,20 +2156,6 @@ inspects or changes them; retiring that durable behavior was rejected as a
 separate product decision. Future management surfaces can reuse the authority,
 but they must be introduced where that job belongs rather than silently
 restoring these controls.
-### 2026-09-21 — Only the Spaces rail auto-collapses during navigation
-
-**What changed:** Opening or re-entering a Channel now compacts the Spaces rail
-without changing the Channels rail's saved expanded/collapsed preference.
-Selecting Main, a Breakout, or **New breakout** likewise leaves the Breakouts
-rail at the width the person chose. Explicit collapse controls, edge gestures,
-and responsive narrow-window compaction remain unchanged on every rail.
-
-**Why:** Automatic compaction at every selection made the two contextual rails
-disappear while the person was actively navigating their contents. The Spaces
-rail is the hierarchy level navigation moves away from, so it alone recovers
-conversation width automatically; the Channels and Breakouts rails stay under
-direct user control.
-
 ### 2026-09-20 — Spaces, Channels, and Breakouts become adjacent navigation levels
 
 **What changed:** The desktop no longer expands Channels inside Space accordion
