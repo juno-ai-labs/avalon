@@ -625,6 +625,9 @@ async function consumeOne(message: Message<unknown>, env: Env,
         workstreamId: intent.workstreamId,
         spaceRevision: intent.spaceRevision,
         membershipGeneration: intent.membershipGeneration,
+        sourceSpaceId: intent.sourceSpaceId,
+        sourceSpaceRevision: intent.sourceSpaceRevision,
+        sourceMembershipGeneration: intent.sourceMembershipGeneration,
         cursor: intent.cursor,
       });
       // An intent that settled without doing its work is the one outcome

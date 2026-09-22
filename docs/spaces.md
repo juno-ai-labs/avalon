@@ -1123,13 +1123,18 @@ the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
 Channel from the selected Channel rail onto another Space is one server-side
-move request. The server first validates that the selected source is writable
-and contains the Channel without staging a mutation, then establishes the destination membership before
-withdrawing the selected source, preserving the invariant that every Channel
-has a home if the second operation is interrupted. The response waits for those
-two access-authority writes and their durable receipts; realtime republication,
-directory nudges, default delivery and recovery-alarm cleanup converge
-asynchronously. **Add to space** remains explicitly additive.
+move request. When both Spaces grant the same scope and participant roster,
+WorkspaceDO stages one durable move, WorkstreamDO replaces the source Space id
+while preserving the exact supplied-reader attribution, and WorkspaceDO
+switches both memberships in one transaction. The Channel's effective audience
+never changes, so the path neither reads its conversation nor runs the
+plan/apply/confirm audience protocol. If the audiences differ or a stored
+source has moved underneath the plan, the server falls back to the
+destination-first add/remove composition: establish the destination before
+withdrawing the source, preserving the invariant that every Channel has a home
+if the second operation is interrupted. Realtime republication, directory
+nudges, default delivery and recovery-alarm cleanup converge asynchronously.
+**Add to space** remains explicitly additive.
 
 **A Space this reader reaches only through a Channel in it is an ordinary
 row.** Mark, colour, name, expansion, and its alphabetical placements — limited
@@ -1567,14 +1572,15 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and a one-request Channel move whose returned source and destination summaries match the settled memberships. Also that a narrowing which leaves its caller out is refused before anything moves, and an unreachable Space authority is named rather than reduced to `internal_error`. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and whose durable row is one settled `move` intent. Also that a narrowing which leaves its caller out is refused before anything moves, and an unreachable Space authority is named rather than reduced to `internal_error`. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
-| `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, and the revision fence a retract-then-apply convergence carries. |
+| `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, the revision fence a retract-then-apply convergence carries, and an equivalent-audience provenance replacement transferring source plus supplied-reader attribution atomically and idempotently. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
-| `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
+| `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses, and that the equal-audience move is prepare → provenance replacement → finalize without reading or rewriting the Channel audience. |
+| `apps/api/test/workspace-space-move-migration.test.ts` | Migration 68 preserving existing intents while adding the move kind and requiring all three source-side fences on every move row. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. And the resume whose requester has been taken out of the Space since staging it: refused `requester_reach_lost`, with every member Channel still seating the readers the Space supplied and nothing left to retry. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
@@ -1679,11 +1685,12 @@ bookkeeping for a table nothing had yet stored.
 `space_channel_memberships` is keyed by `(space_id, workstream_id)` with **no**
 uniqueness on the Channel, because a Channel belongs to as many Spaces as it was
 added to. `space_intents` is one row per staged cross-object operation, keyed by
-the caller's operation id, carrying its kind, its three nullable fences, its
+the caller's operation id, carrying its kind, its target fences, the three
+source-side fences required only by a move, its
 receipts, the `cursor` its member walk reached, the `last_error_code` of its
 most recent failed resume, and the retry gate the alarm claims on. The kind
-vocabulary is exactly the five operations that stage one — `add`, `remove`,
-`audience`, `archive`, `restore` — because a default's delivery and the cutover
+vocabulary is exactly the six operations that stage one — `add`, `remove`,
+`move`, `audience`, `archive`, `restore` — because a default's delivery and the cutover
 each have staging, a retry gate and a consumer leg of their own. The cursor is the same shape `space_bootstrap` carries for the
 cutover's walk — the Channel id the last finished page stopped at — and it is
 what a resume reads; the receipts are one per page rather than one per Channel,
@@ -1974,6 +1981,50 @@ still in flight, navigation waits for the row rather than mistaking the loaded
 slice for an empty Space. Moves of the same Channel settle in gesture order,
 and each destination pulse owns its timer, so an older settlement cannot
 overwrite a newer placement or strand newer feedback.
+
+### 2026-09-22 — Equal-audience Channel moves replace provenance instead of rebuilding access
+
+**What changed:** A move between Spaces with the same scope and participant
+roster now stages one `move` intent in WorkspaceDO, replaces the Space access
+source and its supplied-reader attribution in one WorkstreamDO transaction, and
+atomically activates the target membership while removing the source. The
+intent carries both Space revisions and membership generations and is resumed
+by the existing alarm path. A stale source fence switches that same intent to
+a durable audience-convergence mode rather than spawning separate add and
+remove intents: it restores the source if the fast swap already removed it,
+using only the audience already stored on the target rather than the source's
+possibly widened live roster, rebuilds the destination through canonical
+audience operations, then retires the source and finalizes the original
+membership generations. The fast swap also proves the prepared source revision
+and membership generation before deleting it, so a same-audience source that
+was removed and re-added cannot satisfy a stale move. Recovery reads persisted
+provenance directly from WorkstreamDO and spends the WorkspaceDO-staged intent;
+it does not re-authorize against the initiating user's mutable Channel access
+after provenance may already have moved.
+
+**Why:** The prior server-side operation removed an HTTP boundary but still
+performed a complete add followed by a complete remove. For the common move
+between equivalent personal Spaces, that paid repeated Channel reads and two
+plan/apply/confirm authority conversations even though no reader or scope was
+changing. The new primitive makes the synchronous path one WorkspaceDO prepare,
+one WorkstreamDO provenance transaction, and one WorkspaceDO finalize.
+
+**Considered and rejected:** Running add and remove concurrently would let a
+source removal strand the Channel when the destination failed, and returning
+before either authority settled would report a move that had not happened.
+Blindly renaming the source without comparing the stored roster was rejected
+because stale provenance could silently grant the wrong audience.
+
+**Consequences:** Equal-audience moves do not invoke canonical Channel audience
+mutations or SubstreamAgent writes; unequal audiences still do and retain their
+content and grant fences. Move finalization and cancellation authorize against
+the exact persisted actor, Space ids, Channel id, and generation fences rather
+than mutable Space reach after WorkstreamDO has committed. A fallback or crash
+remains on the original intent, and every interrupted move resume repeats the
+convergent path. Competing moves cannot treat another move's
+source removal as their own replay: only an already-active target may replay a
+settled source. Migration 68 rebuilds `space_intents` to admit `move` and
+require its source-side fences.
 
 ### 2026-09-21 — Space archive Channel retractions overlap within the platform envelope
 

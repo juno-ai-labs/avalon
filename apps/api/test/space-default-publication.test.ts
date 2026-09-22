@@ -53,6 +53,9 @@ const INTENT: WorkspaceSpaceIntentClaim = {
   workstreamId: null,
   spaceRevision: 5,
   membershipGeneration: null,
+  sourceSpaceId: null,
+  sourceSpaceRevision: null,
+  sourceMembershipGeneration: null,
   // Where the interrupted walk got to. It travels on the message because the
   // resume continues the walk rather than restarting it.
   cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
@@ -160,9 +163,44 @@ describe("republishing unsettled Space intents", () => {
       workstreamId: null,
       spaceRevision: 5,
       membershipGeneration: null,
+      sourceSpaceId: null,
+      sourceSpaceRevision: null,
+      sourceMembershipGeneration: null,
       cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
       requestedByUserId: OWNER,
     } }]);
+  });
+
+  it("carries both source fences when the unsettled intent is a move", async () => {
+    const sourceSpaceId = asSpaceId("00000000-0000-7000-8000-0000000000ef");
+    const storage = storageDouble({ intents: [{
+      ...INTENT,
+      kind: "move",
+      workstreamId: CHANNEL_ID,
+      membershipGeneration: 7,
+      sourceSpaceId,
+      sourceSpaceRevision: 4,
+      sourceMembershipGeneration: 6,
+      cursor: null,
+    }] });
+    const sendBatch = vi.fn(async () => undefined);
+
+    await publishSpaceIntentResumes({
+      storage,
+      queue: { sendBatch },
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      now: 2_000,
+      retryAt: (attempt) => 2_000 + attempt * 60_000,
+    });
+
+    expect(sendBatch).toHaveBeenCalledWith([{ body: expect.objectContaining({
+      kind: "move",
+      membershipGeneration: 7,
+      sourceSpaceId,
+      sourceSpaceRevision: 4,
+      sourceMembershipGeneration: 6,
+    }) }]);
   });
 });
 
