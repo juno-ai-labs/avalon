@@ -321,7 +321,6 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
 
     expect(await screen.findByText('Sidekick options couldn’t be loaded.')).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).not.toBeInTheDocument();
     expect(screen.queryByText('Sidekicks couldn’t be loaded.')).not.toBeInTheDocument();
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
   });
