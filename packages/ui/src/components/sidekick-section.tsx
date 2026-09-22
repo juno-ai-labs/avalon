@@ -80,7 +80,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh 
               title in this rail, and a Sidekick row without its mark collapses
               to an empty square there. */}
           <SidebarNavigationRowContent
-            description={item.note ? `${item.note} · ${item.description}` : item.description}
+            activity={item.note ? `${item.note} · ${item.description}` : item.description}
             icon={<span className="workstream-context-sidekick-glyph">
               <AutomationGlyph id={item.id} {...(item.appearance ? { appearance: item.appearance } : {})} />
             </span>}
