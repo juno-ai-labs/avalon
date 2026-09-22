@@ -40,6 +40,8 @@ test('the first automatic release keeps the declared version', () => {
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.version, '0.1.0');
   assert.equal(plan.tag, 'sideline-v0.1.0');
+  assert.equal(plan.requiresApiDeploy, true);
+  assert.equal(plan.apiDeploymentRef, 'first');
 });
 
 test('a relevant change advances one patch after the published watermark', () => {
@@ -52,6 +54,20 @@ test('a relevant change advances one patch after the published watermark', () =>
   assert.equal(nextPatchVersion('0.1.0'), '0.1.1');
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.version, '0.1.1');
+  assert.equal(plan.requiresApiDeploy, false);
+});
+
+test('a shared-contract change waits for the deployment of its newest contract commit', () => {
+  const plan = planSidelineRelease({
+    headSha: 'release-tip',
+    manifestVersion: '0.1.0',
+    latestTag: 'sideline-v0.1.0',
+    changedPaths: ['packages/contracts/src/impersonation.ts'],
+    apiDeploymentRef: 'contract-commit',
+  });
+  assert.equal(plan.shouldRelease, true);
+  assert.equal(plan.requiresApiDeploy, true);
+  assert.equal(plan.apiDeploymentRef, 'contract-commit');
 });
 
 test('a stale queued run skips when no release input changed after the tag', () => {
@@ -62,6 +78,7 @@ test('a stale queued run skips when no release input changed after the tag', () 
     changedPaths: ['docs/impersonation.md'],
   });
   assert.equal(plan.shouldRelease, false);
+  assert.equal(plan.requiresApiDeploy, false);
 });
 
 test('an untagged bumped manifest resumes the same release version', () => {
