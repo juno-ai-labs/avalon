@@ -121,6 +121,7 @@ function SharedConversation(): React.JSX.Element {
         renderSidebar={(context) => <WorkstreamSidebar
           mainVisible={Boolean(parent?.conversations.some((item) => item.substreamId === '0'))}
           workstream={{ ...context.detail, title: parent?.title ?? 'Shared channel',
+            scope: parent?.scope ?? context.detail.scope,
             privateChildren: parent?.conversations.filter((item) => item.substreamId !== '0' && !item.archived) }}
           mainActions={{ onShare: (target) => setSharingSubstream(target.substreamId) }}
           substreamActions={{ onShare: (target) => setSharingSubstream(target.substreamId), onArchive: (target) => setArchiveTarget(target.substreamId) }}
@@ -176,6 +177,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       name: 'Shared channels',
       iconKey: 'users' as const,
       colorKey: 'blue' as const,
+      scope: null,
       workstreamIds: unplacedWorkstreamIds,
     }];
   }, [directory.data]);
@@ -253,16 +255,21 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
           {directory.isError && <InlineError>Unable to load shared conversations.</InlineError>}
           {directory.isPending && <p className="spaces-sidebar-empty">Loading spaces…</p>}
           {directory.data && navigationSpaces.length === 0 && <p className="spaces-sidebar-empty">No shared spaces yet.</p>}
-          {navigationSpaces.map((space) => <SidebarRow aria-label={space.name}
+          {navigationSpaces.map((space) => {
+            const description = space.scope === null
+              ? space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`
+              : `${space.scope === 'workspace' ? 'Public' : 'Private'} · ${space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}`;
+            return <SidebarRow aria-label={space.name} aria-description={description}
             aria-pressed={space.id === selectedSpace?.id}
             className={`spaces-sidebar-row browser-space-row${space.id === selectedSpace?.id ? ' is-active' : ''}`}
             key={space.id} onClick={() => selectSpace(space.id)} type="button">
             <SidebarNavigationRowContent
-              description={space.workstreamIds.length === 1 ? '1 channel' : `${space.workstreamIds.length} channels`}
+              description={description}
               icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
               title={space.name}
             />
-          </SidebarRow>)}
+          </SidebarRow>;
+          })}
         </SidebarList>
       </SidebarScroll>
       <SidebarCollapseFooter
@@ -305,10 +312,10 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       {workstreams.map((workstream) => {
         const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
         if (!first) return null;
-        return <SidebarRow as={NavLink} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
+        return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === `/workstreams/${workstream.parentId}` || pathname.startsWith(`/workstreams/${workstream.parentId}/`) ? ' is-active' : ''}`} onClick={() => {
           spacesSidebar.setCompact(true);
         }} key={workstream.parentId} to={`/workstreams/${workstream.parentId}${first.substreamId === '0' ? '' : `/substreams/${first.substreamId}`}`}>
-          <NavigationRowContent id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
+          <NavigationRowContent description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} id={workstream.parentId} title={workstream.title ?? first.title} appearance={workstream.appearance ?? undefined} />
         </SidebarRow>;
       })}
       </SidebarList></SidebarScroll>

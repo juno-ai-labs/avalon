@@ -244,6 +244,26 @@ export const SpaceDirectorySchema = z.strictObject({
 });
 export type SpaceDirectory = z.infer<typeof SpaceDirectorySchema>;
 
+/** One server-coordinated Channel move, destination first and source second. */
+export const MoveChannelBetweenSpacesRequestSchema = z.strictObject({
+  sourceSpaceId: SpaceIdSchema,
+});
+export type MoveChannelBetweenSpacesRequest = z.infer<typeof MoveChannelBetweenSpacesRequestSchema>;
+
+/**
+ * Both containers changed by a move.
+ *
+ * The two authoritative Space summaries are the mutation witness, so the
+ * initiating client can update both rails immediately and derive the Channel's
+ * new placement without a refetch. Other clients receive the same state through
+ * WorkspaceDO's normal realtime publication.
+ */
+export const MoveChannelBetweenSpacesResultSchema = z.strictObject({
+  source: SpaceSummarySchema,
+  target: SpaceSummarySchema,
+});
+export type MoveChannelBetweenSpacesResult = z.infer<typeof MoveChannelBetweenSpacesResultSchema>;
+
 export const SpaceSnapshotSchema = z.strictObject({
   active: SpaceDirectorySchema,
   inactive: SpaceDirectorySchema,
@@ -411,9 +431,9 @@ export type ChannelAccess = z.infer<typeof ChannelAccessSchema>;
 /**
  * What a refusal knows that its code does not: which Channels are in the way.
  *
- * `space_membership_final` and `space_audience_incompatible` are both refusals
- * about *a Channel* — the one that would be left with no home, or whose readers
- * would lose every way of finding it — and the caller was acting on the Space.
+ * `space_membership_final` is a refusal about *a Channel* that would be left
+ * with no home while the caller was acting on the Space. The legacy
+ * `space_audience_incompatible` code remains parseable during fleet cutover.
  * Without this the confirmation could only say that some Channel has to move
  * first, which leaves the person to find it by archiving repeatedly.
  *
@@ -445,7 +465,7 @@ export const SpaceErrorCodeSchema = z.enum([
   "space_protected",
   /** The Channel's last active membership, or a Space archive that would produce one. */
   "space_membership_final",
-  /** Removing this membership would leave a reader unable to discover any remaining Space. */
+  /** Legacy: associative ancestor visibility means current authorities do not emit this. */
   "space_audience_incompatible",
   /** A Space still makes this Channel Organization-wide; take it out of that Space first. */
   "channel_scope_locked_by_space",
