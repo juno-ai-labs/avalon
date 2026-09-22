@@ -688,27 +688,6 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
-### 2026-09-22 — The Sidekicks heading is a stable room landmark
-
-**What changed:** `SidekickSection` now keeps its section and **Sidekicks**
-heading visible while its rows are loading and after an empty answer. The center
-sidebar and inspector rail inherit the same behavior from the shared component;
-a failed read still adds the existing **Refresh** row beneath the heading.
-
-**Why:** **Participants** is always named in the room rail, but the adjacent
-**Sidekicks** label disappeared whenever no Sidekick row happened to be present.
-That made the room's two kinds of collaborators look like different structures
-and hid the Sidekick affordance exactly in the empty state where its label is
-most useful.
-
-**Considered and rejected:** Adding a placeholder row. The request is for a
-stable section label, not empty-state prose or another interactive control.
-Rows remain reserved for actual Sidekicks and the recovery action.
-
-**Consequences:** The section shell no longer communicates whether the list is
-pending or empty; callers keep those states distinct for data correctness, and
-only a load failure adds content beneath an otherwise empty heading.
-
 ### 2026-09-21 — Expanded hierarchy headers keep their identity marks
 
 **What changed:** The shared Space and Channel title header now renders its

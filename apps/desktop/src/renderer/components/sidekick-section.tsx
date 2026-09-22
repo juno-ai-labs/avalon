@@ -6,7 +6,7 @@ import { SidekickSection as SharedSidekickSection } from '@rally/ui/components/s
 
 export type { SidekickSectionFailure } from '@rally/ui/components/sidekick-section';
 import { desktopBridge } from '../lib/platform';
-export function SidekickSection(props: React.ComponentProps<typeof SharedSidekickSection>): React.JSX.Element | null {
+export function SidekickSection(props: React.ComponentProps<typeof SharedSidekickSection>): React.JSX.Element {
   return <SharedSidekickSection {...props} onOpen={(id) => { void desktopBridge().openSidekicks(id); }} />;
 }
 /**
