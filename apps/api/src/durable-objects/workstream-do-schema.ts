@@ -233,8 +233,8 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // SQLite cannot widen a CHECK in place, so the table is rebuilt. Version 1
     // still creates the narrow shape and must — its statements are hashed into
     // every deployed object's `_sql_schema_migrations` receipt, and editing
-    // them throws `workstream_do_schema_hash_mismatch:1` in the constructor of
-    // every work stream that ran an earlier release.
+    // them emits `workstream_do_schema_hash_mismatch:1` for every work stream
+    // that ran an earlier release without converging those schemas.
     `CREATE TABLE durable_outbox_kinds (
       message_id TEXT PRIMARY KEY,
       partition_key TEXT NOT NULL,

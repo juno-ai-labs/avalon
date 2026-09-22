@@ -74,10 +74,6 @@ const MIGRATION_COMPONENT = "artifact_host";
 export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
   description: "artifact serving state, viewer sessions, and the error log",
-  // One released build changed only the SQL comment below. Accept that exact
-  // schema-equivalent receipt so an object first opened during that deployment
-  // is not stranded when the published statement bytes are restored.
-  compatibleImplementationHashes: ["fnv1a64:d86989fbefcb799f"],
   statements: [
     // One row. The object *is* the artifact, so its identity is a singleton
     // rather than a keyed table — and a second row would mean this object was

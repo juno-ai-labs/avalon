@@ -89,6 +89,13 @@ Three outcomes reach the tracker:
   the constructor rethrows, because a failing object has no later wake to rely
   on and the throw itself would otherwise cancel the send.
 
+A migration implementation-hash disagreement is deliberately not a fourth
+failure outcome. The shared runner emits a structured
+`durable_object_schema_hash_mismatch` warning to regional Workers Logs and
+continues, so the tracker records the ordinary `current` or `applied` outcome.
+The warning preserves the recorded and current fingerprints for diagnosis; an
+actual migration SQL failure still reaches the tracker as `failed`.
+
 A wake that would tell the tracker nothing new sends nothing. The object keeps a
 one-row `_migration_report_state` table — created idempotently by the reporter,
 the same way the runner bootstraps its own ledger — holding the version, status,
@@ -802,6 +809,26 @@ a few tens of registry writes, not a few hundred.
 The run cap of 5,000 is not a capacity estimate; it is a guard on the blast
 radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
+
+### 2026-09-21 — Hash drift warns without becoming fleet failure
+
+**What changed:** Implementation-hash disagreement is now a regional structured
+console warning rather than a thrown migration failure. The tracker records the
+object's otherwise successful current or applied outcome.
+
+**Why:** A comment-only edit changed a receipt without changing the usable
+schema and took every existing live artifact page offline. The tracker made the
+failure observable, but observability did not justify denying every request to
+the object.
+
+**Considered and rejected:** Adding hash warnings to the tracker contract. The
+regional warning already carries both hashes and the tracker is the source of
+fleet migration state, not a second log store. Keeping the throw would preserve
+a red fleet state by preserving the user outage that created it.
+
+**Consequences:** Operators investigate hash drift in Workers Logs. Tracker
+failures now represent concrete migration or initialization failures; receipt
+drift alone cannot make an object unavailable.
 
 ### 2026-09-19 — SpaceDO joins the tracked fleet under its own component
 
