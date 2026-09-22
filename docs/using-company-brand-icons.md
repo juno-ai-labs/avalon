@@ -57,7 +57,7 @@ caches, and only CI's cold run pays it.
 
 ## Drawing a mark
 
-Do not render a brand component directly. Every surface goes through
+Do not render a brand component directly. Every **React** surface goes through
 `ConnectorMark` in `packages/ui/src/components/primitives.tsx`, which
 decides the mark, its colour, and how it is put on the page once:
 
@@ -71,6 +71,13 @@ Which mark a connector wears is
 connector's own type, so a connector looks the same in the transcript and in
 Settings. [`plugin-activity-rows.md`](plugin-activity-rows.md) owns the
 transcript's use of it.
+
+The public landing is static HTML and has no React runtime, so it cannot go
+through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
+download button, painted in `currentColor`. A Lucide or Tabler stand-in is still
+not a company mark there, and adding React to the site just to mount one
+component is not the fallback. The inlined `d` is pinned against the pack in
+`apps/site/test/site.test.ts`.
 
 ### Marks are monochrome
 
