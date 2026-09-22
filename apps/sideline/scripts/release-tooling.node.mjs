@@ -38,6 +38,8 @@ test('Sideline update feed rejects artifact paths', () => {
 test('packaging embeds the Sideline identity and its disjoint R2 update prefix', async () => {
   const config = await readFile(resolve(sidelineDirectory, 'electron-builder.yml'), 'utf8');
   assert.match(config, /^appId: ai\.rallywith\.sideline$/mu);
+  assert.match(config, /^\s*icon: resources\/icon\.icns$/mu);
+  assert.doesNotMatch(config, /desktop\/resources\/icon\.icns/u);
   assert.match(config, /^\s*url: https:\/\/downloads\.rallywith\.ai\/sideline\/stable\/darwin\/arm64$/mu);
   assert.match(config, /^\s*schemes:\n\s*- sideline$/mu);
   assert.doesNotMatch(
