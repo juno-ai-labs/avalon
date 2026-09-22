@@ -27,11 +27,10 @@ export interface CachedWorkspaceDirectory {
   /**
    * The arrangement this person last committed for each list they ordered.
    *
-   * On the row rather than derived, because without it a cold launch paints
-   * every Space's Channels and every Channel's Breakouts in the order the
-   * directory happens to hold them and then reshuffles them a moment later,
-   * under somebody whose whole reason for dragging them was that the order
-   * mattered.
+   * On the row rather than derived so the Organization's manually arranged
+   * Space rail can paint its committed order on a cold launch. Legacy Space-
+   * and Channel-container arrangements remain in the same compatibility shape,
+   * although alphabetical Channel and Breakout rails ignore them.
    *
    * Absent on a row written before this existed, which `parse` absorbs as an
    * empty ordering — one launch painted in the natural order, rather than

@@ -113,7 +113,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list, the active and archived Space directories, and the order this person last put each hand-arranged list in. |
+| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -127,8 +127,8 @@ before the cache existed, waiting for the socket.
 dials. If the work-stream list is still empty, the cached lists go straight
 into the query-cache entries the sidebar, the landing route, and the Space
 dashboard read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
-`['spaces']`, `['spaces-inactive']`, and `['personal-order']` — every list this
-person has arranged by hand. They go in directly,
+`['spaces']`, `['spaces-inactive']`, and `['personal-order']` — the compatible
+ordering payload whose Organization entry arranges the Space rail. They go in directly,
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it
@@ -147,10 +147,10 @@ refetch, which is what retires a seeded row for a work stream archived while
 the device was away.
 
 The ordering *is* on the row, and it did not move the version. Without it a cold
-launch paints every Space's Channels and every Channel's Breakouts in the order
-the directory happens to hold them and reshuffles them a moment later, under
-somebody whose whole reason for dragging them was that the order mattered —
-which is the visible flicker the seed exists to prevent. A version 3 row written
+launch paints the manually arranged Space rail in the directory's serialization
+order and reshuffles it a moment later — the visible flicker the seed exists to
+prevent. Legacy Space- and Channel-container entries remain in the shape but are
+ignored by alphabetical desktop Channel and shared React Breakout rails. A version 3 row written
 before it existed has no `ordering` key, and `parse` reads that absence as an
 empty arrangement: the natural order for one launch, corrected by the first
 payload. Bumping to version 4 to avoid that would have dropped every cached row
