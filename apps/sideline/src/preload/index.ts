@@ -1,0 +1,18 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { SidelineBridge, SidelineSession } from "../common/bridge";
+
+const bridge: SidelineBridge = {
+  getSession: () => ipcRenderer.invoke("sideline:session") as Promise<SidelineSession | null>,
+  signIn: () => ipcRenderer.invoke("sideline:sign-in") as Promise<void>,
+  signOut: () => ipcRenderer.invoke("sideline:sign-out") as Promise<void>,
+  catalog: () => ipcRenderer.invoke("sideline:catalog"),
+  send: (input) => ipcRenderer.invoke("sideline:send", input),
+  openInRally: (input) => ipcRenderer.invoke("sideline:open-in-rally", input) as Promise<void>,
+  onSessionChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, session: SidelineSession | null): void => listener(session);
+    ipcRenderer.on("sideline:session-changed", handler);
+    return () => ipcRenderer.removeListener("sideline:session-changed", handler);
+  },
+};
+
+contextBridge.exposeInMainWorld("sideline", bridge);

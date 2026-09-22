@@ -40,6 +40,16 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 [email sign-in](email-login.md). Challenge redemption records an identity-only
 session receipt; workspace relationships and grants remain separate authorities.
 
+## Impersonation relationships
+
+WorkspaceDO migration 67 adds `workspace_impersonation_relationships`, keyed by
+workspace, impersonating user, and represented user. The row carries its
+authority basis plus creation and revocation timestamps; it carries no action,
+destination, purpose, or read/write sub-permission. Exact direction is the
+authority and self-impersonation is an ordinary self-pair. Message rows remain
+unchanged; dual-principal correlation belongs to `audit_events`. See
+[impersonation](impersonation.md).
+
 ## Agent communication relationships
 
 WorkspaceDO migration 59 adds `agent_teams`, `agent_team_members`,
