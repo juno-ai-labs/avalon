@@ -82,7 +82,7 @@ import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
 import { STOPPING_LABEL } from '../components/agent-work-timing';
-import { ConversationSurface } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
@@ -156,9 +156,16 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
 }
 
 describe('socket-first channel open', () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900);
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
     session.current = null;
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.listScopeInvitations.mockResolvedValue({ status: "ready", invitations: [] });
@@ -943,8 +950,46 @@ describe('socket-first channel open', () => {
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {
     renderScreen();
 
-    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
+    const status = screen.getByRole('status', { name: 'Opening channel…' });
+    expect(status).toBeVisible();
+    expect(status).not.toHaveAttribute('aria-busy');
+    expect(document.querySelectorAll('.conversation-opening-sidebar .skeleton-row')).toHaveLength(7);
+    expect(document.querySelectorAll('.conversation-opening-message')).toHaveLength(3);
+    expect(document.querySelector('.conversation-opening-composer')).not.toBeNull();
+    expect(document.querySelector('[data-testid="thinking-orb"]')).toBeNull();
+    expect(document.querySelector('.conversation-opening-sidebar .sidebar-header')).toHaveClass('window-drag');
+    expect(document.querySelector('.conversation-opening-header')).toHaveClass('grokbot-workstream-header', 'window-drag');
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0'));
+  });
+
+  it('preserves a custom channel-sidebar width while the snapshot is pending', () => {
+    localStorage.setItem('rally.workstream-sidebar-width', '360');
+
+    renderScreen();
+
+    const sidebar = document.querySelector<HTMLElement>('.conversation-opening-sidebar');
+    expect(sidebar).not.toBeNull();
+    expect(sidebar).not.toHaveClass('is-compact');
+    expect(sidebar).toHaveStyle({ flexBasis: '360px' });
+  });
+
+  it('preserves a collapsed channel sidebar while the snapshot is pending', () => {
+    localStorage.setItem('rally.workstream-sidebar-width', '360');
+    localStorage.setItem('rally.workstream-sidebar-collapsed', 'true');
+
+    renderScreen();
+
+    const sidebar = document.querySelector<HTMLElement>('.conversation-opening-sidebar');
+    expect(sidebar).toHaveClass('is-compact');
+    expect(sidebar).toHaveStyle({ flexBasis: '88px' });
+  });
+
+  it('uses the Sidekick header geometry for a Sidekick conversation wait', () => {
+    render(<ConversationOpeningSkeleton label="Opening Sidekick…" parentKind="automation" />);
+
+    expect(document.querySelector('.conversation-opening-feed')).toHaveClass('automation-screen');
+    expect(document.querySelector('.conversation-opening-header')).toHaveClass('sidekick-conversation-heading', 'window-drag');
+    expect(document.querySelector('.conversation-opening-sidebar')).toBeNull();
   });
 
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
@@ -973,7 +1018,7 @@ describe('socket-first channel open', () => {
       client.setQueryData(['ordered-transcript', workstreamId], staleTranscript);
     });
 
-    expect(screen.getByText('Opening channel…')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
     await act(async () => Promise.resolve());
     expect(scrollTranscriptToEnd).not.toHaveBeenCalled();
 
