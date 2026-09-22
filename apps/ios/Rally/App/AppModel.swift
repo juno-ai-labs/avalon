@@ -667,7 +667,7 @@ final class AppModel {
         guard let workspace = workspaceSession?.workspace,
               let workstreamId = currentWorkstream?.id else { return }
         do {
-            guard let spaceId = try await client.channelSpaceIds(id: workstreamId).sorted().first,
+            guard let spaceId = try await client.channelSpaceIds(id: workstreamId).first,
               let url = RallyDeepLink.canonicalURL(
                 region: workspace.region,
                 workspaceId: workspace.id,

@@ -1,4 +1,4 @@
-import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { spaceCanonicalUrl, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { desktopBridge } from './platform';
 import { reportTelemetryProductIntent } from './telemetry';
@@ -14,4 +14,10 @@ export async function copyWorkstreamLink(workspace: WorkspaceTarget, spaceId: st
   reportTelemetryProductIntent({
     kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstreamId,
   });
+}
+
+export async function copySpaceLink(workspace: WorkspaceTarget, spaceId: string): Promise<void> {
+  const bridge = desktopBridge();
+  const { webBaseUrl } = await bridge.getRuntimeConfig();
+  await bridge.copyText(spaceCanonicalUrl(webBaseUrl, { ...workspace, spaceId }));
 }

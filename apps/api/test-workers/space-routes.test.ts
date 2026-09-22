@@ -217,6 +217,22 @@ async function channelSpaceSources(workstreamId: WorkstreamId) {
   return (access.body as { spaces: { spaceId: string; scope: string }[] }).spaces;
 }
 
+describe("GET /workstreams/:id/link-spaces", () => {
+  it("lets a Channel reader obtain its visible Space coordinates", async () => {
+    const space = await createSpace("workspace");
+    const channel = await createChannel("copy-link-reader", [space.id]);
+    const result = await request(`/workstreams/${channel}/link-spaces`, OWNER_AUTH);
+    expect(result).toEqual({ status: 200, body: { spaceIds: [space.id] } });
+    const otherMember = await request(`/workstreams/${channel}/link-spaces`, MEMBER_AUTH);
+    expect(otherMember.status).toBe(200);
+  });
+  it("refuses link coordinates for a Channel the caller cannot open", async () => {
+    const missingChannel = asWorkstreamId("00000000-0000-7000-8000-00000000d2ff");
+    const result = await request(`/workstreams/${missingChannel}/link-spaces`, MEMBER_AUTH);
+    expect(result.status).toBe(404);
+  });
+});
+
 // The test Worker binds `ACTIVITY_QUEUE` with no consumer, so an object's own
 // drain would send every effect into nothing before a case could read it. Held
 // here and delivered by `settleSpaceEffects`, which is the real consumer.

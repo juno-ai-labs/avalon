@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
+import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
@@ -73,6 +74,18 @@ function thesvgMonoPath(brand: string): string {
 }
 
 describe('public Rally site', () => {
+  it('keeps Space-only handoffs on the web when iOS has no Space screen', () => {
+    expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
+    expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
+    expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+  });
+  it('hands canonical Channel paths to iPhone builds through their legacy addressed reader', () => {
+    expect(legacyIosWorkstreamHandoff({
+      region: 'global', workspaceId: '00000000-0000-7000-8000-0000000000a1',
+      spaceId: '00000000-0000-7000-8000-0000000000a9',
+      workstreamId: '00000000-0000-7000-8000-0000000000b1',
+    })).toBe('rallywithai://handoff/workspaces/global/00000000-0000-7000-8000-0000000000a1/workstreams/00000000-0000-7000-8000-0000000000b1');
+  });
   it('offers the canonical installer without a signup dialog or clickable demo artifact', () => {
     const page = readProjectFile('index.html');
     const appleMark = `<svg class="button-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${thesvgMonoPath('apple')}"/></svg>`;
@@ -575,6 +588,8 @@ describe('public Rally site', () => {
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workspaces/enterprise/private-workspace'))
       .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
+    expect(normalizedTelemetryPathname('/app/global/private-org/s/private-space/c'))
+      .toBe('/app/:unrecognized');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
     expect(sitePageForPath('/trust')).toBe('legal');
     expect(sitePageForPath('/trust/')).toBe('legal');
@@ -661,8 +676,6 @@ describe('canonical work-stream links', () => {
 
     // No asset can exist per id, so the rewrite is what makes the canonical
     // path resolve at all. Losing it turns every shared link into a 404.
-    expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
-    expect(redirects).toContain('/app/workspaces/*  /app/workstreams/  200');
     expect(redirects).toContain('/app/*  /app/workstreams/  200');
     expect(config).toContain('app/workstreams/index.html');
     expect(page).toContain('id="open-rally"');
@@ -687,8 +700,7 @@ describe('canonical work-stream links', () => {
   it('keeps the handoff page out of shared caches', () => {
     const headers = readProjectFile('public/_headers');
 
-    expect(headers).toContain('/app/workstreams/*');
     expect(headers).toContain('/app/*');
-    expect(headers.slice(headers.indexOf('/app/workstreams/*'))).toContain('Cache-Control: no-store');
+    expect(headers.slice(headers.indexOf('/app/*'))).toContain('Cache-Control: no-store');
   });
 });

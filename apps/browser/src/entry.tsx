@@ -251,15 +251,15 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       await browserRequest(invitation.region, "/workspace/select", BrowserSessionSchema, { workspaceId: target.workspaceId });
       if (read !== sessionRead.current) return;
       const navigation = await browserRequest(invitation.region, `/api/${target.workspaceId}/sharing/navigation`, SharedNavigationDirectorySchema);
-      const spaceIds = Object.fromEntries(result.invitation.targets.map((entry) => {
-        const space = navigation.spaces.find((item) => item.workstreamIds.includes(entry.parentId));
-        if (!space) throw new Error("This shared channel has no Space to open. Try again in a moment.");
-        return [entry.parentId, space.id];
+      const spaceIds = Object.fromEntries(result.invitation.targets.flatMap((entry) => {
+        const space = navigation.spaces.filter((item) => item.workstreamIds.includes(entry.parentId))
+          .sort((left, right) => Number(left.scope === 'personal') - Number(right.scope === 'personal') || left.id.localeCompare(right.id))[0];
+        return space ? [[entry.parentId, space.id]] : [];
       }));
       setAcceptedSpaceIds(spaceIds);
       setAccepted(result.invitation);
       if (result.invitation.targets.length === 1) {
-        location.assign(invitationTargetPath(location.origin, invitation.region, target, spaceIds[target.parentId]!));
+        location.assign(invitationTargetPath(location.origin, invitation.region, target, spaceIds[target.parentId]));
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to accept this invitation. Please try again."); }
     finally { setBusy(false); }
@@ -279,7 +279,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
         {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
-          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target, acceptedSpaceIds[target.parentId]!)}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
+          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target, acceptedSpaceIds[target.parentId])}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
           : invitation ? <><p>Accept this invitation using the email address it was sent to.</p><button disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy ? "Joining…" : "Accept invitation"}</button></>
           : workspaces.length ? <nav aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="workspace-link" key={workspace.id} href={`/app/workspaces/${region}/${workspace.id}`}>{workspace.name}<span aria-hidden="true">→</span></a>)}</nav>

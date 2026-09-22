@@ -1253,8 +1253,10 @@ export function Sidebar({
   }, [routeWorkstreamId]);
   useEffect(() => {
     if (routeSpaceId) {
-      if (spaces?.some((space) => space.id === routeSpaceId)) setSelectedSpaceId(routeSpaceId);
-      return;
+      if (spaces?.some((space) => space.id === routeSpaceId && (!routeWorkstream || routeWorkstream.spaceIds.includes(space.id)))) {
+        setSelectedSpaceId(routeSpaceId);
+        return;
+      }
     }
     if (routeWorkstream?.spaceIds.includes(selectedSpaceId ?? '')) return;
     if (routeWorkstream?.spaceIds[0]) setSelectedSpaceId(routeWorkstream.spaceIds[0]);

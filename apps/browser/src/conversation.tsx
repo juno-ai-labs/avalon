@@ -85,10 +85,48 @@ function SharedConversationRoute(): React.JSX.Element {
   return <SharedConversation key={`${decodedParentId}:${decodedSubstreamId}`} parentId={decodedParentId} substreamId={decodedSubstreamId} spaceId={decodedSpaceId} />;
 }
 
+function SharedSpaceRoute(): React.JSX.Element {
+  const { spaceId: encodedSpaceId } = useParams();
+  const { api } = useCollaborationSession();
+  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal), enabled: Boolean(api) });
+  if (directory.isPending) return <div className="browser-empty"><p>Opening Space…</p></div>;
+  if (directory.isError) return <InlineError>Unable to open this Space.</InlineError>;
+  return <SharedSpaceOverview encodedSpaceId={encodedSpaceId ?? ''} directory={directory.data} />;
+}
+
+export function SharedSpaceOverview({ encodedSpaceId, directory }: {
+  encodedSpaceId: string;
+  directory: Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>>;
+}): React.JSX.Element {
+  const spaceId = uuidFromBase58(encodedSpaceId);
+  if (!spaceId) return <InlineError>This Space link is invalid.</InlineError>;
+  const space = directory.spaces.find((item) => item.id === spaceId);
+  if (!space) return <InlineError>This Space is not available to you.</InlineError>;
+  const channels = space.workstreamIds
+    .map((id) => directory.workstreams.find((item) => item.parentId === id))
+    .filter((item) => item !== undefined);
+  return <div className="browser-empty browser-space-overview">
+    <h1>{space.name}</h1>
+    <p>{channels.length === 0 ? 'There are no shared channels in this Space.' : 'Channels in this Space'}</p>
+    {channels.length > 0 && <nav aria-label={`Channels in ${space.name}`}><ul>{channels.map((channel) => {
+      const first = channel.conversations.find((item) => !item.archived) ?? channel.conversations[0];
+      return first && <li key={channel.parentId}><NavLink to={sharedConversationPath(spaceId, channel.parentId, first.substreamId)}>{channel.title ?? first.title}</NavLink></li>;
+    })}</ul></nav>}
+  </div>;
+}
+
 function sharedConversationPath(spaceId: string | null, parentId: string, substreamId: string): string {
   return spaceId
     ? `/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(parentId)}${substreamId === '0' ? '' : `/b/${uuidToBase58(substreamId)}`}`
     : `/workstreams/${parentId}${substreamId === '0' ? '' : `/substreams/${substreamId}`}`;
+}
+
+export function sharedConversationLinkPath(region: string, organizationId: string, directory: Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>> | undefined, selectedSpaceId: string | null, parentId: string, substreamId: string): string {
+  const availableSpaces = directory?.spaces.filter((space) => space.workstreamIds.includes(parentId)) ?? [];
+  const space = availableSpaces.find((item) => item.id === selectedSpaceId)
+    ?? [...availableSpaces].sort((a, b) => Number(a.scope === 'personal') - Number(b.scope === 'personal') || a.id.localeCompare(b.id))[0];
+  if (space) return `/app/${region}/${uuidToBase58(organizationId)}${sharedConversationPath(space.id, parentId, substreamId)}`;
+  return `/app/workspaces/${region}/${organizationId}${sharedConversationPath(null, parentId, substreamId)}`;
 }
 
 function SharedConversation({ parentId, substreamId, spaceId }: { parentId: string; substreamId: string; spaceId: string | null }): React.JSX.Element {
@@ -147,7 +185,11 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           onAddParticipant={context.openParticipantDialog} onOpenRail={context.openRail}
           onRename={async (title) => { await context.rename(title); void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] }); }}
           onShowNavigation={() => undefined}
-          onCopyLink={() => { void navigator.clipboard.writeText(location.href); }}
+          onCopyLink={() => {
+            if (!session?.workspace) return;
+            const path = sharedConversationLinkPath(session.workspace.region, session.workspace.id, directory.data, spaceId, parentId, substreamId);
+            void navigator.clipboard.writeText(new URL(path, location.origin).href);
+          }}
           actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} /> : null} />} />}
   </>;
 }
@@ -243,6 +285,11 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   };
   const selectSpace = (spaceId: string) => {
     setSelectedSpaceId(spaceId);
+    if (canonicalHost && spaceId !== SHARED_CHANNELS_SPACE_ID) {
+      spacesSidebar.setCompact(false);
+      navigate(`/s/${uuidToBase58(spaceId)}/`);
+      return;
+    }
     const space = navigationSpaces.find((item) => item.id === spaceId);
     const containedWorkstreams = space?.workstreamIds
       .map((id) => directory.data?.workstreams.find((item) => item.parentId === id))
@@ -366,6 +413,7 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   return <div className="browser-workspace workspace-shell">
     <SharedNavigation api={api} onSignOut={onSignOut} />
     <main className="browser-feed main-pane"><Routes>
+      <Route path="/s/:spaceId" element={<SharedSpaceRoute />} />
       <Route path="/s/:spaceId/c/:parentId" element={<SharedConversationRoute />} />
       <Route path="/s/:spaceId/c/:parentId/b/:substreamId" element={<SharedConversationRoute />} />
       <Route path="/workstreams/:parentId" element={<SharedConversationRoute />} />

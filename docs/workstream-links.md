@@ -334,12 +334,16 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 ## Apple universal links
 
-Both Rally hosts serve `/.well-known/apple-app-site-association`, claiming
-`/app/*` (including the earlier `/app/workspaces/*` and `/app/workstreams/*`) for
-`7ZLT6A8W25.ai.rallywith.desktop` and `7ZLT6A8W25.ai.rallywith.ios`.
-The main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
-uses existing scheme navigation. The iPhone opens the same paths into the
-native client. Legacy origins and other path families remain
+Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
+`/app/*`; iOS still claims only the earlier `/app/workspaces/*` and
+`/app/workstreams/*` paths until an iPhone release with the new parser is
+available. A canonical Channel or Breakout link opens the site handoff, which
+uses the old addressed iPhone reader; it does not send the new Base58 path to
+an installed old build. Space-only URLs stay on the web with a desktop-only
+explanation because the iPhone has no Space dashboard.
+The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
+uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
+into the native client. Legacy origins and other path families remain
 in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
 checks both hosts after site deployment and before desktop release. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
@@ -350,8 +354,11 @@ use the same adapter with notification attribution. See [push](push-notification
 
 **What changed:** New HTTPS links put the Organization immediately after the
 region, then `/s/` Space, `/c/` Channel, and optional `/b/` Breakout in one hierarchy. UUID path
-segments use canonical Base58 encoding. Server-side Channel links resolve one
-current Space placement from WorkspaceDO, while old URL shapes remain readable.
+segments use canonical Base58 encoding. The Space dashboard can copy its URL;
+the browser opens shared Space roots as read-only overviews. Server-side Channel
+links resolve one current Space placement from WorkspaceDO, while old URL shapes
+remain readable. iOS universal-link claims stay on the old paths until the
+new parser has shipped, while the site translates new links for older builds.
 
 **Why:** The old path exposed the prototype Workspace/Workstream/Substream
 taxonomy and could not address a Space dashboard. A shared codec and one

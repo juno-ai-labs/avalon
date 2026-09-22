@@ -190,6 +190,7 @@ export function normalizedTelemetryPathname(pathname: string): string {
     return '/app/workspaces/:region/:workspace/workstreams/:id';
   }
   if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
+  if (path.startsWith('/app/')) return '/app/:unrecognized';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }
 
