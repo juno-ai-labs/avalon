@@ -139,7 +139,9 @@ export type SpaceIntentResumeOutcome =
   | { readonly outcome: "abandoned"; readonly reason: string };
 
 /**
- * Cloudflare permits six simultaneous outgoing connections per invocation.
+ * Cloudflare permits six simultaneous outgoing connections per invocation
+ * (https://developers.cloudflare.com/workers/platform/limits/, verified
+ * 2026-09-21).
  * A member step reaches one Channel authority at a time, so six independent
  * archive retractions can overlap without asking the runtime to queue a
  * seventh connection for us.

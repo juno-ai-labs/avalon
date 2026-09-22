@@ -96,6 +96,42 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Current');
   });
 
+  it.each([
+    { initialVisible: true, nextVersion: version(6, 4), incomingVisible: false },
+    { initialVisible: true, nextVersion: version(4, 6), incomingVisible: false },
+    { initialVisible: false, nextVersion: version(6, 4), incomingVisible: true },
+    { initialVisible: false, nextVersion: version(4, 6), incomingVisible: true },
+  ])(
+    'keeps listability at $initialVisible when one half of a composite snapshot is stale',
+    ({ initialVisible, nextVersion, incomingVisible }) => {
+      const queryClient = new QueryClient();
+      const seed = summary();
+      applyVersionedWorkstreamState(queryClient, {
+        workstreamId: id,
+        stateVersion: version(5, 5),
+        ...workstreamSummaryState(seed),
+        visible: initialVisible,
+      });
+
+      const result = applyVersionedWorkstreamState(queryClient, {
+        workstreamId: id,
+        stateVersion: nextVersion,
+        ...workstreamSummaryState(summary({
+          ...(incomingVisible ? {} : { archivedAt: '2026-09-21T12:00:01.000Z' }),
+        })),
+        visible: incomingVisible,
+      });
+
+      expect(result.visible).toBe(initialVisible);
+      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+        .toHaveLength(initialVisible ? 1 : 0);
+      if (initialVisible) {
+        expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.archivedAt)
+          .not.toBe('2026-09-21T12:00:01.000Z');
+      }
+    },
+  );
+
   it('holds a confirmed archive through a newer in-flight page, then rejects that page after the tombstone', () => {
     const queryClient = new QueryClient();
     const active = summary({ updatedAt: '2026-09-21T12:00:00.000Z' });
@@ -139,6 +175,39 @@ describe('applyVersionedWorkstreamState', () => {
     });
     expect(staleAfterTombstone.visible).toBe(false);
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
+  });
+
+  it('accepts a newer restore even when the archive tombstone has not arrived', () => {
+    const queryClient = new QueryClient();
+    const active = summary({
+      updatedAt: '2026-09-21T12:00:00.000Z',
+    });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      ...workstreamSummaryState(active),
+      visible: true,
+    });
+    holdCachedWorkstreamArchive(queryClient, {
+      ...active,
+      archivedAt: '2026-09-21T12:00:01.000Z',
+      updatedAt: '2026-09-21T12:00:01.000Z',
+    });
+
+    const restored = summary({
+      title: 'Restored',
+      updatedAt: '2026-09-21T12:00:02.000Z',
+    });
+    const result = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(6, 5),
+      ...workstreamSummaryState(restored),
+      visible: true,
+    });
+
+    expect(result).toEqual({ commonApplied: true, viewerApplied: false, visible: true });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0])
+      .toMatchObject({ title: 'Restored', archivedAt: undefined });
   });
 
   it('resets both tables when an authority generation changes', () => {
