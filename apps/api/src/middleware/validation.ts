@@ -114,7 +114,7 @@ export function requireSendableMessageLength(
    * route that carries composed text — not the validator's generic refusal for
    * a bound they can act on.
    */
-  field: "openingMessage" | "text" | "opening.text",
+  field: "openingMessage" | "text" | "message" | "opening.text",
 ): MiddlewareHandler {
   return async (c, next) => {
     const body: unknown = await c.req.json().catch(() => null);

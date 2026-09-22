@@ -235,7 +235,18 @@ export async function retireWorkspaceGraph(
   // closed. It is what lets the Demos page list what is live without waking a
   // retired object to ask it. A workspace this feature never made has no row,
   // and the update is a no-op for it.
-  if (receipt.complete) await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
+  if (receipt.complete) {
+    const demo = await env.DB.prepare(
+      "SELECT operation_id FROM demo_operations WHERE workspace_id = ?",
+    ).bind(input.workspaceId).first<{ operation_id: string }>();
+    if (demo) {
+      await workspace.revokeImpersonationRelationships({
+        workspaceId: input.workspaceId,
+        authorityBasis: `demo:${demo.operation_id}`,
+      });
+    }
+    await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
+  }
 
   // The region's own record of who closed this workspace. The tombstone names
   // an operator retirement; this line names the operator, and it is the one

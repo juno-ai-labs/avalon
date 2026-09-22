@@ -45,6 +45,7 @@ the source credentials, memory, authoring conversation, or run history.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
+| `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
@@ -1025,6 +1026,28 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-09-21 — Sideline uses the desktop isolation boundary without participant credentials
+
+**What changed:** The new Sideline Electron host has a dedicated OAuth callback,
+encrypted main-process session storage, a sandboxed networkless renderer, and a
+narrow typed preload for catalog, send, sign-out, and Rally handoff operations.
+
+**Why:** Represented messaging needs the operator's ordinary Rally identity but
+must never recover or package the represented participant's credential. Keeping
+network and refresh tokens in the main process makes renderer compromise no more
+authoritative than a modified API request.
+
+**Considered and rejected:** A packaged internal API key, renderer-side fetch,
+and sharing the main app's custom URL scheme. Those expose reusable authority or
+leave the operating system unable to choose which installed app owns sign-in.
+
+**Consequences:** New Sideline capabilities must be explicit bridge methods with
+main-process argument validation. The renderer cannot gain arbitrary IPC,
+network, filesystem, session, or environment access; `rallywithai:` remains
+owned by the main Rally app.
+
+Design: `docs/PRDs/2026-09-19_impersonation-platform/prd.md`.
 
 ### 2026-09-19 — The secret gate scans the pull request, not the repository
 
