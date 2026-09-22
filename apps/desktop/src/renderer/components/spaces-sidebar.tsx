@@ -46,6 +46,7 @@ interface SpacesSidebarProps {
   currentPath: string;
   inactiveSpaces: SpaceSummary[];
   loading?: boolean;
+  readOnly?: boolean;
   spaces: SpaceSummary[];
   selectedSpaceId: string | null;
   ready: boolean;
@@ -90,6 +91,7 @@ export function SpacesSidebar({
   currentPath,
   inactiveSpaces,
   loading = false,
+  readOnly = false,
   spaces,
   selectedSpaceId,
   ready,
@@ -248,10 +250,10 @@ export function SpacesSidebar({
       >
         <SidebarHeader aria-label="Space actions" className="spaces-sidebar-titlebar window-drag">
           <div className="spaces-sidebar-titlebar-actions window-no-drag">
-          {ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
+          {!readOnly && ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
             <IconRestore size={16} stroke={1.8} />
           </IconButton>}
-          {ready && <NewWorkstreamMenu
+          {!readOnly && ready && <NewWorkstreamMenu
             canCreateSpace
             tooltipLabel="New channel or space"
             spaces={spaces}
@@ -272,7 +274,7 @@ export function SpacesSidebar({
           </div>
         </SidebarHeader>
         {ready && <div className="sidebar-commandbar spaces-sidebar-commandbar window-no-drag" ref={commandRef}>
-          {collapsed && <NewWorkstreamMenu
+          {!readOnly && collapsed && <NewWorkstreamMenu
             tooltipSide="right"
             tooltipLabel="New channel or space"
             canCreateSpace
@@ -295,12 +297,12 @@ export function SpacesSidebar({
             <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
           </Tip>
         </div>}
-        {ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
+        {!readOnly && ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.
         </p>}
         <SidebarScroll
           as="nav"
-          aria-describedby={ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
+          aria-describedby={!readOnly && ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
           aria-label="Spaces"
           className="spaces-sidebar-scroll"
         >
@@ -331,7 +333,7 @@ export function SpacesSidebar({
                     channelDropTargetId === space.id && 'is-channel-drop-target',
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
-                  draggable
+                  draggable={!readOnly}
                   onDragEnd={(event) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
                     draggingSpaceId.current = null;
@@ -373,6 +375,7 @@ export function SpacesSidebar({
                     setChannelDropTargetId((current) => current === space.id ? null : current);
                   }}
                   onDragStart={(event) => {
+                    if (readOnly) return;
                     draggingSpaceId.current = space.id;
                     previewOrder(orderedSpaces.map((item) => item.id));
                     event.dataTransfer.effectAllowed = 'move';
@@ -405,6 +408,7 @@ export function SpacesSidebar({
                       });
                   }}
                   onKeyDown={(event) => {
+                    if (readOnly) return;
                     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
                     event.preventDefault();
                     const nextIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
@@ -415,6 +419,7 @@ export function SpacesSidebar({
                   to={`/spaces/${space.id}`}
                 >
                   <SidebarNavigationRowContent
+                    description={space.scope === 'workspace' ? 'Public space' : 'Private space'}
                     icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
                     title={space.name}
                   />

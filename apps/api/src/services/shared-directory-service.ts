@@ -3,6 +3,7 @@ import {
   SharedDirectorySchema,
   SharedNavigationDirectorySchema,
   SharedNavigationSpaceSchema,
+  SharedNavigationWorkstreamSchema,
   SharedWorkstreamSchema,
 } from "@rally/contracts/scope-grants";
 import { ScopeGrantCandidatesSchema } from "../durable-objects/scope-grant-directory";
@@ -23,15 +24,22 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
   const items = await Promise.all(candidates.map(async (parentId) => {
     const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
       workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
-    const item = SharedWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
+    const item = SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
     }));
     return item;
   }));
-  const workstreams = items.filter((item) => item !== null).map((item) =>
-    item.conversations.some((conversation) => conversation.substreamId === "0")
-      ? item
-      : { ...item, title: null });
+  const workstreams = items.filter((item) => item !== null).map((item) => SharedWorkstreamSchema.parse({
+    parentId: item.parentId,
+    title: item.conversations.some((conversation) => conversation.substreamId === "0") ? item.title : null,
+    ...(item.appearance ? { appearance: item.appearance } : {}),
+    ...(item.archived === undefined ? {} : { archived: item.archived }),
+    conversations: item.conversations.map((conversation) => ({
+      substreamId: conversation.substreamId,
+      title: conversation.title,
+      archived: conversation.archived,
+    })),
+  }));
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (current?.status !== "active" || current.incarnation !== relationship.incarnation
     || current.revision !== relationship.revision) return SharedDirectorySchema.parse({ workstreams: [] });
@@ -52,7 +60,7 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
   const items = await Promise.all(candidates.map(async (parentId) => {
     const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
       workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
-    return SharedWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
+    return SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
     }));
   }));

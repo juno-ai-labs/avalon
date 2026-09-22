@@ -85,6 +85,8 @@ interface SidebarProps {
    * than this component inferring it from a refusal.
    */
   spaces?: SpaceSummary[];
+  /** Associative ancestor metadata is navigation-only and exposes no Space writes. */
+  spacesReadOnly?: boolean;
   /** Controlled by the shell so responsive geometry reads the rail on screen. */
   spacesCollapsed?: boolean;
   /** Width left for Spaces after preserving compact sibling rails and content. */
@@ -1127,6 +1129,7 @@ export function Sidebar({
   workspace,
   automations,
   spaces,
+  spacesReadOnly = false,
   spacesAvailableWidth = MAX_SIDEBAR_WIDTH,
   spacesCollapsed: controlledSpacesCollapsed,
   spacesConstrained = false,
@@ -2058,6 +2061,7 @@ export function Sidebar({
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
         loading={loading}
+        readOnly={spacesReadOnly}
         onArchive={onArchiveSpace}
         onCollapsedChange={setSpacesCollapsed}
         onWidthChange={setSpacesSidebarWidth}
@@ -2120,7 +2124,7 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               work stream buttons for a quarter of a second. */}
-          <NewWorkstreamMenu
+          {!spacesReadOnly && <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             spaces={placementSpaces}
             onCreateChannel={createChannelFromSidebar}
@@ -2137,7 +2141,7 @@ export function Sidebar({
             >
               <Plus aria-hidden="true" size={16} />
             </button>
-          </NewWorkstreamMenu>
+          </NewWorkstreamMenu>}
         </SidebarHeader>}
 
         {spaces === undefined && <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>

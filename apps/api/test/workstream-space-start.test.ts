@@ -1,7 +1,6 @@
 import { asSpaceId, asUserId, asWorkstreamId, SpaceSummarySchema } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../src/lib/api-error";
 import {
   reconcileReplayedSpaceMembership,
   resolveSpaceWorkstreamStart,
@@ -99,14 +98,12 @@ describe("starting a Channel inside a Space", () => {
     });
   });
 
-  it("given a requested participant outside every personal Space, when creation resolves its start, then it is refused", () => {
-    const start = (): unknown => resolveSpaceWorkstreamStart({
+  it("given a direct participant outside every personal Space, when creation resolves its start, then the Channel seats them", () => {
+    expect(resolveSpaceWorkstreamStart({
       spaces: [space()],
       scope: "personal",
       requestedParticipantUserIds: [outsiderId],
-    });
-    expect(start).toThrowError(ApiError);
-    expect(start).toThrow("Add that person to the space before starting this channel");
+    }).participantUserIds).toEqual([outsiderId, creatorId, participantId]);
   });
 
   it("given an Organization-wide Space, when a requested participant is outside its roster, then nothing is refused", () => {

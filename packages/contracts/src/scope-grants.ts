@@ -186,9 +186,26 @@ export const SharedWorkstreamSchema = z.strictObject({
   title: z.string().nullable(),
   appearance: WorkstreamAppearanceSchema.optional(),
   archived: z.boolean().optional(),
-  conversations: z.array(z.strictObject({ substreamId: SubstreamIdSchema, title: z.string(), archived: z.boolean() })),
+  conversations: z.array(z.strictObject({
+    substreamId: SubstreamIdSchema,
+    title: z.string(),
+    archived: z.boolean(),
+  })),
 });
 export const SharedDirectorySchema = z.strictObject({ workstreams: z.array(SharedWorkstreamSchema) });
+
+/** Associative presentation added only on the separately versioned navigation read. */
+export const SharedNavigationWorkstreamSchema = SharedWorkstreamSchema.omit({ conversations: true }).extend({
+  scope: z.enum(["personal", "workspace"]),
+  conversations: z.array(z.strictObject({
+    substreamId: SubstreamIdSchema,
+    title: z.string(),
+    appearance: WorkstreamAppearanceSchema.optional(),
+    scope: z.enum(["personal", "workspace"]),
+    archived: z.boolean(),
+  })),
+});
+export type SharedNavigationWorkstream = z.infer<typeof SharedNavigationWorkstreamSchema>;
 
 /** The smallest Space projection needed to place shared Channels in browser navigation. */
 export const SharedNavigationSpaceSchema = z.strictObject({
@@ -196,6 +213,7 @@ export const SharedNavigationSpaceSchema = z.strictObject({
   name: z.string().trim().min(1),
   iconKey: SpaceIconKeySchema,
   colorKey: SpaceColorKeySchema,
+  scope: z.enum(["personal", "workspace"]),
   workstreamIds: z.array(IdSchema),
 });
 export type SharedNavigationSpace = z.infer<typeof SharedNavigationSpaceSchema>;
@@ -203,7 +221,7 @@ export type SharedNavigationSpace = z.infer<typeof SharedNavigationSpaceSchema>;
 /** Versioned separately from SharedDirectorySchema so strict older clients keep parsing. */
 export const SharedNavigationDirectorySchema = z.strictObject({
   spaces: z.array(SharedNavigationSpaceSchema),
-  workstreams: z.array(SharedWorkstreamSchema),
+  workstreams: z.array(SharedNavigationWorkstreamSchema),
 });
 export type SharedNavigationDirectory = z.infer<typeof SharedNavigationDirectorySchema>;
 
