@@ -119,8 +119,9 @@ describe('SpacesSidebar', () => {
       ],
     });
 
-    expect(within(screen.getByRole('link', { name: 'General' }))
-      .getByLabelText('4 conversations need attention in General')).toHaveTextContent('4');
+    const general = screen.getByRole('link', { name: 'General' });
+    expect(general).toHaveAccessibleDescription('4 conversations need attention in General');
+    expect(within(general).getByText('4')).toHaveAttribute('aria-hidden', 'true');
     expect(within(screen.getByRole('link', { name: 'Launch' })).queryByText('0')).not.toBeInTheDocument();
   });
 

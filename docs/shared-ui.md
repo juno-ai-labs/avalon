@@ -185,6 +185,10 @@ state and still duplicate expanded-row placement.
 
 **Consequences:** Any host using the shared row gets the same badge behavior by
 supplying data; identity components remain usable without navigation state.
+The visible count is hidden from the accessibility tree and the
+labelled count is attached to the row's accessible description, so focus
+announces the destination and its attention total together without exposing a
+second, non-interactive element.
 
 ### 2026-09-21 — Hierarchy title headers keep one identity composition
 

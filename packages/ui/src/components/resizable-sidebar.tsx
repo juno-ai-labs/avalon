@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { GripVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -49,17 +50,26 @@ export function SidebarRow<Component extends ElementType = 'button'>(
   props: SidebarRowProps<Component>,
 ): React.JSX.Element {
   const { as, badge, children, ...rest } = props;
-  const rowProps = rest as typeof rest & { className?: string | ClassNameResolver };
+  const rowProps = rest as typeof rest & {
+    'aria-describedby'?: string;
+    className?: string | ClassNameResolver;
+  };
   const className = rowProps.className;
+  const badgeVisible = Boolean(badge && badge.count > 0);
+  const badgeDescriptionId = useId();
+  const describedBy = [rowProps['aria-describedby'], badgeVisible ? badgeDescriptionId : undefined]
+    .filter(Boolean)
+    .join(' ') || undefined;
   const mergedClassName = typeof className === 'function'
     ? (...args: unknown[]): string => clsx('sidebar-row', className(...args))
     : clsx('sidebar-row', className);
   const Row: ElementType = as ?? 'button';
-  return <Row {...rest} className={mergedClassName}>
+  return <Row {...rest} aria-describedby={describedBy} className={mergedClassName}>
     {children}
-    {badge && badge.count > 0 && (
-      <span aria-label={badge.label} className="sidebar-row-badge">{badge.count}</span>
-    )}
+    {badgeVisible && <>
+      <span aria-hidden="true" className="sidebar-row-badge">{badge!.count}</span>
+      <span className="sr-only" id={badgeDescriptionId}>{badge!.label}</span>
+    </>}
   </Row>;
 }
 

@@ -3997,16 +3997,20 @@ function mapDirectoryWorkstreams(
   workspaceId: string,
   spaces: WorkspaceSpaceStorage,
   userId: string,
+  accessClass: "member" | "guest" = "member",
 ): Workstream[] {
   const personalIds = [...new Set(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
   )];
   const previews = loadParticipantPreviews(sql, personalIds);
   const spaceIds = spaces.spaceIdsByChannel(userId, rows.map((row) => row.workstream_id));
-  const pins = loadSpacePins(sql, userId, rows.map((row) => row.workstream_id));
+  const pins = spaces.ready()
+    ? loadSpacePins(sql, userId, rows.map((row) => row.workstream_id))
+    : new Map<string, { spaceId: string; position: number }[]>();
   const breakoutAttentionCounts = spaces.breakoutAttentionCounts(
     userId,
     rows.map((row) => row.workstream_id),
+    accessClass,
   );
   return rows.map((row) => directoryWorkstream(
     row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
@@ -4509,6 +4513,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstream: mapDirectoryWorkstreams(
             this.state.storage.sql, [row], currentAttachment.workspaceId,
             this.spaceStorage(), currentAttachment.userId,
+            currentAttachment.accessClass,
           ).map((item) => currentAttachment.accessClass === "guest"
             ? { ...item, spaceIds: [] }
             : item)[0],
@@ -4543,7 +4548,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         limit: parsed.data.limit,
         ...(parsed.data.before ? { before: parsed.data.before } : {}),
         includeSystem: parsed.data.includeSystem,
-      });
+      }, attachment.accessClass);
       socket.send(JSON.stringify(WorkspaceWorkstreamPageEventSchema.parse({
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
@@ -11445,7 +11450,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  private listDirectory(request: WorkspaceDirectoryListRequest): WorkspaceDirectoryPage {
+  private listDirectory(
+    request: WorkspaceDirectoryListRequest,
+    accessClass: "member" | "guest" = "member",
+  ): WorkspaceDirectoryPage {
     let cursor = request.before ? directoryCursor(request.before) : null;
     if (cursor) {
       const anchor = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
@@ -11500,6 +11508,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       items: mapDirectoryWorkstreams(
         this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
+        accessClass,
       ),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
@@ -11663,7 +11672,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               ? []
               : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
             [],
-            spaces.breakoutAttentionCounts(attachment.userId, [workstreamId]).get(workstreamId) ?? 0,
+            spaces.breakoutAttentionCounts(
+              attachment.userId,
+              [workstreamId],
+              attachment.accessClass,
+            ).get(workstreamId) ?? 0,
           )
           : null,
       }));
@@ -11691,7 +11704,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId: attachment.userId,
       limit: SIDEBAR_LIST_LIMIT,
       includeSystem: false,
-    });
+    }, attachment.accessClass);
     return WorkspaceSidebarSchema.parse({
       workstreams: attachment.accessClass === "guest"
         ? { ...workstreams, items: workstreams.items.map((item) => ({ ...item, spaceIds: [] })) }
@@ -11808,10 +11821,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `spaceIds`, because the Space's own disappearance or return is already
    * visible to everyone who reaches it by any clause.
    *
-   * Two local reads per socket and no write, plus two more per entry in
-   * `spaceIdsThroughChannel` — which is one Channel on the two membership
-   * settlements that pass it, beside a `publishSpaceSnapshot` on the same line
-   * that rebuilds both directories per socket.
+   * The addressed sets take bounded local reads per socket and no write. The
+   * final attention totals are one grouped read for every Space named to that
+   * socket, rather than one aggregate query per Space.
    */
   private publishSpaceConversationsChanged(moved: {
     /** Channels whose shared row moved: everyone who can list them. */
@@ -11874,14 +11886,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
       }
       if (spaceIds.size === 0) continue;
+      const sortedSpaceIds = [...spaceIds].sort();
+      const attentionCounts = spaces.attentionCounts(attachment.userId, sortedSpaceIds);
       try {
         socket.send(JSON.stringify(WorkspaceSpaceConversationsEventSchema.parse({
           type: "space_conversations_changed",
           occurredAt,
-          spaceIds: [...spaceIds].sort(),
-          attentionCounts: [...spaceIds].sort().map((spaceId) => ({
+          spaceIds: sortedSpaceIds,
+          attentionCounts: sortedSpaceIds.map((spaceId) => ({
             spaceId,
-            count: spaces.attentionCount(attachment.userId, spaceId),
+            count: attentionCounts.get(spaceId) ?? 0,
           })),
         })));
       } catch {
