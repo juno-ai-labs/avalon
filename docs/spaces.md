@@ -1988,9 +1988,12 @@ overwrite a newer placement or strand newer feedback.
 roster now stages one `move` intent in WorkspaceDO, replaces the Space access
 source and its supplied-reader attribution in one WorkstreamDO transaction, and
 atomically activates the target membership while removing the source. The
-intent carries both Space revisions and membership generations, is resumed by
-the existing alarm path, and falls back to the existing destination-first
-add/remove composition when the audiences differ or a source fence is stale.
+intent carries both Space revisions and membership generations and is resumed
+by the existing alarm path. A stale source fence switches that same intent to
+a durable audience-convergence mode rather than spawning separate add and
+remove intents: it restores the source if the fast swap already removed it,
+rebuilds the destination through canonical audience operations, then retires
+the source and finalizes the original membership generations.
 
 **Why:** The prior server-side operation removed an HTTP boundary but still
 performed a complete add followed by a complete remove. For the common move
@@ -2007,10 +2010,14 @@ because stale provenance could silently grant the wrong audience.
 
 **Consequences:** Equal-audience moves do not invoke canonical Channel audience
 mutations or SubstreamAgent writes; unequal audiences still do and retain their
-content and grant fences. A crash after the provenance replacement leaves the
-durable intent pending, and replay returns the WorkstreamDO operation receipt
-before WorkspaceDO finishes the membership switch. Migration 68 rebuilds
-`space_intents` to admit `move` and require its source-side fences.
+content and grant fences. Move finalization and cancellation authorize against
+the exact persisted actor, Space ids, Channel id, and generation fences rather
+than mutable Space reach after WorkstreamDO has committed. A fallback or crash
+remains on the original intent, and every interrupted move resume repeats the
+convergent path. Competing moves cannot treat another move's
+source removal as their own replay: only an already-active target may replay a
+settled source. Migration 68 rebuilds `space_intents` to admit `move` and
+require its source-side fences.
 
 ### 2026-09-21 — Space archive Channel retractions overlap within the platform envelope
 
