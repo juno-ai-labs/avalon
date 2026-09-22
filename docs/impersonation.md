@@ -87,16 +87,18 @@ Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
 immutable after `latest-mac.yml` commits their version. Before that commit, a
 selected preserved artifact can reconcile objects left by an interrupted
-attempt. The publisher verifies each candidate against R2, purges the exact
-public URLs, then SHA-512 checks those same URLs. A failed check leaves the
+attempt. The publisher verifies each candidate against R2, purges the Sideline
+channel prefix, then SHA-512 checks the exact public URLs. The prefix purge is
+scoped to Sideline; the exact-URL purge failed to evict cached GET responses on
+the release domain. A failed check leaves the
 manifest where it was; retrying publication reads the same signed artifact.
 Only
-`latest-mac.yml` and `Sideline.dmg` are mutable, and their exact public URLs are
-purged after upload. The canonical DMG is hash-verified against R2, then fully
+`latest-mac.yml` and `Sideline.dmg` are mutable. The canonical DMG is hash-verified against R2, then fully
 SHA-512 checked at its exact public URL. The manifest moves last, after the
 versioned payloads and canonical installer are publicly verified, so a retry
 after commit verifies that the live manifest is byte-identical to the local
-release before it finishes the release tag. Both the version-stamping job and
+release before it finishes the release tag. The channel prefix is purged again
+after the manifest upload before its exact URL is verified. Both the version-stamping job and
 the final publication boundary refuse a candidate tag that already exists.
 For a failed publication after the signed artifacts were preserved, the manual
 workflow accepts the exact artifact ID, source run ID, stamped commit SHA, and
@@ -213,14 +215,16 @@ existing `rallywithai:` deep link for the main app.
 **What changed:** Signing and notarization now finish in an artifact-producing
 job. A separate job publishes the preserved artifact and records the tag. A
 failed publication retries only that job. The publisher checks R2 bytes, purges
-the exact public URLs, and fully hashes those same URLs before moving the feed.
+the Sideline channel prefix, and fully hashes the exact public URLs before
+moving the feed.
 Manual recovery can select a preserved artifact by ID without rebuilding it.
 
 **Why:** The 0.1.3 publisher uploaded the correct installer and purged its exact
 URL, but the runner's PoP continued serving the previous DMG to the full-body
 hash check. The release stopped before moving the manifest. A failed-job retry
 then rebuilt different notarized bytes and hit the same stale-cache failure at
-the overwritten versioned DMG.
+the overwritten versioned DMG. Even after a publish-only retry restored one
+artifact to R2, a confirmed exact-URL purge left an older GET cache entry live.
 
 **Considered and rejected:** A cache-busting query would check a different cache
 key, leaving the updater's exact URL unproved. Rebuilding on retry changes
@@ -230,7 +234,8 @@ candidate. Longer retries do not fix that identity problem.
 **Consequences:** The manifest stays the commit point. A stale CDN response can
 still fail a publication attempt, but the next publish-only retry uses identical
 bytes. The exact updater and recovery-installer URLs must serve those bytes
-before the feed moves.
+before the feed moves. A channel prefix purge evicts other Sideline download
+objects as well; Rally's separate prefix is unaffected.
 
 ### 2026-09-22 — Current-user sends use ordinary message authority
 
