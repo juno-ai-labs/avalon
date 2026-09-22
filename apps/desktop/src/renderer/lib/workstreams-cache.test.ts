@@ -5,6 +5,7 @@ import { clearAllLocalCache, localCacheScope } from './local-cache';
 import {
   evictCachedSubstream,
   evictCachedWorkstream,
+  holdCachedWorkstreamArchive,
   invalidateCachedWorkstreamDetails,
   mergeCachedWorkstreamPage,
   patchCachedWorkstream,
@@ -73,6 +74,39 @@ describe('setCachedWorkstreams', () => {
       laterPage,
       debugRow,
     ]);
+  });
+
+  it('keeps a confirmed archive ahead of a stale directory page until the tombstone arrives', () => {
+    const queryClient = new QueryClient();
+    const active = summary();
+    setCachedWorkstreams(queryClient, [active]);
+    holdCachedWorkstreamArchive(queryClient, {
+      ...active,
+      archivedAt: '2026-09-21T12:00:00.000Z',
+      updatedAt: '2026-09-21T12:00:00.000Z',
+    });
+
+    mergeCachedWorkstreamPage(queryClient, [{ ...active, title: 'Stale page' }]);
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([{
+      ...active,
+      archivedAt: '2026-09-21T12:00:00.000Z',
+      updatedAt: '2026-09-21T12:00:00.000Z',
+    }]);
+  });
+
+  it('keeps the archive marker when the row disappeared before the response arrived', () => {
+    const queryClient = new QueryClient();
+    const archived = {
+      ...summary(),
+      archivedAt: '2026-09-21T12:00:00.000Z',
+      updatedAt: '2026-09-21T12:00:00.000Z',
+    };
+
+    holdCachedWorkstreamArchive(queryClient, archived);
+    mergeCachedWorkstreamPage(queryClient, [{ ...summary(), title: 'Stale page' }]);
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([archived]);
   });
 
   it('evicts every per-channel cache family after access revocation', () => {

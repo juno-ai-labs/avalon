@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamSummary } from './types';
 import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreams, useWorkstreamsQuery } from './use-workstreams-query';
-import { setCachedWorkstreams } from './workstreams-cache';
+import { holdCachedWorkstreamArchive, setCachedWorkstreams } from './workstreams-cache';
 
 const listWorkstreams = vi.hoisted(() => vi.fn());
 const socket = vi.hoisted(() => ({
@@ -148,6 +148,23 @@ describe('useWorkstreamsQuery', () => {
     });
 
     await waitFor(() => expect(result.current.data?.[0]?.title).toBe('Renamed in place'));
+  });
+
+  it('hides a confirmed archive while retaining its ordering marker in the raw cache', async () => {
+    const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+    const active = summary('workstream-1', 'Launch brief');
+    landConnectPayload(rerender, { items: [active] });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    act(() => holdCachedWorkstreamArchive(queryClient, {
+      ...active,
+      archivedAt: '2026-09-21T12:00:00.000Z',
+      updatedAt: '2026-09-21T12:00:00.000Z',
+    }));
+
+    await waitFor(() => expect(result.current.data).toEqual([]));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.archivedAt)
+      .toBe('2026-09-21T12:00:00.000Z');
   });
 
   // Debugging is the one thing the connect payload deliberately does not serve:

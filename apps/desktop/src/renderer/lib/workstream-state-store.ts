@@ -12,7 +12,7 @@ import {
 export const WORKSTREAM_STATE_WATERLINES_KEY = ['workstream-state-waterlines'] as const;
 export const WORKSPACE_DIRECTORY_WATERLINES_KEY = ['workspace-directory-waterlines'] as const;
 
-type StoredWaterlines = WorkstreamStateVersion;
+type StoredWaterlines = WorkstreamStateVersion & { visible: boolean };
 
 type WorkstreamPatch = Partial<WorkstreamSummary>;
 
@@ -29,6 +29,8 @@ export interface VersionedWorkstreamState {
 export interface WorkstreamStateApplyResult {
   commonApplied: boolean;
   viewerApplied: boolean;
+  /** The newest accepted listability, including a tombstone whose row is no longer cached. */
+  visible: boolean;
 }
 
 export function workstreamSummaryState(workstream: WorkstreamSummary): {
@@ -167,6 +169,12 @@ export function applyVersionedWorkstreamState(
     || input.stateVersion.commonWaterline > current.commonWaterline);
   const viewerApplied = !staleGeneration && (newerGeneration
     || input.stateVersion.viewerWaterline > current.viewerWaterline);
+  // A tombstone is listability authority, so none of the equal-version
+  // exceptions below may turn its missing row into an empty cache slot to
+  // seed. They repair fields on a visible row; they never restore one.
+  if (!commonApplied && !viewerApplied && current?.visible === false) {
+    return { commonApplied, viewerApplied, visible: false };
+  }
   const incomingIds = input.common.participantUserIds;
   // A control seed can claim an empty pile at a waterline the later
   // directory page shares. That page then looks like a duplicate and would
@@ -178,8 +186,10 @@ export function applyVersionedWorkstreamState(
   if (!commonApplied && !viewerApplied && !canFillEmptyPile
     && !carriesNewPlacements(queryClient, input, staleGeneration === true)
     && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)) {
-    return { commonApplied, viewerApplied };
+    return { commonApplied, viewerApplied, visible: current?.visible ?? input.visible };
   }
+
+  const visible = commonApplied || viewerApplied ? input.visible : current?.visible ?? input.visible;
 
   queryClient.setQueryData<Record<string, StoredWaterlines>>(
     WORKSTREAM_STATE_WATERLINES_KEY,
@@ -199,14 +209,23 @@ export function applyVersionedWorkstreamState(
         viewerWaterline: viewerApplied
           ? input.stateVersion.viewerWaterline
           : stored[input.workstreamId]?.viewerWaterline ?? 0,
+        visible,
       },
     }),
   );
 
   if (!input.visible) {
     evictCachedWorkstream(queryClient, input.workstreamId);
-    return { commonApplied, viewerApplied };
+    return { commonApplied, viewerApplied, visible };
   }
+
+  // A successful REST archive is held as a hidden row until the versioned
+  // tombstone arrives. A directory page already in flight may carry a newer
+  // version than this window had seen before the click, but it still predates
+  // the archive response and must not clear that confirmed local fact.
+  const heldArchive = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+    ?.find((item) => item.id === input.workstreamId)?.archivedAt;
+  if (heldArchive) return { commonApplied, viewerApplied, visible };
 
   const merge = <T extends WorkstreamSummary>(value: T): T => {
     const patched = {
@@ -257,7 +276,7 @@ export function applyVersionedWorkstreamState(
   queryClient.setQueryData<WorkstreamDetail>(['workstream', input.workstreamId], (detail) => (
     detail ? merge(detail) : detail
   ));
-  return { commonApplied, viewerApplied };
+  return { commonApplied, viewerApplied, visible };
 }
 
 /**

@@ -18,11 +18,29 @@ import type { WorkstreamSummary } from './types';
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
+let observedRows: WorkstreamSummary[] | undefined;
+let observedActiveRows: WorkstreamSummary[] | undefined;
+
+/** Preserve the raw archived marker for ordering while every directory reader sees only active rows. */
+function activeWorkstreams(rows: WorkstreamSummary[]): WorkstreamSummary[];
+function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined;
+function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSummary[] | undefined {
+  if (rows === observedRows) return observedActiveRows;
+  observedRows = rows;
+  observedActiveRows = rows?.filter((workstream) => !workstream.archivedAt);
+  return observedActiveRows;
+}
+
+const selectActiveWorkstreams = (rows: WorkstreamSummary[]): WorkstreamSummary[] =>
+  activeWorkstreams(rows);
+
 /** Observe directory pushes without registering another pager or query function. */
 export function useCachedWorkstreams(): WorkstreamSummary[] | undefined {
   const client = useQueryClient();
   const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe(onChange), [client]);
-  const snapshot = useCallback(() => client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY), [client]);
+  const snapshot = useCallback(() => activeWorkstreams(
+    client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY),
+  ), [client]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
@@ -118,6 +136,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
     // something explicitly invalidates, which is the debug toggle or a pin.
     enabled: sidebarConnect !== null,
     staleTime: Number.POSITIVE_INFINITY,
+    select: selectActiveWorkstreams,
   });
 
   // Paging is the client's own position and the payload knows nothing about it.

@@ -243,6 +243,16 @@ over. One walk function serves the request and the resume, because a request and
 its resume that walked differently would be two implementations of the same
 convergence and the resume is the one nobody watches.
 
+An archive overlaps up to six independent Channel retractions inside each page,
+matching Cloudflare's simultaneous outgoing-connection limit. It awaits every
+started retraction — including the siblings of one that fails — before it moves
+the cursor or finalizes the Space. The archive therefore preserves synchronous
+source convergence and the same authorization checks while making the common
+one-to-six-Channel path cost the slowest Channel round trip rather than their
+sum. Audience changes and restores remain sequential because their per-member
+steps carry mutable audience revisions and applications rather than independent
+withdrawals.
+
 ### Per-person ordering
 
 Three lists in the product are arranged by hand, and they are **one mechanism
@@ -1891,6 +1901,34 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-21 — Space archive Channel retractions overlap within the platform envelope
+
+**What changed:** A Space archive now retracts its source from as many as six
+member Channels concurrently, in bounded batches within the existing paged
+walk. The request and an alarm resume use the same path, wait for every started
+retraction with settled-promise semantics, and advance the durable cursor or
+finalize the Space only after the whole batch succeeds.
+
+**Why:** The prior walk paid each Channel authority round trip serially, so
+archive latency grew as their sum even though the retractions are independent.
+Six matches Cloudflare's simultaneous outgoing-connection limit and changes the
+common one-to-six-Channel path to the slowest retraction rather than the sum,
+supporting the 500 ms P50 target without relaxing an authorization, preflight,
+or synchronous-convergence rule.
+
+**Considered and rejected:** Finalizing the Space before source retractions
+finish would return sooner, but would turn a synchronous authority transition
+into background convergence and allow the archived Space's access source to
+remain live after success. Unbounded fan-out was rejected because the runtime
+would queue work past its connection limit and failure could leave unobserved
+sibling writes.
+
+**Consequences:** Archive batches may issue six independent Channel RPC chains
+at once, but all are joined before failure propagates. Audience and restore
+walks remain sequential because they apply mutable revisions rather than only
+withdraw an independent source. The 500 ms P50 remains a live-performance
+target, not a claim established by capability-double timing.
 
 ### 2026-09-21 — Sidebar recovery stays actionable and free of warnings
 
