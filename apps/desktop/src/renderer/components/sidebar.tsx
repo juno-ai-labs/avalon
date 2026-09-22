@@ -1201,8 +1201,9 @@ export function Sidebar({
   }, [controlledSpacesCollapsed, onSpacesCollapsedChange]);
   const routeSpaceId = /^\/spaces\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
   const routeWorkstreamId = /^\/workstreams\/([^/]+)/u.exec(location.pathname)?.[1] ?? null;
-  const currentPathname = useRef(location.pathname);
-  currentPathname.current = location.pathname;
+  const currentRoute = `${location.pathname}${location.search}${location.hash}`;
+  const currentRouteRef = useRef(currentRoute);
+  currentRouteRef.current = currentRoute;
   const channelMoveNavigationGeneration = useRef(0);
   const channelMoveNavigation = useRef<{
     destination: string | null;
@@ -1454,7 +1455,7 @@ export function Sidebar({
       setPendingChannelMoveNavigation(null);
       return;
     }
-    if (currentPathname.current !== owned.origin) {
+    if (currentRouteRef.current !== owned.origin) {
       channelMoveNavigation.current = null;
       setPendingChannelMoveNavigation(null);
       return;
@@ -1472,6 +1473,7 @@ export function Sidebar({
     setPendingChannelMoveNavigation(null);
     void navigate(destination, { replace: true });
   }, [
+    currentRoute,
     displayedWorkstreams,
     hasMoreWorkstreams,
     loadingMoreWorkstreams,
@@ -2109,7 +2111,7 @@ export function Sidebar({
       channelMoveNavigationGeneration.current = navigationToken;
       channelMoveNavigation.current = {
         destination,
-        origin: location.pathname,
+        origin: currentRoute,
         token: navigationToken,
       };
       if (destination === null) {
@@ -2125,7 +2127,7 @@ export function Sidebar({
           current?.token === navigationToken ? null : current
         ));
         if (owned.destination !== null
-          && (currentPathname.current === owned.destination || currentPathname.current === owned.origin)) {
+          && (currentRouteRef.current === owned.destination || currentRouteRef.current === owned.origin)) {
           void navigate(owned.origin, { replace: true });
         }
         channelMoveNavigation.current = null;
@@ -2134,7 +2136,7 @@ export function Sidebar({
     });
   }, [
     displayedWorkstreams,
-    location.pathname,
+    currentRoute,
     navigate,
     onMoveChannelToSpace,
     routeWorkstreamId,
