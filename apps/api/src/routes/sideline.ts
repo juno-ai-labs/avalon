@@ -20,7 +20,7 @@ sidelineRoutes.post(
   async (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(SidelineSendResponseSchema.parse(
-      await new ImpersonationService(c.env, getAuth(c)).send(c.req.valid("json")),
+      await new ImpersonationService(c.env, getAuth(c)).send(c.req.valid("json"), c.get("requestReceivedAt")),
     ));
   },
 );
