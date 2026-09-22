@@ -89,8 +89,9 @@ immutable after `latest-mac.yml` commits their version. Before that commit, a
 selected preserved artifact can reconcile objects left by an interrupted
 attempt. The publisher verifies each candidate against R2, purges the Sideline
 channel prefix, then SHA-512 checks the exact public URLs. The prefix purge is
-scoped to Sideline; the exact-URL purge failed to evict cached GET responses on
-the release domain. A failed check leaves the
+scoped to Sideline. It must target the Cloudflare zone that owns
+`downloads.rallywith.ai`; a successful purge request against another zone does
+not evict this domain's cached objects. A failed check leaves the
 manifest where it was; retrying publication reads the same signed artifact.
 Only
 `latest-mac.yml` and `Sideline.dmg` are mutable. The canonical DMG is hash-verified against R2, then fully
@@ -219,12 +220,14 @@ the Sideline channel prefix, and fully hashes the exact public URLs before
 moving the feed.
 Manual recovery can select a preserved artifact by ID without rebuilding it.
 
-**Why:** The 0.1.3 publisher uploaded the correct installer and purged its exact
-URL, but the runner's PoP continued serving the previous DMG to the full-body
-hash check. The release stopped before moving the manifest. A failed-job retry
-then rebuilt different notarized bytes and hit the same stale-cache failure at
-the overwritten versioned DMG. Even after a publish-only retry restored one
-artifact to R2, a confirmed exact-URL purge left an older GET cache entry live.
+**Why:** The 0.1.3 publisher uploaded the correct installer, but the configured
+`desktop-release` Cloudflare zone ID was not the `rallywith.ai` zone. Purge
+requests succeeded against the wrong zone while the runner's PoP continued
+serving the previous DMG to the full-body hash check. The release stopped
+before moving the manifest. A failed-job retry then rebuilt different
+notarized bytes and hit the same stale-cache failure at the overwritten
+versioned DMG. Correcting the environment's zone ID let a publish-only retry
+verify the exact public URLs, move the feed, and tag the stamped commit.
 
 **Considered and rejected:** A cache-busting query would check a different cache
 key, leaving the updater's exact URL unproved. Rebuilding on retry changes
