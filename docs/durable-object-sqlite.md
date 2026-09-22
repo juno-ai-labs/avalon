@@ -99,7 +99,12 @@ The ledger itself is created inside the first pending group. Migration hashes
 include execution mode because mode changes semantics; the one pre-mode
 published work-stream migration carries an explicit legacy marker only because
 its old wrapper already ran it under the identical mode. Tests cover rollback,
-resume, invalid legacy declarations, and exact hash matching. A populated-v27
+resume, invalid legacy declarations, and hash matching. A migration may name an
+exact compatible implementation hash only to recover a released receipt whose
+SQL is proven schema-equivalent; this is a narrow historical exception, must be
+pinned in the owning migration test, and does not permit a general bypass or an
+edit to the canonical published statement. Every unnamed mismatch still fails
+closed. A populated-v27
 fixture exercises the earlier enforcement-on groups and resource-table rebuild;
 a separate populated-v32 fixture crosses the destructive transcript rebuild.
 Both upgrade through the real workerd Durable Object storage pipeline and prove
@@ -342,6 +347,29 @@ after its return type has been erased to `unknown` or `any`; dynamically indexed
 methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
+
+### 2026-09-21 — Admit one proven schema-equivalent migration receipt
+
+**What changed:** The shared runner can accept an exact, migration-local list of
+historical implementation hashes while retaining the canonical published hash.
+The owning migration test must pin both the canonical history and each accepted
+receipt.
+
+**Why:** One ArtifactHostDO deployment changed only a comment inside released
+migration SQL. Existing objects retained the original receipt, while any object
+first initialized during that window could retain the comment-only fingerprint.
+Restoring the published bytes repairs the first cohort but, without an explicit
+equivalence, strands the second.
+
+**Considered and rejected:** Rewriting receipts, appending a schema-free
+migration, or disabling hash enforcement. The first two obscure what executed;
+the last allows unrelated edited history. An exact code-owned exception keeps
+unknown hashes fail-closed.
+
+**Consequences:** Compatibility hashes require evidence that the released SQL
+is schema-equivalent and a negative-control integration test proving that only
+the named receipt passes. They are recovery metadata, not a routine migration
+mechanism; real schema changes still append a migration.
 
 ### 2026-09-09 — Preserve cursor range seeks
 
