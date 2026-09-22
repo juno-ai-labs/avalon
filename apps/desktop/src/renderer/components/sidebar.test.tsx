@@ -3111,16 +3111,14 @@ describe('pinned channels', () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // leaves and returns even though the Space layout gives its old and new
-      // rows the same vertical slot: the Pinned heading replaces the selected
-      // Space's list heading above it.
+      // leaves and returns one row above its alphabetical slot, under the new
+      // Pinned heading.
       const moved = playedOn('workstream:ws-recent');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 0px)' }));
-      // The row it passed shifts down rather than being moved. A selected
-      // Space has no recency heading of its own.
-      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, -48px)' }));
+      // The remaining alphabetical row shifts down one slot under Pinned.
+      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
@@ -3918,14 +3916,7 @@ describe('the sidebar without a recency list', () => {
   });
 });
 
-/**
- * The two lists inside the Spaces section, arranged by hand.
- *
- * Through `Sidebar` rather than the section alone, because the gesture is the
- * row's and the section's together: the row carries the drag handlers and the
- * section decides what a release means.
- */
-describe('reordering the channels inside a space', () => {
+describe('alphabetical channels inside a space', () => {
   beforeEach(() => {
     window.localStorage.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
@@ -4038,28 +4029,19 @@ describe('reordering the channels inside a space', () => {
     return wrapper as HTMLElement;
   }
 
-  it('given a placement dropped inside its own space, then that space\'s order is saved', async () => {
-    const onReorderContainer = vi.fn(async () => undefined);
-    renderSidebar({ onReorderContainer });
-    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  it('sorts unpinned channels case-insensitively and ignores a stored manual order', () => {
+    const lowercase = placedIn(workstream('ws-lowercase', 'alpha', 'completed'), hiring.id);
+    const zulu = placedIn(workstream('ws-zulu', 'Zulu', 'completed'), hiring.id);
+    renderSidebar({
+      ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [zulu.id, bravo.id, lowercase.id] }],
+      workstreams: [zulu, bravo, lowercase],
+    });
 
-    const transfer = channelTransfer();
-    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
-    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    // The list settles under the pointer rather than jumping once at the end.
-    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-    fireEvent.drop(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
-
-    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
-      container: { kind: 'space', id: hiring.id },
-      itemIds: [bravo.id, alpha.id],
-    }));
+    expect(placementTitles()).toEqual(['alpha', 'Bravo', 'Zulu']);
   });
 
-  // The two meanings of one gesture. A release inside the list the Channel is
-  // already in is a reorder; a release on another Space is a move, and it
-  // must not also commit the arrangement the pointer built on its way out.
+  // A Channel can still move between Spaces; it just cannot be manually
+  // reordered inside the alphabetical list it is leaving.
   it('given a placement dropped on another space, then it is moved and nothing is reordered', async () => {
     const onMoveChannelToSpace = vi.fn(async () => undefined);
     const onReorderContainer = vi.fn(async () => undefined);
@@ -4068,7 +4050,6 @@ describe('reordering the channels inside a space', () => {
     const transfer = channelTransfer();
     const target = screen.getByRole('link', { name: 'Launch' });
     fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
-    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
     fireEvent.drop(target, { dataTransfer: transfer });
     fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
 
@@ -4247,53 +4228,27 @@ describe('reordering the channels inside a space', () => {
       .toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]));
   });
 
-  // Every drag in the sidebar has one, so the feature is reachable without a
-  // pointer. Alt rather than a bare arrow: the arrows move focus through the
-  // sidebar, and a row must stay readable by somebody who is not rearranging.
-  it('given a placement, when Alt+ArrowUp is pressed, then the new order is saved', async () => {
+  it('does not reorder the alphabetical section with Alt+Arrow', () => {
     const onReorderContainer = vi.fn(async () => undefined);
     renderSidebar({ onReorderContainer });
 
     fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
 
-    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
-      container: { kind: 'space', id: hiring.id },
-      itemIds: [bravo.id, alpha.id],
-    }));
+    expect(onReorderContainer).not.toHaveBeenCalled();
+    expect(placementTitles()).toEqual(['Alpha', 'Bravo']);
   });
 
-  it('describes the keyboard gesture that reorders Channels in a Space', () => {
-    renderSidebar();
+  it('pins a channel dropped from the alphabetical section onto Pinned', async () => {
+    const onPinWorkstream = vi.fn(async () => true);
+    const pinnedAlpha = pinned(alpha, 0);
+    renderSidebar({ onPinWorkstream, workstreams: [pinnedAlpha, bravo] });
+    const transfer = channelTransfer();
 
-    expect(screen.getByRole('region', { name: 'Channels' }))
-      .toHaveAccessibleDescription('Hold Alt and press the up or down arrow to move a channel in this space.');
-  });
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
+    fireEvent.dragOver(screen.getByRole('region', { name: 'Pinned' }), { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole('region', { name: 'Pinned' }), { dataTransfer: transfer });
 
-  it('keeps an in-flight order scoped to its Space and reports failure in a dialog', async () => {
-    let rejectOrder: ((cause: unknown) => void) | undefined;
-    const onReorderContainer = vi.fn(() => new Promise<void>((_resolve, reject) => {
-      rejectOrder = reject;
-    }));
-    const shared = placedIn({ ...alpha, lastActivityAt: '2026-08-01T09:00:00.000Z' }, hiring.id, launch.id);
-    const launchFirst = placedIn(
-      workstream('ws-launch', 'Launch first', 'completed', '2026-08-03T09:00:00.000Z'),
-      launch.id,
-    );
-    renderSidebar({ onReorderContainer, workstreams: [shared, bravo, launchFirst] });
-
-    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
-    fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
-
-    const launchList = document.querySelector(`[data-motion-scope="space:${launch.id}"]`);
-    if (!launchList) throw new Error('The Launch space has no placement list');
-    expect(within(launchList as HTMLElement).getAllByRole('link').map((row) => row.textContent ?? ''))
-      .toEqual([expect.stringContaining('Launch first'), expect.stringContaining('Alpha')]);
-
-    rejectOrder?.(new Error('The space changed while this was applied'));
-    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
-    const dialog = await screen.findByRole('dialog', { name: 'Channels could not be reordered' });
-    expect(within(dialog).getByText('The channels in that space are back in the order they were in. Try again in a moment.')).toBeVisible();
-    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });
 
   it('offers placement removal for a pinned Channel in the selected Space', async () => {
@@ -4309,30 +4264,4 @@ describe('reordering the channels inside a space', () => {
     await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, alpha.id));
   });
 
-  it('given a refused reorder, then the placements snap back and a dialog says so', async () => {
-    renderSidebar({
-      onReorderContainer: async () => { throw new Error('The space changed while this was applied'); },
-    });
-
-    fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
-
-    const dialog = await screen.findByRole('dialog', { name: 'Channels could not be reordered' });
-    expect(within(dialog).getByText('The channels in that space are back in the order they were in. Try again in a moment.')).toBeVisible();
-    expect(within(dialog).getByRole('button', { name: 'OK' })).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Channels could not be reordered' }))
-      .not.toBeInTheDocument());
-    // The list shows what the server holds, which is what this person's other
-    // windows are showing — not a local order nothing took.
-    expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
-    expect(screen.queryByText('The space changed while this was applied')).not.toBeInTheDocument();
-  });
-
-  it('given a stored order for a space, then its placements are drawn in it rather than by recency', () => {
-    renderSidebar({
-      ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [bravo.id, alpha.id] }],
-    });
-
-    expect(placementTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-  });
 });

@@ -629,123 +629,39 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();
   });
 
-  /**
-   * The third list a person arranges by hand, and the same gesture as the
-   * other two: the rail draws the order it is given and reports the drag, and
-   * the order itself is the host's, because it is stored per person on the
-   * Organization.
-   */
-  describe('reordering breakouts', () => {
+  describe('alphabetical breakouts', () => {
     const first = {
       substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b1'), title: 'Launch risks',
       createdByUserId: asUserId(person.id),
       createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
     };
-    const second = { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b2'), title: 'Launch comms' };
+    const second = { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b2'), title: 'launch Comms' };
 
-    function setupRail(drag?: React.ComponentProps<typeof WorkstreamSidebar>['substreamDrag']) {
-      return render(<Tooltip.Provider><WorkstreamSidebar
+    function setupRail() {
+      render(<Tooltip.Provider><WorkstreamSidebar
         workstream={{ ...workstream, privateChildren: [first, second] }}
         presentUserIds={[]}
         onOpenArtifact={vi.fn()}
         onParticipants={vi.fn()}
         onFocusTranscript={vi.fn()}
         onNewSubstream={vi.fn()}
-        {...(drag ? { substreamDrag: drag } : {})}
       /></Tooltip.Provider>);
     }
 
-    /** jsdom implements no `DataTransfer`; `dropEffect` is the field that matters. */
-    const transfer = (dropEffect: 'move' | 'none' = 'move') =>
-      ({ dropEffect, effectAllowed: '', setData: () => undefined });
-
-    it('given a breakout dragged over another, then the list reports the move it is building', () => {
-      const drag = {
-        draggingSubstreamId: null,
-        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
-      };
-      setupRail(drag);
-      const row = screen.getByRole('button', { name: /Launch comms/u });
-
-      fireEvent.dragStart(row, { dataTransfer: transfer() });
-      fireEvent.dragOver(screen.getByRole('button', { name: /Launch risks/u }), { dataTransfer: transfer() });
-      fireEvent.dragEnd(row, { dataTransfer: transfer() });
-
-      expect(drag.onDragStart).toHaveBeenCalledWith(second.substreamId);
-      // The reorder is reported as the pointer crosses rather than on the
-      // release, so the list settles under the pointer instead of jumping once
-      // at the end.
-      expect(drag.onDragOver).toHaveBeenCalledWith(first.substreamId);
-      expect(drag.onDragEnd).toHaveBeenCalledWith(false);
-    });
-
-    it('given a breakout released in the gap between rows, then the drag is completed', () => {
-      const drag = {
-        draggingSubstreamId: null,
-        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
-      };
-      const view = setupRail(drag);
-      const row = screen.getByRole('button', { name: /Launch comms/u });
-      const list = view.container.querySelector<HTMLElement>('.workstream-conversation-list');
-      const dataTransfer = transfer('none');
-      expect(list).not.toBeNull();
-      if (!list) return;
-
-      fireEvent.dragStart(row, { dataTransfer });
-      fireEvent.dragOver(list, { dataTransfer });
-      fireEvent.drop(list, { dataTransfer });
-      fireEvent.dragEnd(row, { dataTransfer });
-
-      expect(dataTransfer.dropEffect).toBe('move');
-      expect(drag.onDragEnd).toHaveBeenCalledWith(false);
-    });
-
-    // Escape, or a release off the list, leaves `dropEffect` at `none` — and
-    // backing out of a drag must not be the same thing as finishing it.
-    it('given a drag backed out of, then the end is reported as cancelled', () => {
-      const drag = {
-        draggingSubstreamId: null,
-        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
-      };
-      setupRail(drag);
-
-      fireEvent.dragEnd(screen.getByRole('button', { name: /Launch comms/u }), { dataTransfer: transfer('none') });
-
-      expect(drag.onDragEnd).toHaveBeenCalledWith(true);
-    });
-
-    it('given Alt and an arrow, then the same move is reported without a pointer', () => {
-      const drag = {
-        draggingSubstreamId: null,
-        onDragStart: vi.fn(), onDragOver: vi.fn(), onDragEnd: vi.fn(), onMove: vi.fn(),
-      };
-      setupRail(drag);
-      const row = screen.getByRole('button', { name: /Launch comms/u });
-
-      // A bare arrow moves focus through the rail and must keep doing so for
-      // somebody who is reading rather than rearranging.
-      fireEvent.keyDown(row, { key: 'ArrowUp' });
-      expect(drag.onMove).not.toHaveBeenCalled();
-
-      fireEvent.keyDown(row, { altKey: true, key: 'ArrowUp' });
-      expect(drag.onMove).toHaveBeenCalledWith(second.substreamId, -1);
-      // Said once for the list; per row it would land inside every row's own
-      // accessible name.
-      expect(screen.getByText('Hold Alt and press the up or down arrow to move a breakout.')).toBeInTheDocument();
-      expect(row).toHaveAccessibleName('Go to breakout: Launch comms, 2 of 2');
-    });
-
-    // A guest's ordering write is refused by the same gate every Space write
-    // is, so the rail offers them no gesture at all rather than one that could
-    // only fail.
-    it('given a reader who cannot store an order, then the rows are not draggable', () => {
+    it('keeps Main first, sorts Breakouts case-insensitively, and keeps creation last', () => {
       setupRail();
 
-      const row = screen.getByRole('button', { name: /Launch comms/u });
-      expect(row).not.toHaveAttribute('draggable', 'true');
-      expect(row).toHaveAccessibleName('Go to breakout: Launch comms');
-      expect(screen.queryByText('Hold Alt and press the up or down arrow to move a breakout.'))
-        .not.toBeInTheDocument();
+      const sidebar = screen.getByRole('complementary');
+      expect(within(sidebar).getAllByRole('button').slice(0, 4)
+        .map((button) => button.getAttribute('aria-label'))).toEqual([
+        'Go to conversation: Launch preparation',
+        'Go to breakout: launch Comms',
+        'Go to breakout: Launch risks',
+        'New breakout',
+      ]);
+      for (const row of within(sidebar).getAllByRole('button', { name: /Go to breakout:/u })) {
+        expect(row).not.toHaveAttribute('draggable', 'true');
+      }
     });
   });
 });
