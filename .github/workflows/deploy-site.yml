@@ -1,8 +1,8 @@
 name: Deploy Avalon site
 
-# The landing site also ships as the last step of a desktop release, which is
-# what publishes a new version's download. This workflow covers the other case:
-# a copy, layout, or page change that has no release to ride along with.
+# The landing site deploys independently from desktop releases. Its download
+# link targets the canonical installer object, which the release publisher
+# advances without rebuilding this Worker.
 
 on:
   push:
@@ -11,6 +11,9 @@ on:
     paths:
       - "config/regions.json"
       - "apps/site/**"
+      # Desktop publication owns this durable record; the site neither reads
+      # nor renders it.
+      - "!apps/site/release.config.json"
       # The site compiles shared contracts in: auth-handoff validates OAuth
       # callbacks against ConnectorOAuthProviders, so adding a provider must
       # reach the site as well as the API, or production rejects the new
@@ -19,9 +22,8 @@ on:
       - "pnpm-lock.yaml"
       # The site's tsconfig extends the root config, and the workspace file
       # decides which install build scripts run — a merge touching either
-      # changes what this workflow would have built, so it must redeploy and
-      # verify the site rather than leave the desktop release's site deploy
-      # as the only path that ships it.
+      # changes what this workflow builds, so it must redeploy and verify the
+      # site.
       - "tsconfig.base.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-site.yml"
@@ -31,27 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  # A group of its own, not the desktop release's. Sharing that group would
-  # order the two, but `single` cancels the pending member when another queues,
-  # so a site deployment could discard a pending release — and never losing a
-  # release matters more than the narrow overlap this leaves.
-  #
-  # That overlap runs in both directions, and each has its own guard. This
-  # workflow deploying an older commit just after a release would advertise
-  # the superseded version; the release-config check below fails that against
-  # the live channel immediately before the publish, leaving only a
-  # seconds-wide window. The release overwriting a site this workflow deployed
-  # while the release was building — which reverted a live site fix on
-  # 2026-08-27, when the release still deployed from its hour-old checkout —
-  # is narrowed by the release building the site from the tip of main, fetched
-  # inside its final step. Push-triggered runs here only ever deploy commits
-  # on main, so that tip is never older than one of them, and losing the
-  # remaining race would take an entire run of this workflow — runner,
-  # checkout, install, full lint and typecheck, site tests, deploy — finishing
-  # inside a span in which the release performs a strict subset of that work;
-  # that follows from the work involved, not from any timing measurement. A
-  # manual dispatch of this workflow on another branch sits outside the
-  # guarantee: the next release will overwrite whatever it deployed.
+  # Keep the newest pending site revision without interrupting a publish that
+  # has already started.
   group: deploy-site
   cancel-in-progress: false
   queue: single
@@ -64,7 +47,6 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      RALLY_TURNSTILE_SITE_KEY: ${{ vars.RALLY_TURNSTILE_SITE_KEY }}
 
     steps:
       - name: Check out the revision being deployed
@@ -77,9 +59,6 @@ jobs:
           set -euo pipefail
           test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
           test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
-
-      - name: Require production bot protection
-        run: test -n "$RALLY_TURNSTILE_SITE_KEY" || { echo "RALLY_TURNSTILE_SITE_KEY variable is not set"; exit 1; }
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -106,12 +85,6 @@ jobs:
 
       - name: Test the site
         run: pnpm --filter @rally/site test
-
-      # The site advertises the version in apps/site/release.config.json. A
-      # release rewrites that file on its own runner, so a site deploy from an
-      # uncommitted release would advertise the superseded version.
-      - name: Check the advertised release against the live channel
-        run: node scripts/check-site-release-config.mjs
 
       - name: Deploy the site
         run: pnpm --filter @rally/site run deploy

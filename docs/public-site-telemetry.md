@@ -1,8 +1,7 @@
 # Public-site telemetry
 
 The landing links directly to the canonical macOS installer and collects no email.
-The retained access-request client submits only to `/access/requests`; email values and submission bodies never enter telemetry. `/download/` deliberately
-skips telemetry initialization so its bearer fragment cannot reach analytics.
+`/download/` deliberately skips telemetry initialization so its bearer fragment cannot reach analytics.
 The Download for macOS action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
 Support and Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
@@ -13,7 +12,6 @@ Support and Trust Center pages use `apps/site/src/information.css`, a static com
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry. |
-| `apps/site/src/landing.ts` | Sends the access-request form to its API; emits no telemetry or email content. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |

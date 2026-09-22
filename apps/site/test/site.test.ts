@@ -5,12 +5,6 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import {
-  desktopDmgUrl,
-  discoverDesktopRelease,
-  parseDesktopReleaseConfig,
-  renderDesktopRelease,
-} from '../src/release-config';
 import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
@@ -55,20 +49,12 @@ const supportPagePaths = [
 const parseJsonc = (source: string): unknown =>
   JSON.parse(source.replace(/^\s*\/\/.*$/gmu, ''));
 
-function unpublishedReleaseFixture(): Record<string, unknown> {
-  return {
-    ...JSON.parse(readProjectFile('release.config.json')) as Record<string, unknown>,
-    published: false,
-    sha256: {},
-    publishedAt: null,
-  };
-}
-
 describe('public Rally site', () => {
-  it('offers the configured canonical installer without a signup dialog or clickable demo artifact', () => {
+  it('offers the canonical installer without a signup dialog or clickable demo artifact', () => {
     const page = readProjectFile('index.html');
-    const config = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')));
-    expect(page).toContain(`href="${desktopDmgUrl(config)}" download>Download for macOS</a>`);
+    expect(page).toContain(
+      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>Download for macOS</a>',
+    );
     expect(page).not.toContain('id="access-request"');
     expect(page).not.toContain('<dialog');
     expect(page).not.toContain('<details');
@@ -235,146 +221,6 @@ describe('public Rally site', () => {
     for (const path of ['concepts/index.html', 'concepts/horizon/index.html', 'concepts/hero/index.html']) {
       expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
     }
-  });
-
-  it('uses the official black Apple logo in the primary macOS call to action', () => {
-    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
-
-    expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('src="/brand/apple-logo.svg"');
-    expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
-    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
-    expect(renderDesktopRelease(page, release)).toContain(
-      '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" />',
-    );
-  });
-
-  it('renders the legacy release component from the verified release configuration', () => {
-    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
-    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
-
-    expect(release.published).toBe(true);
-    expect(release.downloadBaseUrl).toBe('https://downloads.rallywith.ai');
-    expect(release.bucket).toBe('avalon-desktop-releases');
-    expect(release.prefix).toBe('stable/darwin/arm64');
-    expect(release.files).toMatchObject({
-      dmg: `Rally-${release.version}-mac-arm64.dmg`,
-      zip: `Rally-${release.version}-mac-arm64.zip`,
-    });
-    expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
-    );
-    expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('Downloads opening soon');
-    expect(renderDesktopRelease(page, release)).toContain('Download Rally for macOS');
-    expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');
-  });
-
-  it('renders the immutable DMG object only after a release is published', () => {
-    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
-    const base = unpublishedReleaseFixture();
-    const { dmg } = base.files as { dmg: string };
-    const release = parseDesktopReleaseConfig({
-      ...base,
-      published: true,
-      sha256: {
-        [dmg]: 'a'.repeat(64),
-        'Rally.dmg': 'a'.repeat(64),
-      },
-      publishedAt: '2026-08-02T12:00:00.000Z',
-    });
-
-    const rendered = renderDesktopRelease(page, release);
-
-    expect(desktopDmgUrl(release)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
-    );
-    expect(rendered).toContain(
-      'href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg"',
-    );
-    expect(rendered).toContain('Download Rally for macOS');
-    expect(rendered).not.toContain('Downloads opening soon');
-  });
-
-  it('rediscovers a promoted canonical release during later site deployments', async () => {
-    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
-    const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
-    const fetchRelease: typeof fetch = async (input, init) => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
-      if (url.pathname.endsWith('/latest-mac.yml')) {
-        const manifest = 'version: 0.1.0\nfiles:\n  - url: Rally-0.1.0-mac-arm64.zip\n';
-        return new Response(manifest, {
-          status: 200,
-          headers: { 'content-length': String(new TextEncoder().encode(manifest).byteLength) },
-        });
-      }
-      if (init?.method === 'HEAD') {
-        return new Response(null, {
-          status: 200,
-          headers: {
-            'content-length': '42',
-            'last-modified': 'Sun, 02 Aug 2026 19:00:00 GMT',
-          },
-        });
-      }
-      return new Response(new Uint8Array([0]), {
-        status: 206,
-        headers: { 'content-range': 'bytes 0-0/42' },
-      });
-    };
-
-    const publication = await discoverDesktopRelease(release, fetchRelease);
-
-    expect(publication).toEqual({
-      published: true,
-      version: '0.1.0',
-      publishedAt: '2026-08-02T19:00:00.000Z',
-    });
-    expect(desktopDmgUrl(release, publication)).toBe(
-      'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
-    );
-    expect(renderDesktopRelease(page, release, publication)).toContain('Download Rally for macOS');
-  });
-
-  it('keeps a genuinely missing release unpublished but rejects inconsistent promotion state', async () => {
-    const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
-    const notFound: typeof fetch = async () => new Response(null, { status: 404 });
-    const invalidRange: typeof fetch = async (input, init) => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
-      if (url.pathname.endsWith('/latest-mac.yml')) {
-        return new Response(
-          `version: ${release.version}\nfiles:\n  - url: Rally-${release.version}-mac-arm64.zip\n`,
-        );
-      }
-      if (init?.method === 'HEAD') {
-        return new Response(null, { headers: { 'content-length': '42' } });
-      }
-      return new Response(new Uint8Array([0]), {
-        status: 200,
-        headers: { 'content-range': 'bytes 0-0/42' },
-      });
-    };
-
-    await expect(discoverDesktopRelease(release, notFound)).resolves.toEqual({
-      published: false,
-      version: release.version,
-    });
-    await expect(discoverDesktopRelease(release, invalidRange)).rejects.toThrow(/range/u);
-  });
-
-  it('refuses to activate a release whose object map or verification data is inconsistent', () => {
-    const base = unpublishedReleaseFixture();
-
-    expect(() => parseDesktopReleaseConfig({
-      ...base,
-      published: true,
-      publishedAt: '2026-08-02T12:00:00.000Z',
-    })).toThrow(/SHA-256/u);
-    expect(() => parseDesktopReleaseConfig({
-      ...base,
-      objects: {
-        ...(base.objects as Record<string, unknown>),
-        dmg: 'stable/darwin/arm64/not-the-configured-installer.dmg',
-      },
-    })).toThrow(/object keys/u);
   });
 
   it('declares every production custom domain and restrictive static-site headers', () => {
@@ -569,12 +415,15 @@ describe('public Rally site', () => {
     expect(privacy).toContain('does not scrape, mirror');
     expect(privacy).toContain('do not sell personal information');
     expect(privacy).toContain('accepted product-event and delivery records expire within 90 days');
+    expect(privacy).not.toContain('early-access form');
     expect(readProjectFile('trust/dpa/index.html')).toContain('without undue delay');
     expect(readProjectFile('trust/dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('trust/subprocessors/index.html')).toContain('Cloudflare, Inc.');
-    expect(readProjectFile('trust/cookies/index.html')).toContain('uses bounded first-party product analytics');
-    expect(readProjectFile('trust/cookies/index.html')).toContain('first-party anonymous identifier in local storage');
-    expect(readProjectFile('trust/cookies/index.html')).toContain("does not load PostHog's browser SDK");
+    const cookies = readProjectFile('trust/cookies/index.html');
+    expect(cookies).toContain('uses bounded first-party product analytics');
+    expect(cookies).toContain('first-party anonymous identifier in local storage');
+    expect(cookies).toContain("does not load PostHog's browser SDK");
+    expect(cookies).not.toContain('early-access form');
     expect(readProjectFile('trust/security/index.html')).toContain('context isolation');
     expect(readProjectFile('trust/security/index.html')).not.toContain('Request access');
     expect(readProjectFile('trust/security/index.html')).not.toContain('SOC 2');
@@ -664,6 +513,8 @@ describe('public Rally site', () => {
     expect(telemetry).toContain("report('site_page_left'");
     expect(headers).toMatch(/^\/\*\n {2}Content-Security-Policy:/u);
     expect(headers).toContain("connect-src https://api.rallywith.ai https://api.with-avalon.com");
+    expect(headers).toContain("frame-src 'none'");
+    expect(headers).not.toContain('challenges.cloudflare.com');
     expect(headers).not.toContain("connect-src 'none'");
     expect(headers).not.toContain('https://enterprise.api.rallywith.ai');
   });

@@ -5,9 +5,8 @@ import viteConfig from './vite.config';
 // Merged onto the site's own Vite config rather than written standalone: a
 // `vitest.config.ts` takes priority over `vite.config.ts` and Vitest then never
 // loads it, which would drop the `define`d `__RALLY_SITE_RELEASE__` and
-// `__RALLY_SITE_BUILD__` that `src/telemetry.ts` reads. The site's config is a
-// function, so it is called rather than spread.
-export default defineConfig(async (env) => mergeConfig(await viteConfig(env), {
+// `__RALLY_SITE_BUILD__` that `src/telemetry.ts` reads.
+export default defineConfig(mergeConfig(viteConfig, {
   test: {
     // The site had no `test` block, so it ran on Vitest's five-second default
     // while CI fans four package suites out onto one shared four-core runner —
