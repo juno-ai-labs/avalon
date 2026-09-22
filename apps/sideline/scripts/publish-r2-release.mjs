@@ -13,7 +13,10 @@ import {
   sha512File,
   verifyFeedArtifact,
 } from '../../desktop/scripts/release-lib.mjs';
-import { purgeCloudflareUrls, verifyPublicReleaseArtifactHash } from '../../desktop/scripts/release-cache.mjs';
+import {
+  purgeCloudflareUrls,
+  verifyPublicReleaseArtifactHash,
+} from '../../desktop/scripts/release-cache.mjs';
 
 const sidelineDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(sidelineDirectory, '../..');
@@ -115,6 +118,7 @@ if (liveFeed?.version === release.feed.version) {
   await verifyPublicReleaseArtifactHash({ expectedHash: liveDmg.sha512, url: publicUrl('Sideline.dmg') });
   console.log(`Sideline ${release.feed.version} is already published; verified its committed feed`);
 } else {
+  const versioned = [];
   for (const artifact of release.artifacts) {
     if (!artifact.name.includes(release.feed.version)) throw new Error(`Refusing unversioned artifact ${artifact.name}`);
     const key = `${prefix}/${artifact.name}`;
@@ -128,19 +132,32 @@ if (liveFeed?.version === release.feed.version) {
         'public, max-age=31536000, immutable',
         `attachment; filename="${basename(artifact.name)}"`,
       );
+      const r2Hash = await remoteSha512(key);
+      if (r2Hash !== localHash) throw new Error(`Remote SHA-512 mismatch for r2://${bucket}/${key}`);
     }
-    await verifyPublicReleaseArtifactHash({ expectedHash: localHash, url: publicUrl(artifact.name) });
+    versioned.push({ hash: localHash, url: publicUrl(artifact.name) });
+  }
+  // The selected GitHub artifact is fixed for this release attempt. Purge the
+  // exact updater URLs even on publish-only retries, then verify those URLs.
+  await purgeCloudflareUrls({ apiToken, zoneId, urls: versioned.map(({ url }) => url) });
+  for (const artifact of versioned) {
+    await verifyPublicReleaseArtifactHash({ expectedHash: artifact.hash, url: artifact.url });
   }
 
   const canonicalDmg = release.artifacts.find((artifact) => artifact.name.endsWith('.dmg'));
   if (!canonicalDmg) throw new Error('Sideline release is missing its DMG');
   const dmgHash = await sha512File(canonicalDmg.path);
-  await put('Sideline.dmg', canonicalDmg.path, 'public, max-age=3600', 'attachment; filename="Sideline.dmg"');
+  const canonicalKey = `${prefix}/Sideline.dmg`;
+  if (await remoteSha512(canonicalKey) !== dmgHash) {
+    await put('Sideline.dmg', canonicalDmg.path, 'public, max-age=3600', 'attachment; filename="Sideline.dmg"');
+  }
+  const r2Hash = await remoteSha512(canonicalKey);
+  if (r2Hash !== dmgHash) throw new Error(`Remote SHA-512 mismatch for r2://${bucket}/${prefix}/Sideline.dmg`);
   await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('Sideline.dmg')] });
   await verifyPublicReleaseArtifactHash({ expectedHash: dmgHash, url: publicUrl('Sideline.dmg') });
 
-  // The manifest is the commit point and moves only after every byte it names,
-  // plus the recovery installer, is publicly readable with the expected hash.
+  // The manifest is the commit point. Every referenced artifact and the
+  // recovery installer has passed a full hash check at its exact public URL.
   await put('latest-mac.yml', release.manifestPath, 'no-cache, no-store, must-revalidate');
   await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('latest-mac.yml')] });
   const feedHash = await sha512File(release.manifestPath);
