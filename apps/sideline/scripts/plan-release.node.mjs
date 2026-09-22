@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { applySidelineReleaseVersion } from './apply-release-version.mjs';
 import {
+  latestContractCommit,
   nextPatchVersion,
   planSidelineRelease,
   sidelineReleaseInputPaths,
 } from './plan-release.mjs';
+
+function git(directory, args) {
+  return execFileSync('/usr/bin/git', args, {
+    cwd: directory,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
 
 test('Sideline release inputs include the app, shared source, and release foundations', () => {
   assert.deepEqual(sidelineReleaseInputPaths([
@@ -68,6 +78,35 @@ test('a shared-contract change waits for the deployment of its newest contract c
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.requiresApiDeploy, true);
   assert.equal(plan.apiDeploymentRef, 'contract-commit');
+});
+
+test('the API deployment ref is the main-line merge that introduced a second-parent contract change', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sideline-contract-merge-'));
+  try {
+    git(directory, ['init', '--initial-branch=main']);
+    git(directory, ['config', 'user.name', 'Sideline Release Test']);
+    git(directory, ['config', 'user.email', 'sideline-release-test@example.com']);
+    await mkdir(join(directory, 'packages/contracts'), { recursive: true });
+    await writeFile(join(directory, 'packages/contracts/schema.ts'), 'export const version = 1;\n');
+    git(directory, ['add', '.']);
+    git(directory, ['commit', '-m', 'Add contract']);
+
+    git(directory, ['switch', '-c', 'feature']);
+    await writeFile(join(directory, 'packages/contracts/schema.ts'), 'export const version = 2;\n');
+    git(directory, ['add', '.']);
+    git(directory, ['commit', '-m', 'Change contract on feature branch']);
+
+    git(directory, ['switch', 'main']);
+    await writeFile(join(directory, 'README.md'), 'main-line change\n');
+    git(directory, ['add', '.']);
+    git(directory, ['commit', '-m', 'Advance main']);
+    git(directory, ['merge', '--no-ff', 'feature', '-m', 'Merge contract change']);
+    const mergeSha = git(directory, ['rev-parse', 'HEAD']);
+
+    assert.equal(latestContractCommit(mergeSha, directory), mergeSha);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('a stale queued run skips when no release input changed after the tag', () => {
