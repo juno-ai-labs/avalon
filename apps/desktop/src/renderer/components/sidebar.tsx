@@ -2127,10 +2127,7 @@ export function Sidebar({
         onReorder={onReorderContainer}
         onRetry={onRetrySpaces}
         onRestore={onRestoreSpace}
-        onSelect={(spaceId) => {
-          setSelectedSpaceId(spaceId);
-          setSpacesCollapsed(true);
-        }}
+        onSelect={setSelectedSpaceId}
         ordering={ordering}
         ready={spacesReady}
         outOfDate={spacesOutOfDate}
