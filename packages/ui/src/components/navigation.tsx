@@ -16,13 +16,15 @@ export function SidebarNavigationRowContent({ icon, title, marks, titlePrefix, a
   activity?: ReactNode;
   naming?: boolean;
 }): React.JSX.Element {
+  const activityIsEmpty = activity === undefined || activity === null
+    || typeof activity === 'boolean' || activity === '';
   return <>
     <span className="sidebar-row-icon">{icon}{marks}</span>
     <span className="sidebar-row-main">
       <span className="sidebar-row-title"><span className="sidebar-row-title-copy">
         {titlePrefix}{naming ? <TitleSkeleton /> : title}
       </span></span>
-      {activity === undefined ? null : <span className="sidebar-row-activity">{activity}</span>}
+      {activityIsEmpty ? null : <span className="sidebar-row-activity">{activity}</span>}
     </span>
   </>;
 }
