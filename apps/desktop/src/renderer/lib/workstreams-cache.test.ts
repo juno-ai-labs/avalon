@@ -109,6 +109,26 @@ describe('setCachedWorkstreams', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([archived]);
   });
 
+  it('does not hide a restore that became current before the archive response arrived', () => {
+    const queryClient = new QueryClient();
+    const restored = {
+      ...summary(),
+      title: 'Restored elsewhere',
+      updatedAt: '2026-09-21T12:00:02.000Z',
+    };
+    setCachedWorkstreams(queryClient, [restored]);
+    queryClient.setQueryData(['workstream', restored.id], { marker: 'restored detail' });
+
+    holdCachedWorkstreamArchive(queryClient, {
+      ...summary(),
+      archivedAt: '2026-09-21T12:00:01.000Z',
+      updatedAt: '2026-09-21T12:00:01.000Z',
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([restored]);
+    expect(queryClient.getQueryData(['workstream', restored.id])).toEqual({ marker: 'restored detail' });
+  });
+
   it('evicts every per-channel cache family after access revocation', () => {
     const queryClient = new QueryClient();
     const workstreamId = summary().id;
