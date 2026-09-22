@@ -70,6 +70,8 @@ import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationActivationV1Schema,
   AutomationDetailSchema,
+  ConnectorResourceAuthorizationHintSchema,
+  ConnectorResourceAuthorizationRequestSchema,
   ModelPluginIdSchema,
   WorkstreamReadResourceOutputSchema,
   WorkstreamSearchResourceOutputSchema,
@@ -4232,11 +4234,30 @@ export async function runWorkstreamHarness(
             const pluginActivityId = plugin.activityId;
             const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
             await ensureTranscriptToolParents(event);
+            const connectionId = event.pluginId.startsWith("connection:")
+              ? event.pluginId.slice("connection:".length)
+              : null;
+            const resourceAuthorization = ConnectorResourceAuthorizationHintSchema.safeParse(
+              event.data?.details?.resourceAuthorization,
+            );
+            const recovery = connectionId && resourceAuthorization.success
+              ? ConnectorResourceAuthorizationRequestSchema.safeParse({
+                    ...resourceAuthorization.data,
+                    connectionId,
+                    parentKind: input.parentKind,
+                    parentId: input.parentId,
+                    substreamId: input.substreamId ?? "0",
+                    failedToolInvocationId: event.toolCallId,
+                    continuationId: crypto.randomUUID(),
+                  })
+              : null;
+            const participantSafeResult = recovery?.success ? { recovery: recovery.data } : undefined;
             await orderedTranscript.upsertToolLifecycle({
               toolCallId: event.toolCallId,
               pluginId: event.pluginId,
               toolName: event.toolName,
               status: ambiguous || planAlreadyAmbiguous ? "ambiguous" : "failed",
+              ...(participantSafeResult ? { participantSafeResult } : {}),
               error: event.error,
               occurredAtUtc: new Date().toISOString(),
             });
@@ -5614,7 +5635,7 @@ function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<stri
   }
   if (granted.has("docs.write") || granted.has("sheets.write")) {
     examples.push(
-      `Check writability before editing — a search result carries \`writableByRally\`, and only a file where it is true can be edited through this connection. A file created by these tools always is; an arbitrary file found in Drive usually is not, so create one rather than assuming an existing file can be written.`,
+      `Check writability before editing — a search result carries \`writableByRally\`. An existing file the user can edit may still need Rally's one-file grant. Attempt the requested edit to surface the Allow editing card, wait for authorization, then retry that same edit instead of creating a duplicate.`,
     );
   }
   if (granted.has("sheets.read")) {

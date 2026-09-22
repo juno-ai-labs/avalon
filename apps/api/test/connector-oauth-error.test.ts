@@ -5,6 +5,11 @@ import { ApiError } from "../src/lib/api-error";
 import { classifyConnectorOAuthCallbackFailure } from "../src/lib/connector-oauth-error";
 
 describe("connector OAuth callback failures", () => {
+  it("names a resource grant mismatch without forwarding provider text", () => {
+    expect(classifyConnectorOAuthCallbackFailure(new ConnectorError(
+      "invalid_payload", "private provider message", { reason: "resource_authorization_mismatch" },
+    ))).toMatchObject({ errorCode: "resource_authorization_mismatch" });
+  });
   it("retains only allowlisted connector diagnostics", () => {
     expect(classifyConnectorOAuthCallbackFailure(new ConnectorError(
       "unauthorized",

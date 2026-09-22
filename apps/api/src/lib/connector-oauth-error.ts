@@ -41,6 +41,8 @@ export function classifyConnectorOAuthCallbackFailure(
     const stage = safeStage(details?.oauthStage);
     const providerStatus = safeProviderStatus(details?.status);
     const providerError = safeProviderError(details?.providerError) ?? safeProviderError(details?.error);
+    const resourceReason = details?.reason === "resource_authorization_mismatch"
+      || details?.reason === "resource_authorization_not_effective" ? details.reason : null;
     // A schema mismatch and a provider refusal are both `provider_error`, and
     // they call for opposite responses — one is Avalon's bug, the other is a
     // configuration or a spent code. The Zod flatten an adapter attaches is the
@@ -55,7 +57,7 @@ export function classifyConnectorOAuthCallbackFailure(
     // bounds what would if one did.
     const responseIssues = safeResponseIssues(details?.responseIssues);
     return {
-      errorCode: `connector_${error.code}`,
+      errorCode: resourceReason ?? `connector_${error.code}`,
       level: error.code === "unauthorized" ? "warn" : "error",
       diagnostics: {
         error_name: errorName,

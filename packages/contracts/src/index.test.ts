@@ -1312,6 +1312,29 @@ describe("boundary contracts", () => {
       code: "unauthorized",
       details: { reason: "invalid_grant", reconnectRequired: true, retryable: false },
     });
+    expect(readStructuredFailure(new ProviderError("unsupported_capability", "Authorize file", {
+      reason: "drive_file_not_writable",
+      resourceAuthorization: {
+        kind: "connector_resource_authorization",
+        provider: "google",
+        capability: "sheets.write",
+        operation: "edit",
+        resource: { id: "sheet-1", type: "document", name: "Ellen Buckley Assessment" },
+      },
+      accessToken: "do-not-forward",
+    }))).toEqual({
+      code: "unsupported_capability",
+      details: {
+        reason: "drive_file_not_writable",
+        resourceAuthorization: {
+          kind: "connector_resource_authorization",
+          provider: "google",
+          capability: "sheets.write",
+          operation: "edit",
+          resource: { id: "sheet-1", type: "document", name: "Ellen Buckley Assessment" },
+        },
+      },
+    });
     expect(readStructuredFailure(new ProviderError("invalid_payload", "Ambiguous", {
       reason: "ambiguous_calendar_name",
       available: Array.from({ length: 400 }, (_, index) => `calendar-${index}-with-a-long-name`),

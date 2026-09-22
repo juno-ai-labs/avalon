@@ -31,6 +31,7 @@ import {
   AutomationDraftProposedV1Schema,
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
+  ConnectorResourceAuthorizationRequestSchema,
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -420,9 +421,11 @@ const ProductAuthSchema = z.strictObject({
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
   // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
-  // member who never signs in, verified the same way. Both are constructed
-  // only by server code; `IdentityAuthContext.principal` says why.
-  principal: z.enum(["connector", "demo_seed", "impersonation"]).optional(),
+  // member who never signs in, verified the same way. A provider callback
+  // uses `"resource_authorization"` after its state and grant are verified.
+  // These are constructed only by server code; `IdentityAuthContext.principal`
+  // says why.
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -457,6 +460,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
   productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
   productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
+  productOperation({ operation: z.literal("read_resource_authorization_recovery"), toolCallId: z.string().min(1) }),
   productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
   productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
   productOperation({ operation: z.literal("mark_unread") }),
@@ -3339,7 +3343,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    // Any non-session principal — `connector`, `demo_seed`, `impersonation` — is verified by
+    // Any non-session principal — `connector`, `demo_seed`, `impersonation`, or
+    // `resource_authorization` after a consumed provider callback — is verified by
     // membership rather than by a session row. The enum on `principal` is the
     // gate: a value added to it inherits this branch.
     const nonSessionPrincipal = request.auth.principal !== undefined;
@@ -3423,6 +3428,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
         return jsonResponse({ title: root.title, turns });
       }
+      if (request.operation === "read_resource_authorization_recovery") {
+        await this.product.authorize(current);
+        const turn = this.transcript.participantTurnForTool(request.toolCallId);
+        const block = turn?.blocks.find((candidate) => candidate.type === "tool"
+          && candidate.toolCallId === request.toolCallId && candidate.status === "failed");
+        const result = block?.type === "tool" ? block.participantSafeResult : null;
+        const recovery = ConnectorResourceAuthorizationRequestSchema.safeParse(
+          result && typeof result === "object" && !Array.isArray(result)
+            ? (result as Record<string, unknown>).recovery : null,
+        );
+        return jsonResponse({ recovery: recovery.success ? recovery.data : null });
+      }
       if (request.operation === "get") {
         return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
@@ -3452,7 +3469,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "create_message") {
-        return jsonResponse(await this.admitMessage(current, request.input, span));
+        return jsonResponse(await this.admitMessage(
+          request.auth.principal === "resource_authorization"
+            ? { ...current, principal: "resource_authorization" } : current,
+          request.input,
+          span,
+        ));
       }
       if ((request.operation === "add_participant" || request.operation === "remove_participant")
         && identity.parentKind === "workstream"

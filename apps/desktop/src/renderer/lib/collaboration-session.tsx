@@ -5,18 +5,22 @@ import type { Region } from '@rally/contracts/regions';
 import type { RallyApi } from './api';
 
 export interface PendingConnectorOAuth {
-  source?: 'onboarding' | 'conversation';
+  source?: 'onboarding' | 'conversation' | 'resource';
   connectorId?: string;
   scope?: 'personal' | 'workspace';
   attemptId: string;
   provider: ConnectorOAuthProvider;
   region: Region;
   workspaceId: string;
+  resourceAuthorizationKey?: string;
+  resourceAuthorizationStatus?: 'pending' | 'succeeded' | 'denied' | 'failed';
 }
 
 export interface ConnectorSetupCapability {
   pendingConnectorOAuth: PendingConnectorOAuth | null;
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
+  resourceAuthorizationAttempts: Readonly<Record<string, PendingConnectorOAuth>>;
+  setResourceAuthorizationAttempt: (key: string, attempt: PendingConnectorOAuth | null) => void;
   openExternal: (url: string) => Promise<void>;
 }
 
