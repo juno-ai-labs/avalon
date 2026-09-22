@@ -58,6 +58,7 @@ import {
   SpaceChannelPageSchema as WireSpaceChannelPageSchema,
   ContainerOrderSchema as WireContainerOrderSchema,
   SpaceSummarySchema as WireSpaceSummarySchema,
+  MoveChannelBetweenSpacesResultSchema as WireMoveChannelBetweenSpacesResultSchema,
   type ChannelAccess,
   type ContainerOrder,
   type CreateSpaceRequest,
@@ -1334,6 +1335,17 @@ export class RallyApi {
     return this.request(
       `/spaces/${encodeURIComponent(spaceId)}/channels/${encodeURIComponent(workstreamId)}`,
       { method: 'DELETE', schema: WireSpaceSummarySchema },
+    );
+  }
+
+  moveChannelBetweenSpaces(sourceSpaceId: string, targetSpaceId: string, workstreamId: string) {
+    return this.request(
+      `/spaces/${encodeURIComponent(targetSpaceId)}/channels/${encodeURIComponent(workstreamId)}/move`,
+      {
+        method: 'POST',
+        body: { sourceSpaceId },
+        schema: WireMoveChannelBetweenSpacesResultSchema,
+      },
     );
   }
 

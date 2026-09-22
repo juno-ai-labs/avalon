@@ -7,6 +7,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import type { PersonalOrder } from '@rally/contracts';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
 import { desktopBridge } from '../lib/platform';
@@ -124,6 +125,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
+  const sharedNavigation = useQuery<SharedNavigationDirectory | undefined>({
+    queryKey: ['shared-navigation', session?.workspace?.id], queryFn: async () => undefined, enabled: false,
+  });
+  const sharedParent = guest
+    ? sharedNavigation.data?.workstreams.find((item) => item.parentId === id)
+    : undefined;
   // The open substream's own detail, for its row in the rail below. Its title
   // and the header's are then one value rather than two that agree eventually.
   const openChild = useQuery<WorkstreamDetail | undefined>({
@@ -145,7 +152,23 @@ export function WorkstreamScreen(): React.JSX.Element {
    * open child. `docs/substream-creation.md` holds why each of those is so, and
    * what writing it back cost when it was tried.
    */
-  const namedChildren = children.data?.privateChildren?.map((child) =>
+  const directoryChildren = sharedParent
+    ? sharedParent.conversations.filter((item) => item.substreamId !== '0' && !item.archived).map((item) => {
+        const live = children.data?.privateChildren?.find((child) => child.substreamId === item.substreamId);
+        return {
+          ...(live ?? {
+            substreamId: item.substreamId,
+            title: item.title,
+            createdByUserId: session?.user.id ?? '',
+            createdAt: '1970-01-01T00:00:00.000Z',
+            updatedAt: '1970-01-01T00:00:00.000Z',
+          }),
+          scope: item.scope,
+          ...(live?.appearance ?? item.appearance ? { appearance: live?.appearance ?? item.appearance } : {}),
+        };
+      })
+    : children.data?.privateChildren;
+  const namedChildren = directoryChildren?.map((child) =>
     child.substreamId === selectedSubstreamId
       ? {
           ...child,

@@ -2,8 +2,9 @@ import { render } from '@testing-library/react';
 import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { asSpaceId, SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
+import { asSpaceId, asSubstreamId, SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useLayoutEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
@@ -12,6 +13,8 @@ import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
+  associativeSpacesForSidebar,
+  associativeWorkstreamsForSidebar,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   archiveSpaceMutationHandler,
@@ -200,19 +203,79 @@ describe('spacesEnabledForSession', () => {
     },
   };
 
-  // Guest access to Spaces is deferred: every Space RPC refuses a guest, so the
-  // shell omits the navigation rather than drawing controls that only fail.
-  it('omits spaces for a guest, and keeps them for a member however the wire says so', () => {
+  it('keeps Space navigation for guests and members', () => {
     expect(spacesEnabledForSession({
       ...session,
       workspace: { ...session.workspace!, accessClass: 'guest', role: null },
-    })).toBe(false);
+    })).toBe(true);
     expect(spacesEnabledForSession({
       ...session,
       workspace: { ...session.workspace!, accessClass: 'member' },
     })).toBe(true);
     // An absent `accessClass` is the legacy full-member representation.
     expect(spacesEnabledForSession(session)).toBe(true);
+  });
+});
+
+describe('associative guest navigation', () => {
+  const directory: SharedNavigationDirectory = {
+    spaces: [{
+      id: asSpaceId('00000000-0000-7000-8000-0000000000f1'),
+      name: 'Private planning',
+      iconKey: 'star',
+      colorKey: 'red',
+      scope: 'personal',
+      workstreamIds: [workstreamId],
+    }],
+    workstreams: [{
+      parentId: workstreamId,
+      title: 'Launch plan',
+      appearance: { icon: 'rocket', color: 'violet' },
+      scope: 'personal',
+      archived: false,
+      conversations: [{ substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000f2'), title: 'Risks', scope: 'personal', archived: false }],
+    }],
+  };
+
+  it('adapts only allowed Space presentation and marks it read-only', () => {
+    expect(associativeSpacesForSidebar(directory)).toEqual([
+      expect.objectContaining({
+        id: directory.spaces[0]!.id,
+        name: 'Private planning',
+        iconKey: 'star',
+        colorKey: 'red',
+        scope: 'personal',
+        reach: 'through_channel',
+        participants: [],
+        defaultResourceIds: [],
+        defaultSidekickIds: [],
+      }),
+    ]);
+  });
+
+  it('keeps fresher socket metadata while attaching canonical guest placements and destination', () => {
+    const hidden = summary('completed', '00000000-0000-7000-8000-0000000000f9');
+    expect(associativeWorkstreamsForSidebar(directory, [summary('completed'), hidden])).toEqual([
+      expect.objectContaining({
+        id: workstreamId,
+        title: 'Draft the reply',
+        scope: 'workspace',
+        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
+        spaceIds: [directory.spaces[0]!.id],
+      }),
+    ]);
+  });
+
+  it('synthesizes the Channel ancestor when only one Breakout is shared', () => {
+    expect(associativeWorkstreamsForSidebar(directory, [])).toEqual([
+      expect.objectContaining({
+        id: workstreamId,
+        title: 'Launch plan',
+        appearance: { icon: 'rocket', color: 'violet' },
+        scope: 'personal',
+        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
+      }),
+    ]);
   });
 });
 
@@ -556,11 +619,16 @@ describe('applyPinnedWorkstreams', () => {
 });
 
 describe('channelSpaceMutationHandlers', () => {
-  it('keeps the Space and Channel identifiers in API order for membership writes and moves', async () => {
+  it('uses one server move and immediately patches both Space and Channel caches', async () => {
     const queryClient = new QueryClient();
+    const source = { ...space, id: 'source-space', channelCount: 0 };
+    const target = { ...space, id: 'target-space', channelCount: 1 };
+    queryClient.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [source, target] });
+    setCachedWorkstreams(queryClient, [{ ...summary('completed'), spaceIds: [source.id] }]);
     const api = {
       addChannelToSpace: vi.fn().mockResolvedValue({ ...space, channelCount: 1 }),
       removeChannelFromSpace: vi.fn().mockResolvedValue(space),
+      moveChannelBetweenSpaces: vi.fn().mockResolvedValue({ source, target }),
     };
     const handlers = channelSpaceMutationHandlers(api, queryClient);
 
@@ -570,12 +638,9 @@ describe('channelSpaceMutationHandlers', () => {
 
     expect(api.addChannelToSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
     expect(api.removeChannelFromSpace).toHaveBeenNthCalledWith(1, space.id, workstreamId);
-    expect(api.addChannelToSpace).toHaveBeenNthCalledWith(2, 'target-space', workstreamId);
-    expect(api.removeChannelFromSpace).toHaveBeenNthCalledWith(2, 'source-space', workstreamId);
-    const moveAddOrder = api.addChannelToSpace.mock.invocationCallOrder[1];
-    const moveRemoveOrder = api.removeChannelFromSpace.mock.invocationCallOrder[1];
-    if (moveAddOrder === undefined || moveRemoveOrder === undefined) throw new Error('move calls missing');
-    expect(moveAddOrder).toBeLessThan(moveRemoveOrder);
+    expect(api.moveChannelBetweenSpaces).toHaveBeenCalledWith('source-space', 'target-space', workstreamId);
+    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items).toEqual([source, target]);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.spaceIds).toEqual(['target-space']);
   });
 });
 

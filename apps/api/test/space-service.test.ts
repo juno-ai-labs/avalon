@@ -52,6 +52,7 @@ interface WorkspaceDouble {
   spaceSummary: ReturnType<typeof vi.fn>;
   listSpaceMembers: ReturnType<typeof vi.fn>;
   prepareSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
+  preflightSpaceMembershipMoveSource: ReturnType<typeof vi.fn>;
   finalizeSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   noteSpaceAudience: ReturnType<typeof vi.fn>;
   reserveSpace: ReturnType<typeof vi.fn>;
@@ -71,6 +72,7 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     prepareSpaceMembershipRemoval: vi.fn(async () => ({
       ok: true, space: summary(), membershipGeneration: 4,
     })),
+    preflightSpaceMembershipMoveSource: vi.fn(async () => ({ ok: true, space: summary() })),
     finalizeSpaceMembershipRemoval: vi.fn(async () => ({ ok: true, space: summary() })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
     reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
@@ -259,6 +261,22 @@ describe("SpaceService audience changes", () => {
 });
 
 describe("SpaceService lifecycle fan-out", () => {
+  it("refuses an invalid move source before reserving the destination", async () => {
+    const workspace = workspaceDouble({
+      preflightSpaceMembershipMoveSource: vi.fn(async () => ({
+        ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [],
+      })),
+    });
+
+    await expect(new SpaceService(serviceEnv({ workspace }), auth()).moveChannel(
+      SPACE_ID,
+      asSpaceId("00000000-0000-7000-8000-0000000000d7"),
+      CHANNEL_ID,
+    )).rejects.toMatchObject({ code: "space_not_found" });
+
+    expect(workspace.reserveSpace).not.toHaveBeenCalled();
+  });
+
   it("given an archive, when it runs, then reached Channel retractions overlap and all settle before finalization", async () => {
     const log: string[] = [];
     const workspace = workspaceDouble({

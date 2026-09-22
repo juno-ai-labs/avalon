@@ -362,6 +362,50 @@ describe("POST /workstreams/import", () => {
   });
 });
 
+describe("POST /spaces/:id/channels/:workstreamId/move", () => {
+  it("leaves the destination untouched when the source placement is invalid", async () => {
+    const source = await createSpace("personal", "Wrong source");
+    const target = await createSpace("personal", "Untouched target");
+    const workstreamId = await createChannel("invalid-source-move");
+
+    const moved = await request(
+      `/spaces/${target.id}/channels/${workstreamId}/move`,
+      OWNER_AUTH,
+      { sourceSpaceId: source.id },
+    );
+
+    expect(moved).toMatchObject({ status: 404, body: { error: { code: "space_not_found" } } });
+    expect((await spaceDirectories(OWNER)).active.items.find((item) => item.id === target.id))
+      .toMatchObject({ channelCount: 0 });
+    expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId)).not.toContain(target.id);
+  });
+
+  it("moves a Channel behind one HTTP boundary and returns both changed Spaces", async () => {
+    const source = await createSpace("personal", "Source");
+    const target = await createSpace("personal", "Target");
+    const workstreamId = await createChannel("move-channel");
+    expect((await request(`/spaces/${source.id}/channels`, OWNER_AUTH, { workstreamId })).status).toBe(200);
+
+    const moved = await request(
+      `/spaces/${target.id}/channels/${workstreamId}/move`,
+      OWNER_AUTH,
+      { sourceSpaceId: source.id },
+    );
+
+    expect(moved).toMatchObject({
+      status: 200,
+      body: {
+        source: { id: source.id, channelCount: 0 },
+        target: { id: target.id, channelCount: 1 },
+      },
+    });
+    expect(await channelSpaceSources(workstreamId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ spaceId: target.id }),
+    ]));
+    expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId)).not.toContain(source.id);
+  });
+});
+
 describe("PATCH /spaces/:id/audience", () => {
   it("widens a Space and narrows it again, carrying each answer to its member Channel", async () => {
     const created = await createSpace("personal", "Hiring");

@@ -518,10 +518,9 @@ async function settleNudges(seen: readonly (readonly string[])[], count: number)
 async function displace(
   spaceId: SpaceId,
   workstreamId: WorkstreamId,
-  remainingAudience: { scope: "personal" | "workspace"; participantUserIds: UserId[] },
 ): Promise<void> {
   const plan = await workspace().prepareSpaceMembershipRemoval({
-    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId, remainingAudience,
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId,
   });
   if (!plan.ok) throw new Error(`prepareSpaceMembershipRemoval refused: ${plan.code}`);
   const settled = await workspace().finalizeSpaceMembershipRemoval({
@@ -972,7 +971,6 @@ describe("WorkspaceDO space authority", () => {
       workspace().prepareSpaceMembershipRemoval({
         ...asMember,
         workstreamId: CHANNEL_A,
-        remainingAudience: { scope: "workspace", participantUserIds: [OWNER] },
       }),
       // The two settlements, which are reachable only behind a prepare that is
       // itself refused above — enumerated anyway, because "every operation
@@ -1165,8 +1163,8 @@ describe("WorkspaceDO space authority", () => {
     // resolves to the Space it just left and a dashboard still holding its row
     // would never hear.
     const displaced = nextWorkstreamStateFor(member.socket, CHANNEL_C);
-    await displace(personal, CHANNEL_B, { scope: "personal", participantUserIds: [OWNER] });
-    await displace(personal, CHANNEL_C, { scope: "workspace", participantUserIds: [] });
+    await displace(personal, CHANNEL_B);
+    await displace(personal, CHANNEL_C);
     await displaced;
 
     // Both `CHANNEL_C` moves, and neither `CHANNEL_B` move: the row this
@@ -1292,33 +1290,40 @@ describe("WorkspaceDO space authority", () => {
       userId: OWNER,
       spaceId,
       workstreamId: CHANNEL_A,
-      remainingAudience: { scope: "workspace", participantUserIds: [] },
     })).resolves.toMatchObject({ ok: false, code: "space_membership_final" });
   });
 
-  it("given two Spaces, when a reader could discover neither remaining one, then removal names them", async () => {
+  it("given a direct Channel reader, when a membership is removed, then the remaining Space is associatively discoverable", async () => {
     const organization = await reserve("Company", "workspace");
     const personal = await reserve("Side work", "personal");
     await publishChannel(CHANNEL_A, null);
     await place(organization, CHANNEL_A);
     await place(personal, CHANNEL_A);
 
-    // `MEMBER` keeps access to the Channel from somewhere else, but the only
-    // Space that would remain is one they do not participate in — so the
-    // Channel would be readable and unreachable for them.
-    const refused = await workspace().prepareSpaceMembershipRemoval({
+    const plan = await workspace().prepareSpaceMembershipRemoval({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId: organization,
       workstreamId: CHANNEL_A,
-      remainingAudience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
     });
-
-    expect(refused).toMatchObject({
-      ok: false,
-      code: "space_audience_incompatible",
-      unreachableUserIds: [MEMBER],
-    });
+    if (!plan.ok) throw new Error(plan.code);
+    await expect(workspace().finalizeSpaceMembershipRemoval({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: organization,
+      workstreamId: CHANNEL_A,
+      spaceRevision: plan.space.revision,
+      membershipGeneration: plan.membershipGeneration,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal,
+    })).resolves.toMatchObject({ ok: true, space: {
+      id: personal,
+      name: "Side work",
+      scope: "personal",
+      reach: "through_channel",
+      participants: [],
+    } });
   });
 
   it("given a Channel in two Spaces, when one membership is removed, then the other keeps it", async () => {
@@ -1333,7 +1338,6 @@ describe("WorkspaceDO space authority", () => {
       userId: OWNER,
       spaceId: organization,
       workstreamId: CHANNEL_A,
-      remainingAudience: { scope: "workspace", participantUserIds: [] },
     });
     if (!plan.ok) throw new Error(plan.code);
     await expect(workspace().finalizeSpaceMembershipRemoval({
@@ -1368,7 +1372,7 @@ describe("WorkspaceDO space authority", () => {
     const { socket } = await connectViewer(OWNER, "f001");
     const directorySyncs = collectDirectorySyncs(socket);
     try {
-      await displace(removedSpace, CHANNEL_A, { scope: "workspace", participantUserIds: [] });
+      await displace(removedSpace, CHANNEL_A);
       await settleNudges(directorySyncs.topics, 1);
 
       expect(directorySyncs.topics, directorySyncs.raw.join("\n")).toHaveLength(1);
@@ -1417,7 +1421,6 @@ describe("WorkspaceDO space authority", () => {
       userId: OWNER,
       spaceId,
       workstreamId: CHANNEL_B,
-      remainingAudience: { scope: "workspace", participantUserIds: [] },
     });
     if (!plan.ok) throw new Error(plan.code);
     await expect(workspace().finalizeSpaceMembershipRemoval({

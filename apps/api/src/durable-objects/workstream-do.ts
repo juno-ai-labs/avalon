@@ -2,7 +2,7 @@ import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import { ConnectorParticipantAdmissionSchema, ScopeGrantManagementRequestSchema, ManagedScopeGrantsSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsRequestSchema, ScopeSharingOptionsSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ListScopeInvitationsSchema } from "@rally/contracts/scope-grants";
-import { SharedWorkstreamRequestSchema, SharedWorkstreamSchema } from "@rally/contracts/scope-grants";
+import { SharedNavigationWorkstreamSchema, SharedWorkstreamRequestSchema } from "@rally/contracts/scope-grants";
 import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
 import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import { CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
@@ -1381,20 +1381,42 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.assertParent(request.workspaceId, request.parentId);
     // No external await after relationship admission: grants, lifecycle and labels
     // are read together from the canonical parent, not from the discovery index.
-    const conversations = this.parentSql.exec<{ substream_id: string; title: string | null; archived_at: number | null }>(
-      "SELECT substream_id,title,archived_at FROM conversation_children ORDER BY substream_id",
+    const projections = new Map(this.parentSql.exec<{ substream_id: string; effect_json: string }>(
+      "SELECT substream_id,effect_json FROM substream_directory",
+    ).toArray().map((row) => [
+      row.substream_id,
+      WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)),
+    ]));
+    const conversations = this.parentSql.exec<{
+      substream_id: string;
+      title: string | null;
+      archived_at: number | null;
+      audience: "restricted" | "inherits_workstream";
+    }>(
+      "SELECT substream_id,title,archived_at,audience FROM conversation_children ORDER BY substream_id",
     ).toArray().filter((child) => this.resolveScopeAccess({ userId: request.userId,
       target: { kind: "conversation", workspaceId: request.workspaceId, parentId: request.parentId,
         substreamId: asSubstreamId(child.substream_id) } }, relationship).allowed)
-      .map((child) => ({ substreamId: child.substream_id, archived: metadata.archived_at !== null || child.archived_at !== null,
-        title: child.substream_id === "0" ? "Main" : child.title ?? "Shared substream" }));
+      .map((child) => {
+        const appearance = projections.get(child.substream_id)?.appearance;
+        return {
+          substreamId: child.substream_id,
+          archived: metadata.archived_at !== null || child.archived_at !== null,
+          title: child.substream_id === "0" ? "Main" : child.title ?? "Shared breakout",
+          scope: child.substream_id === "0"
+            || child.audience === "inherits_workstream"
+            ? metadata.scope
+            : "personal",
+          ...(appearance ? { appearance } : {}),
+        };
+      });
     if (!conversations.length) return null;
-    return SharedWorkstreamSchema.parse({ parentId: request.parentId, archived: metadata.archived_at !== null,
+    return SharedNavigationWorkstreamSchema.parse({ parentId: request.parentId, archived: metadata.archived_at !== null,
       // The browser draws an authorized Breakout beneath its actual Channel.
       // Naming the parent does not grant Main or release any Main transcript.
       title: metadata.title,
-      ...(conversations.some((child) => child.substreamId === "0") && this.childCommonProjections()[0]?.appearance
-        ? { appearance: this.childCommonProjections()[0]!.appearance } : {}),
+      scope: metadata.scope,
+      ...(projections.get("0")?.appearance ? { appearance: projections.get("0")!.appearance } : {}),
       conversations });
   }
 

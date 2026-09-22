@@ -6566,15 +6566,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
     });
-    await this.publishWorkstreamState(request.workstreamId);
-    // Unconditionally, not only when this settlement staged a default of its
-    // own. The matching `prepareSpaceMembership` armed a wake
-    // `SPACE_INTENT_RESUME_DELAY_MS` out for the intent this line has just
-    // settled, and `armNextAlarm` is an exact re-derive — it deletes the alarm
-    // when nothing is left. Skipping it on the ordinary path left every
-    // Channel creation with one WorkspaceDO wake thirty seconds later that
-    // found nothing due and re-armed nothing.
-    await this.armNextAlarm();
+    // The durable membership and its recovery receipt are already committed.
+    // Realtime convergence and deleting the now-stale recovery wake do not
+    // decide whether the move is authorized, so neither belongs on its response
+    // time. A failed re-derive leaves the existing wake in place; that wake is
+    // itself the recovery path and will safely find the settled intent.
+    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, false);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -6622,6 +6619,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  async preflightSpaceMembershipMoveSource(
+    input: WorkspaceSpaceMembershipRemovalRequest,
+  ): Promise<WorkspaceSpaceMutationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "preflight_space_membership_move_source");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    return WorkspaceSpaceMutationResultSchema.parse(
+      this.spaceStorage().preflightMembershipMoveSource(request),
+    );
+  }
+
   async finalizeSpaceMembershipRemoval(
     input: WorkspaceSpaceMembershipSettleRequest,
   ): Promise<WorkspaceSpaceMutationResult> {
@@ -6648,9 +6658,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
     });
-    await this.publishDirectorySync(request.workspaceId);
-    await this.publishWorkstreamState(request.workstreamId);
-    await this.armNextAlarm();
+    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -8596,7 +8604,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.membershipIncarnation,
     ));
     const admittedIds = request.workstreamIds.filter((workstreamId) => candidates.has(workstreamId));
-    return this.spaceStorage().sharedNavigationSpaces(request.userId, admittedIds).map((space) =>
+    return this.spaceStorage().sharedNavigationSpaces(admittedIds).map((space) =>
       SharedNavigationSpaceSchema.parse(space));
   }
 
@@ -12051,6 +12059,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const placementAffinity = this.placementAffinity();
     if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
     await this.publishSync(["workstream_directory"], workspaceId, placementAffinity);
+  }
+
+  /** Finish non-authoritative move convergence after the mutation has answered. */
+  private deferSpaceMembershipConvergence(
+    workspaceId: string,
+    workstreamId: string,
+    includeDirectory: boolean,
+  ): void {
+    this.state.waitUntil(Promise.all([
+      ...(includeDirectory ? [this.publishDirectorySync(workspaceId)] : []),
+      this.publishWorkstreamState(workstreamId),
+      this.armNextAlarm(),
+    ]).then(() => undefined).catch((error: unknown) => {
+      logWarn(this.env, "space_membership_convergence_deferred", {
+        workspace_id: workspaceId,
+        workstream_id: workstreamId,
+        error_code: diagnosticErrorCode(error, "space_membership_convergence_failed"),
+      });
+    }));
   }
 
   private productStorage(): WorkspaceProductStorage {

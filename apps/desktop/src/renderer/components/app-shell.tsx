@@ -1,7 +1,8 @@
 import type { CreateSpaceRequest, PersonalOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
@@ -203,14 +204,14 @@ export function archiveSpaceMutationHandler(
  * the test covers the same callbacks the sidebar invokes.
  */
 export function channelSpaceMutationHandlers(
-  api: Pick<RallyApi, 'addChannelToSpace' | 'removeChannelFromSpace'> | null,
+  api: Pick<RallyApi, 'addChannelToSpace' | 'moveChannelBetweenSpaces' | 'removeChannelFromSpace'> | null,
   queryClient: QueryClient,
 ): {
   onAddChannelToSpace: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace: (spaceId: string, workstreamId: string) => Promise<void>;
 } {
-  const activeApi = (): Pick<RallyApi, 'addChannelToSpace' | 'removeChannelFromSpace'> => {
+  const activeApi = (): Pick<RallyApi, 'addChannelToSpace' | 'moveChannelBetweenSpaces' | 'removeChannelFromSpace'> => {
     if (!api) throw new Error('Your session is no longer active. Sign in again.');
     return api;
   };
@@ -229,18 +230,22 @@ export function channelSpaceMutationHandlers(
       // its socket push is what puts the row under the Space.
       await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     },
-    // A cross-rail drag composes the two existing membership primitives in the
-    // safe order: establish the destination before withdrawing the source, so
-    // an interrupted move can leave an extra placement but never a homeless
-    // Channel. WorkspaceDO remains the authority for both settlements.
+    // One server operation composes the membership primitives in the safe
+    // order: establish the destination before withdrawing the source, so an
+    // interrupted move can leave an extra placement but never a homeless
+    // Channel. The response is the cache patch; no refetch extends the gesture.
     onMoveChannelToSpace: async (sourceSpaceId, targetSpaceId, workstreamId) => {
       if (sourceSpaceId === targetSpaceId) return;
-      applySpace(await activeApi().addChannelToSpace(targetSpaceId, workstreamId));
-      try {
-        applySpace(await activeApi().removeChannelFromSpace(sourceSpaceId, workstreamId));
-      } finally {
-        await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      }
+      const moved = await activeApi().moveChannelBetweenSpaces(sourceSpaceId, targetSpaceId, workstreamId);
+      applySpace(moved.target);
+      applySpace(moved.source);
+      patchCachedWorkstream(queryClient, workstreamId, (current) => ({
+        ...current,
+        spaceIds: [...new Set([
+          ...current.spaceIds.filter((spaceId) => spaceId !== sourceSpaceId),
+          targetSpaceId,
+        ])],
+      }));
     },
     onRemoveChannelFromSpace: async (spaceId, workstreamId) => {
       applySpace(await activeApi().removeChannelFromSpace(spaceId, workstreamId));
@@ -375,18 +380,81 @@ export function applyPinnedWorkstreamsIfCurrent(
 const WORKSPACE_ENTER_MS = 320;
 
 /**
- * Whether this session may see the Organization's Spaces at all.
+ * Whether the active workspace shell has a Space rail.
  *
- * Guest access to Spaces is deferred — PRD non-goal 3: a guest holds explicit
- * Channel and Breakout grants and no Organization-wide discovery, and every
- * Space RPC refuses one. Design decision 9 makes that the host's decision
- * rather than something the shared components infer from a missing control, so
- * it is taken once here and the sidebar is handed no directory to draw.
- *
- * An absent `accessClass` is the legacy full-member wire representation.
+ * Guests receive an associative, read-only directory instead of the member
+ * socket directory: only Spaces that contain a Channel they may read, and only
+ * each ancestor's presentation metadata. A session without an active workspace
+ * never mounts this shell; null remains enabled for the legacy startup frame.
  */
 export function spacesEnabledForSession(session: ClientSession | null): boolean {
-  return session?.workspace?.accessClass !== 'guest';
+  return session === null || session.workspace !== undefined;
+}
+
+/** Adapt the metadata-only guest directory to the existing navigation rails. */
+export function associativeSpacesForSidebar(directory: SharedNavigationDirectory | undefined): SpaceSummary[] {
+  return directory?.spaces.map((space) => ({
+    id: space.id,
+    name: space.name,
+    iconKey: space.iconKey,
+    colorKey: space.colorKey,
+    scope: space.scope,
+    status: 'active',
+    systemRole: null,
+    revision: 1,
+    reach: 'through_channel',
+    participants: [],
+    channelCount: space.workstreamIds.length,
+    defaultResourceIds: [],
+    defaultSidekickIds: [],
+    createdAt: '1970-01-01T00:00:00.000Z',
+    updatedAt: '1970-01-01T00:00:00.000Z',
+  })) ?? [];
+}
+
+/** Build the guest Channel rail from canonical grants and enrich it with live socket state. */
+export function associativeWorkstreamsForSidebar(
+  directory: SharedNavigationDirectory | undefined,
+  workstreams: readonly WorkstreamSummary[] | undefined,
+): WorkstreamSummary[] {
+  if (!directory || !workstreams) return [];
+  const live = new Map(workstreams.map((item) => [item.id, item]));
+  const placements = new Map<string, string[]>();
+  for (const space of directory.spaces) {
+    for (const workstreamId of space.workstreamIds) {
+      const current = placements.get(workstreamId) ?? [];
+      current.push(space.id);
+      placements.set(workstreamId, current);
+    }
+  }
+  return directory.workstreams.flatMap((metadata) => {
+    const first = metadata.conversations.find((item) => !item.archived) ?? metadata.conversations[0];
+    if (!first) return [];
+    const workstream = live.get(metadata.parentId);
+    return [{
+      ...(workstream ?? {
+        id: metadata.parentId,
+        title: metadata.title ?? first.title,
+        titleStatus: 'settled' as const,
+        harnessStatus: 'completed' as const,
+        latestAttentionSequenceNumber: 0,
+        readThroughSequenceNumber: 0,
+        manualUnreadFromSequenceNumber: null,
+        manualUnreadGeneration: 0,
+        hasUnread: false,
+        firstUnreadSequenceNumber: null,
+        lastActivityAt: '1970-01-01T00:00:00.000Z',
+        scope: metadata.scope,
+        participantUserIds: [],
+        participantExtraCount: 0,
+        nextPendingWakeup: null,
+        pinPosition: null,
+        ...(metadata.appearance ? { appearance: metadata.appearance } : {}),
+      }),
+      associativeSubstreamId: first.substreamId,
+      spaceIds: placements.get(metadata.parentId) ?? [],
+    }];
+  });
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
@@ -501,7 +569,25 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return true;
   };
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
-  const spacesReady = useSpacesReady();
+  const socketSpacesReady = useSpacesReady();
+  const guestSession = session?.workspace?.accessClass === 'guest';
+  const associativeNavigation = useQuery({
+    queryKey: ['shared-navigation', workspace.id],
+    queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
+    enabled: guestSession && Boolean(api),
+    refetchOnWindowFocus: 'always',
+  });
+  const associativeSpaces = useMemo(
+    () => associativeSpacesForSidebar(associativeNavigation.data),
+    [associativeNavigation.data],
+  );
+  const sidebarWorkstreams = useMemo(() => {
+    if (!guestSession) return workstreams.data ?? [];
+    return associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data);
+  }, [associativeNavigation.data, guestSession, workstreams.data]);
+  const visibleSpaces = guestSession ? associativeSpaces : spaces.data?.items ?? [];
+  const visibleInactiveSpaces = guestSession ? [] : inactiveSpaces.data?.items ?? [];
+  const spacesReady = guestSession ? !associativeNavigation.isPending : socketSpacesReady;
   const ordering = usePersonalOrder();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -742,23 +828,20 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than
         // claiming an empty workspace when the socket cannot connect.
-        loading={workstreams.data === undefined}
-        // Undefined rather than empty for a guest: an empty directory is an
-        // Organization with no Spaces yet, which still has a Spaces section
-        // and a **New space**. No directory at all is a shell with no Space
-        // navigation, which is what a guest gets.
-        spaces={spacesEnabled ? spaces.data?.items ?? [] : undefined}
+        loading={workstreams.data === undefined || (guestSession && associativeNavigation.isPending)}
+        spaces={spacesEnabled ? visibleSpaces : undefined}
+        spacesReadOnly={guestSession}
         spacesAvailableWidth={spacesAvailableWidth}
         spacesCollapsed={spacesSidebarCollapsed}
         spacesConstrained={spacesSidebarConstrained}
         onSpacesCollapsedChange={setSpacesSidebarCollapsed}
-        inactiveSpaces={inactiveSpaces.data?.items ?? []}
+        inactiveSpaces={visibleInactiveSpaces}
         spacesReady={spacesReady}
         // The rows on screen are the last ones the socket delivered and the
         // connection is down. They stay, marked out of date, with the one retry
         // there is: a list nothing fetches has nothing to refetch.
-        spacesOutOfDate={workspaceSocketState === 'unavailable'}
-        onRetrySpaces={reconnect}
+        spacesOutOfDate={guestSession ? associativeNavigation.isError : workspaceSocketState === 'unavailable'}
+        onRetrySpaces={guestSession ? () => { void associativeNavigation.refetch(); } : reconnect}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having
@@ -905,7 +988,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         loadingMoreWorkstreams={workstreams.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
         workspace={workspace}
-        workstreams={workstreams.data ?? []}
+        workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}

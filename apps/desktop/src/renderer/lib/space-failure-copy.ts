@@ -11,11 +11,9 @@ import { ApiError } from './api';
  * table is what makes a refusal actionable: each of these says what has to
  * change first, which a status code and a transport message cannot.
  *
- * Two of them are the whole reason **Manage access** exists rather than a
- * toggle. `space_membership_final` is the invariant that every Channel has a
- * home; `space_audience_incompatible` is the weaker one, that a reader who
- * keeps access through another source still has to be able to *find* the
- * Channel.
+ * `space_membership_final` is the invariant that every Channel has a home.
+ * `space_audience_incompatible` remains here only so an older server's refusal
+ * still has product copy during a rolling deployment.
  *
  * One table for every Space surface, deliberately. Each sentence is therefore
  * written to be true wherever the refusal can arrive — the same

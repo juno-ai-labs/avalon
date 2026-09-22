@@ -28,12 +28,13 @@ export function SidebarNavigationRowContent({ icon, title, description, marks, t
   </>;
 }
 
-export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity }: {
+export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity, description }: {
   id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
-  marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode;
+  marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode; description?: ReactNode;
 }): React.JSX.Element {
   return <SidebarNavigationRowContent
     activity={activity}
+    description={description}
     icon={<WorkstreamGlyph appearance={appearance} id={id} size={36} />}
     marks={marks}
     naming={naming}

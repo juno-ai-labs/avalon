@@ -63,9 +63,9 @@ it('keeps the live collaboration socket across a focus session refresh', async (
     if (path.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
     if (path.endsWith('/workspace/select')) { selections++; return Response.json({ ...metadata, workspace }); }
     if (path.endsWith('/sharing/navigation')) return Response.json({ spaces: [{
-      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Guest space', iconKey: 'briefcase', colorKey: 'blue', workstreamIds: [parent],
-    }], workstreams: [{ parentId: parent, title: 'Shared parent', archived: false,
-      conversations: [{ substreamId: child, title: 'Shared child conversation', archived: false }] }] });
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Guest space', iconKey: 'briefcase', colorKey: 'blue', scope: 'personal', workstreamIds: [parent],
+    }], workstreams: [{ parentId: parent, title: 'Shared parent', scope: 'personal', archived: false,
+      conversations: [{ substreamId: child, title: 'Shared child conversation', scope: 'personal', archived: false }] }] });
     if (path.endsWith('/socket')) return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + child, ticket: 'fixture-ticket' });
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
@@ -94,16 +94,16 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
     const path = new URL(String(input), 'http://localhost').pathname;
     if (path.endsWith('/sharing/navigation')) return Response.json({
       spaces: [
-        { id: '33333333-3333-4333-8333-333333333333', name: 'Product', iconKey: 'rocket', colorKey: 'violet', workstreamIds: [parent] },
-        { id: '44444444-4444-4444-8444-444444444444', name: 'Research', iconKey: 'lightbulb', colorKey: 'teal', workstreamIds: [archivedParent, otherParent, parent] },
+        { id: '33333333-3333-4333-8333-333333333333', name: 'Product', iconKey: 'rocket', colorKey: 'violet', scope: 'personal', workstreamIds: [parent] },
+        { id: '44444444-4444-4444-8444-444444444444', name: 'Research', iconKey: 'lightbulb', colorKey: 'teal', scope: 'workspace', workstreamIds: [archivedParent, otherParent, parent] },
       ],
       workstreams: [
-        { parentId: parent, title: 'Channel Alpha', archived: false,
-          conversations: [{ substreamId: child, title: 'Breakout Alpha', archived: false }] },
-        { parentId: otherParent, title: 'Channel Beta', archived: false,
-          conversations: [{ substreamId: otherChild, title: 'Breakout Beta', archived: false }] },
-        { parentId: archivedParent, title: 'Archived channel', archived: true,
-          conversations: [{ substreamId: archivedChild, title: 'Archived breakout', archived: true }] },
+        { parentId: parent, title: 'Channel Alpha', scope: 'personal', archived: false,
+          conversations: [{ substreamId: child, title: 'Breakout Alpha', scope: 'personal', archived: false }] },
+        { parentId: otherParent, title: 'Channel Beta', scope: 'workspace', archived: false,
+          conversations: [{ substreamId: otherChild, title: 'Breakout Beta', scope: 'workspace', archived: false }] },
+        { parentId: archivedParent, title: 'Archived channel', scope: 'personal', archived: true,
+          conversations: [{ substreamId: archivedChild, title: 'Archived breakout', scope: 'personal', archived: true }] },
       ],
     });
     if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${otherParent}/${otherChild}`, ticket: 'fixture-ticket' });
@@ -116,12 +116,12 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
   try {
     expect(await screen.findByRole('button', { name: 'Product' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
     expect(screen.queryByRole('link', { name: 'Channel Beta' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Research' }));
-    expect(await screen.findByRole('link', { name: 'Channel Beta' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Channel Beta' })).toHaveAttribute('aria-description', 'Public channel');
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
     expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`);
     expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
 
@@ -140,8 +140,8 @@ it('keeps an authorized Channel reachable when no visible Space contains it', as
     const path = new URL(String(input), 'http://localhost').pathname;
     if (path.endsWith('/sharing/navigation')) return Response.json({
       spaces: [],
-      workstreams: [{ parentId: parent, title: 'Channel Alpha', archived: false,
-        conversations: [{ substreamId: child, title: 'Breakout Alpha', archived: false }] }],
+      workstreams: [{ parentId: parent, title: 'Channel Alpha', scope: 'personal', archived: false,
+        conversations: [{ substreamId: child, title: 'Breakout Alpha', scope: 'personal', archived: false }] }],
     });
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
   };
@@ -150,6 +150,8 @@ it('keeps an authorized Channel reachable when no visible Space contains it', as
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
   try {
     expect(await screen.findByRole('button', { name: 'Shared channels' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toBeInTheDocument();
+    expect(screen.getByText('1 channel')).toBeVisible();
+    expect(screen.queryByText(/Associated/u)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
   } finally { view.unmount(); }
 });

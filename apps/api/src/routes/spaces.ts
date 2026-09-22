@@ -1,5 +1,7 @@
 import {
   CreateSpaceRequestSchema,
+  MoveChannelBetweenSpacesRequestSchema,
+  MoveChannelBetweenSpacesResultSchema,
   SpaceChannelPageSchema,
   SpaceDefaultKindSchema,
   SpaceIdSchema,
@@ -114,6 +116,19 @@ spaceRoutes.delete(
   zValidator("param", channelParam),
   async (c) => c.json(SpaceSummarySchema.parse(
     await new SpaceService(c.env, getAuth(c)).removeChannel(
+      c.req.valid("param").id,
+      c.req.valid("param").workstreamId,
+    ),
+  )),
+);
+
+spaceRoutes.post(
+  "/:id/channels/:workstreamId/move",
+  zValidator("param", channelParam),
+  zValidator("json", MoveChannelBetweenSpacesRequestSchema),
+  async (c) => c.json(MoveChannelBetweenSpacesResultSchema.parse(
+    await new SpaceService(c.env, getAuth(c)).moveChannel(
+      c.req.valid("json").sourceSpaceId,
       c.req.valid("param").id,
       c.req.valid("param").workstreamId,
     ),

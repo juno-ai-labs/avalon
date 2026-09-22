@@ -11,7 +11,6 @@ import {
   SpaceDirectorySchema,
   SpaceSummarySchema,
   asSpaceId,
-  asUserId,
   asWorkstreamId,
   SPACE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
@@ -22,12 +21,10 @@ import {
   type SpaceDirectory,
   type SpaceReach,
   type SpaceSummary,
-  type UserId,
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
 import type {
-  RemainingChannelAudience,
   SpaceMember,
   MemberWalkReach,
   WorkspaceSpaceAudienceNoteRequest,
@@ -1853,10 +1850,11 @@ export class WorkspaceSpaceStorage {
    * Space marks for Channels whose canonical grant owner has admitted a guest.
    *
    * The caller supplies only Channels already re-read from their WorkstreamDOs.
-   * This read therefore exposes the Space's mark and the containment edge, not
-   * the Space's wider participant, defaults, scope or lifecycle projection.
+   * This read therefore exposes the Space's presentation and containment edge,
+   * even when the guest is not a Space participant. The candidate Channel is
+   * the associative permission; no roster, defaults, lifecycle or writes leave.
    */
-  sharedNavigationSpaces(userId: string, workstreamIds: readonly string[]): SharedNavigationSpace[] {
+  sharedNavigationSpaces(workstreamIds: readonly string[]): SharedNavigationSpace[] {
     if (!this.ready() || workstreamIds.length === 0) return [];
     const spaces = new Map<string, {
       createdAt: number;
@@ -1868,22 +1866,17 @@ export class WorkspaceSpaceStorage {
         space_id: string;
         title: string;
         appearance_json: string | null;
+        scope: "personal" | "workspace";
         created_at: number;
         workstream_id: string;
       } & Record<string, SqlStorageValue>>(
-        `SELECT space.space_id, space.title, space.appearance_json, space.created_at,
+        `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.created_at,
                 membership.workstream_id
            FROM space_channel_memberships membership
            JOIN workspace_space_directory space ON space.space_id = membership.space_id
-           LEFT JOIN workspace_space_viewers viewer
-             ON viewer.space_id = space.space_id
-            AND viewer.user_id = ? AND viewer.is_participant = 1
            WHERE membership.state = 'active' AND space.archived_at IS NULL
-            AND ${spaceVisibleToViewerSql("space", "viewer")}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.created_at, space.space_id, membership.workstream_id`,
-        userId,
-        userId,
         ...chunk,
       ).toArray()) {
         const appearance = row.appearance_json
@@ -1903,6 +1896,7 @@ export class WorkspaceSpaceStorage {
             name: row.title,
             iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
             colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
+            scope: row.scope,
           }),
           workstreamIds: [row.workstream_id],
         });
@@ -2031,15 +2025,27 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /**
-   * Stage a membership removal, refusing the two removals that would strand a
-   * Channel.
-   *
-   * `space_membership_final` is the invariant every Channel has a home;
-   * `space_audience_incompatible` is the weaker one that also has to hold — a
-   * reader who keeps access through some other source must still be able to
-   * *find* the Channel, which means discovering one of the Spaces it stays in.
-   */
+  /** Validate a move source without staging it; the destination is not active yet. */
+  preflightMembershipMoveSource(
+    request: WorkspaceSpaceMembershipRemovalRequest,
+  ): WorkspaceSpaceMutationResult {
+    if (!this.canEdit(request.userId, request.spaceId)) {
+      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
+    const membership = this.storage.sql.exec<{ generation: number } & Record<string, SqlStorageValue>>(
+      `SELECT generation FROM space_channel_memberships
+        WHERE space_id = ? AND workstream_id = ? AND state IN ('joining', 'active')`,
+      request.spaceId,
+      request.workstreamId,
+    ).toArray()[0];
+    if (!membership) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const space = this.space(request.spaceId, request.userId);
+    return space === false
+      ? { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] }
+      : { ok: true, space };
+  }
+
+  /** Stage a membership removal, refusing one that would leave no home. */
   prepareMembershipRemoval(
     request: WorkspaceSpaceMembershipRemovalRequest,
     now = Date.now(),
@@ -2060,19 +2066,6 @@ export class WorkspaceSpaceStorage {
       const remainingSpaceIds = this.otherActiveSpaceIds(request.workstreamId, request.spaceId);
       if (remainingSpaceIds.length === 0) {
         return { ok: false, code: "space_membership_final", unreachableUserIds: [], blockedWorkstreamIds: [] };
-      }
-      const unreachable = this.unreachableReaders(remainingSpaceIds, request.remainingAudience);
-      if (unreachable.length > 0 || (request.remainingAudience.scope === "workspace"
-        && !this.holdsOrganizationWideSpace(remainingSpaceIds))) {
-        // No `blockedWorkstreamIds`: the caller named the Channel in the
-        // request. The archive is the refusal that has to say which of a
-        // Space's Channels is in the way.
-        return {
-          ok: false,
-          code: "space_audience_incompatible",
-          unreachableUserIds: unreachable,
-          blockedWorkstreamIds: [],
-        };
       }
       const generation = membership.generation + 1;
       this.storage.sql.exec(
@@ -2161,53 +2154,27 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /**
-   * The same two tests as a removal, over every member Channel at once.
-   *
-   * The audience tested here is the Space's own — who it supplies — rather than
-   * each Channel's remaining readers, because those live in the Channels' own
-   * authorities and reading N of them would put N cross-object awaits inside
-   * one refusal. What it proves is the thing that matters for an archive: no
-   * Channel is stranded, and nobody this Space was the discovery path for loses
-   * every way of finding one.
-   */
+  /** Refuse only an archive that would leave a member Channel with no home. */
   prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(userId, spaceId, true)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const row = this.storage.sql.exec<{
-        scope: "personal" | "workspace";
         system_role: string | null;
         revision: number;
       } & Record<string, SqlStorageValue>>(
-        "SELECT scope, system_role, revision FROM workspace_space_directory WHERE space_id = ?",
+        "SELECT system_role, revision FROM workspace_space_directory WHERE space_id = ?",
         spaceId,
       ).one();
       if (row.system_role === "general") {
         return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
-      const audience: RemainingChannelAudience = {
-        scope: row.scope,
-        participantUserIds: this.participantUserIds(spaceId).map(asUserId),
-      };
-      // Every member is tested rather than the first blocker returned, because
-      // the refusal is what tells a person which Channels to move and stopping
-      // at one would make them archive once per Channel to find them all.
       const stranded: string[] = [];
-      const unreachableFor: string[] = [];
-      let unreachableUserIds: string[] = [];
       for (const workstreamId of this.memberWorkstreamIdsUnchecked(spaceId)) {
         const remainingSpaceIds = this.otherActiveSpaceIds(workstreamId, spaceId);
         if (remainingSpaceIds.length === 0) {
           stranded.push(workstreamId);
-          continue;
-        }
-        const unreachable = this.unreachableReaders(remainingSpaceIds, audience);
-        if (unreachable.length > 0 || (audience.scope === "workspace"
-          && !this.holdsOrganizationWideSpace(remainingSpaceIds))) {
-          unreachableFor.push(workstreamId);
-          if (unreachableUserIds.length === 0) unreachableUserIds = unreachable;
         }
       }
       if (stranded.length > 0) {
@@ -2216,14 +2183,6 @@ export class WorkspaceSpaceStorage {
           code: "space_membership_final",
           unreachableUserIds: [],
           blockedWorkstreamIds: this.listableChannelIds(userId, stranded).map(asWorkstreamId),
-        };
-      }
-      if (unreachableFor.length > 0) {
-        return {
-          ok: false,
-          code: "space_audience_incompatible",
-          unreachableUserIds: unreachableUserIds.map(asUserId),
-          blockedWorkstreamIds: this.listableChannelIds(userId, unreachableFor).map(asWorkstreamId),
         };
       }
       this.storage.sql.exec(
@@ -3301,41 +3260,6 @@ export class WorkspaceSpaceStorage {
       workstreamId,
       departingSpaceId,
     ).toArray().map((row) => row.space_id);
-  }
-
-  private holdsOrganizationWideSpace(spaceIds: readonly string[]): boolean {
-    return boundParameterChunks(spaceIds).some((chunk) => (
-      this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-        `SELECT 1 AS one FROM workspace_space_directory
-          WHERE scope = 'workspace' AND archived_at IS NULL
-            AND space_id IN (${chunk.map(() => "?").join(", ")}) LIMIT 1`,
-        ...chunk,
-      ).toArray().length > 0
-    ));
-  }
-
-  /**
-   * Readers who could discover none of these Spaces.
-   *
-   * An Organization-wide Space is discoverable by any active member, so one of
-   * those covers everybody and the answer is empty. Otherwise a reader is
-   * covered when they participate in one of the remaining personal Spaces.
-   */
-  private unreachableReaders(
-    spaceIds: readonly string[],
-    audience: RemainingChannelAudience,
-  ): UserId[] {
-    if (spaceIds.length === 0) return [...new Set(audience.participantUserIds)];
-    if (this.holdsOrganizationWideSpace(spaceIds)) return [];
-    const reachable = new Set<string>();
-    for (const chunk of boundParameterChunks(spaceIds)) {
-      for (const row of this.storage.sql.exec<{ user_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT DISTINCT user_id FROM workspace_space_viewers
-          WHERE is_participant = 1 AND space_id IN (${chunk.map(() => "?").join(", ")})`,
-        ...chunk,
-      ).toArray()) reachable.add(row.user_id);
-    }
-    return [...new Set(audience.participantUserIds)].filter((userId) => !reachable.has(userId));
   }
 
   /**
