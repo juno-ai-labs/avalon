@@ -14,7 +14,7 @@ import {
   verifyFeedArtifact,
 } from '../../desktop/scripts/release-lib.mjs';
 import {
-  purgeCloudflareUrls,
+  purgeCloudflarePrefix,
   verifyPublicReleaseArtifactHash,
 } from '../../desktop/scripts/release-cache.mjs';
 
@@ -47,6 +47,8 @@ function publicUrl(name) {
   }
   return new URL(parts.map(encodeURIComponent).join('/'), origin).toString();
 }
+
+const channelPrefixUrl = new URL(`${prefix}/`, origin).toString();
 
 function objectUrl(key) {
   const encoded = key.split('/').map(encodeURIComponent).join('/');
@@ -110,6 +112,11 @@ if (liveFeed?.version === release.feed.version) {
   if (liveFeedText !== localFeedText) {
     throw new Error(`Published Sideline ${release.feed.version} does not match this build`);
   }
+  await purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl });
+  await verifyPublicReleaseArtifactHash({
+    expectedHash: await sha512File(release.manifestPath),
+    url: publicUrl('latest-mac.yml'),
+  });
   for (const file of liveFeed.files) {
     await verifyPublicReleaseArtifactHash({ expectedHash: file.sha512, url: publicUrl(file.url) });
   }
@@ -137,13 +144,6 @@ if (liveFeed?.version === release.feed.version) {
     }
     versioned.push({ hash: localHash, url: publicUrl(artifact.name) });
   }
-  // The selected GitHub artifact is fixed for this release attempt. Purge the
-  // exact updater URLs even on publish-only retries, then verify those URLs.
-  await purgeCloudflareUrls({ apiToken, zoneId, urls: versioned.map(({ url }) => url) });
-  for (const artifact of versioned) {
-    await verifyPublicReleaseArtifactHash({ expectedHash: artifact.hash, url: artifact.url });
-  }
-
   const canonicalDmg = release.artifacts.find((artifact) => artifact.name.endsWith('.dmg'));
   if (!canonicalDmg) throw new Error('Sideline release is missing its DMG');
   const dmgHash = await sha512File(canonicalDmg.path);
@@ -153,13 +153,19 @@ if (liveFeed?.version === release.feed.version) {
   }
   const r2Hash = await remoteSha512(canonicalKey);
   if (r2Hash !== dmgHash) throw new Error(`Remote SHA-512 mismatch for r2://${bucket}/${prefix}/Sideline.dmg`);
-  await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('Sideline.dmg')] });
+  // Single-file purges did not evict the GET cache entries for this R2 domain.
+  // Purge only Sideline's channel, including its cache-key variants, then check
+  // the exact URLs the updater and recovery installer use.
+  await purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl });
+  for (const artifact of versioned) {
+    await verifyPublicReleaseArtifactHash({ expectedHash: artifact.hash, url: artifact.url });
+  }
   await verifyPublicReleaseArtifactHash({ expectedHash: dmgHash, url: publicUrl('Sideline.dmg') });
 
   // The manifest is the commit point. Every referenced artifact and the
   // recovery installer has passed a full hash check at its exact public URL.
   await put('latest-mac.yml', release.manifestPath, 'no-cache, no-store, must-revalidate');
-  await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('latest-mac.yml')] });
+  await purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl });
   const feedHash = await sha512File(release.manifestPath);
   await verifyPublicReleaseArtifactHash({ expectedHash: feedHash, url: publicUrl('latest-mac.yml') });
   console.log(`Published Sideline ${release.feed.version} at ${publicUrl('latest-mac.yml')}`);
