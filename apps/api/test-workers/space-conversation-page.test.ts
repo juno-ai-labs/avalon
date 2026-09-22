@@ -19,7 +19,7 @@
  * and asserting the answers match.
  */
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -220,7 +220,7 @@ function breakoutCommonEffect(title: string, overrides: {
   lastActivityAt?: string;
   archivedAt?: string | null;
   latestAttentionOrdinal?: number;
-} = {}): ConversationEffect {
+} = {}): Extract<ConversationEffect, { kind: "directory_common" }> {
   return {
     kind: "directory_common",
     title,
@@ -451,6 +451,61 @@ beforeEach(async () => {
 });
 
 describe("space dashboard conversation page", () => {
+  it("replays breakout projections that were already stored when forwarding shipped", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+
+    await channelObject(CHANNEL_A).receiveChildEffects({
+      substreamId: BREAKOUT_ONE,
+      envelopes: [
+        childEnvelope(CHANNEL_A, BREAKOUT_ONE, breakoutCommonEffect("Pricing"), 1),
+        childEnvelope(CHANNEL_A, BREAKOUT_ONE, viewerEffect(OWNER) as ConversationEffect, 1),
+      ],
+    });
+    await channelObject(CHANNEL_A).receiveChildEffects({
+      substreamId: BREAKOUT_TWO,
+      envelopes: [
+        childEnvelope(CHANNEL_A, BREAKOUT_TWO, {
+          ...breakoutCommonEffect("Background worker"),
+          backgroundAgent: true,
+        }, 1),
+        childEnvelope(CHANNEL_A, BREAKOUT_TWO, viewerEffect(OWNER) as ConversationEffect, 1),
+      ],
+    });
+
+    // Reconstruct the deployed state before breakout forwarding: the Channel
+    // already held the child's current projections, but it had never created
+    // parent projection keys or outbox rows for them. Removing migration 19's
+    // receipt makes the next construction the production upgrade event.
+    await runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => {
+      state.storage.sql.exec(
+        `DELETE FROM durable_outbox
+          WHERE partition_key LIKE 'substream:%'`,
+      );
+      state.storage.sql.exec(
+        `DELETE FROM workstream_state_changes
+          WHERE state_key LIKE 'substream:%'`,
+      );
+      state.storage.sql.exec(
+        `DELETE FROM projection_keys
+          WHERE projection_key LIKE 'substream:%'`,
+      );
+      state.storage.sql.exec("DELETE FROM _sql_schema_migrations WHERE version = 19");
+    });
+    await evictDurableObject(channelObject(CHANNEL_A));
+
+    const replayed = await pendingParentEffects(channelObject(CHANNEL_A));
+    expect(replayed.map((envelope) => envelope.effect.kind).sort())
+      .toEqual(["directory_common", "directory_user"]);
+    await deliverParentEffects(env, channelObject(CHANNEL_A));
+
+    expect(await breakoutRows()).toMatchObject({
+      rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing" }],
+    });
+    const owner = await connectViewer(OWNER);
+    expect(owner.initialChannelCounts).toEqual([1]);
+  });
+
   it("given a breakout projection, when its Channel forwards it, then it lands in the breakout tables", async () => {
     await openChannelObject(CHANNEL_A);
 
