@@ -8271,12 +8271,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // reconciliation, none of which a breakout has or wants.
     const breakoutChanges = new Set<string>();
     const breakoutViewerChanges = new Map<string, Set<string>>();
+    const breakoutDirectoryReady = breakoutEnvelopes.length === 0
+      || this.breakoutStorage().ready();
     for (const envelope of spaceEnvelopes) {
       spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
         || spaceDirectoryChanged;
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of breakoutEnvelopes) {
+      // Migration 19 in WorkstreamDO replays quiet stored projections only
+      // once. An Organization held at schema 57 has no breakout tables yet,
+      // so do not receipt or acknowledge that delivery: the activity Queue's
+      // existing incomplete-acceptance path keeps it retryable until migration
+      // 63 creates the destination.
+      if (!breakoutDirectoryReady) continue;
       if (this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)) {
         if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
         else if (envelope.effect.kind === "directory_user") {
