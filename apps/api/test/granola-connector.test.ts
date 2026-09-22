@@ -418,17 +418,30 @@ describe("Granola workspace connection", () => {
       request: { ingressEventId: string; event: { activity: { eventType: string; dedupeKey: string; occurrenceKey?: string; metadata: Record<string, unknown> } } };
     });
     expect(queued.map((message) => message.kind)).toEqual(Array(4).fill("workspace_connector_event"));
-    expect(queued.map((message) => message.request.event.activity.eventType))
-      .toEqual(["note.access_granted", "note.generated", "note.access_granted", "note.generated"]);
-    expect(new Set(queued.slice(0, 2).map((message) => message.request.ingressEventId)).size).toBe(2);
-    expect(queued[1]!.request.event.activity).toMatchObject({
+    const firstDelivery = queued.slice(0, 2);
+    const retryDelivery = queued.slice(2);
+    for (const delivery of [firstDelivery, retryDelivery]) {
+      // The two hashes and Queue sends run concurrently. Queue delivery does
+      // not promise their call order; the contract is exactly one event of
+      // each type for both the original delivery and its retry.
+      expect(delivery.map((message) => message.request.event.activity.eventType).sort())
+        .toEqual(["note.access_granted", "note.generated"]);
+      expect(new Set(delivery.map((message) => message.request.ingressEventId)).size).toBe(2);
+    }
+    const firstShare = firstDelivery.find(
+      (message) => message.request.event.activity.eventType === "note.access_granted",
+    )!;
+    const firstTranscript = firstDelivery.find(
+      (message) => message.request.event.activity.eventType === "note.generated",
+    )!;
+    expect(firstTranscript.request.event.activity).toMatchObject({
       dedupeKey: `${event.event_id}:generated`,
       occurrenceKey: `granola:${connectionId}:note:not_2234567890abcd:transcript`,
       metadata: { noteId: "not_2234567890abcd", changedFields: [], derivedFrom: "note.access_granted" },
     });
-    expect(queued[0]!.request.event.activity.occurrenceKey).toBeUndefined();
-    expect(queued[0]!.request.ingressEventId).toBe(first.activityId);
-    expect(queued[1]!.request.ingressEventId).toBe(first.derivedActivityIds![0]);
+    expect(firstShare.request.event.activity.occurrenceKey).toBeUndefined();
+    expect(firstShare.request.ingressEventId).toBe(first.activityId);
+    expect(firstTranscript.request.ingressEventId).toBe(first.derivedActivityIds![0]);
   });
 });
 
