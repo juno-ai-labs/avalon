@@ -1,8 +1,7 @@
 # Public-site telemetry
 
 The landing links directly to the canonical macOS installer and collects no email.
-The retained access-request client submits only to `/access/requests`; email values and submission bodies never enter telemetry. `/download/` deliberately
-skips telemetry initialization so its bearer fragment cannot reach analytics.
+`/download/` deliberately skips telemetry initialization so its bearer fragment cannot reach analytics.
 The Download for macOS action is a plain installer link. Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
 Support and Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
@@ -13,7 +12,6 @@ Support and Trust Center pages use `apps/site/src/information.css`, a static com
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry. |
-| `apps/site/src/landing.ts` | Sends the access-request form to its API; emits no telemetry or email content. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
@@ -27,7 +25,7 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 ## How it works
 
 - Global reads or creates one random UUIDv7 in first-party `localStorage`, so
-  landing, download, and handoff pages can form one anonymous acquisition path.
+  landing and handoff pages can form one anonymous acquisition path.
 
 `site_page_viewed` carries a closed page class, a lowercased bounded pathname,
 an external referring domain, and allowlisted `utm_source`, `utm_medium`, and
@@ -131,6 +129,24 @@ that reports. Events are sent immediately in batches bounded by the shared
 256-KiB/50-event contract; the page itself holds at most 20. The route lookup
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
+
+### 2026-09-21 — Retire acquisition-form telemetry ownership
+
+**What changed:** Removed the retired acquisition-form browser client from this
+module's code ownership and kept the homepage on its existing bounded page
+telemetry only.
+
+**Why:** The homepage now links directly to the canonical installer and no
+longer collects an email or initializes Turnstile. Keeping the deleted client in
+the module contract described a telemetry boundary that no production page used.
+
+**Considered and rejected:** Retaining the form client as dormant site
+scaffolding would preserve dead code, its browser dependency, and unrelated
+deployment configuration without providing an active acquisition path.
+
+**Consequences:** A future public intake UI must introduce and document its own
+client and telemetry boundary explicitly. The token-download page remains
+excluded from telemetry so bearer fragments cannot enter analytics.
 
 ### 2026-09-21 — Match link previews to the landing page
 
