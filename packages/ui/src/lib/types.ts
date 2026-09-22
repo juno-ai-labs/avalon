@@ -27,8 +27,9 @@ export interface ConversationPresentation {
 }
 export interface SidebarPresentation {
   id: string; title: string; appearance?: WorkstreamAppearance;
+  needsAttention?: boolean;
   scope?: 'personal' | 'workspace';
   participants: WorkspaceMember[];
   resources: { id: string; title: string; resourceType: string; mimeType?: string | null; direction: string; currentVersion: number }[];
-  privateChildren?: { substreamId: string; title: string; appearance?: WorkstreamAppearance; scope?: 'personal' | 'workspace'; status?: string; createdByUserId?: string; createdAt?: string; updatedAt?: string; participantUserIds?: string[] }[];
+  privateChildren?: { substreamId: string; title: string; appearance?: WorkstreamAppearance; scope?: 'personal' | 'workspace'; needsAttention?: boolean; status?: string; createdByUserId?: string; createdAt?: string; updatedAt?: string; participantUserIds?: string[] }[];
 }

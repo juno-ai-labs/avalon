@@ -10,8 +10,8 @@ import { z } from "zod";
  * that is not, so the question had to stop being a rendering detail and become
  * a value two authorities can agree on.
  *
- * **This is the definition the page query is held to, and nothing on the
- * client calls it.** WorkspaceDO's page query mirrors it in SQL because the
+ * **This is the definition the page query and Channel rail badges use.**
+ * WorkspaceDO's page query mirrors it in SQL because the
  * page is *decided* on the server: a client-side filter over a server-ordered
  * page would hand back short pages and a cursor that skipped rows. So the SQL
  * is the authority and this is the executable specification of it, compared
@@ -19,9 +19,9 @@ import { z } from "zod";
  * walks every combination of these four inputs asserting the two agree. That
  * test is what keeps them equal, because nothing else can.
  *
- * The desktop draws the rows the server has already filtered, so it has no
- * reason to call this — and if it ever does, that is a second place the
- * question is answered and the walk stops being enough on its own.
+ * The Space dashboard draws rows the server has already filtered. The Channel
+ * rail uses the same predicate over the parent-projected conversation states
+ * to badge Main and each Breakout without fetching every child separately.
  */
 
 /**

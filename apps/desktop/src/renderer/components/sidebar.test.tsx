@@ -1091,7 +1091,7 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('region', { name: 'Get started with Rally' })).not.toBeInTheDocument();
   });
 
-  it('hides only completed ranked markers and preserves personal attention', () => {
+  it('leaves channel glyphs whole across run and attention states', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
@@ -1116,17 +1116,8 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.workstream-row-status')).toBeNull();
-    expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.status-running .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.workstream-row-status')).toBeNull();
-    expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.status-dot')).toBeNull();
-    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.status-dot')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Completed unread' }).querySelector('.status-unread .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Completed mention' }).querySelector('.status-mentioned .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Completed unseen' }).querySelector('.status-unseen .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /Scheduled mention/u }).querySelector('.status-mentioned .status-dot')).not.toBeNull();
+    expect(document.querySelectorAll('.workstream-row-status')).toHaveLength(0);
+    expect(document.querySelectorAll('.workstream-row .status-dot')).toHaveLength(0);
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
@@ -1157,7 +1148,7 @@ describe('Sidebar channel markers', () => {
     expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText('0')).not.toBeInTheDocument();
   });
 
-  it('marks a channel this person has never opened, whatever its run is doing', async () => {
+  it('keeps status off the channel icon even when it has personal attention', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/unseen']}>
         <Tooltip.Provider>
@@ -1181,21 +1172,10 @@ describe('Sidebar channel markers', () => {
     );
 
     const row = screen.getByRole('link', { name: /Warehouse migration/u });
-    // The run is `running`, and the marker says the other thing: being new to
-    // this reader outranks it.
-    expect(row.querySelector('.status-unseen .status-dot')).not.toBeNull();
-    expect(row.querySelector('.status-running')).toBeNull();
-    expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
-
-    const dot = row.querySelector('.status-unseen');
-    if (!dot) throw new Error('the channel row rendered no unseen status dot');
-    fireEvent.pointerMove(dot, { pointerType: 'mouse' });
-
-    expect(await screen.findByText('New to you — you were added to this channel and have not opened it yet.'))
-      .toBeVisible();
+    expect(row.querySelector('.status-dot')).toBeNull();
   });
 
-  it('marks a mention above the run, and unread below it', () => {
+  it('keeps the channel navigation glyph free of state badges', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/mentioned']}>
         <Tooltip.Provider>
@@ -1221,13 +1201,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // Being named outranks the run that is working; merely being unread does not.
-    expect(screen.getByRole('link', { name: /Launch blockers/u }).querySelector('.status-mentioned .status-dot'))
-      .not.toBeNull();
-    expect(screen.getByRole('link', { name: /Vendor contract/u }).querySelector('.status-running .status-dot'))
-      .not.toBeNull();
-    expect(screen.getByRole('link', { name: /Release notes/u }).querySelector('.status-unread .status-dot'))
-      .not.toBeNull();
+    expect(document.querySelectorAll('.workstream-row .status-dot')).toHaveLength(0);
   });
 
   it('shows the next active timer and its brief prompt in a tooltip', async () => {
@@ -1343,28 +1317,6 @@ describe('Sidebar channel markers', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('explains a channel dot color on hover', async () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[workstream('input', 'Board decision', 'needs_input')]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const dot = screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input');
-    if (!dot) throw new Error('the channel row rendered no needs-input status dot');
-    fireEvent.pointerMove(dot, { pointerType: 'mouse' });
-
-    expect(await screen.findByText('Needs input — the agent is waiting on an answer.')).toBeVisible();
   });
 
   it('renders only populated recency sections and keeps status from changing row order', () => {

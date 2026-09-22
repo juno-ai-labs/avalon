@@ -62,6 +62,22 @@ describe('SidebarList', () => {
 });
 
 describe('WorkstreamSidebar', () => {
+  it('shows the shared attention badge independently for Main and each breakout', () => {
+    const childId = asSubstreamId('00000000-0000-7000-8000-000000000099');
+    setup({ ...workstream, needsAttention: true, privateChildren: [
+      { substreamId: childId, title: 'Launch risks', needsAttention: true,
+        createdByUserId: asUserId(person.id), createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' },
+      { substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: 'Done', needsAttention: false,
+        createdByUserId: asUserId(person.id), createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' },
+    ] });
+    const main = screen.getByRole('button', { name: 'Go to conversation: Launch preparation' });
+    const breakout = screen.getByRole('button', { name: 'Go to breakout: Launch risks' });
+    expect(main.querySelector('.sidebar-row-badge')).toHaveTextContent('1');
+    expect(breakout.querySelector('.sidebar-row-badge')).toHaveTextContent('1');
+    expect(breakout).toHaveAccessibleDescription(/Breakout Launch risks needs attention/u);
+    expect(screen.getByRole('button', { name: 'Go to breakout: Done' }).querySelector('.sidebar-row-badge')).toBeNull();
+  });
+
   it('shows the channel, its artifacts, then participants, excluding sources and breakouts', () => {
     setup();
     const sidebar = screen.getByRole('complementary', { name: 'Channel sidebar' });
