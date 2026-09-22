@@ -105,6 +105,46 @@ describe("Durable Object SQLite migrations", () => {
     }
   });
 
+  it("accepts only an explicitly named schema-equivalent historical receipt", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      const storage = storageFor(database);
+      const historical = [{
+        ...MIGRATIONS[0]!,
+        statements: [`${MIGRATIONS[0]!.statements[0]}\n-- released comment-only edit`],
+      }];
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: historical,
+        component: "test_do",
+        workerVersionId: "worker-one",
+      });
+
+      const compatible = [{
+        ...MIGRATIONS[0]!,
+        compatibleImplementationHashes: [durableObjectMigrationHash(historical[0]!)],
+      }];
+      expect(applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: compatible,
+        component: "test_do",
+        workerVersionId: "worker-two",
+      })).toEqual([]);
+
+      database.prepare(
+        `UPDATE _sql_schema_migrations SET implementation_hash = ? WHERE version = 1`,
+      ).run("fnv1a64:0000000000000000");
+      expect(() => applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: compatible,
+        component: "test_do",
+        workerVersionId: "worker-three",
+      })).toThrow("test_do_schema_hash_mismatch:1");
+    } finally {
+      database.close();
+    }
+  });
+
   it("rebuilds referenced parent tables without deleting or orphaning children", () => {
     const database = new DatabaseSync(":memory:");
     try {
