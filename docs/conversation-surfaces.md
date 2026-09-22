@@ -64,6 +64,11 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   delay and one provider through. A new tooltip comes from there rather than
   from Radix's five parts; eight files still assemble those by hand and predate
   it.
+- `packages/ui/src/components/workstream-sidebar.tsx` owns the Channel rail's
+  navigation language. Its main conversation and Breakout rows use the same
+  icon-and-title hover card as the Space and Channel hierarchy, while New
+  breakout, Participants, and the expand/collapse control use concise control
+  tooltips.
 - `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
   every one of those surfaces has to ask before it opens: whether the hover or
   the focus it is looking at came from the person or from the window being

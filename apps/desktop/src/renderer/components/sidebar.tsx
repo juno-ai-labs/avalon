@@ -2170,7 +2170,9 @@ export function Sidebar({
               </button>
             </NewWorkstreamMenu>
           )}
-          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          <Tip describesTrigger={false} label="Search" side={compact ? 'right' : 'bottom'}>
+            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
+          </Tip>
         </div>
         }
 
@@ -2453,11 +2455,11 @@ export function Sidebar({
         {sidekickSlot && sidekickShortcuts && createPortal(sidekickShortcuts, sidekickSlot)}
 
         <SidebarCollapseFooter
-          collapseLabel="Collapse navigation"
+          collapseLabel="Collapse channels"
           compact={compact}
           constrained={forcedCompact}
-          constrainedTitle="Widen the window to expand navigation"
-          expandLabel="Expand navigation"
+          constrainedTitle="Widen the window to expand channels"
+          expandLabel="Expand channels"
           leading={spaces === undefined ? <div className="sidebar-account-slot" ref={setAccountSlot} /> : undefined}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
