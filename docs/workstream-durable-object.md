@@ -1314,8 +1314,9 @@ example:
 3. compare the deterministic implementation hash of every applied version;
 4. apply each normal group of versions and its receipts in one
    `transactionSync` transaction;
-5. reject an object whose schema is ahead of the Worker or whose historical SQL
-   was edited;
+5. reject an object whose schema is ahead of the Worker, warn and continue when
+   an applied version's implementation hash changed, and let concrete SQL or
+   integrity failures reject construction;
 6. run `PRAGMA foreign_key_check`, then `PRAGMA optimize` after changes.
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
