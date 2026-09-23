@@ -360,10 +360,10 @@ describe("POST /workstreams/import", () => {
     const destination = await createSpace("personal", "Research");
     const imported = await request("/workstreams/import", OWNER_AUTH, {
       title: "Imported research",
-      source: { provider: "claude", url: null },
+      source: { provider: "claude", url: null, sessionId: "research-session" },
       content: { messages: [
-        { role: "user", text: "What did we learn?" },
-        { role: "assistant", text: "The selected result." },
+        { role: "user", text: "What did we learn?", sourceMessageId: "u1" },
+        { role: "assistant", text: "The selected result.", sourceMessageId: "a1" },
       ] },
       clientMessageId: "00000000-0000-7000-8000-00000000d205",
       spaceIds: [destination.id],
@@ -375,6 +375,29 @@ describe("POST /workstreams/import", () => {
     expect(workstream).toMatchObject({ title: "Imported research", titleStatus: "settled" });
     expect(await channelSpaceSources(asWorkstreamId(workstream.id)))
       .toEqual([expect.objectContaining({ spaceId: destination.id, scope: "personal" })]);
+  });
+
+  it('rejects a different source before uploading its files', async () => {
+    const imported = await request('/workstreams/import', OWNER_AUTH, {
+      title: 'Source validation', source: { provider: 'claude', url: null, sessionId: 'original' },
+      content: { messages: [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }] },
+      clientMessageId: '00000000-0000-7000-8000-00000000d206', spaceIds: [],
+    });
+    expect(imported.status).toBe(201);
+    const workstreamId = (imported.body as { workstream: { id: string } }).workstream.id;
+    const update = await request(`/workstreams/${workstreamId}/import/update`, OWNER_AUTH, {
+      title: 'Different source',
+      source: { provider: 'claude', url: null, sessionId: 'another' },
+      content: { messages: [{ role: 'user', text: 'Changed', sourceMessageId: 'u1', files: [
+        { name: 'report.txt', mimeType: 'text/plain', kind: 'attachment',
+          source: { kind: 'inline', encoding: 'utf8', data: 'Should not upload' } },
+      ] }] },
+      clientMessageId: '00000000-0000-7000-8000-00000000d207',
+    });
+    expect(update.status).toBe(409);
+    expect(update.body).toMatchObject({ error: { code: 'session_import_source_mismatch' } });
+    expect(await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM resources').one().count)).toBe(0);
   });
 });
 

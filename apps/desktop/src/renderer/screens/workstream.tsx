@@ -1,5 +1,6 @@
 import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
+import { IconCloudDownload } from '@tabler/icons-react';
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,7 +21,8 @@ import { CONTEXT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
-import { Button, InlineError, Modal } from '../components/primitives';
+import { Button, IconButton, InlineError, Modal } from '../components/primitives';
+import { SessionImportUpdateDialog } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
@@ -149,6 +151,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const location = useLocation();
   const { api, session } = useCollaborationSession();
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
+  const [importUpdateOpen, setImportUpdateOpen] = useState(false);
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
@@ -159,6 +162,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!guest || selectedSubstreamId === '0')), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
+  });
+  const importedSource = useQuery({
+    queryKey: ['workstream-import-source', session?.user.id, id],
+    queryFn: () => api!.importedSessionSource(id),
+    enabled: Boolean(api && session?.user.id && id),
+    staleTime: Number.POSITIVE_INFINITY,
   });
   // The rail's mark follows the sidebar row rather than this detail, so one
   // appearance change moves both rails together instead of moving the sidebar
@@ -543,6 +552,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
+    {api && importedSource.data && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
+      onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
@@ -594,8 +605,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       )}
       renderHeader={(context) => (
         <WorkstreamHeader
-          actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id}
-            parentId={id} substreamId={selectedSubstreamId} /> : null}
+          actions={api && session?.workspace ? <>
+            {selectedSubstreamId === '0' && importedSource.data && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
+            <ShareConversationButton api={api} workspaceId={session.workspace.id}
+              parentId={id} substreamId={selectedSubstreamId} />
+          </> : null}
           currentUserId={session?.user.id ?? null}
           grokBotMode
           substreamId={selectedSubstreamId}

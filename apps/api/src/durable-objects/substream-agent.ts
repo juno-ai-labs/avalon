@@ -466,6 +466,10 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("mark_unread") }),
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
+  productOperation({ operation: z.literal("import_source_get") }),
+  productOperation({ operation: z.literal("import_source_checkpoint_get") }),
+  productOperation({ operation: z.literal("import_source_update"),
+    operationId: IdSchema, conversation: PreparedConversationSchema }),
   // `spaceSourceId` names the Space a participant change is being made on
   // behalf of. It changes nothing about admission — the same roster or grant
   // row is written either way — only where the resulting grant is published,
@@ -3475,6 +3479,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.input,
           span,
         ));
+      }
+      if (request.operation === "import_source_get") {
+        return jsonResponse({ source: await this.product.importedSessionSource(current) });
+      }
+      if (request.operation === "import_source_checkpoint_get") {
+        return jsonResponse({ messages: await this.product.importedSessionCheckpoint(current) });
+      }
+      if (request.operation === "import_source_update") {
+        const result = await this.product.updateImportedSession(current, request.operationId, request.conversation);
+        await this.flushSemanticRealtimeOutboxBestEffort();
+        return jsonResponse(result);
       }
       if ((request.operation === "add_participant" || request.operation === "remove_participant")
         && identity.parentKind === "workstream"

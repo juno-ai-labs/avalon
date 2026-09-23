@@ -27,6 +27,10 @@ and forks; Rally captures its flat projection and plugin/skill activation hints.
 The eval host restores configuration and isolated tool state, and allocates a fresh
 loop identity per fork. Production without checkpoint capture keeps the existing
 ledger path. See [prepared conversations and session import](session-import.md).
+An explicit source update appends labeled, overheard provider context through
+Bind's `protocol_user_appended` transition, so the next Rally execution sees
+the updated source transcript without inventing a Rally run or treating imported
+assistant text as Rally's own output.
 
 Production message addressing is a two-stage cascade. JEV receives every
 message passed to the classifier using the optimized TypeSafe choice question and

@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 66;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 67;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3335,6 +3335,35 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       ON CONFLICT(message_id) DO UPDATE SET source_version = excluded.source_version,
         state = 'pending', not_before = 0;
     END`,
+    ],
+  },
+  {
+    version: 67,
+    description: "track imported source messages independently of Rally turns",
+    statements: [
+      `CREATE TABLE imported_session_sources (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        provider TEXT NOT NULL CHECK (provider IN ('chatgpt', 'claude', 'claude_code')),
+        session_id TEXT NOT NULL,
+        source_url TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `CREATE TABLE imported_session_messages (
+        source_message_id TEXT PRIMARY KEY,
+        source_revision TEXT NOT NULL,
+        source_position INTEGER NOT NULL CHECK (source_position >= 0),
+        latest_turn_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `CREATE TABLE imported_session_update_receipts (
+        operation_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        added_count INTEGER NOT NULL CHECK (added_count >= 0),
+        updated_count INTEGER NOT NULL CHECK (updated_count >= 0),
+        missing_count INTEGER NOT NULL CHECK (missing_count >= 0),
+        committed_at INTEGER NOT NULL
+      ) STRICT`,
     ],
   },
 ];
