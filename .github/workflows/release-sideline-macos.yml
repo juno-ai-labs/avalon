@@ -278,7 +278,6 @@ jobs:
       SIDELINE_RELEASE_BASE_URL: https://downloads.rallywith.ai
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -315,6 +314,8 @@ jobs:
           }
 
       - name: Publish update feed and installer to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @rally/sideline release:publish
 
       - name: Record the published release tag
