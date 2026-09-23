@@ -3,13 +3,14 @@ import { ConversationHeader } from '@rally/ui/components/conversation-header';
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useCollaborationSession } from '../lib/collaboration-session';
 
 import { desktopBridge } from '../lib/platform';
+import { layoutKey } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
@@ -98,6 +99,7 @@ export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, 
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const { api, session } = useCollaborationSession();
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -243,11 +245,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     setSearchParams(next, { replace: true });
   };
   const previousChildren = useRef<{ parentId: string; ids: Set<string> }>({ parentId: id, ids: new Set() });
+  const restoredBreakout: unknown = location.state && typeof location.state === 'object'
+    && 'restoredBreakout' in location.state ? location.state.restoredBreakout : null;
   useEffect(() => {
-    if (!children.data) return;
-    const ids = new Set<string>(children.data.privateChildren?.map((child) => child.substreamId));
-    if (previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
-      && !ids.has(selectedSubstreamId)) {
+    if (!children.data && !(guest && sharedNavigation.data)) return;
+    const ids = new Set<string>((directoryChildren ?? []).map((child) => child.substreamId));
+    if ((previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
+      || restoredBreakout === selectedSubstreamId) && !ids.has(selectedSubstreamId)) {
       setSearchParams((current) => {
         const next = new URLSearchParams(current);
         next.delete('substream'); next.delete('turn'); next.delete('sequence');
@@ -255,7 +259,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       }, { replace: true });
     }
     previousChildren.current = { parentId: id, ids };
-  }, [children.data, id, selectedSubstreamId, setSearchParams]);
+  }, [children.data, sharedNavigation.data, guest, id, selectedSubstreamId, restoredBreakout, setSearchParams]);
   const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
   routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
   const reportParentAction = (workstream: WorkstreamSummary, action: 'rename' | 'archive' | 'make_public'): void => {
@@ -506,6 +510,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
+          scrollStateKey={layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`)}
           mainVisible={!guest || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
           onRefreshSidekicks={context.refreshSidekicks}

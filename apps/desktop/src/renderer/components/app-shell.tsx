@@ -17,6 +17,7 @@ import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { desktopBridge } from '../lib/platform';
+import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
@@ -527,6 +528,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    const path = location.pathname;
+    if (!/^\/spaces\/[^/]+$/.test(path)
+      && (!/^\/workstreams\/[^/]+$/.test(path) || path === '/workstreams/new')) return;
+    const breakout = new URLSearchParams(location.search).get('substream');
+    writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
+      path.startsWith('/workstreams/') && breakout
+        ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
+  }, [location.pathname, location.search, workspace.id, workspace.currentUser.id]);
   const currentPathname = useLatestCommittedValue(location.pathname);
   const shellMounted = useLayoutMountedRef();
   const openFirstWorkstream = useOpenFirstWorkstream();
@@ -542,7 +552,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const spacesSidebarWidth = useUiStore((state) => state.spacesSidebarWidth);
   const spacesEnabled = spacesEnabledForSession(session);
-  const [spacesSidebarCollapsed, setSpacesSidebarCollapsed] = useState(false);
+  const spacesSidebarCollapsed = useUiStore((state) => state.spacesSidebarCollapsed);
+  const setSpacesSidebarCollapsed = useUiStore((state) => state.setSpacesSidebarCollapsed);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   useEffect(() => {
     const measure = (): void => setViewportWidth(window.innerWidth);

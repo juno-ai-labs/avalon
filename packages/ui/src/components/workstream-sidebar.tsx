@@ -148,7 +148,7 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -185,6 +185,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   onFocusTranscript: () => void;
   substreamActions?: ConversationRowActions | undefined;
   mainActions?: ConversationRowActions | undefined;
+  scrollRef?: React.Ref<HTMLElement>;
 }): React.JSX.Element {
   const {
     compact,
@@ -238,12 +239,13 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} size={20} />}
         title={workstream.title}
       />
-      <SidebarScroll className="workstream-context-scroll">
+      <SidebarScroll className="workstream-context-scroll" scrollRef={scrollRef}>
         <SidebarList className="workstream-conversation-list">
         {mainVisible && <ConversationRowMenu actions={mainActions}
           icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} size={16} />}
           target={{ substreamId: '0', title: workstream.title }}>
           <SidebarRow
+            data-layout-id="conversation:0"
             className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
@@ -261,6 +263,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
           {orderedChildren?.map((child) => {
             const row = (
               <SidebarRow
+                data-layout-id={`conversation:${child.substreamId}`}
                 aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
                 aria-label={`Go to breakout: ${child.title}`}
                 aria-description={child.scope === undefined ? undefined : child.scope === 'workspace' ? 'Public breakout' : 'Private breakout'}
@@ -345,7 +348,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             conversation that has only just started. */}
         <ResourceSection label="Artifacts" resources={artifacts} onOpen={onOpenArtifact} />
         {onOpenResource && <ResourceSection label="Resources" resources={workstream.resources.filter((item) => item.direction !== 'artifact')} onOpen={onOpenResource} />}
-        <section aria-label="Channel participants" className="workstream-context-section">
+        <section aria-label="Channel participants" className="workstream-context-section" data-layout-id="section:participants">
           <SidebarHorizontalLine />
           <h2>Participants</h2>
           <Tip describesTrigger={false} label="Participants" side="right">
@@ -356,7 +359,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
-        <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} onRefresh={onRefreshSidekicks} />
+        <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} onRefresh={onRefreshSidekicks} layoutId="section:sidekicks" />
         {addSidekick}
       </SidebarScroll>
       <SidebarCollapseFooter
@@ -377,7 +380,7 @@ function ResourceSection({ label, resources, onOpen }: { label: string; resource
     {/* The rail owns its tooltip: native title uses a different delay and
         never appears for someone reaching the row with the keyboard. */}
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
-      <SidebarRow className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
+      <SidebarRow className="workstream-context-row" data-layout-id={`resource:${resource.id}`} aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
         <SidebarNavigationRowContent
           activity={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
           icon={<ResourceIcon resource={resource} />}

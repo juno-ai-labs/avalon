@@ -62,6 +62,7 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
           spaces={[space('general', 'General', 3), space('launch', 'Launch', 1)]}
           workstreams={[]}
           {...props}
+          scrollStateKey={props.scrollStateKey ?? 'test-spaces-scroll'}
         />
       </Tooltip.Provider>
     </MemoryRouter>,
@@ -473,7 +474,7 @@ describe('SpacesSidebar', () => {
       width: 280,
     };
     const { rerender } = render(<MemoryRouter><Tooltip.Provider>
-      <SpacesSidebar {...props} collapsed={false} />
+      <SpacesSidebar scrollStateKey="test-spaces-scroll" {...props} collapsed={false} />
     </Tooltip.Provider></MemoryRouter>);
 
     const titlebar = document.querySelector('.spaces-sidebar-titlebar');
@@ -482,7 +483,7 @@ describe('SpacesSidebar', () => {
     expect(commandbar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
 
     rerender(<MemoryRouter><Tooltip.Provider>
-      <SpacesSidebar {...props} collapsed />
+      <SpacesSidebar scrollStateKey="test-spaces-scroll" {...props} collapsed />
     </Tooltip.Provider></MemoryRouter>);
 
     const compactCreate = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel or space' });

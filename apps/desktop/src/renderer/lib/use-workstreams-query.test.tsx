@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import type { PropsWithChildren } from 'react';
+import { useLayoutEffect, type PropsWithChildren } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamSummary } from './types';
@@ -107,6 +107,22 @@ describe('useWorkstreamsQuery', () => {
 
     expect(WORKSTREAMS_QUERY_KEY).toEqual(['workstreams']);
     expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual(result.current.data);
+  });
+
+  it('exposes and follows the opening cursor before passive effects run', async () => {
+    setCachedWorkstreams(queryClient, [summary('workstream-1', 'Launch brief')]);
+    socket.sidebarConnect = { generation: 1, nextCursor: 'older-page' };
+    const seen: boolean[] = [];
+    renderHook(() => {
+      const query = useWorkstreamsQuery();
+      useLayoutEffect(() => {
+        seen.push(query.hasMore);
+        if (query.hasMore) query.fetchMore();
+      }, [query.hasMore]);
+      return query;
+    }, { wrapper });
+    expect(seen[0]).toBe(true);
+    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledWith(expect.objectContaining({ before: 'older-page' })));
   });
 
   // The round trip the connect payload exists to remove. A mount that asks for

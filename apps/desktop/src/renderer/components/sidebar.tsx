@@ -40,6 +40,7 @@ import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNav
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
+import { layoutKey, useSemanticScroll } from '../lib/desktop-layout';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
@@ -778,6 +779,7 @@ function WorkstreamRow({
           // How the sidebar finds this row again after pinning has moved it to
           // a different section — see the `reveal` effect.
           data-workstream-id={workstream.id}
+          data-layout-id={workstream.id}
           // How the sidebar's motion follows this row when it changes place,
           // in a section or between two. A row under the pointer mid-drag is
           // placed rather than moved: it would otherwise leave and re-enter
@@ -1344,6 +1346,11 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  useSemanticScroll(scrollRef,
+    layoutKey(workspace.id, workspace.currentUser.id, `channels-scroll:${selectedSpaceId ?? 'all'}`),
+    '[data-workstream-id]', !loading,
+    hasMoreWorkstreams ? () => { if (!loadingMoreWorkstreams) onLoadMoreWorkstreams?.(); } : undefined,
+    workstreams);
   const revealedDeepLinkRevision = useRef<number | null>(null);
   // The search row — and, in the rail, the New work stream row under it — sit
   // above the scroll box rather than in it, so search is at the top of the
@@ -2186,6 +2193,7 @@ export function Sidebar({
   return (
     <>
       {spaces !== undefined && <SpacesSidebar
+        scrollStateKey={layoutKey(workspace.id, workspace.currentUser.id, 'spaces-scroll')}
         accountSlotRef={setAccountSlot}
         availableWidth={spacesAvailableWidth}
         sidekickSlotRef={setSidekickSlot}

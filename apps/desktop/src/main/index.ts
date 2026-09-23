@@ -1,5 +1,5 @@
 import { startCanvaConnection } from './canva-loopback';
-import { boundsWithoutConversationDetails, readMainWindowState, writeMainWindowState } from './main-window-state';
+import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -79,6 +79,7 @@ import type {
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
 import { generatedArtifactWindowDocument } from '../common/generated-artifact-window';
+import { readArtifactWindows, writeArtifactWindows, type ArtifactWindowState } from './artifact-window-state';
 import { logError, logWarn } from '../common/logger';
 import {
   defaultDesktopReleaseChannel,
@@ -831,6 +832,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
+  closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
   if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
@@ -1084,6 +1086,7 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 }
 
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
+  closeAndForgetArtifactWindows();
   desktopPush.signOut(inMemoryAuthSet?.workspaces);
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
@@ -1618,6 +1621,7 @@ async function loadStoredIdentitySession(): Promise<WireSession | null> {
 }
 
 async function clearStoredSessionUnlocked(): Promise<void> {
+  closeAndForgetArtifactWindows();
   inMemoryAuthSet = null;
   inMemoryProfileSet = null;
   inMemorySession = null;
@@ -1687,6 +1691,15 @@ async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<voi
     userDataDirectory(),
     encryptStoredSessionValue(JSON.stringify(nextProfiles)),
   );
+  if (rejected.binding.workspaceId !== null) {
+    for (const [window, artifact] of poppedOutArtifacts) {
+      if (artifact.workspaceId === rejected.binding.workspaceId && artifact.userId === rejected.binding.userId
+        && !window.isDestroyed()) window.destroy();
+    }
+    savedArtifactWindows = artifactWindowStates().filter((item) =>
+      item.workspaceId !== rejected.binding.workspaceId || item.userId !== rejected.binding.userId);
+    saveArtifactWindowStates();
+  }
   inMemoryAuthSet = nextAuth;
   inMemoryProfileSet = nextProfiles;
   if (rejected.binding.workspaceId === null && inMemorySession?.workspace) return;
@@ -2846,9 +2859,38 @@ function observeAcceptedDeepLinkOpen(): void {
  */
 const artifactPreviews = new Map<BrowserWindow, ArtifactPreviewController>();
 const poppedOutArtifacts = new Map<BrowserWindow, {
+  workspaceId: string;
+  userId: string;
   resourceId: string;
   version: number;
+  stateId: string;
 }>();
+let savedArtifactWindows: ArtifactWindowState[] | null = null;
+const preservedArtifactWindows = new WeakSet<BrowserWindow>();
+function artifactWindowStates(): ArtifactWindowState[] {
+  return savedArtifactWindows ??= readArtifactWindows(userDataDirectory());
+}
+function saveArtifactWindowStates(): void {
+  try { writeArtifactWindows(userDataDirectory(), artifactWindowStates()); }
+  catch (error) { logWarn('rally', 'Could not save artifact window placement', error); }
+}
+function closeAndForgetArtifactWindows(): void {
+  for (const window of poppedOutArtifacts.keys()) {
+    if (!window.isDestroyed()) window.destroy();
+  }
+  savedArtifactWindows = [];
+  saveArtifactWindowStates();
+}
+function closeArtifactWindowsOutsideSession(workspaceId: string | null, userId: string | null): void {
+  let closed = false;
+  for (const [window, artifact] of poppedOutArtifacts) {
+    if (artifact.workspaceId === workspaceId && artifact.userId === userId) continue;
+    preservedArtifactWindows.add(window);
+    if (!window.isDestroyed()) window.destroy();
+    closed = true;
+  }
+  if (closed) saveArtifactWindowStates();
+}
 const artifactViews = new WeakMap<ArtifactViewHandle, WebContentsView>();
 
 /**
@@ -2967,9 +3009,28 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
  */
 function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
   const artifactId = request.kind === 'site' ? request.artifactId : request.resourceId;
+  const workspaceId = inMemorySession?.workspace?.id;
+  const userId = inMemorySession?.user.id;
+  if (!workspaceId || !userId) return false;
+  const previous = request.restoreId ? artifactWindowStates().find((item) =>
+    item.id === request.restoreId && item.workspaceId === workspaceId && item.userId === userId
+      && item.resourceId === request.resourceId) : undefined;
+  if (request.restoreId && !previous) return false;
+  if (previous && [...poppedOutArtifacts.values()].some((item) => item.stateId === previous.id)) return true;
+  if (previous) {
+    previous.kind = request.kind;
+    if (request.kind === 'generated') previous.mimeType = request.mimeType;
+    else delete previous.mimeType;
+  }
+  const display = previous
+    ? electronScreen.getAllDisplays().find((item) => item.id === previous.displayId)
+      ?? electronScreen.getDisplayMatching(previous.bounds)
+    : electronScreen.getPrimaryDisplay();
+  const restoredBounds = previous ? clampWindowBounds(previous.bounds, display.workArea, { width: 420, height: 360 }) : null;
   const window = new BrowserWindow({
-    width: 1_100,
-    height: 800,
+    width: restoredBounds?.width ?? 1_100,
+    height: restoredBounds?.height ?? 800,
+    ...(restoredBounds ? { x: restoredBounds.x, y: restoredBounds.y } : {}),
     minWidth: 420,
     minHeight: 360,
     show: false,
@@ -2983,8 +3044,38 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
     webPreferences: artifactWebPreferences(artifactId, app.isPackaged),
   });
   artifactWebContents.add(window.webContents);
-  poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version });
-  window.once('closed', () => poppedOutArtifacts.delete(window));
+  const stateId = previous?.id ?? crypto.randomUUID();
+  let loadFailed = false;
+  const record = (): void => {
+    if (window.isDestroyed()) return;
+    const bounds = window.getNormalBounds();
+    const states = artifactWindowStates();
+    const index = states.findIndex((item) => item.id === stateId);
+    const latest = index < 0 ? undefined : states[index];
+    const state: ArtifactWindowState = {
+      id: stateId, workspaceId, userId, kind: latest?.kind ?? request.kind,
+      resourceId: request.resourceId, version: poppedOutArtifacts.get(window)?.version ?? request.version,
+      title: window.getTitle(),
+      ...((latest?.kind ?? request.kind) === 'generated'
+        ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.mimeType : undefined) }
+        : {}),
+      bounds, displayId: electronScreen.getDisplayMatching(bounds).id,
+    };
+    if (index < 0) states.push(state); else states[index] = state;
+  };
+  poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId });
+  record();
+  saveArtifactWindowStates();
+  window.on('move', record);
+  window.on('resize', record);
+  window.on('close', () => { record(); saveArtifactWindowStates(); });
+  window.once('closed', () => {
+    poppedOutArtifacts.delete(window);
+    if (!applicationIsQuitting && !preservedArtifactWindows.has(window) && (!loadFailed || !previous)) {
+      savedArtifactWindows = artifactWindowStates().filter((item) => item.id !== stateId);
+      saveArtifactWindowStates();
+    }
+  });
   const url = request.kind === 'site'
     ? request.url
     : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
@@ -2996,7 +3087,10 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
   void loadArtifactInitialUrl(() => window.loadURL(url)).then((loaded) => {
-    if (!loaded && !window.isDestroyed()) window.close();
+    if (!loaded && !window.isDestroyed()) {
+      loadFailed = true;
+      window.close();
+    }
   });
   return true;
 }
@@ -3004,7 +3098,8 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
 function poppedOutArtifactVersions(): Record<string, number> {
   const versions: Record<string, number> = {};
   for (const [window, artifact] of poppedOutArtifacts) {
-    if (window.isDestroyed()) continue;
+    if (window.isDestroyed() || artifact.workspaceId !== inMemorySession?.workspace?.id
+      || artifact.userId !== inMemorySession?.user.id) continue;
     const current = versions[artifact.resourceId];
     // Several windows may show one resource. Reporting the oldest makes the
     // renderer refresh the group until every surviving window has caught up.
@@ -3018,6 +3113,8 @@ function poppedOutArtifactVersions(): Record<string, number> {
 async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): Promise<boolean> {
   const windows = [...poppedOutArtifacts.entries()]
     .filter(([window, artifact]) => !window.isDestroyed()
+      && artifact.workspaceId === inMemorySession?.workspace?.id
+      && artifact.userId === inMemorySession?.user.id
       && artifact.resourceId === request.resourceId
       && artifact.version < request.version);
   if (windows.length === 0) {
@@ -3029,13 +3126,22 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
     : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
   // One navigation per call: a site URL is single-use, so the renderer must
   // mint again before advancing a second window for the same resource.
-  poppedOutArtifacts.set(target, { resourceId: request.resourceId, version: request.version });
+  poppedOutArtifacts.set(target, { ...previous, version: request.version });
   target.setTitle(request.title);
   const loaded = await loadArtifactInitialUrl(() => target.loadURL(url));
   if (!loaded && !target.isDestroyed()
     && poppedOutArtifacts.get(target)?.version === request.version) {
     poppedOutArtifacts.set(target, previous);
     return false;
+  }
+  const saved = artifactWindowStates().find((item) => item.id === previous.stateId);
+  if (saved) {
+    saved.kind = request.kind;
+    saved.version = request.version;
+    saved.title = request.title;
+    if (request.kind === 'generated') saved.mimeType = request.mimeType;
+    else delete saved.mimeType;
+    saveArtifactWindowStates();
   }
   return [...poppedOutArtifacts.entries()].some(([window, artifact]) =>
     !window.isDestroyed() && artifact.resourceId === request.resourceId && artifact.version < request.version);
@@ -3073,6 +3179,7 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
   if (value.kind === 'site' && typeof value.resourceId === 'string' && version !== null
     && typeof value.artifactId === 'string' && typeof value.url === 'string') return {
     kind: 'site',
+    ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
     version,
     artifactId: value.artifactId,
@@ -3085,6 +3192,7 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
     || typeof value.mimeType !== 'string' || !(value.content instanceof Uint8Array)) return null;
   return {
     kind: 'generated',
+    ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
     version,
     content: value.content,
@@ -3545,17 +3653,29 @@ function registerIpc(): void {
     if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
     return openArtifactWindow(request);
   });
+  ipcMain.handle('artifact:restorable-windows', async (event) => {
+    assertTrustedIpcSender(event);
+    const workspaceId = inMemorySession?.workspace?.id;
+    const userId = inMemorySession?.user.id;
+    if (!workspaceId || !userId) return [];
+    const open = new Set([...poppedOutArtifacts.values()].map((item) => item.stateId));
+    return artifactWindowStates().filter((item) => item.workspaceId === workspaceId
+      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType }) =>
+      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}) }));
+  });
+  ipcMain.handle('artifact:forget-window', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof raw !== 'string') return;
+    const workspaceId = inMemorySession?.workspace?.id;
+    const userId = inMemorySession?.user.id;
+    if (!workspaceId || !userId) return;
+    savedArtifactWindows = artifactWindowStates().filter((item) =>
+      item.id !== raw || item.workspaceId !== workspaceId || item.userId !== userId);
+    saveArtifactWindowStates();
+  });
   ipcMain.handle('artifact:popped-out-versions', async (event) => {
     assertTrustedIpcSender(event);
     return poppedOutArtifactVersions();
-  });
-  ipcMain.handle('artifact:close-pop-outs', async (event, raw: unknown) => {
-    assertTrustedIpcSender(event);
-    if (!Array.isArray(raw) || !raw.every((value) => typeof value === 'string')) return;
-    const closing = new Set(raw);
-    for (const [window, artifact] of poppedOutArtifacts) {
-      if (closing.has(artifact.resourceId) && !window.isDestroyed()) window.close();
-    }
   });
   ipcMain.handle('artifact:update-pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
@@ -4790,6 +4910,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (event) => {
   applicationIsQuitting = true;
+  if (savedArtifactWindows !== null) saveArtifactWindowStates();
   if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault();
 });
 

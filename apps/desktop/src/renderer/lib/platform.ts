@@ -512,6 +512,8 @@ const browserBridge: RallyDesktopBridge = {
     opened.location.href = url;
     return true;
   },
+  async getRestorableArtifactWindows() { return []; },
+  async forgetRestorableArtifactWindow() { /* Browser windows have no native saved geometry. */ },
   async getPoppedOutArtifactVersions() {
     const versions: Record<string, number> = {};
     for (const [opened, artifact] of browserArtifactWindows) {
@@ -525,14 +527,6 @@ const browserBridge: RallyDesktopBridge = {
         : Math.min(current, artifact.version);
     }
     return versions;
-  },
-  async closePoppedOutArtifacts(resourceIds) {
-    const closing = new Set(resourceIds);
-    for (const [opened, artifact] of browserArtifactWindows) {
-      if (!closing.has(artifact.resourceId)) continue;
-      browserArtifactWindows.delete(opened);
-      if (!opened.closed) opened.close();
-    }
   },
   async updatePoppedOutArtifact(request) {
     const opened = [...browserArtifactWindows.entries()]

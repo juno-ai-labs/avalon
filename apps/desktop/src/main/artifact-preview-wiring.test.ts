@@ -70,9 +70,12 @@ describe('artifact preview wiring', () => {
 
   it('keeps detached windows versioned by resource until they close', () => {
     const text = source();
+    const factory = text.match(/function openArtifactWindow\([\s\S]*?\n\}/u)?.[0];
 
-    expect(text).toContain('poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version })');
-    expect(text).toContain("window.once('closed', () => poppedOutArtifacts.delete(window))");
+    expect(factory).toBeDefined();
+    expect(factory).toContain('poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId })');
+    expect(factory).toContain("window.once('closed', () => {");
+    expect(factory).toContain('poppedOutArtifacts.delete(window)');
     expect(text).toContain("ipcMain.handle('artifact:popped-out-versions'");
     expect(text).toContain("ipcMain.handle('artifact:update-pop-out'");
     expect(text).toContain('artifact.resourceId === request.resourceId');
