@@ -72,6 +72,13 @@ describe('elicitation normalization', () => {
       status: 'cancelled', answer: null,
     })).toMatchObject({ status: 'cancelled', answer: null });
   });
+
+  it('keeps an unrecognized status out of the open answer control', () => {
+    expect(normalizeElicitation({
+      id: 'question-future', prompt: 'Old question', responseType: 'text',
+      status: 'future' as 'answered',
+    }).status).toBe('answered');
+  });
   it('uses one transcript identity for open and answered representations', () => {
     expect(elicitationMessageId('question-one')).toBe('elicitation-question-one');
   });
