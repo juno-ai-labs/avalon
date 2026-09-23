@@ -271,7 +271,6 @@ jobs:
     timeout-minutes: 45
     environment: desktop-release
     permissions:
-      actions: read
       contents: write
     env:
       SIDELINE_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
