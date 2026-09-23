@@ -160,6 +160,9 @@ serves it through `rally-font://`.
   is translucent in **both** appearances on purpose — an opaque fill has to know
   what is behind it, which is how `sys.color.surface.raised` came to be a hover
   on the light canvas that *was* the canvas.
+- **Elicitation hover uses the reader's accent.** The scoped row clears the
+  generic brand background beneath its accent tint; its thin row divider stays
+  visible on hover and selection.
 - **A control's resting chip fill is `cmp.control.background-quiet`, not the
   hover wash.** They carry the same weight today and are still two tokens: the
   composer's round tools rest on the quiet fill and hover a step above it, so a
@@ -216,26 +219,6 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
-
-### 2026-09-23 — Elicitation hover clears the generic brand fill
-
-**What changed:** option hover still layers a half-strength
-`sys.color.accent.tint` over the option list's existing surface. The app-shell
-rule now explicitly clears the later generic option rule's brand fill and border.
-The checkbox border takes the reader's accent on hover instead of the generic
-brand ink. Selection keeps its neutral row fill, and a selected checkbox keeps
-its human-bubble fill and border.
-
-**Why:** the personal accent hover introduced on September 21 set only a
-background image. A later equal-specificity generic `:hover` rule still painted
-a brand-coloured background and border beneath it. That made the reader's chosen
-colour compete with the brand hue, most conspicuously for yellow-brand and
-green-personal combinations. The app-shell rule now owns the whole hover paint.
-
-**Considered and rejected:** replacing the personal hover with the shared
-neutral wash. It hides the bleed but also discards the reader-colour interaction
-the September 21 change intended. Clearing the underlying brand paint fixes the
-actual cascade conflict.
 
 ### 2026-09-21 — Elicitation hover belongs to the reader
 
