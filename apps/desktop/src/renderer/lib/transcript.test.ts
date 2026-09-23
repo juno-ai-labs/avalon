@@ -1303,6 +1303,12 @@ describe('canonical elicitation presentation', () => {
     expect(answered.ranges.flatMap((range) => range.turns).every((candidate) =>
       candidate.revision === 1)).toBe(true);
 
+    const cancelled = setTranscriptElicitationState(snapshot, elicitationId, {
+      status: 'cancelled', answer: null,
+    });
+    expect(orderedTranscriptMessages(cancelled, 'workstream-one')[0]?.elicitation)
+      .toMatchObject({ status: 'cancelled', answer: null });
+
     const rolledBack = setTranscriptElicitationState(answered, elicitationId, {
       status: 'open',
       answer: null,

@@ -3170,6 +3170,10 @@ export class WorkstreamObjectProductService {
     return this.elicitationsIncludingResolved().filter((elicitation) => elicitation.status === "open");
   }
 
+  elicitationById(elicitationId: string): Elicitation | undefined {
+    return this.elicitationsIncludingResolved().find((elicitation) => elicitation.id === elicitationId);
+  }
+
   private elicitationsIncludingResolved(): Elicitation[] {
     const root = this.root();
     return this.storage.sql.exec<{
@@ -4629,6 +4633,7 @@ export class WorkstreamObjectProductService {
         if (receipt === "replayed") {
           throw new Error("substream_message_receipt_without_projection");
         }
+        this.loops.cancelPendingElicitations(now);
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
         const openedParticipant = first(sql.exec<{ user_id: string }>(

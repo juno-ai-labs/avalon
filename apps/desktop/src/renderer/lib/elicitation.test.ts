@@ -66,6 +66,12 @@ describe('answerElicitationOptimistically', () => {
 });
 
 describe('elicitation normalization', () => {
+  it('preserves cancelled questions as resolved', () => {
+    expect(normalizeElicitation({
+      id: 'question-cancelled', prompt: 'Old question', responseType: 'text',
+      status: 'cancelled', answer: null,
+    })).toMatchObject({ status: 'cancelled', answer: null });
+  });
   it('uses one transcript identity for open and answered representations', () => {
     expect(elicitationMessageId('question-one')).toBe('elicitation-question-one');
   });

@@ -37,7 +37,7 @@ export function normalizeElicitation(source: ElicitationSource): ElicitationData
     ...(source.maximumSelections == null ? {} : { maximumSelections: source.maximumSelections }),
     ...(source.allowOther === undefined ? {} : { allowOther: source.allowOther }),
     ...(source.targetUserId ? { targetUserId: source.targetUserId } : {}),
-    status: source.status === undefined || source.status === 'open' ? 'open' : 'answered',
+    status: source.status ?? 'open',
     ...(source.answer === undefined ? {} : { answer: source.answer }),
     ...(source.createdAt ? { createdAt: source.createdAt } : {}),
   };
