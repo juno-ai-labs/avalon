@@ -1038,9 +1038,8 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
   and release-tooling tests, and waits for the matching API deployment when
   contracts changed. It builds, signs, notarizes, and preserves one release
   artifact, then publishes that artifact in a separate job. Retrying a failed
-  publication job reuses the same bytes. When a signed artifact exists but the
-  original run cannot be resumed, dispatch the workflow with its artifact ID,
-  run ID, stamped commit SHA, and version to publish those preserved bytes.
+  publication job reuses the same bytes; rerun only failed jobs while the run
+  and its artifact are retained.
   Publication verifies the signed arm64 ZIP, DMG, blockmaps, update manifest,
   and canonical installer under `sideline/stable/darwin/arm64/` in the release
   R2 bucket before pushing the Sideline tag. The `desktop-release` environment's
