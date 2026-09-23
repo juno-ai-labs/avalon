@@ -26,7 +26,7 @@ page calls. **Open questions** below says what remains.
 
 Text-only openings may select `execution: history`: they materialize prepared
 conversation facts through the same authority path as imports, start idle and
-confirm canonical content without inventing a run. The memo opening uses this mode.
+confirm canonical content without inventing a run. The Acme proposal opening uses this mode.
 Tool/elicitation scenarios retain ordinary scripted executions. See
 [prepared conversations and session import](session-import.md).
 
@@ -38,7 +38,7 @@ Tool/elicitation scenarios retain ordinary scripted executions. See
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the placeholder pack — its three rooms and its standing Sidekick. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the multiplayer pack — its three Spaces, four Channels, three Breakouts and review Sidekick. |
 | `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that produces the `expect` block. Invoke it as `/demo-scenario`. |
 | `apps/api/src/services/demo-cast.ts` | Who a demo can be cast from: the company's email domain, the directory query the New demo form suggests from, persona minting for a typed name, and the check that every cast id is a colleague or a persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
@@ -119,8 +119,8 @@ is a typed name; the **company's directory** — everyone with an account on the
 company's own email domain who has signed in to this region — is what the New
 demo form suggests, and the only accounts a request may name. `demo-cast.ts` holds that domain — the one
 place it is written down — and the query that reads it. The pack names each
-part it is casting for (`roleLabels`: Product, Sales and Legal for the pack in
-service), because a role token reads as this pack's own character and a
+part it is casting for (`roleLabels`: Solutions engineer / IT, Sales lead / business owner, and
+Manager / finance approver for the pack in service), because a role token reads as this pack's own character and a
 colleague put in the wrong part has its scripted words attributed to them under
 their real name.
 
@@ -181,25 +181,81 @@ that starts the run — `assistant`, a single turn that is either prose (`say`) 
 a question (`ask`). The schema refuses, before the first write, a room used
 before it is created, a line from somebody not in the room, a mention of
 somebody not in the cast, a room that carries on after its question, and two
-Sidekicks under one name. The placeholder pack carries the two scenarios the
-spike settled — the decision memo and the multiplayer renewal — a third,
-drafting the announcement of a filing, which is where the pack's document
-versions and its substream live, and one standing Sidekick.
+Sidekicks under one name. The shipped `multiplayer-2026-09` pack replaces the earlier memo, renewal,
+announcement and morning-briefing content completely.
 
-**A room is Organization-wide, and the seeder refuses one that is not.** Every
-Channel is born in a Space and a create that names none lands in General, which
-is Organization-wide — so a `personal` room would seed workspace-scoped
-whatever the pack asked for, the readiness barrier would compare that against
-the scope the pack stated, and the demo would sit in **Waiting for workspace**
-until the operator gave up. `applyDemoSeedAction` therefore refuses a
-`create_workstream` step with `scope: "personal"` by name,
-`demo_seed_personal_room_unsupported`, rather than seeding a room whose
-audience is a lie. The schema still admits the value, because the pack's
-substream rules are written in terms of it and because the honest fix when a
-demo needs a private room is a personal Space for it to be born in — which the
-pack cannot name yet. The placeholder pack's four rooms are all
-workspace-scoped, so nothing in service is affected;
-[`workstream-creation.md`](workstream-creation.md) owns the birth audience.
+#### Presenting the multiplayer examples
+
+Choose the recognizable collaboration problem from discovery. Start with the
+Acme proposal by default, then show at most one other example matched to the
+prospect's pain. These routes are presentation guidance, not measured popularity.
+Do not put the discovery questions or this taxonomy into customer-facing Channels.
+
+| Pain | Where to open | Human intervention and visible result |
+| --- | --- | --- |
+| Fragmented expertise, context sharing, getting unstuck | **Customer: Acme → Proposal & solution design** | Sales continues sample prior AI work. An engineer explicitly shares that orders live in NetSuite. Growth alone at $24k becomes Growth + Integration at $30k; v1 and v2 attachments make the assumption change visible. **Integration requirements** holds the focused flow validation. |
+| Trust, review, approval, revision | **Vendor selection: Customer support platform → Evaluation & decision** | The provisional $30k ClearDesk recommendation changes when the manager requires launch within four weeks. HelpHarbor costs $39k, launches in three weeks and leaves $6k of the $45k ceiling. **Implementation costs** confirms setup and staffing; the manager explicitly approves and assigns procurement and migration. |
+| Repetitive reviews, distribution, follow-through | **Customer: Acme → Demo & follow-up** | A sample call review flags unresolved NetSuite sync. Sales shares missing off-call context; the corrected review distinguishes package availability from remaining validation. The manager removes a launch-date promise and assigns owners. **Customer response** holds the unsent follow-up draft. |
+| Cross-account visibility | **Sales → Demo reviews** | One short pointer to the Acme review and its next action, without repeating the account conversation. |
+
+The presenter speaks in none of the seeded history. They are mentioned only in
+the proposal Channel's closing beat and included in all three Breakouts. The
+proposal is the newest main conversation and the default demo entry. No example
+ends in an artificial pending poll: the human approval and follow-up commitments
+are already visible, and the presenter can continue normally.
+
+Each example stands alone. Business names, customer contact Maya Chen, prices,
+quotes and transcript are fictional. The existing casting system still binds
+roles to **real colleague accounts**; this pack does not create fictional login
+identities. Three colleagues play compatible roles across scenarios, keeping the
+existing casting form and number of required accounts. Use dedicated demo
+accounts if fictional speaker names are required; they must meet the same
+company-domain/sign-in requirements. No real customer or guest is seeded.
+
+#### Boundaries the demonstration must preserve
+
+- **Knowledge:** joining does not disclose someone's private context. The engineer
+  contributes a separate note and explicitly repeats the private Breakout's
+  relevant conclusion in the parent Channel before Rally uses it.
+- **Audience:** the three named Spaces and their Channels are Organization-wide,
+  inside an internal demo Organization. Breakouts use explicit participants. No
+  external guest is seated, so internal proposal pricing is not presented as
+  customer-shared. Adding a guest later requires normal scoped access; do not
+  share the whole account Space as a shortcut.
+- **Import:** the proposal opening is prepared sample history, not a claimed live
+  import. Real Claude/ChatGPT URL import exists through the sidebar and requires
+  Firecrawl configuration; seeding does not contact either provider.
+- **Artifacts:** v1/v2 are separately uploaded Markdown snapshots, the existing
+  demo convention, not a claim that a live editor tracked a revision.
+- **Sidekick:** Demo Call Review is a real published Organization Sidekick with
+  a weekday schedule and one manually seeded sample run. The Granola-style note,
+  review guide, review outputs and distribution preview are illustrative. No
+  Granola event fired, no Drive file was written, and no Slack message was sent.
+  The desired Granola Demo Calls → guide → Drive Demo Reviews → Slack #demos
+  workflow needs real source/destination configuration; this pack binds none.
+  Scheduled runs prepare drafts only and must say when no source is available.
+  The customer reply remains unsent.
+
+#### Space placement and replacing older demos
+
+An optional `spaces` map declares named Organization Spaces and their creator,
+icon and colour. A Channel opening may name one with `space`. The seeder derives
+the Space id from the operation and key, resumes creation through `SpaceService`,
+and passes the id into ordinary Channel creation (including prepared history).
+The same Acme Space therefore serves both account Channels, and a retry cannot
+create another copy. Readiness checks the actual directory membership and the
+Space's name, audience and active state. A pack without Space declarations keeps
+the existing General fallback. Personal Channels remain refused by the seeder;
+this change does not introduce private Space casting or change permission rules.
+
+**Existing demos do not change when this pack deploys.** Use Ace **New demo** with
+a new operation id; wait for Ready, switch to that Organization, then separately
+retire the old demo if desired. There is no in-place reset/reseed and no bulk
+migration of live or customer Organizations. A stale unfinished operation fails
+`demo_pack_changed` at any phase, including a resumed seeding or readiness phase
+whose earlier template check already completed. Abandon that candidate and start
+a new operation; Retry cannot convert it to the new pack. No retirement or remote
+workspace mutation is performed by this source change.
 
 **A room step addresses a conversation, not a room.** Naming only the room means
 its main conversation; naming a room and a substream means the child. Every rule
@@ -370,8 +426,8 @@ receives the template's credentials, so a presenter outside the template would
 be handed them. What the row stores is the user ids every phase after it works
 in.
 
-**The phases are the PRD's, and each is safe to run again.** `checking_template`
-verifies the pack in service is the one the operation recorded, the template
+**The phases are the PRD's, and each is safe to run again.** Every phase verifies the pack in service is the one the operation recorded.
+`checking_template` verifies the template
 workspace exists in this region, the presenter is a signed-in regional user and
 still an active member of the template, and every other role is played by an
 account that is still a colleague on the company's domain, or by the persona
@@ -717,6 +773,31 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-23 — Demonstrate human intervention in shared outcomes
+
+**What changed:** The shipped pack now has Acme proposal and demo-follow-up work,
+a support-vendor decision, and a brief Sales review pointer, grouped in named
+Spaces. Setup uses repeatable Space identities and checks their placement before
+Ready. Every preparation phase refuses a changed pack version. Product RPC
+schema failures now preserve the declared field code after local verification
+exposed malformed participant timestamps hidden by a generic error.
+
+**Why:** Discovery needs one recognizable breakdown followed by a human changing
+the work and an observable improvement. The unrelated memo, renewal and filing
+examples buried that transition. General-only seeding could not represent the
+agreed account/outcome structure, and a version check only in the first phase
+could let a resumed Workflow mix content from two deployments.
+
+**Considered and rejected:** A feature tour, fabricated connector deliveries, and
+in-place rewrites of live demos. Brief independent stories, labelled sample
+outputs, and the existing fresh-Organization lifecycle preserve truthful demos
+without changing product capabilities or customer data.
+
+**Consequences:** Replace older demos with New demo and separate retirement, not
+Retry. Keep source facts and arithmetic consistent across snapshots; joining is
+never implicit private-data sharing. Casting still requires colleague accounts,
+and real import/distribution requires its ordinary provider configuration.
 
 ### 2026-09-23 — A part can be played by any typed name
 

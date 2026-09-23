@@ -38,7 +38,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     companyName: 'Alto Capital',
     presenterUserId: PRESENTER_ID,
     presenterName: 'Adam',
-    packVersion: 'placeholder-2026-09',
+    packVersion: 'multiplayer-2026-09',
     cast: { presenter: PRESENTER_ID },
     castNames: { presenter: 'Adam' },
     workspaceId: WORKSPACE_ID,

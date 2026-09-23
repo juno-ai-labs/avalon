@@ -28,7 +28,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     companyName: 'Alto Capital',
     presenterUserId: PRESENTER_ID,
     presenterName: 'Adam',
-    packVersion: 'placeholder-2026-09',
+    packVersion: 'multiplayer-2026-09',
     cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
     castNames: { presenter: 'Adam', priya: 'Priya Raman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
     workspaceId: WORKSPACE_ID,
@@ -56,7 +56,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
 const template = {
   workspaceId: '01a06d5d-4624-751e-8269-e7950b51a835',
   pack: {
-    version: 'placeholder-2026-09',
+    version: 'multiplayer-2026-09',
     roles: ['presenter', 'priya', 'marcus', 'dana'],
     presenterRole: 'presenter',
     roleLabels: { priya: 'Product', marcus: 'Sales', dana: 'Legal' },

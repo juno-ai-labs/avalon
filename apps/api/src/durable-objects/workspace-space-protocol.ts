@@ -48,6 +48,8 @@ export type WorkspaceSpaceListRequest = z.infer<typeof WorkspaceSpaceListRequest
 
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   space: CreateSpaceRequestSchema,
+  /** Internal creation identity for resumable setup; absent for ordinary creates. */
+  spaceId: SpaceIdSchema.optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
 

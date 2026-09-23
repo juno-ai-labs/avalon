@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
@@ -3598,18 +3599,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       throw new Error("substream_product_operation_unhandled");
     } catch (error) {
+      const diagnostic = zodDiagnosticCode(error, "workstream_product");
       const safe = error instanceof ApiError
         ? error
-        : new ApiError(500, "workstream_object_request_failed", "The work stream could not be loaded");
+        : new ApiError(500, diagnostic ?? "workstream_object_request_failed", "The work stream could not be loaded");
       if (!(error instanceof ApiError)) {
-        // The member-facing body stays generic, but an internal failure that
-        // reaches here with no record is undiagnosable — this same anonymous
-        // 500 cost a debugging round during the dispatch outage.
+        // Report schema shape, never rejected values or adapter prose. The
+        // same field code survives the RPC hop into demo preparation's status.
         logError(this.env, "workstream_product_request_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
           workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
-          reason: error instanceof Error ? error.message : "unknown",
+          reason: diagnosticErrorCode(error, "workstream_product_request_failed"),
         });
       }
       span.setError(safe.code, safe.message);

@@ -25,9 +25,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   applyDemoSeedAction,
   demoSeedReceipts,
+  demoSeedSpaceId,
   type DemoSeedReceipt,
   type DemoSeedSession,
 } from "../src/services/demo-seeder";
+import { asUserId, asWorkstreamId } from "@rally/contracts";
+import { workspaceDOName } from "../src/durable-objects/names";
+import { DemoPackSchema } from "../src/services/demo-pack";
+import { SpaceService } from "../src/services/space-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { AutomationService } from "../src/services/automation-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
@@ -38,6 +43,7 @@ import {
   DEMO_MEMO_TITLE,
   DEMO_OPENING_PROSE,
   DEMO_OPERATION_ID,
+  DEMO_WORKSPACE_ID,
   DEMO_PRESENTER_ID,
   DEMO_PRIYA_ID,
   DEMO_QUESTION,
@@ -77,6 +83,54 @@ function roomClient(
 }
 
 describe("seeding a pack", () => {
+  it("places prepared and scripted Channels in one replayable named Space", async () => {
+    const pack = DemoPackSchema.parse({
+      version: "spaces-test", roles: ["presenter", "priya", "marcus"],
+      roleLabels: { priya: "Engineer", marcus: "Sales" },
+      spaces: { account: { as: "priya", name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" } },
+      steps: [
+        { kind: "create_workstream", id: "first", room: "first", as: "priya", title: "Proposal",
+          space: "account", execution: "history", scope: "workspace", participants: ["marcus"],
+          openingMessage: "Prior work.", assistant: { kind: "say", text: "Prior answer." } },
+        { kind: "create_workstream", id: "second", room: "second", as: "marcus", title: "Review",
+          space: "account", scope: "workspace", participants: [],
+          openingMessage: "Review this.", assistant: { kind: "say", text: "Review complete." } },
+      ],
+    });
+    const seed = await openDemoTestSession(pack);
+    const first = await playDemoAction(seed, seed.actions[0]!);
+    // The creation write survived, the orchestration receipt did not.
+    await env.DB.prepare("DELETE FROM demo_seed_receipts WHERE operation_id = ? AND action_id = ?")
+      .bind(DEMO_OPERATION_ID, "first").run();
+    const replay = await playDemoAction(seed, seed.actions[0]!);
+    expect(replay.workstreamId).toBe(first.workstreamId);
+    const second = await playDemoAction(seed, seed.actions[1]!);
+    const id = await demoSeedSpaceId(DEMO_OPERATION_ID, "account");
+    const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_PRIYA_ID)!);
+    expect(await service.summary(id)).toMatchObject({ name: "Customer: Acme", scope: "workspace", channelCount: 2 });
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", DEMO_WORKSPACE_ID));
+    for (const workstreamId of [first.workstreamId!, second.workstreamId!]) {
+      expect(await workspace.channelSpaces({ workspaceId: DEMO_WORKSPACE_ID,
+        userId: asUserId(DEMO_PRESENTER_ID), workstreamId: asWorkstreamId(workstreamId) }))
+        .toEqual({ spaceIds: [id] });
+    }
+    expect(await runInDurableObject(workspace, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM workspace_space_directory WHERE title = ?", "Customer: Acme").one().count))
+      .toBe(1);
+    expect(provider.calls).toEqual([]);
+  });
+
+  it("names a malformed participant field across the product RPC without disclosing its value", async () => {
+    const seed = await openDemoTestSession();
+    const opened = await playDemoAction(seed, seed.actions[0]!);
+    await env.DB.prepare("UPDATE users SET created_at = ? WHERE id = ?")
+      .bind("private-rejected-value", DEMO_PRIYA_ID).run();
+    await expect(roomClient(seed, opened.workstreamId!, DEMO_MARCUS_ID).get()).rejects.toMatchObject({
+      code: expect.stringMatching(/^workstream_product_invalid:participants\.[0-9]+\.user.createdAt:invalid_format/u),
+      message: "The work stream could not be loaded",
+    });
+  });
+
   it("writes the conversation, the prose, the document and the question through production paths, reaching no provider", async () => {
     const seed = await openDemoTestSession();
     const receipts: DemoSeedReceipt[] = [];

@@ -31,6 +31,7 @@ import type { Workstream } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { SpaceService } from "./space-service";
 import { AutomationService } from "./automation-service";
 import {
   packRoomFacts,
@@ -41,7 +42,7 @@ import {
   type DemoPack,
   type DemoPackRoomFacts,
 } from "./demo-pack";
-import { demoMemberAuth, type DemoSeedReceipt } from "./demo-seeder";
+import { demoMemberAuth, demoSeedSpaceId, type DemoSeedReceipt } from "./demo-seeder";
 import { workspaceAttention } from "./workspace-attention-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -51,6 +52,7 @@ export interface DemoRoomExpectation {
   room: string;
   workstreamId: string;
   title: string;
+  space?: { key: string; name: string };
   scope: "workspace" | "personal";
   harnessStatus: "idle" | "completed" | "needs_input";
   /** Everyone in the room at the end, by user id. */
@@ -151,8 +153,11 @@ export function demoReadinessManifest(
     if (room.finalState === "needs_input" && !closing?.elicitationId) {
       throw new ApiError(409, "demo_readiness_question_unconfirmed", `Room "${room.room}" has no confirmed question`);
     }
+    const opening = pack.steps.find((step) => step.kind === "create_workstream" && step.room === room.room);
+    const spaceKey = opening?.kind === "create_workstream" ? opening.space : undefined;
     rooms.set(room.room, {
       room: room.room,
+      ...(spaceKey ? { space: { key: spaceKey, name: pack.spaces![spaceKey]!.name } } : {}),
       workstreamId: receipt.workstreamId,
       title: room.title,
       scope: room.scope,
@@ -340,6 +345,21 @@ export async function checkDemoReadiness(
         continue;
       }
       gaps.push(...compareRoom(room, actual, view.viewerUserId));
+      if (room.space) {
+        const spaceId = await demoSeedSpaceId(input.operationId, room.space.key);
+        if (actual.spaceIds.length !== 1 || actual.spaceIds[0] !== spaceId) {
+          gap(room.room, "space_membership", `expected only ${room.space.name}`);
+        }
+        try {
+          const space = await new SpaceService(env, auth).summary(spaceId);
+          if (space.name !== room.space.name || space.status !== "active" || space.scope !== "workspace") {
+            gap(room.room, "space_state", `expected active Organization Space ${room.space.name}`);
+          }
+        } catch (error) {
+          if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
+          gap(room.room, "space_missing", room.space.name);
+        }
+      }
     }
     const listedOrder = items.filter((item) => expectedIds.has(item.id)).map((item) => item.id);
     const expectedOrder = view.rooms.map((room) => room.workstreamId);
