@@ -269,14 +269,20 @@ export class SpaceService {
    * product opens a Space's feed and a Space that started an agent loop would
    * be a conversation the product cannot show.
    */
-  async create(input: CreateSpaceRequest): Promise<SpaceSummary> {
+  async create(input: CreateSpaceRequest, spaceId?: SpaceId): Promise<SpaceSummary> {
     const workspace = await this.workspace();
     const reserved = this.settled(await workspace.reserveSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       space: input,
+      ...(spaceId ? { spaceId } : {}),
     }), input.name);
+    if (spaceId && (reserved.name !== input.name.trim() || reserved.scope !== input.scope
+      || reserved.iconKey !== input.iconKey || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
+      throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
+    }
     try {
+      // Both child reservation and conversation provisioning resume under this id.
       await this.provisionSpaceObject(reserved.id, input);
       return await this.summary(reserved.id);
     } catch (error) {

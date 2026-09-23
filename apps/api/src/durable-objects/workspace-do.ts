@@ -6163,7 +6163,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const space = this.spaceStorage().reserve(request, uuidV7(), null);
+    const storage = this.spaceStorage();
+    const existing = request.spaceId ? storage.readable(request.userId, request.spaceId) : false;
+    const space = existing || storage.reserve(request, request.spaceId ?? uuidV7(), null);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 

@@ -30,6 +30,8 @@ import { z } from "zod";
 
 import {
   DemoSeedSayTurnSchema,
+  SpaceIconKeySchema,
+  SpaceColorKeySchema,
   DemoSeedTurnSchema,
   IanaTimezoneSchema,
   MESSAGE_MAX_CHARACTERS,
@@ -88,6 +90,7 @@ const CreateWorkstreamStepSchema = z.strictObject({
   room: RoomKeySchema,
   as: DemoPackRoleSchema,
   title: z.string().min(1),
+  space: RoomKeySchema.optional(),
   /**
    * Roles seated at creation, besides the author. May be empty: a person alone
    * with Rally is an ordinary room, and whether a seeded line starts a run is
@@ -444,6 +447,10 @@ export function demoIdleViewerExpectation(
 export const DemoPackSchema = z.strictObject({
   version: z.string().min(1),
   roles: z.array(DemoPackRoleSchema).min(1),
+  spaces: z.record(RoomKeySchema, z.strictObject({
+    as: DemoPackRoleSchema, name: z.string().trim().min(1),
+    iconKey: SpaceIconKeySchema, colorKey: SpaceColorKeySchema,
+  })).optional(),
   steps: z.array(DemoPackStepSchema).min(1),
   /**
    * The viewers the readiness barrier verifies, and what each should find.
@@ -480,6 +487,9 @@ export const DemoPackSchema = z.strictObject({
   if (roles.size !== pack.roles.length) {
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
+  for (const [key, space] of Object.entries(pack.spaces ?? {})) {
+    if (!roles.has(space.as)) context.addIssue({ code: "custom", path: ["spaces", key, "as"], message: "Space creator is not in the cast" });
+  }
   const ids = new Set<string>();
   /**
    * Who is in each conversation so far, keyed by `conversationKey`: a room's
@@ -497,6 +507,9 @@ export const DemoPackSchema = z.strictObject({
   const sidekickNames = new Set<string>();
   pack.steps.forEach((step, index) => {
     const path = ["steps", index];
+    if (step.kind === "create_workstream" && step.space && !pack.spaces?.[step.space]) {
+      context.addIssue({ code: "custom", path: [...path, "space"], message: "Space is not declared in the pack" });
+    }
     if (ids.has(step.id)) {
       context.addIssue({ code: "custom", path: [...path, "id"], message: `Step id "${step.id}" is used twice` });
     }
@@ -762,6 +775,7 @@ export type DemoSeedAction =
   | (RoomActionBase & {
       kind: "create_workstream";
       execution: "run" | "history";
+      space?: string;
       substream: null;
       title: string;
       scope: "workspace" | "personal";
@@ -839,6 +853,7 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
         return {
           kind: "create_workstream",
           execution: step.execution ?? "run",
+          ...(step.space ? { space: step.space } : {}),
           actionId: step.id,
           room: step.room,
           substream: null,
@@ -917,566 +932,487 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
   });
 }
 
-const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
-const PRESS_RELEASE_TITLE = "Announcement — listing";
-
 /**
- * The pack the feature is built and proved against.
- *
- * It carries the two scenarios the spike settled — the decision memo and the
- * multiplayer renewal — plus the standing Sidekick a demo is expected to open
- * with, and a third room the spike did not settle: drafting the announcement of
- * a filing, which exists to show two things the first two cannot. A document
- * that goes through versions, so the room holds three drafts rather than one
- * attachment. And a substream, so the demo has somewhere the side argument went
- * that is not the main conversation. It is not the spike's onboarding-email
- * room, which was invented to test a third directory row and is not approved
- * copy. The cast roles and their names are open inputs the PRD hands to the
- * team; this pack is what runs until they arrive, and swapping any of it is a
- * data change behind the schema above.
- *
- * Every assistant turn cites only what the room holds. A seeded run makes no
- * tool call, so Rally cannot have read Drive, Granola or Linear: the people
- * bring the facts in their own messages, Rally reasons from them, and the
- * memo is attached by the person who wrote it. That is also what keeps the
- * one real run in a demo — the presenter's answer to the closing question —
- * honest: it inherits a transcript in which every number has a source. Names
- * in Rally's prose are `@{role}` tokens, expanded to the cast when played.
- *
- * A literal, not a parsed value: it is checked against the schema the first
- * time a demo asks for it (`activeDemoPack`) and by `demo-pack.test.ts`, not
- * when the Worker's module graph loads — a pack the schema refused took every
- * route in both regions down at boot, for a feature one region refuses.
+ * Three independent collaboration stories: teammate expertise changes an Acme
+ * proposal, an approver changes vendor criteria and decides, and a demo review
+ * becomes owned follow-up. The last main-channel beat makes Acme proposal the
+ * default entry. Prepared history is illustrative, and no seeded connector
+ * delivery is claimed. Version changes require a fresh demo Organization.
+ * Keep this literal unparsed at module load: a bad pack must not stop the API.
  */
 export const PLACEHOLDER_DEMO_PACK = {
-  version: "placeholder-2026-09",
-  // Product, sales and legal, in the order the operator meets them in the
-  // form. A role is a part in the script, not a person: whoever is cast as
-  // `priya` plays it under their own name.
-  roles: ["presenter", "priya", "marcus", "dana"],
-  // What each part is, in the order the operator meets them in the form. A
-  // role is a part in the script, not a person: whoever is cast as `priya`
-  // plays it under their own name, and the label is what tells the operator
-  // whose words they are about to put in a colleague's mouth.
-  roleLabels: { priya: "Product", marcus: "Sales", dana: "Legal" },
+  version: "multiplayer-2026-09",
+  roles: [
+    "presenter",
+    "priya",
+    "marcus",
+    "dana"
+  ],
+  roleLabels: {
+    priya: "Solutions engineer / IT",
+    marcus: "Sales lead / business owner",
+    dana: "Manager / finance approver"
+  },
+  spaces: {
+    acme: { as: "marcus", name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" },
+    vendors: { as: "marcus", name: "Vendor selection: Customer support platform", iconKey: "list-checks", colorKey: "purple" },
+    sales: { as: "marcus", name: "Sales", iconKey: "chart-no-axes-combined", colorKey: "green" }
+  },
   steps: [
     {
       kind: "create_workstream",
-      id: "memo-open",
-      execution: "history",
-      room: "decision-memo",
-      as: "priya",
-      title: "Insights pricing before the Northgate renewal",
-      participants: ["marcus"],
+      id: "vendor-open",
+      room: "vendor-selection",
+      title: "Evaluation & decision",
+      space: "vendors",
+      participants: [
+        "priya"
+      ],
       scope: "workspace",
-      openingMessage: [
-        "I need a decision memo on Insights pricing before the Northgate renewal, and I",
-        "want the argument for and against bundling, not a summary. What I have: sales",
-        "say it is the separate line item, not the price, that stalls deals, and two",
-        "renewals this quarter asked for Insights to be included. Bundling it into",
-        "Growth at a $4k uplift still reaches the Q4 revenue target, at 41 attached",
-        "accounts instead of 18 at the $12k add-on. Finance's ARPA floor is $31k.",
-        "TID-431 is still open — billing has no bundle SKU.",
-      ].join(" "),
+      openingMessage: "We need a support platform for 25 agents: SSO, EU data hosting and migration included. Budget is $45k in year one. ClearDesk: $24k + $6k setup, eight weeks. HelpHarbor: $30k + $9k, three weeks. SupportLane: $27k + $15k, six weeks. All meet the requirements. Start with cost.",
       assistant: {
         kind: "say",
-        text: [
-          "From what you have given me, the argument runs both ways, and it is not close.",
-          "",
-          "**For bundling.** The objection sales report is the line item, not the price,",
-          "and two renewals have already asked for Insights to be included — that is",
-          "demand for the bundle, not for a discount. The bundled case reaches the Q4",
-          "target at 41 attached accounts against 18 for the add-on, so the revenue risk",
-          "is in the add-on, not the bundle.",
-          "",
-          "**Against.** A $4k uplift on Growth clears the $31k ARPA floor, but you have",
-          "not said by how much, and a thin margin leaves no room for a concession at",
-          "renewal. And TID-431 means a bundled launch cannot be quoted today: with no",
-          "bundle SKU, the first bundled deal is a manual invoice.",
-          "",
-          "My read: bundle, and make TID-431 the blocker rather than the price.",
-        ].join("\n"),
+        text: "**Provisional choice: ClearDesk.** $30k in year one, versus HelpHarbor at $39k and SupportLane at $42k. The trade-off is eight weeks to launch."
       },
+      as: "marcus"
     },
     {
       kind: "upload",
-      id: "memo-attach",
-      room: "decision-memo",
-      as: "priya",
-      title: DECISION_MEMO_TITLE,
-      fileName: "insights-pricing-decision-memo.md",
+      id: "vendor-requirements",
+      room: "vendor-selection",
+      title: "Requirements & budget",
+      fileName: "vendor-requirements.md",
       mimeType: "text/markdown",
-      content: [
-        `# ${DECISION_MEMO_TITLE}`,
-        "",
-        "Recommendation: fold Insights into Growth at a $4k uplift.",
-        "",
-        "## The case for bundling",
-        "",
-        "Sales report the separate line item, not the price, is what stalls deals. Two",
-        "renewals this quarter asked for Insights to be included. The bundled case",
-        "reaches the Q4 revenue target at 41 attached accounts.",
-        "",
-        "## The case against",
-        "",
-        "ARPA floor is $31k and the bundle clears it, but not by much. TID-431 means",
-        "billing has no bundle SKU, so nothing can be quoted until it exists.",
-        "",
-      ].join("\n"),
-    },
-    {
-      kind: "create_workstream",
-      id: "renewal-open",
-      room: "northgate-renewal",
-      as: "marcus",
-      title: "Northgate renewal: what we owe them on Insights",
-      participants: ["dana", "priya"],
-      scope: "workspace",
-      openingMessage: [
-        "Northgate renewal is up. They are on the 2024 Growth agreement — 140 seats, a",
-        "6% uplift cap at renewal, and a 60-day notice window that opens in eleven",
-        "days. Insights was given to them free during the pilot and never added to the",
-        "order form. Before we quote it I want to know what we actually owe them on it.",
-      ].join(" "),
-      assistant: {
-        kind: "say",
-        text: [
-          "On the terms you describe, nothing. Insights is not on the order form, the",
-          "pilot grant was free, and the Growth agreement's uplift cap governs the seats,",
-          "not an add-on it never named. What you owe them is the conversation: a year",
-          "of use is not an entitlement, but nothing in the paperwork stops them reading",
-          "it as one, and the notice window opens in eleven days — so the position has",
-          "to be settled before then, not argued during it.",
-        ].join("\n"),
-      },
-    },
-    {
-      kind: "message",
-      id: "renewal-dana-1",
-      room: "northgate-renewal",
-      as: "dana",
-      text: "Legally nothing. Practically, they have a year of usage and a champion who will "
-        + "say it was always part of the deal.",
-    },
-    {
-      kind: "message",
-      id: "renewal-priya-1",
-      room: "northgate-renewal",
-      as: "priya",
-      text: "Their usage is real — 40-odd weekly actives on Insights out of 140 seats. Pulling "
-        + "it at renewal is the version of this that loses the account.",
-    },
-    {
-      kind: "message",
-      id: "renewal-marcus-1",
-      room: "northgate-renewal",
-      as: "marcus",
-      text: "I am not proposing we pull it. I am asking whether it goes on the order form at "
-        + "$12k, at the $4k Growth uplift, or at zero.",
-    },
-    {
-      kind: "message",
-      id: "renewal-dana-2",
-      room: "northgate-renewal",
-      as: "dana",
-      text: "Zero sets the precedent for every renewal behind them. I would rather lose the "
-        + "6% uplift than the line item.",
-    },
-    {
-      kind: "message",
-      id: "renewal-priya-2",
-      room: "northgate-renewal",
-      as: "priya",
-      text: "@{presenter} you own the commercial call here — we cannot answer this without you.",
-    },
-    {
-      kind: "message",
-      id: "renewal-marcus-2",
-      room: "northgate-renewal",
-      as: "marcus",
-      text: "We are going in circles and the notice window opens in eleven days. Rally, take "
-        + "the three positions above and tell me which one the proposal should argue for.",
-      assistant: {
-        kind: "ask",
-        prompt: [
-          "Northgate's notice window opens in eleven days and the room disagrees about",
-          "what Insights costs them at renewal. @{dana} would hold the line item and give",
-          "up the 6% uplift; @{priya} would not pull Insights at renewal; @{marcus}",
-          "wants a number on the order form. Which position should the renewal proposal",
-          "argue for? I will draft the argument for whichever you pick.",
-        ].join(" "),
-        options: [
-          "Include Insights at no uplift — protect the renewal",
-          "Include Insights at the $4k Growth uplift",
-          "Keep Insights as a separate $12k add-on and hold the line",
-        ],
-      },
-    },
-    {
-      kind: "sidekick",
-      id: "morning-briefing",
-      as: "priya",
-      // Workspace-scoped, so every member is offered it and the presenter finds
-      // it in their Sidekick strip without anybody having shared it.
-      scope: "workspace",
-      name: "Morning briefing",
-      description: "Posts a short briefing each weekday morning on what moved overnight and what needs a decision today.",
-      overview: [
-        "Every weekday at 9am Pacific, this Sidekick reads the work streams it can see and",
-        "writes one short briefing: what changed since yesterday, what is waiting on somebody,",
-        "and which decisions have a date attached. It states what it found and stops; it does",
-        "not chase people or answer on their behalf.",
-      ].join(" "),
-      instructions: [
-        "Each weekday morning, write one briefing for the workspace.",
-        "",
-        "Cover, in this order, and only from what the work streams actually say:",
-        "",
-        "1. Decisions with a date. Name the decision, who owns it, and the date.",
-        "2. Anything waiting on a person, with who it is waiting on.",
-        "3. What moved since the previous briefing.",
-        "",
-        "Keep it under 200 words. Every claim must come from a work stream you can read —",
-        "if a number or a date is not written down somewhere, leave it out rather than",
-        "estimating it. Say plainly when there is nothing to report.",
-      ].join("\n"),
-      schedule: {
-        // Weekdays at 9am in the zone the demo is presented in.
-        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
-        timezone: "America/Los_Angeles",
-        summary: "Every weekday at 9:00am Pacific",
-      },
-      // One briefing it has already written, so the demo shows a Sidekick that
-      // has done something rather than one that is merely configured. It cites
-      // only what the two rooms above hold, for the same reason their own
-      // assistant turns do: a seeded run makes no tool call, so anything it
-      // claims to have read has to be something the seeded history contains.
-      firstRun: {
-        kind: "say",
-        text: [
-          "**Two decisions have a date on them.**",
-          "",
-          "The Northgate renewal is the near one: the 60-day notice window opens in eleven",
-          "days, and the room is split on what Insights costs at renewal — @{dana} would hold",
-          "the line item and give up the 6% uplift, @{priya} would not pull Insights, and",
-          "@{marcus} wants a number on the order form. It is waiting on a commercial call.",
-          "",
-          "Insights pricing itself is the other. The memo recommends folding Insights into",
-          "Growth at a $4k uplift, which clears the $31k ARPA floor and reaches the Q4 target",
-          "at 41 attached accounts against 18 for the add-on. TID-431 is the blocker, not the",
-          "price: billing has no bundle SKU, so the first bundled deal is a manual invoice.",
-          "",
-          "Nothing else moved overnight.",
-        ].join("\n"),
-      },
-    },
-    {
-      kind: "create_workstream",
-      id: "press-open",
-      room: "press-release",
-      as: "marcus",
-      title: "The going-public announcement",
-      participants: ["priya", "dana"],
-      scope: "workspace",
-      openingMessage: [
-        "We need the announcement written before the filing goes public. The bankers",
-        "want a draft with the syndicate by Thursday, and the filing goes up the",
-        "Tuesday after. Constraints I know about: legal has not cleared the ticker,",
-        "and we are inside the quiet period from the day we file. What I want is a",
-        "release that leads with the business rather than the raise. The numbers I",
-        "would use: ARR crossed $140m last quarter, net revenue retention is 118%, and",
-        "1,900 companies run on us. Draft it, and tell me which of those three I",
-        "should expect to be argued about.",
-      ].join(" "),
-      assistant: {
-        kind: "say",
-        text: [
-          "Here is the shape I would write, and the number I would expect trouble over.",
-          "",
-          "**Lead.** The business, as you asked: 1,900 companies, ARR over $140m,",
-          "retention at 118%. That is a growth story that stands without the listing in",
-          "it, and the listing is one line at the end of the first paragraph.",
-          "",
-          "**Then the filing, flatly.** What was filed, where it will list, and that the",
-          "ticker is not final. Not the date it goes up, which is the bankers' to give",
-          "out, and no price — a range in a press release is a claim about a number",
-          "nobody has set yet.",
-          "",
-          "**The number to expect trouble over is 118%.** ARR and the customer count are",
-          "facts as of a quarter you can name. Net revenue retention is a computed",
-          "figure, and the release will be read against whatever definition the filing",
-          "uses. If the two differ, the release is the one that looks wrong.",
-          "",
-          "One thing I cannot judge from this room: what the quiet period lets you say",
-          "at all. @{dana} should read the draft before the syndicate does.",
-        ].join("\n"),
-      },
+      content: "# Requirements & budget\n\nFictional evaluation. 25 support agents. Required: SSO, EU data hosting, existing-ticket migration. First-year cash budget: $45,000 including setup. Initial preference: lowest qualifying first-year cost. No deadline agreed yet.",
+      as: "marcus"
     },
     {
       kind: "upload",
-      id: "press-v1",
-      room: "press-release",
-      as: "marcus",
-      title: `${PRESS_RELEASE_TITLE} v1`,
-      fileName: "announcement-v1.md",
+      id: "vendor-cleardesk",
+      room: "vendor-selection",
+      title: "ClearDesk — sample proposal",
+      fileName: "vendor-cleardesk.md",
       mimeType: "text/markdown",
-      content: [
-        "# Announcement — draft 1",
-        "",
-        "1,900 companies now run their work on our platform. Annual recurring revenue",
-        "passed $140m last quarter, and net revenue retention stands at 118%.",
-        "",
-        "Today we filed to go public. We expect to list on the Nasdaq; the ticker is",
-        "not yet final.",
-        "",
-        "This is a milestone for our customers more than for us. We are going to keep",
-        "building the same product, on the same roadmap, for the same people.",
-        "",
-      ].join("\n"),
+      content: "# ClearDesk — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $24,000. One-time implementation: $6,000. Year-one total: $30,000. Implementation: 8 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "vendor-helpharbor",
+      room: "vendor-selection",
+      title: "HelpHarbor — sample proposal",
+      fileName: "vendor-helpharbor.md",
+      mimeType: "text/markdown",
+      content: "# HelpHarbor — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $30,000. One-time implementation: $9,000. Year-one total: $39,000. Implementation: 3 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "vendor-supportlane",
+      room: "vendor-selection",
+      title: "SupportLane — sample proposal",
+      fileName: "vendor-supportlane.md",
+      mimeType: "text/markdown",
+      content: "# SupportLane — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $27,000. One-time implementation: $15,000. Year-one total: $42,000. Implementation: 6 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "vendor-comparison-v1",
+      room: "vendor-selection",
+      title: "Vendor comparison — v1",
+      fileName: "vendor-comparison-v1.md",
+      mimeType: "text/markdown",
+      content: "# Vendor comparison — v1\n\nProvisional: ClearDesk, lowest qualifying cost.\n\n| Vendor | Annual | Setup | Year one | Launch |\n| --- | ---: | ---: | ---: | --- |\n| ClearDesk | $24,000 | $6,000 | $30,000 | 8 weeks |\n| HelpHarbor | $30,000 | $9,000 | $39,000 | 3 weeks |\n| SupportLane | $27,000 | $15,000 | $42,000 | 6 weeks |\n\nDecision pending reviewer criteria.",
+      as: "marcus"
     },
     {
       kind: "message",
-      id: "press-dana-1",
-      room: "press-release",
+      id: "vendor-invite",
+      room: "vendor-selection",
+      text: "@{dana}, can you make the call? The cheapest option takes eight weeks.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "vendor-criteria",
+      room: "vendor-selection",
+      text: "We must launch within four weeks. Speed matters more than the $9k difference. Keep the $45k ceiling.",
       as: "dana",
-      text: [
-        "Three problems, one of them serious. \"We are going to keep building\" is a",
-        "forward-looking statement with no safe-harbour language anywhere near it —",
-        "either it goes or the release carries the disclaimer. \"A milestone for our",
-        "customers\" is puffery and I do not care. The serious one is 118%: the filing",
-        "computes retention on a trailing twelve-month basis and I do not know that",
-        "this number does.",
-      ].join(" "),
-    },
-    {
-      kind: "message",
-      id: "press-priya-1",
-      room: "press-release",
-      as: "priya",
-      text: [
-        "It does not. 118% is the quarterly cohort figure we report internally. On the",
-        "trailing twelve-month basis the filing uses it is 112%. Both are true and they",
-        "are not the same measurement, which is exactly the trap.",
-      ].join(" "),
-    },
-    {
-      kind: "message",
-      id: "press-marcus-1",
-      room: "press-release",
-      as: "marcus",
-      text: [
-        "Rally, take @{dana}'s three and @{priya}'s correction and tell me what the",
-        "second draft has to change. I would rather cut a sentence than carry a",
-        "disclaimer.",
-      ].join(" "),
       assistant: {
         kind: "say",
-        text: [
-          "Then cut the sentence. Three changes, in the order they matter.",
-          "",
-          "**Retention becomes 112%, on the trailing twelve months, and says so.** This",
-          "is the only change that is about being wrong rather than about being careful.",
-          "Two defensible numbers under one name is how a release ends up contradicting",
-          "the filing it was written to accompany, and the filing is the one that",
-          "governs.",
-          "",
-          "**The last paragraph goes.** \"We are going to keep building\" is the",
-          "forward-looking statement; without it there is nothing in the draft that needs",
-          "safe-harbour language, and you avoid the disclaimer you did not want.",
-          "",
-          "**\"A milestone for our customers\" goes with it.** Not because it is a legal",
-          "problem — @{dana} said it is not — but because it is the sentence that was",
-          "carrying the paragraph, and the paragraph is gone.",
-          "",
-          "That leaves the release ending on the filing itself, which is the fact you",
-          "are announcing.",
-        ].join("\n"),
-      },
-    },
-    {
-      kind: "upload",
-      id: "press-v2",
-      room: "press-release",
-      as: "marcus",
-      title: `${PRESS_RELEASE_TITLE} v2`,
-      fileName: "announcement-v2.md",
-      mimeType: "text/markdown",
-      content: [
-        "# Announcement — draft 2",
-        "",
-        "1,900 companies now run their work on our platform. Annual recurring revenue",
-        "passed $140m last quarter, and net revenue retention over the trailing twelve",
-        "months stands at 112%.",
-        "",
-        "Today we filed to go public. We expect to list on the Nasdaq; the ticker is",
-        "not yet final.",
-        "",
-      ].join("\n"),
-    },
-    {
-      kind: "message",
-      id: "press-dana-2",
-      room: "press-release",
-      as: "dana",
-      text: [
-        "That clears everything I raised. One thing I did not: \"we expect to list\" is",
-        "itself forward-looking. Say what was filed and where the application was made,",
-        "and let the reader draw the conclusion.",
-      ].join(" "),
-    },
-    {
-      kind: "upload",
-      id: "press-v3",
-      room: "press-release",
-      as: "marcus",
-      title: `${PRESS_RELEASE_TITLE} v3`,
-      fileName: "announcement-v3.md",
-      mimeType: "text/markdown",
-      content: [
-        "# Announcement — draft 3",
-        "",
-        "1,900 companies now run their work on our platform. Annual recurring revenue",
-        "passed $140m last quarter, and net revenue retention over the trailing twelve",
-        "months stands at 112%.",
-        "",
-        "Today we filed a registration statement with the Securities and Exchange",
-        "Commission and applied to list our common stock on the Nasdaq Global Select",
-        "Market. The ticker is not yet final.",
-        "",
-      ].join("\n"),
-    },
-    {
-      kind: "message",
-      id: "press-marcus-2",
-      room: "press-release",
-      as: "marcus",
-      text: "v3 is what goes to the syndicate. Thank you both.",
+        text: "**Recommendation changes to HelpHarbor.** Three weeks and $39k meet both constraints, leaving $6k. ClearDesk saves $9k but misses the deadline; SupportLane is slower and costs $3k more. Confirm setup is included before approval."
+      }
     },
     {
       kind: "create_substream",
-      id: "press-placement-open",
-      room: "press-release",
-      substream: "placement",
-      as: "marcus",
-      title: "Who gets it first",
-      participants: ["priya", "dana", "presenter"],
-      startingContext: [
-        "**Request.** Draft the announcement of the filing, leading with the business",
-        "rather than the raise, before the draft goes to the syndicate on Thursday.",
-        "",
-        "**Decisions.** Retention is stated as 112% on a trailing twelve-month basis,",
-        "matching the filing, rather than the 118% quarterly cohort figure reported",
-        "internally. The closing paragraph was cut rather than carrying safe-harbour",
-        "language. The release says what was filed and where the listing application",
-        "was made, not what the company expects to happen.",
-        "",
-        "**Done.** Three drafts. v3 is the one going to the syndicate.",
-        "",
-        "**Facts.** 1,900 companies on the platform. ARR over $140m as of last",
-        "quarter. Retention 112% trailing twelve months, 118% quarterly cohort. The",
-        "ticker is not cleared. The quiet period runs from the filing.",
-        "",
-        "**Relevant attachments.** Announcement — listing v1, v2 and v3.",
-        "",
-        "**Open.** Where the announcement is placed, and in what order.",
-      ].join("\n"),
+      id: "vendor-costs-open",
+      room: "vendor-selection",
+      substream: "implementation-costs",
+      title: "Implementation costs",
+      participants: [
+        "priya",
+        "presenter"
+      ],
+      startingContext: "HelpHarbor is the only quote within four weeks. Confirm the $39k first-year total includes migration before approval.",
+      as: "dana"
     },
     {
       kind: "message",
-      id: "press-placement-marcus-1",
-      room: "press-release",
-      substream: "placement",
-      as: "marcus",
-      text: [
-        "Placement, away from the drafting. My instinct is one exclusive to a business",
-        "desk an hour ahead of the wire, and everyone else off the wire. The Journal or",
-        "Bloomberg — I would take either.",
-      ].join(" "),
-    },
-    {
-      kind: "message",
-      id: "press-placement-priya-1",
-      room: "press-release",
-      substream: "placement",
+      id: "vendor-it",
+      room: "vendor-selection",
+      text: "The $9k setup includes ticket migration and SSO. IT can staff the three-week plan; internal time is outside the cash budget.",
       as: "priya",
-      text: [
-        "An exclusive to a general business desk gets us a story about the raise, which",
-        "is the story we spent three drafts not writing. The trade press is where our",
-        "buyers actually read, and they will cover the product because that is what",
-        "they cover.",
-      ].join(" "),
+      substream: "implementation-costs"
     },
     {
       kind: "message",
-      id: "press-placement-dana-1",
-      room: "press-release",
-      substream: "placement",
+      id: "vendor-finance",
+      room: "vendor-selection",
+      text: "$30k + $9k = $39k. That leaves $6k against our $45k cash ceiling.",
       as: "dana",
-      text: [
-        "Whoever it is, they get the release and nothing else. An exclusive usually",
-        "comes with a briefing call, and a briefing call inside the quiet period is how",
-        "you end up explaining an unfiled number to a regulator. No call, no background,",
-        "no colour.",
-      ].join(" "),
+      substream: "implementation-costs"
     },
     {
       kind: "message",
-      id: "press-placement-marcus-2",
-      room: "press-release",
-      substream: "placement",
-      as: "marcus",
-      text: "Rally, we are three for three on different answers. Sort it out.",
+      id: "vendor-costs-shared",
+      room: "vendor-selection",
+      text: "Sharing the cost check: setup includes SSO and migration. IT can staff three weeks. $39k is the full first-year cash quote; internal time is separate.",
+      as: "priya"
+    },
+    {
+      kind: "upload",
+      id: "vendor-comparison-v2",
+      room: "vendor-selection",
+      title: "Vendor comparison — v2",
+      fileName: "vendor-comparison-v2.md",
+      mimeType: "text/markdown",
+      content: "# Vendor comparison — v2\n\nUpdated criteria: required capabilities first, launch within four weeks, then first-year cash cost at or below $45,000.\n\n| Vendor | Year one | Launch | Result |\n| --- | ---: | --- | --- |\n| ClearDesk | $30,000 | 8 weeks | Misses deadline |\n| HelpHarbor | $39,000 | 3 weeks | Recommended; $6,000 headroom |\n| SupportLane | $42,000 | 6 weeks | Misses deadline |\n\nChanged from v1: speed is now a hard constraint. HelpHarbor costs $9,000 more than ClearDesk and launches five weeks sooner. Setup includes SSO and migration; IT confirmed staffing. Human approval recorded in the Channel.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "vendor-approval",
+      room: "vendor-selection",
+      text: "Approved: HelpHarbor at $39k in year one. @{marcus}, own procurement; @{priya}, own the migration kickoff. This approves the choice, not a signed contract.",
+      as: "dana"
+    },
+    {
+      kind: "create_workstream",
+      id: "review-open",
+      room: "acme-review",
+      title: "Demo & follow-up",
+      space: "acme",
+      participants: [
+        "priya",
+        "dana"
+      ],
+      scope: "workspace",
+      openingMessage: "Acme demo recap, from a sample Granola-style note: Maya Chen liked the workflow but asked whether NetSuite orders sync automatically. We left that unresolved on the call. Review guide: evidence, open concern, owner, next step.",
       assistant: {
         kind: "say",
-        text: [
-          "You are not disagreeing about the same question, which is why it will not",
-          "settle.",
-          "",
-          "@{dana}'s constraint decides the format, not the outlet: no briefing call, no",
-          "background, no colour. That holds whoever gets it. Once it holds, an exclusive",
-          "is worth much less than it usually is — what you are offering is an hour's",
-          "head start on a document, not access — so the case for spending one narrows to",
-          "who you most want writing first.",
-          "",
-          "@{priya}'s point answers that. Your buyers read the trade press, and the trade",
-          "press will write about the product because that is their beat. A general",
-          "business desk will write about the raise, and you have removed everything from",
-          "the release that would help them write anything else.",
-          "",
-          "So: the head start goes to a trade outlet, the wire carries it to everyone",
-          "else at the same moment, and nobody gets a call. The one thing I would not",
-          "decide from this room is which trade outlet — that turns on relationships",
-          "none of you have described here.",
-        ].join("\n"),
+        text: "**Needs follow-up:** NetSuite sync is unresolved in this call record. Name a technical owner and a validation step before calling the demo a success."
       },
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "review-transcript",
+      room: "acme-review",
+      title: "Acme demo call — sample transcript",
+      fileName: "review-transcript.md",
+      mimeType: "text/markdown",
+      content: "# Acme demo call — sample transcript\n\nFictional Granola-style note; no live Granola import. Folder example: Demo Calls.\n\nMaya Chen, Acme operations: The handoff looks useful. Do NetSuite orders sync automatically?\nSales: Let us verify the connector and get back to you.\nMaya: We need order updates without CSV exports.\nSales: Understood. We will follow up.\n\nCall ends with connector availability unresolved. Off-call conversations are not in this note.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "review-guide",
+      room: "acme-review",
+      title: "Demo Call Review Guide",
+      fileName: "review-guide.md",
+      mimeType: "text/markdown",
+      content: "# Demo Call Review Guide\n\nEvaluate only supplied evidence. Separate facts, unknowns and decisions. State the customer concern, evidence, owner and next action. Accept explicitly shared off-call context as an attributed correction. Never infer agreement from silence. Draft follow-up; do not send it. Distinguish a sample distribution record from a successful connector receipt.",
+      as: "marcus"
+    },
+    {
+      kind: "sidekick",
+      id: "demo-call-review",
+      as: "marcus",
+      scope: "workspace",
+      name: "Demo Call Review",
+      description: "Reviews supplied demo notes and surfaces the next team action.",
+      overview: "Review new demo notes with the Demo Call Review Guide. Keep concerns, evidence and ownership together. The seeded example is illustrative; no external distribution occurred.",
+      instructions: "Review supplied demo-call notes against the attached Demo Call Review Guide when those sources are available. Report evidence, unresolved concern, owner and next step. Do not infer private context. If no new note is available, say so. Prepare a review and a short distribution draft; do not send or write to external services. Example intended workflow: Granola Demo Calls → review → Drive Demo Reviews → Slack #demos. Those destinations require actual authorized connector configuration; the seeded sample is not a delivery receipt.",
+      schedule: {
+        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: "America/Los_Angeles",
+        summary: "Weekdays at 9:00am Pacific"
+      },
+      firstRun: {
+        kind: "say",
+        text: "**Sample review — Acme:** NetSuite sync was unresolved in the supplied call excerpt. Technical validation needs an owner.\n\n**Distribution draft:** Acme needs a connector check before follow-up. No Drive file or Slack message was sent."
+      }
     },
     {
       kind: "message",
-      id: "press-placement-priya-2",
-      room: "press-release",
-      substream: "placement",
+      id: "review-sample-share",
+      room: "acme-review",
+      text: "Sample Sidekick review: “NetSuite sync unresolved; technical owner needed.” Distribution preview: Drive / Demo Reviews and Slack #demos. Nothing was delivered externally.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "review-v1",
+      room: "acme-review",
+      title: "Acme demo review — v1",
+      fileName: "review-v1.md",
+      mimeType: "text/markdown",
+      content: "# Acme demo review — v1\n\nSample Sidekick output.\n\nConcern: automatic NetSuite order sync.\nEvidence: unresolved in the demo transcript.\nStatus: technical owner and validation step needed.\nDistribution: preview only; no Drive write or Slack post.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "review-context",
+      room: "acme-review",
+      text: "After the call, Maya confirmed NetSuite is mandatory. @{priya} already verified the connector needs our Integration package. That context was missing from the transcript.",
+      as: "marcus",
+      assistant: {
+        kind: "say",
+        text: "**Correction:** package availability is now known; customer validation is still open. Replace “research connector availability” with “validate Acme’s order flow.” The proposal needs the Integration package."
+      }
+    },
+    {
+      kind: "message",
+      id: "review-manager",
+      room: "acme-review",
+      text: "Change one thing: do not promise a launch date yet. @{marcus}, own the customer reply tomorrow; @{priya}, validate the order flow first.",
+      as: "dana"
+    },
+    {
+      kind: "upload",
+      id: "review-v2",
+      room: "acme-review",
+      title: "Acme demo review — v2",
+      fileName: "review-v2.md",
+      mimeType: "text/markdown",
+      content: "# Acme demo review — v2\n\nCorrected from v1 using explicitly shared off-call context: NetSuite is mandatory and the connector requires the Integration package.\n\nResolved: package availability. Still open: Acme order-flow validation. Sales owns tomorrow’s reply; solutions engineering owns the validation. Manager requested no launch-date promise. Draft only; no external distribution.",
+      as: "marcus"
+    },
+    {
+      kind: "create_substream",
+      id: "review-response-open",
+      room: "acme-review",
+      substream: "customer-response",
+      title: "Customer response",
+      participants: [
+        "priya",
+        "dana",
+        "presenter"
+      ],
+      startingContext: "Draft the Acme reply. NetSuite needs the Integration package; order-flow validation is open. Do not promise a launch date or send the message.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "review-draft",
+      room: "acme-review",
+      text: "Draft the reply with the package correction and a validation step.",
+      as: "marcus",
+      assistant: {
+        kind: "say",
+        text: "Hi Maya — NetSuite order sync requires the Integration package, so we are updating the proposal. Could you share one example order flow for our solutions engineer to validate? We will confirm scope and timing after that check."
+      },
+      substream: "customer-response"
+    },
+    {
+      kind: "message",
+      id: "review-draft-check",
+      room: "acme-review",
+      text: "Yes. Ask for an order update as well as a new order; both paths need validation.",
       as: "priya",
-      text: "Agreed. I will put three trade outlets and who we know at each in here tomorrow.",
+      substream: "customer-response"
     },
+    {
+      kind: "upload",
+      id: "review-follow-up-draft",
+      room: "acme-review",
+      title: "Acme follow-up — draft",
+      fileName: "review-follow-up-draft.md",
+      mimeType: "text/markdown",
+      content: "# Acme follow-up — draft\n\nHi Maya,\n\nNetSuite order sync requires the Integration package, so we are updating the proposal. Could you share an example new order and an order update for our solutions engineer to validate? We will confirm scope and timing after that check.\n\nStatus: draft, not sent. Sales owns the reply; solutions engineering owns validation.",
+      as: "marcus",
+      substream: "customer-response"
+    },
+    {
+      kind: "message",
+      id: "review-next-step",
+      room: "acme-review",
+      text: "I will send the reviewed draft tomorrow after the order-flow check. It is still a draft.",
+      as: "marcus",
+      substream: "customer-response"
+    },
+    {
+      kind: "create_workstream",
+      id: "sales-open",
+      room: "sales-reviews",
+      title: "Demo reviews",
+      space: "sales",
+      participants: [],
+      scope: "workspace",
+      openingMessage: "Acme review is in Customer: Acme → Demo & follow-up. Correction: NetSuite needs the Integration package. I own tomorrow’s reply; solutions engineering owns validation. Draft is in Customer response. No launch date promised.",
+      assistant: {
+        kind: "say",
+        text: "**Next action:** finish the Acme order-flow check, then use the customer-response draft. The detailed review stays with the account."
+      },
+      as: "marcus"
+    },
+    {
+      kind: "create_workstream",
+      id: "proposal-open",
+      room: "acme-proposal",
+      title: "Proposal & solution design",
+      space: "acme",
+      participants: [],
+      scope: "workspace",
+      openingMessage: "Continuing my earlier proposal work here (sample history). Acme needs order handoffs for 40 staff. The brief says CRM sync; Growth is $24k/year and includes CRM sync. Draft a Growth proposal.",
+      assistant: {
+        kind: "say",
+        text: "**Draft v1:** Growth at $24k/year, assuming CRM sync covers Acme’s order handoff. Confirm the system of record before sending."
+      },
+      as: "marcus",
+      execution: "history"
+    },
+    {
+      kind: "upload",
+      id: "proposal-brief",
+      room: "acme-proposal",
+      title: "Acme customer brief",
+      fileName: "proposal-brief.md",
+      mimeType: "text/markdown",
+      content: "# Acme customer brief\n\nFictional customer. Maya Chen, Operations Lead. 40 staff need order handoffs without CSV exports. Initial brief says “CRM sync”; order system not specified. Proposed Growth package: $24,000/year, CRM connector included. Internal working material; no customer guest has access.",
+      as: "marcus"
+    },
+    {
+      kind: "upload",
+      id: "proposal-v1",
+      room: "acme-proposal",
+      title: "Acme proposal — v1",
+      fileName: "proposal-v1.md",
+      mimeType: "text/markdown",
+      content: "# Acme proposal — v1\n\nProvisional recommendation: Growth, $24,000/year. CRM sync included. Assumption: CRM is the order system of record. Integration scope and timing require confirmation. Internal draft; not sent.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "proposal-invite",
+      room: "acme-proposal",
+      text: "@{priya}, joining you to the proposal. Does Growth cover their integration?",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "proposal-expert",
+      room: "acme-proposal",
+      text: "Maya told me separately that orders live in NetSuite, not the CRM. Sharing my technical note now: the NetSuite connector needs the $6k/year Integration package. Growth alone will not cover it.",
+      as: "priya"
+    },
+    {
+      kind: "upload",
+      id: "proposal-technical-note",
+      room: "acme-proposal",
+      title: "Acme integration note",
+      fileName: "proposal-technical-note.md",
+      mimeType: "text/markdown",
+      content: "# Acme integration note\n\nExplicitly shared technical context. Maya confirmed NetSuite is the order system of record. Growth covers CRM only. NetSuite connector requires Integration at $6,000/year in addition to Growth at $24,000/year. Validate new-order and order-update flows before committing scope or timing. This note was contributed by the solutions engineer; joining alone did not disclose it.",
+      as: "priya"
+    },
+    {
+      kind: "create_substream",
+      id: "proposal-integration-open",
+      room: "acme-proposal",
+      substream: "integration-requirements",
+      title: "Integration requirements",
+      participants: [
+        "marcus",
+        "presenter"
+      ],
+      startingContext: "Validate Acme’s NetSuite order integration. Growth alone is insufficient; Integration is $6k/year. New-order and order-update flows still need validation.",
+      as: "priya"
+    },
+    {
+      kind: "message",
+      id: "proposal-integration-check",
+      room: "acme-proposal",
+      text: "We need a sample new order and an update. No custom connector promised; use the supported NetSuite connector.",
+      as: "priya",
+      substream: "integration-requirements"
+    },
+    {
+      kind: "message",
+      id: "proposal-integration-share",
+      room: "acme-proposal",
+      text: "Sharing the breakout conclusion here: use the supported NetSuite connector; validate a new order and an update. We have not confirmed timing.",
+      as: "priya"
+    },
+    {
+      kind: "message",
+      id: "proposal-revise",
+      room: "acme-proposal",
+      text: "Revise the proposal using the technical note. Make the changed assumption clear.",
+      as: "marcus",
+      assistant: {
+        kind: "say",
+        text: "**Changed assumption:** orders live in NetSuite, not the CRM.\n\n**Draft v2:** Growth $24k + Integration $6k = $30k/year. Growth alone is insufficient. Validate both order flows before committing timing."
+      }
+    },
+    {
+      kind: "upload",
+      id: "proposal-v2",
+      room: "acme-proposal",
+      title: "Acme proposal — v2",
+      fileName: "proposal-v2.md",
+      mimeType: "text/markdown",
+      content: "# Acme proposal — v2\n\nReplaces v1 for internal review.\n\nRecommendation: Growth ($24,000/year) plus Integration ($6,000/year), totaling $30,000/year. Increase from v1: $6,000/year.\n\nChanged assumption: NetSuite is the order system of record; CRM sync alone does not satisfy the requirement. Source: explicitly shared Acme integration note.\n\nNext: validate a new order and an order update with the solutions engineer. Scope and launch timing remain uncommitted. Internal draft; not sent.",
+      as: "marcus"
+    },
+    {
+      kind: "message",
+      id: "proposal-presenter",
+      room: "acme-proposal",
+      text: "@{presenter}, v2 now covers NetSuite at $30k/year. The customer draft is ready for review; technical validation is the remaining step.",
+      as: "marcus"
+    }
   ],
-  // The presenter's view, which is the demo. All three rooms are
-  // workspace-scoped, so all three are offered; the presenter is seated in the
-  // renewal room only, by Priya's mention, and has opened nothing — so that
-  // room is unseen and mentioned, the other two are merely unread, and the home
-  // screen says one thing is waiting on them, for the mention.
-  //
-  // The placement substream is deliberately absent, and its absence is the
-  // point: a private child takes no directory row and contributes nothing to
-  // attention, so the presenter's home screen still counts one. They find it by
-  // opening the press-release room, where they are a participant of the child
-  // without being a participant of its parent.
-  expect: [{
-    viewer: "presenter",
-    attention: { waitingForYou: 1, waitingReason: "mentioned" },
-    rooms: {
-      "decision-memo": { unseen: false, hasUnread: true, mentioned: false },
-      "northgate-renewal": { unseen: true, hasUnread: true, mentioned: true },
-      "press-release": { unseen: false, hasUnread: true, mentioned: false },
-    },
-  }],
+  expect: [
+    {
+      viewer: "presenter",
+      attention: {
+        waitingForYou: 1,
+        waitingReason: "mentioned"
+      },
+      rooms: {
+        "vendor-selection": {
+          unseen: false,
+          hasUnread: true,
+          mentioned: false
+        },
+        "acme-review": {
+          unseen: false,
+          hasUnread: true,
+          mentioned: false
+        },
+        "sales-reviews": {
+          unseen: false,
+          hasUnread: true,
+          mentioned: false
+        },
+        "acme-proposal": {
+          unseen: true,
+          hasUnread: true,
+          mentioned: true
+        }
+      }
+    }
+  ]
 } satisfies z.input<typeof DemoPackSchema>;
