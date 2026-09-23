@@ -1,9 +1,11 @@
 import { fireEvent, render } from '@testing-library/react';
 import { useRef } from 'react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { layoutKey, readArtifactPanel, readLayout, useSemanticScroll, writeLayout } from './desktop-layout';
 
 const key = layoutKey('org', 'person', 'channels-scroll:space');
+let originalScrollIntoView: PropertyDescriptor | undefined;
+let scrollIntoView: ReturnType<typeof vi.fn>;
 
 function List({ ids, onMissing }: { ids: string[]; onMissing?: () => void }): React.JSX.Element {
   const ref = useRef<HTMLElement | null>(null);
@@ -16,10 +18,20 @@ beforeEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+  originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+  scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    value: scrollIntoView, configurable: true, writable: true,
+  });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
+  else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
 });
 
 it('returns to the first visible row after the order changes', () => {
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
   const first = render(<List ids={['a', 'b', 'c']} />);
   const rows = first.container.querySelectorAll<HTMLElement>('[data-layout-id]');
   vi.spyOn(first.container.querySelector('nav')!, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
@@ -29,16 +41,9 @@ it('returns to the first visible row after the order changes', () => {
   expect(readLayout(key)).toBe('b');
   first.unmount();
 
-  const scrollIntoView = vi.fn();
-  const original = HTMLElement.prototype.scrollIntoView;
-  HTMLElement.prototype.scrollIntoView = scrollIntoView;
-  try {
-    render(<List ids={['c', 'a', 'b']} />);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView.mock.instances[0]).toHaveAttribute('data-layout-id', 'b');
-  } finally {
-    HTMLElement.prototype.scrollIntoView = original;
-  }
+  render(<List ids={['c', 'a', 'b']} />);
+  expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  expect(scrollIntoView.mock.instances[0]).toHaveAttribute('data-layout-id', 'b');
 });
 
 it('asks for a missing row only when the loaded directory changes', () => {

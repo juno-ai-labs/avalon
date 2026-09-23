@@ -22,7 +22,9 @@ Channel row in local storage. The row key is an ID, so a reordered directory
 opens at the same object instead of yesterday's pixel offset. Scroll events are
 coalesced into one layout read per animation frame. A missing saved Channel row
 asks for the next directory page once per loaded list revision, so a failed
-page does not start a retry loop. Channel position
+page does not start a retry loop. The opening Channel page exposes its cursor
+in the same render as its rows, so a saved row beyond page one can request it
+before passive effects run. Channel position
 is scoped to the selected Space. The selected artifact panel is scoped to a
 Channel and Breakout address; its resource is looked up in the freshly loaded
 conversation before the panel is drawn.
