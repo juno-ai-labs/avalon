@@ -114,6 +114,21 @@ describe('SpacesSidebar', () => {
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('1 channel');
   });
 
+  it('omits the private scope subtitle from personal Space rows and previews', async () => {
+    renderSidebar({
+      collapsed: true,
+      spaces: [{ ...space('personal', 'Personal', 0), scope: 'personal', reach: 'participant' }],
+    });
+    const row = screen.getByRole('link', { name: 'Personal' });
+    expect(row).not.toHaveAccessibleDescription('Private space');
+    expect(within(row).queryByText('Private space')).not.toBeInTheDocument();
+
+    fireEvent.focus(row);
+    const preview = await screen.findByRole('tooltip');
+    expect(preview).toHaveTextContent('Personal');
+    expect(preview).not.toHaveTextContent('Private space');
+  });
+
   it('draws an attention count on a Space row and omits zero', () => {
     renderSidebar({
       spaces: [
