@@ -208,6 +208,10 @@ async function browserOnboardingSession(
 let browserSidekicksWindow: Window | null = null;
 
 const browserBridge: RallyDesktopBridge = {
+  async listLocalClaudeSessions() { return []; },
+  async readLocalClaudeSession() { throw new Error('Local Claude sessions are available in the desktop app.'); },
+  async listLocalClaudeCodeSessions() { return []; },
+  async readLocalClaudeCodeSession() { throw new Error('Local Claude Code sessions are available in the desktop app.'); },
   async getRuntimeConfig() {
     return {
       appVersion: 'development',

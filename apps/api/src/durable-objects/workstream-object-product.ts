@@ -1,6 +1,6 @@
 import { createAccessContext, requireAuthorizedRead } from "../services/authorization-service";
 import { stableUuid } from "../lib/stable-uuid";
-import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
@@ -1113,6 +1113,7 @@ export class WorkstreamObjectProductService {
     conversation: PreparedConversation,
     transcriptMessages: Awaited<ReturnType<WorkstreamTranscriptStorage["prepareConversation"]>>,
     attachments: AttachmentResourceRow[], userId: string, now: number,
+    recordSource = true,
   ): void {
     for (const message of transcriptMessages) this.transcript.appendPreparedParticipantMessage(message);
       transcriptMessages.forEach((turn, turnIndex) => (conversation.messages[turnIndex]?.attachmentIds ?? []).forEach((resourceId, position) => {
@@ -1143,6 +1144,160 @@ export class WorkstreamObjectProductService {
         );
       }));
     for (const turn of transcriptMessages) this.markAttachmentReleaseOwnedByProjection(turn.input.turnId);
+    const imports = conversation.messages.flatMap((message) => {
+      const parsed = ImportedMessageProvenanceSchema.safeParse(message.structuredContent);
+      return parsed.success ? [parsed.data] : [];
+    });
+    if (recordSource && imports.length === conversation.messages.length
+      && imports.every((result) => result.source.sessionId && result.sourceMessageId && result.sourceRevision)) {
+      const source = imports[0]!;
+      if (imports.some((result) => result.source.provider !== source.source.provider
+        || result.source.sessionId !== source.source.sessionId
+        || result.source.url !== source.source.url)) {
+        throw new ApiError(422, "session_import_source_mismatch", "Imported messages must belong to one source session");
+      }
+      const ids = imports.map((result) => result.sourceMessageId!);
+      if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
+      this.storage.sql.exec(`INSERT INTO imported_session_sources(id, provider, session_id, source_url, created_at, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?)`, source.source.provider, source.source.sessionId!, source.source.url, now, now);
+      imports.forEach((result, index) => this.storage.sql.exec(`INSERT INTO imported_session_messages
+        (source_message_id, source_revision, source_position, latest_turn_id, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        result.sourceMessageId!, result.sourceRevision!, index, transcriptMessages[index]!.input.turnId, now));
+    }
+  }
+
+  /** The import checkpoint belongs to this conversation, never to its regional directory row. */
+  async importedSessionSource(auth: AuthContext): Promise<{ provider: string; sessionId: string; url: string | null } | null> {
+    await this.authorize(auth);
+    const row = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
+      `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
+    return row ? { provider: row.provider, sessionId: row.session_id, url: row.source_url } : null;
+  }
+
+  async importedSessionCheckpoint(auth: AuthContext): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
+    await this.authorize(auth);
+    return this.storage.sql.exec<{ source_message_id: string; source_revision: string }>(
+      `SELECT source_message_id, source_revision FROM imported_session_messages`).toArray()
+      .map((row) => ({ sourceMessageId: row.source_message_id, sourceRevision: row.source_revision }));
+  }
+
+  /** Append only source changes. Rally-authored turns can occupy any positions between imports. */
+  async updateImportedSession(auth: AuthContext, operationId: string, rawConversation: PreparedConversation): Promise<{
+    added: number; updated: number;
+  }> {
+    const conversation = PreparedConversationSchema.parse(rawConversation);
+    const root = await this.authorize(auth);
+    const source = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
+      `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
+    if (!source) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
+    const entries = conversation.messages.map((message, position) => ({
+      message, position, provenance: ImportedMessageProvenanceSchema.parse(message.structuredContent),
+    }));
+    if (entries.some(({ provenance }) => provenance.source.provider !== source.provider
+      || provenance.source.sessionId !== source.session_id
+      || provenance.source.url !== source.source_url
+      || !provenance.sourceMessageId || !provenance.sourceRevision)) {
+      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this channel");
+    }
+    const ids = entries.map(({ provenance }) => provenance.sourceMessageId!);
+    if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
+    const requestHash = workstreamImportHash({ source, messages: entries.map(({ provenance }) => ({
+      sourceMessageId: provenance.sourceMessageId, sourceRevision: provenance.sourceRevision,
+    })) });
+    const receipt = () => first(this.storage.sql.exec<{ request_hash: string; added_count: number; updated_count: number }>(
+      `SELECT request_hash, added_count, updated_count FROM imported_session_update_receipts WHERE operation_id = ?`, operationId));
+    const replay = receipt();
+    if (replay) {
+      if (replay.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
+      return { added: Number(replay.added_count), updated: Number(replay.updated_count) };
+    }
+    const previous = new Map(this.storage.sql.exec<{ source_message_id: string; source_revision: string; source_position: number; latest_turn_id: string }>(
+      `SELECT source_message_id, source_revision, source_position, latest_turn_id FROM imported_session_messages`).toArray()
+      .map((row) => [row.source_message_id, row]));
+    const checkpointUnchanged = (): boolean => {
+      const current = this.storage.sql.exec<{ source_message_id: string; source_revision: string; source_position: number; latest_turn_id: string }>(
+        `SELECT source_message_id, source_revision, source_position, latest_turn_id FROM imported_session_messages`).toArray();
+      return current.length === previous.size && current.every((row) => {
+        const old = previous.get(row.source_message_id);
+        return old?.source_revision === row.source_revision
+          && old.source_position === row.source_position && old.latest_turn_id === row.latest_turn_id;
+      });
+    };
+    if ([...previous.keys()].some((id) => !ids.includes(id))
+      || entries.some(({ position, provenance }) => {
+        const old = previous.get(provenance.sourceMessageId!);
+        return old && Number(old.source_position) !== position;
+      })) {
+      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new channel");
+    }
+    const changes = entries.filter(({ provenance }) => previous.get(provenance.sourceMessageId!)?.source_revision !== provenance.sourceRevision);
+    const added = changes.filter(({ provenance }) => !previous.has(provenance.sourceMessageId!)).length;
+    const updated = changes.length - added;
+    if (changes.length === 0) {
+      let result = { added: 0, updated: 0 };
+      this.storage.transactionSync(() => {
+        const raced = receipt();
+        if (raced) {
+          if (raced.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
+          result = { added: Number(raced.added_count), updated: Number(raced.updated_count) };
+          return;
+        }
+        if (!checkpointUnchanged()) throw new ApiError(409, "session_import_update_raced", "The source was updated concurrently; retry the import");
+        this.storage.sql.exec(`INSERT INTO imported_session_update_receipts
+          (operation_id, request_hash, added_count, updated_count, missing_count, committed_at) VALUES (?, ?, 0, 0, 0, ?)`,
+          operationId, requestHash, Date.now());
+      });
+      return result;
+    }
+    const now = Date.now();
+    const delta: PreparedConversation = { messages: changes.map(({ message, provenance }) => ({
+      ...message,
+      structuredContent: { ...provenance,
+        ...(previous.get(provenance.sourceMessageId!) ? { supersedesTurnId: previous.get(provenance.sourceMessageId!)!.latest_turn_id } : {}),
+      },
+    })) };
+    const firstTurnId = await stableUuid(["session-import-update", root.workstream_key, operationId]);
+    const names = await this.messageUsers([auth.userId]);
+    const person = names.get(auth.userId);
+    const prepared = await this.prepareConversationMaterialization({
+      conversation: delta, operationId, firstTurnId, clientMessageId: operationId,
+      userId: auth.userId,
+      snapshot: { displayName: person?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME, avatarUrl: person?.avatar_url ?? null },
+      now, workspaceId: auth.workspaceId, workstreamId: root.workstream_key,
+    });
+    try {
+      this.storage.transactionSync(() => {
+        const racedReceipt = receipt();
+        if (racedReceipt) {
+          if (racedReceipt.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
+          return;
+        }
+        if (!checkpointUnchanged()) throw new ApiError(409, "session_import_update_raced", "The source was updated concurrently; retry the import");
+        const currentRoot = this.root();
+        prepared.turns.forEach((turn, index) => {
+          turn.input.messageSequenceNumber = currentRoot.next_sequence_number + index;
+          turn.input.attentionOrdinal = currentRoot.next_attention_ordinal + index;
+        });
+        this.commitConversationPreparation(operationId);
+        this.commitPreparedConversation(prepared.conversation, prepared.turns, prepared.attachments, auth.userId, now, false);
+        changes.forEach(({ position, provenance }, index) => this.storage.sql.exec(`INSERT INTO imported_session_messages
+          (source_message_id, source_revision, source_position, latest_turn_id, updated_at) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(source_message_id) DO UPDATE SET source_revision = excluded.source_revision,
+            source_position = excluded.source_position, latest_turn_id = excluded.latest_turn_id, updated_at = excluded.updated_at`,
+          provenance.sourceMessageId!, provenance.sourceRevision!, position, prepared.turns[index]!.input.turnId, now));
+        this.storage.sql.exec(`UPDATE workstream SET next_sequence_number = next_sequence_number + ?,
+          next_attention_ordinal = next_attention_ordinal + ?, last_people_activity_at = ?, updated_at = ? WHERE id = 1`,
+          changes.length, changes.length, now, now);
+        this.storage.sql.exec(`INSERT INTO imported_session_update_receipts
+          (operation_id, request_hash, added_count, updated_count, missing_count, committed_at) VALUES (?, ?, ?, ?, 0, ?)`,
+          operationId, requestHash, added, updated, now);
+      });
+    } catch (error) {
+      await this.failConversationPreparation(operationId);
+      throw error;
+    }
+    await this.enqueueDirectorySnapshot();
+    return { added, updated };
   }
 
   /** Internal coordinator operation, valid only for a freshly provisioned conversation. */
