@@ -1,19 +1,19 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  compareVersions,
   loadReleaseDirectory,
   normalizeReleasePrefix,
-  parseMacUpdateFeed,
   releaseContentType,
-  sha512File,
   verifyFeedArtifact,
 } from '../../desktop/scripts/release-lib.mjs';
-import { purgeCloudflareUrls, verifyPublicReleaseArtifactHash } from '../../desktop/scripts/release-cache.mjs';
+import {
+  purgeCloudflarePrefix,
+  verifyPublicReleaseArtifactHash,
+} from '../../desktop/scripts/release-cache.mjs';
+import { publishSidelineRelease } from './release-publication.mjs';
 
 const sidelineDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(sidelineDirectory, '../..');
@@ -44,6 +44,8 @@ function publicUrl(name) {
   }
   return new URL(parts.map(encodeURIComponent).join('/'), origin).toString();
 }
+
+const channelPrefixUrl = new URL(`${prefix}/`, origin).toString();
 
 function objectUrl(key) {
   const encoded = key.split('/').map(encodeURIComponent).join('/');
@@ -96,54 +98,14 @@ async function put(name, path, cacheControl, disposition) {
   await run('pnpm', args);
 }
 
-const liveFeedText = await remoteText(`${prefix}/latest-mac.yml`);
-const liveFeed = liveFeedText ? parseMacUpdateFeed(liveFeedText) : undefined;
-if (liveFeed && compareVersions(liveFeed.version, release.feed.version) > 0) {
-  throw new Error(`Refusing to replace Sideline ${liveFeed.version} with older ${release.feed.version}`);
-}
-
-if (liveFeed?.version === release.feed.version) {
-  const localFeedText = await readFile(release.manifestPath, 'utf8');
-  if (liveFeedText !== localFeedText) {
-    throw new Error(`Published Sideline ${release.feed.version} does not match this build`);
-  }
-  for (const file of liveFeed.files) {
-    await verifyPublicReleaseArtifactHash({ expectedHash: file.sha512, url: publicUrl(file.url) });
-  }
-  const liveDmg = liveFeed.files.find((file) => file.url.endsWith('.dmg'));
-  if (!liveDmg) throw new Error('Committed Sideline update feed is missing its DMG');
-  await verifyPublicReleaseArtifactHash({ expectedHash: liveDmg.sha512, url: publicUrl('Sideline.dmg') });
-  console.log(`Sideline ${release.feed.version} is already published; verified its committed feed`);
-} else {
-  for (const artifact of release.artifacts) {
-    if (!artifact.name.includes(release.feed.version)) throw new Error(`Refusing unversioned artifact ${artifact.name}`);
-    const key = `${prefix}/${artifact.name}`;
-    const [localHash, existingHash] = await Promise.all([sha512File(artifact.path), remoteSha512(key)]);
-    if (existingHash !== localHash) {
-      // No live manifest names this candidate version yet, so a mismatched key
-      // is debris from an interrupted attempt rather than an immutable release.
-      await put(
-        artifact.name,
-        artifact.path,
-        'public, max-age=31536000, immutable',
-        `attachment; filename="${basename(artifact.name)}"`,
-      );
-    }
-    await verifyPublicReleaseArtifactHash({ expectedHash: localHash, url: publicUrl(artifact.name) });
-  }
-
-  const canonicalDmg = release.artifacts.find((artifact) => artifact.name.endsWith('.dmg'));
-  if (!canonicalDmg) throw new Error('Sideline release is missing its DMG');
-  const dmgHash = await sha512File(canonicalDmg.path);
-  await put('Sideline.dmg', canonicalDmg.path, 'public, max-age=3600', 'attachment; filename="Sideline.dmg"');
-  await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('Sideline.dmg')] });
-  await verifyPublicReleaseArtifactHash({ expectedHash: dmgHash, url: publicUrl('Sideline.dmg') });
-
-  // The manifest is the commit point and moves only after every byte it names,
-  // plus the recovery installer, is publicly readable with the expected hash.
-  await put('latest-mac.yml', release.manifestPath, 'no-cache, no-store, must-revalidate');
-  await purgeCloudflareUrls({ apiToken, zoneId, urls: [publicUrl('latest-mac.yml')] });
-  const feedHash = await sha512File(release.manifestPath);
-  await verifyPublicReleaseArtifactHash({ expectedHash: feedHash, url: publicUrl('latest-mac.yml') });
-  console.log(`Published Sideline ${release.feed.version} at ${publicUrl('latest-mac.yml')}`);
-}
+await publishSidelineRelease({
+  bucket,
+  prefix,
+  publicUrl,
+  purgeChannel: () => purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl }),
+  put,
+  release,
+  remoteSha512,
+  remoteText,
+  verifyPublic: verifyPublicReleaseArtifactHash,
+});
