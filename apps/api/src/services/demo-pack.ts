@@ -938,202 +938,192 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
  * becomes owned follow-up. The last main-channel beat makes Acme proposal the
  * default entry. Prepared history is illustrative, and no seeded connector
  * delivery is claimed. Version changes require a fresh demo Organization.
+ * Every assistant turn uses only facts explicitly shared in its conversation;
+ * seeded runs make no tool calls and cannot fetch private or external context.
  * Keep this literal unparsed at module load: a bad pack must not stop the API.
  */
 export const PLACEHOLDER_DEMO_PACK = {
   version: "multiplayer-2026-09",
-  roles: [
-    "presenter",
-    "priya",
-    "marcus",
-    "dana"
-  ],
+  // Stable role tokens identify parts; roleLabels describes their current jobs.
+  roles: ["presenter", "priya", "marcus", "dana"],
   roleLabels: {
     priya: "Solutions engineer / IT",
     marcus: "Sales lead / business owner",
-    dana: "Manager / finance approver"
+    dana: "Manager / finance approver",
   },
   spaces: {
     acme: { as: "marcus", name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" },
     vendors: { as: "marcus", name: "Vendor selection: Customer support platform", iconKey: "list-checks", colorKey: "purple" },
-    sales: { as: "marcus", name: "Sales", iconKey: "chart-no-axes-combined", colorKey: "green" }
+    sales: { as: "marcus", name: "Sales", iconKey: "chart-no-axes-combined", colorKey: "green" },
   },
   steps: [
     {
       kind: "create_workstream",
       id: "vendor-open",
       room: "vendor-selection",
+      as: "marcus",
       title: "Evaluation & decision",
       space: "vendors",
-      participants: [
-        "priya"
-      ],
+      participants: ["priya"],
       scope: "workspace",
       openingMessage: "We need a support platform for 25 agents: SSO, EU data hosting and migration included. Budget is $45k in year one. ClearDesk: $24k + $6k setup, eight weeks. HelpHarbor: $30k + $9k, three weeks. SupportLane: $27k + $15k, six weeks. All meet the requirements. Start with cost.",
       assistant: {
         kind: "say",
-        text: "**Provisional choice: ClearDesk.** $30k in year one, versus HelpHarbor at $39k and SupportLane at $42k. The trade-off is eight weeks to launch."
+        text: "**Provisional choice: ClearDesk.** $30k in year one, versus HelpHarbor at $39k and SupportLane at $42k. The trade-off is eight weeks to launch.",
       },
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "vendor-requirements",
       room: "vendor-selection",
+      as: "marcus",
       title: "Requirements & budget",
       fileName: "vendor-requirements.md",
       mimeType: "text/markdown",
       content: "# Requirements & budget\n\nFictional evaluation. 25 support agents. Required: SSO, EU data hosting, existing-ticket migration. First-year cash budget: $45,000 including setup. Initial preference: lowest qualifying first-year cost. No deadline agreed yet.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "vendor-cleardesk",
       room: "vendor-selection",
+      as: "marcus",
       title: "ClearDesk — sample proposal",
       fileName: "vendor-cleardesk.md",
       mimeType: "text/markdown",
       content: "# ClearDesk — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $24,000. One-time implementation: $6,000. Year-one total: $30,000. Implementation: 8 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "vendor-helpharbor",
       room: "vendor-selection",
+      as: "marcus",
       title: "HelpHarbor — sample proposal",
       fileName: "vendor-helpharbor.md",
       mimeType: "text/markdown",
       content: "# HelpHarbor — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $30,000. One-time implementation: $9,000. Year-one total: $39,000. Implementation: 3 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "vendor-supportlane",
       room: "vendor-selection",
+      as: "marcus",
       title: "SupportLane — sample proposal",
       fileName: "vendor-supportlane.md",
       mimeType: "text/markdown",
       content: "# SupportLane — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $27,000. One-time implementation: $15,000. Year-one total: $42,000. Implementation: 6 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "vendor-comparison-v1",
       room: "vendor-selection",
+      as: "marcus",
       title: "Vendor comparison — v1",
       fileName: "vendor-comparison-v1.md",
       mimeType: "text/markdown",
       content: "# Vendor comparison — v1\n\nProvisional: ClearDesk, lowest qualifying cost.\n\n| Vendor | Annual | Setup | Year one | Launch |\n| --- | ---: | ---: | ---: | --- |\n| ClearDesk | $24,000 | $6,000 | $30,000 | 8 weeks |\n| HelpHarbor | $30,000 | $9,000 | $39,000 | 3 weeks |\n| SupportLane | $27,000 | $15,000 | $42,000 | 6 weeks |\n\nDecision pending reviewer criteria.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "vendor-invite",
       room: "vendor-selection",
+      as: "marcus",
       text: "@{dana}, can you make the call? The cheapest option takes eight weeks.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "vendor-criteria",
       room: "vendor-selection",
-      text: "We must launch within four weeks. Speed matters more than the $9k difference. Keep the $45k ceiling.",
       as: "dana",
+      text: "We must launch within four weeks. Speed matters more than the $9k difference. Keep the $45k ceiling.",
       assistant: {
         kind: "say",
-        text: "**Recommendation changes to HelpHarbor.** Three weeks and $39k meet both constraints, leaving $6k. ClearDesk saves $9k but misses the deadline; SupportLane is slower and costs $3k more. Confirm setup is included before approval."
-      }
+        text: "**Recommendation changes to HelpHarbor.** Three weeks and $39k meet both constraints, leaving $6k. ClearDesk saves $9k but misses the deadline; SupportLane is slower and costs $3k more. Confirm setup is included before approval.",
+      },
     },
     {
       kind: "create_substream",
       id: "vendor-costs-open",
       room: "vendor-selection",
+      as: "dana",
       substream: "implementation-costs",
       title: "Implementation costs",
-      participants: [
-        "priya",
-        "presenter"
-      ],
+      participants: ["priya", "presenter"],
       startingContext: "HelpHarbor is the only quote within four weeks. Confirm the $39k first-year total includes migration before approval.",
-      as: "dana"
     },
     {
       kind: "message",
       id: "vendor-it",
       room: "vendor-selection",
-      text: "The $9k setup includes ticket migration and SSO. IT can staff the three-week plan; internal time is outside the cash budget.",
       as: "priya",
-      substream: "implementation-costs"
+      text: "The $9k setup includes ticket migration and SSO. IT can staff the three-week plan; internal time is outside the cash budget.",
+      substream: "implementation-costs",
     },
     {
       kind: "message",
       id: "vendor-finance",
       room: "vendor-selection",
-      text: "$30k + $9k = $39k. That leaves $6k against our $45k cash ceiling.",
       as: "dana",
-      substream: "implementation-costs"
+      text: "$30k + $9k = $39k. That leaves $6k against our $45k cash ceiling.",
+      substream: "implementation-costs",
     },
     {
       kind: "message",
       id: "vendor-costs-shared",
       room: "vendor-selection",
+      as: "priya",
       text: "Sharing the cost check: setup includes SSO and migration. IT can staff three weeks. $39k is the full first-year cash quote; internal time is separate.",
-      as: "priya"
     },
     {
       kind: "upload",
       id: "vendor-comparison-v2",
       room: "vendor-selection",
+      as: "marcus",
       title: "Vendor comparison — v2",
       fileName: "vendor-comparison-v2.md",
       mimeType: "text/markdown",
-      content: "# Vendor comparison — v2\n\nUpdated criteria: required capabilities first, launch within four weeks, then first-year cash cost at or below $45,000.\n\n| Vendor | Year one | Launch | Result |\n| --- | ---: | --- | --- |\n| ClearDesk | $30,000 | 8 weeks | Misses deadline |\n| HelpHarbor | $39,000 | 3 weeks | Recommended; $6,000 headroom |\n| SupportLane | $42,000 | 6 weeks | Misses deadline |\n\nChanged from v1: speed is now a hard constraint. HelpHarbor costs $9,000 more than ClearDesk and launches five weeks sooner. Setup includes SSO and migration; IT confirmed staffing. Human approval recorded in the Channel.",
-      as: "marcus"
+      content: "# Vendor comparison — v2\n\nUpdated criteria: required capabilities first, launch within four weeks, then first-year cash cost at or below $45,000.\n\n| Vendor | Year one | Launch | Result |\n| --- | ---: | --- | --- |\n| ClearDesk | $30,000 | 8 weeks | Misses deadline |\n| HelpHarbor | $39,000 | 3 weeks | Recommended; $6,000 headroom |\n| SupportLane | $42,000 | 6 weeks | Misses deadline |\n\nChanged from v1: speed is now a hard constraint. HelpHarbor costs $9,000 more than ClearDesk and launches five weeks sooner. Setup includes SSO and migration; IT confirmed staffing. Pending human approval in the Channel.",
     },
     {
       kind: "message",
       id: "vendor-approval",
       room: "vendor-selection",
+      as: "dana",
       text: "Approved: HelpHarbor at $39k in year one. @{marcus}, own procurement; @{priya}, own the migration kickoff. This approves the choice, not a signed contract.",
-      as: "dana"
     },
     {
       kind: "create_workstream",
       id: "review-open",
       room: "acme-review",
+      as: "marcus",
       title: "Demo & follow-up",
       space: "acme",
-      participants: [
-        "priya",
-        "dana"
-      ],
+      participants: ["priya", "dana"],
       scope: "workspace",
       openingMessage: "Acme demo recap, from a sample Granola-style note: Maya Chen liked the workflow but asked whether NetSuite orders sync automatically. We left that unresolved on the call. Review guide: evidence, open concern, owner, next step.",
       assistant: {
         kind: "say",
-        text: "**Needs follow-up:** NetSuite sync is unresolved in this call record. Name a technical owner and a validation step before calling the demo a success."
+        text: "**Needs follow-up:** NetSuite sync is unresolved in this call record. Name a technical owner and a validation step before calling the demo a success.",
       },
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "review-transcript",
       room: "acme-review",
+      as: "marcus",
       title: "Acme demo call — sample transcript",
       fileName: "review-transcript.md",
       mimeType: "text/markdown",
       content: "# Acme demo call — sample transcript\n\nFictional Granola-style note; no live Granola import. Folder example: Demo Calls.\n\nMaya Chen, Acme operations: The handoff looks useful. Do NetSuite orders sync automatically?\nSales: Let us verify the connector and get back to you.\nMaya: We need order updates without CSV exports.\nSales: Understood. We will follow up.\n\nCall ends with connector availability unresolved. Off-call conversations are not in this note.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "review-guide",
       room: "acme-review",
+      as: "marcus",
       title: "Demo Call Review Guide",
       fileName: "review-guide.md",
       mimeType: "text/markdown",
       content: "# Demo Call Review Guide\n\nEvaluate only supplied evidence. Separate facts, unknowns and decisions. State the customer concern, evidence, owner and next action. Accept explicitly shared off-call context as an attributed correction. Never infer agreement from silence. Draft follow-up; do not send it. Distinguish a sample distribution record from a successful connector receipt.",
-      as: "marcus"
     },
     {
       kind: "sidekick",
@@ -1147,115 +1137,112 @@ export const PLACEHOLDER_DEMO_PACK = {
       schedule: {
         rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
         timezone: "America/Los_Angeles",
-        summary: "Weekdays at 9:00am Pacific"
+        summary: "Weekdays at 9:00am Pacific",
       },
       firstRun: {
         kind: "say",
-        text: "**Sample review — Acme:** NetSuite sync was unresolved in the supplied call excerpt. Technical validation needs an owner.\n\n**Distribution draft:** Acme needs a connector check before follow-up. No Drive file or Slack message was sent."
-      }
+        text: "**Sample review — Acme:** NetSuite sync was unresolved in the supplied call excerpt. Technical validation needs an owner.\n\n**Distribution draft:** Acme needs a connector check before follow-up. No Drive file or Slack message was sent.",
+      },
     },
     {
       kind: "message",
       id: "review-sample-share",
       room: "acme-review",
+      as: "marcus",
       text: "Sample Sidekick review: “NetSuite sync unresolved; technical owner needed.” Distribution preview: Drive / Demo Reviews and Slack #demos. Nothing was delivered externally.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "review-v1",
       room: "acme-review",
+      as: "marcus",
       title: "Acme demo review — v1",
       fileName: "review-v1.md",
       mimeType: "text/markdown",
       content: "# Acme demo review — v1\n\nSample Sidekick output.\n\nConcern: automatic NetSuite order sync.\nEvidence: unresolved in the demo transcript.\nStatus: technical owner and validation step needed.\nDistribution: preview only; no Drive write or Slack post.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "review-context",
       room: "acme-review",
-      text: "After the call, Maya confirmed NetSuite is mandatory. @{priya} already verified the connector needs our Integration package. That context was missing from the transcript.",
       as: "marcus",
+      text: "After the call, Maya confirmed NetSuite is mandatory. @{priya} already verified the connector needs our Integration package. That context was missing from the transcript.",
       assistant: {
         kind: "say",
-        text: "**Correction:** package availability is now known; customer validation is still open. Replace “research connector availability” with “validate Acme’s order flow.” The proposal needs the Integration package."
-      }
+        text: "**Correction:** package availability is now known; customer validation is still open. Replace “research connector availability” with “validate Acme’s order flow.” The proposal needs the Integration package.",
+      },
     },
     {
       kind: "message",
       id: "review-manager",
       room: "acme-review",
+      as: "dana",
       text: "Change one thing: do not promise a launch date yet. @{marcus}, own the customer reply tomorrow; @{priya}, validate the order flow first.",
-      as: "dana"
     },
     {
       kind: "upload",
       id: "review-v2",
       room: "acme-review",
+      as: "marcus",
       title: "Acme demo review — v2",
       fileName: "review-v2.md",
       mimeType: "text/markdown",
       content: "# Acme demo review — v2\n\nCorrected from v1 using explicitly shared off-call context: NetSuite is mandatory and the connector requires the Integration package.\n\nResolved: package availability. Still open: Acme order-flow validation. Sales owns tomorrow’s reply; solutions engineering owns the validation. Manager requested no launch-date promise. Draft only; no external distribution.",
-      as: "marcus"
     },
     {
       kind: "create_substream",
       id: "review-response-open",
       room: "acme-review",
+      as: "marcus",
       substream: "customer-response",
       title: "Customer response",
-      participants: [
-        "priya",
-        "dana",
-        "presenter"
-      ],
+      participants: ["priya", "dana", "presenter"],
       startingContext: "Draft the Acme reply. NetSuite needs the Integration package; order-flow validation is open. Do not promise a launch date or send the message.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "review-draft",
       room: "acme-review",
-      text: "Draft the reply with the package correction and a validation step.",
       as: "marcus",
+      text: "Draft the reply with the package correction and a validation step.",
       assistant: {
         kind: "say",
-        text: "Hi Maya — NetSuite order sync requires the Integration package, so we are updating the proposal. Could you share one example order flow for our solutions engineer to validate? We will confirm scope and timing after that check."
+        text: "Hi Maya — NetSuite order sync requires the Integration package, so we are updating the proposal. Could you share one example order flow for our solutions engineer to validate? We will confirm scope and timing after that check.",
       },
-      substream: "customer-response"
+      substream: "customer-response",
     },
     {
       kind: "message",
       id: "review-draft-check",
       room: "acme-review",
-      text: "Yes. Ask for an order update as well as a new order; both paths need validation.",
       as: "priya",
-      substream: "customer-response"
+      text: "Yes. Ask for an order update as well as a new order; both paths need validation.",
+      substream: "customer-response",
     },
     {
       kind: "upload",
       id: "review-follow-up-draft",
       room: "acme-review",
+      as: "marcus",
       title: "Acme follow-up — draft",
       fileName: "review-follow-up-draft.md",
       mimeType: "text/markdown",
       content: "# Acme follow-up — draft\n\nHi Maya,\n\nNetSuite order sync requires the Integration package, so we are updating the proposal. Could you share an example new order and an order update for our solutions engineer to validate? We will confirm scope and timing after that check.\n\nStatus: draft, not sent. Sales owns the reply; solutions engineering owns validation.",
-      as: "marcus",
-      substream: "customer-response"
+      substream: "customer-response",
     },
     {
       kind: "message",
       id: "review-next-step",
       room: "acme-review",
-      text: "I will send the reviewed draft tomorrow after the order-flow check. It is still a draft.",
       as: "marcus",
-      substream: "customer-response"
+      text: "I will send the reviewed draft tomorrow after the order-flow check. It is still a draft.",
+      substream: "customer-response",
     },
     {
       kind: "create_workstream",
       id: "sales-open",
       room: "sales-reviews",
+      as: "marcus",
       title: "Demo reviews",
       space: "sales",
       participants: [],
@@ -1263,14 +1250,14 @@ export const PLACEHOLDER_DEMO_PACK = {
       openingMessage: "Acme review is in Customer: Acme → Demo & follow-up. Correction: NetSuite needs the Integration package. I own tomorrow’s reply; solutions engineering owns validation. Draft is in Customer response. No launch date promised.",
       assistant: {
         kind: "say",
-        text: "**Next action:** finish the Acme order-flow check, then use the customer-response draft. The detailed review stays with the account."
+        text: "**Next action:** finish the Acme order-flow check, then use the customer-response draft. The detailed review stays with the account.",
       },
-      as: "marcus"
     },
     {
       kind: "create_workstream",
       id: "proposal-open",
       room: "acme-proposal",
+      as: "marcus",
       title: "Proposal & solution design",
       space: "acme",
       participants: [],
@@ -1278,141 +1265,137 @@ export const PLACEHOLDER_DEMO_PACK = {
       openingMessage: "Continuing my earlier proposal work here (sample history). Acme needs order handoffs for 40 staff. The brief says CRM sync; Growth is $24k/year and includes CRM sync. Draft a Growth proposal.",
       assistant: {
         kind: "say",
-        text: "**Draft v1:** Growth at $24k/year, assuming CRM sync covers Acme’s order handoff. Confirm the system of record before sending."
+        text: "**Draft v1:** Growth at $24k/year, assuming CRM sync covers Acme’s order handoff. Confirm the system of record before sending.",
       },
-      as: "marcus",
-      execution: "history"
+      execution: "history",
     },
     {
       kind: "upload",
       id: "proposal-brief",
       room: "acme-proposal",
+      as: "marcus",
       title: "Acme customer brief",
       fileName: "proposal-brief.md",
       mimeType: "text/markdown",
       content: "# Acme customer brief\n\nFictional customer. Maya Chen, Operations Lead. 40 staff need order handoffs without CSV exports. Initial brief says “CRM sync”; order system not specified. Proposed Growth package: $24,000/year, CRM connector included. Internal working material; no customer guest has access.",
-      as: "marcus"
     },
     {
       kind: "upload",
       id: "proposal-v1",
       room: "acme-proposal",
+      as: "marcus",
       title: "Acme proposal — v1",
       fileName: "proposal-v1.md",
       mimeType: "text/markdown",
       content: "# Acme proposal — v1\n\nProvisional recommendation: Growth, $24,000/year. CRM sync included. Assumption: CRM is the order system of record. Integration scope and timing require confirmation. Internal draft; not sent.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "proposal-invite",
       room: "acme-proposal",
+      as: "marcus",
       text: "@{priya}, joining you to the proposal. Does Growth cover their integration?",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "proposal-expert",
       room: "acme-proposal",
+      as: "priya",
       text: "Maya told me separately that orders live in NetSuite, not the CRM. Sharing my technical note now: the NetSuite connector needs the $6k/year Integration package. Growth alone will not cover it.",
-      as: "priya"
     },
     {
       kind: "upload",
       id: "proposal-technical-note",
       room: "acme-proposal",
+      as: "priya",
       title: "Acme integration note",
       fileName: "proposal-technical-note.md",
       mimeType: "text/markdown",
       content: "# Acme integration note\n\nExplicitly shared technical context. Maya confirmed NetSuite is the order system of record. Growth covers CRM only. NetSuite connector requires Integration at $6,000/year in addition to Growth at $24,000/year. Validate new-order and order-update flows before committing scope or timing. This note was contributed by the solutions engineer; joining alone did not disclose it.",
-      as: "priya"
     },
     {
       kind: "create_substream",
       id: "proposal-integration-open",
       room: "acme-proposal",
+      as: "priya",
       substream: "integration-requirements",
       title: "Integration requirements",
-      participants: [
-        "marcus",
-        "presenter"
-      ],
+      participants: ["marcus", "presenter"],
       startingContext: "Validate Acme’s NetSuite order integration. Growth alone is insufficient; Integration is $6k/year. New-order and order-update flows still need validation.",
-      as: "priya"
     },
     {
       kind: "message",
       id: "proposal-integration-check",
       room: "acme-proposal",
-      text: "We need a sample new order and an update. No custom connector promised; use the supported NetSuite connector.",
       as: "priya",
-      substream: "integration-requirements"
+      text: "We need a sample new order and an update. No custom connector promised; use the supported NetSuite connector.",
+      substream: "integration-requirements",
     },
     {
       kind: "message",
       id: "proposal-integration-share",
       room: "acme-proposal",
+      as: "priya",
       text: "Sharing the breakout conclusion here: use the supported NetSuite connector; validate a new order and an update. We have not confirmed timing.",
-      as: "priya"
     },
     {
       kind: "message",
       id: "proposal-revise",
       room: "acme-proposal",
-      text: "Revise the proposal using the technical note. Make the changed assumption clear.",
       as: "marcus",
+      text: "Revise the proposal using the technical note. Make the changed assumption clear.",
       assistant: {
         kind: "say",
-        text: "**Changed assumption:** orders live in NetSuite, not the CRM.\n\n**Draft v2:** Growth $24k + Integration $6k = $30k/year. Growth alone is insufficient. Validate both order flows before committing timing."
-      }
+        text: "**Changed assumption:** orders live in NetSuite, not the CRM.\n\n**Draft v2:** Growth $24k + Integration $6k = $30k/year. Growth alone is insufficient. Validate both order flows before committing timing.",
+      },
     },
     {
       kind: "upload",
       id: "proposal-v2",
       room: "acme-proposal",
+      as: "marcus",
       title: "Acme proposal — v2",
       fileName: "proposal-v2.md",
       mimeType: "text/markdown",
       content: "# Acme proposal — v2\n\nReplaces v1 for internal review.\n\nRecommendation: Growth ($24,000/year) plus Integration ($6,000/year), totaling $30,000/year. Increase from v1: $6,000/year.\n\nChanged assumption: NetSuite is the order system of record; CRM sync alone does not satisfy the requirement. Source: explicitly shared Acme integration note.\n\nNext: validate a new order and an order update with the solutions engineer. Scope and launch timing remain uncommitted. Internal draft; not sent.",
-      as: "marcus"
     },
     {
       kind: "message",
       id: "proposal-presenter",
       room: "acme-proposal",
+      as: "marcus",
       text: "@{presenter}, v2 now covers NetSuite at $30k/year. The customer draft is ready for review; technical validation is the remaining step.",
-      as: "marcus"
-    }
+    },
   ],
   expect: [
     {
       viewer: "presenter",
       attention: {
         waitingForYou: 1,
-        waitingReason: "mentioned"
+        waitingReason: "mentioned",
       },
       rooms: {
         "vendor-selection": {
           unseen: false,
           hasUnread: true,
-          mentioned: false
+          mentioned: false,
         },
         "acme-review": {
           unseen: false,
           hasUnread: true,
-          mentioned: false
+          mentioned: false,
         },
         "sales-reviews": {
           unseen: false,
           hasUnread: true,
-          mentioned: false
+          mentioned: false,
         },
         "acme-proposal": {
           unseen: true,
           hasUnread: true,
-          mentioned: true
-        }
-      }
-    }
-  ]
+          mentioned: true,
+        },
+      },
+    },
+  ],
 } satisfies z.input<typeof DemoPackSchema>;

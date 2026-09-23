@@ -230,6 +230,13 @@ export const WorkspaceSpaceMutationResultSchema = z.union([
 ]);
 export type WorkspaceSpaceMutationResult = z.infer<typeof WorkspaceSpaceMutationResultSchema>;
 
+export const WorkspaceSpaceReserveResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
+  WorkspaceSpaceAudienceFailureSchema,
+]);
+export type WorkspaceSpaceReserveResult = z.infer<typeof WorkspaceSpaceReserveResultSchema>;
+
+
 export const WorkspaceSpaceChannelPageRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   cursor: z.string().min(1).max(200).nullable(),
