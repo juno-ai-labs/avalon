@@ -4,7 +4,6 @@ import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
 import { FirecrawlClient, FirecrawlError } from "../lib/firecrawl";
 import { ApiError } from "../lib/api-error";
-import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -82,6 +81,16 @@ function sourceFiles(value: unknown, kind: ConversationFile["kind"]): Conversati
   const original = { ...file };
   delete original['extracted_content'];
   return [sourceFile(original, kind), sourceFile(value, kind)];
+}
+
+function claudeContentFile(part: Record<string, unknown>, kind: ConversationFile["kind"]): ConversationFile {
+  const source = object(part['source']);
+  const type = text(part['type']);
+  return (source['type'] === 'base64' || (type === 'document' && source['type'] === 'text')) && typeof source['data'] === 'string'
+    ? { name: text(part['title']) || text(part['name']) || `Imported ${type}`,
+        mimeType: text(source['media_type']) || 'application/octet-stream', kind,
+        source: { kind: 'inline', encoding: source['type'] === 'text' ? 'utf8' : 'base64', data: source['data'] } }
+    : sourceFile({ ...part, url: source['url'] }, kind);
 }
 
 function visibleMessage(role: "user" | "assistant", body: string, files: ConversationFile[], sourceMessageId?: string) {
@@ -184,11 +193,7 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
         if (typeof part['text'] !== 'string') throw new Error("Expected Claude text block text");
         parts.push(part['text']);
       } else if (part['type'] === 'image' || part['type'] === 'document') {
-        const source = object(part['source']);
-        files.push((source['type'] === 'base64' || (part['type'] === 'document' && source['type'] === 'text')) && typeof source['data'] === 'string'
-          ? { name: text(part['title']) || text(part['name']) || `Imported ${part['type']}`, mimeType: text(source['media_type']) || 'application/octet-stream', kind,
-              source: { kind: 'inline', encoding: source['type'] === 'text' ? 'utf8' : 'base64', data: source['data'] } }
-          : sourceFile({ ...part, url: source['url'] }, kind));
+        files.push(claudeContentFile(part, kind));
       } else if (part['type'] === 'artifact') {
         if (typeof part['content'] !== 'string') files.push(sourceFile(part, 'artifact'));
         else files.push({ name: text(part['title']) || 'Claude artifact', mimeType: text(part['mime_type']) || 'text/plain', kind: 'artifact',
@@ -254,14 +259,21 @@ function claudeCodeMessages(value: unknown): SubstreamContent["messages"] {
     const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : array(content);
     const visible = blocks.filter((block) => object(block)['type'] === 'text');
     if (visible.some((block) => typeof object(block)['text'] !== 'string')) throw new Error("Expected Claude Code text block text");
-    const unsupported = blocks.find((block) => !['text', 'thinking', 'redacted_thinking', 'tool_use', 'tool_result', 'fallback'].includes(text(object(block)['type'])));
+    const unsupported = blocks.find((block) => !['text', 'image', 'document', 'thinking', 'redacted_thinking', 'tool_use', 'tool_result', 'fallback'].includes(text(object(block)['type'])));
     if (unsupported) throw new Error("Unsupported Claude Code content block type");
     const body = visible.map((block) => text(object(block)['text'])).filter(Boolean).join("\n\n").trim();
-    if (!body) continue;
     const role = event['type'] as 'user' | 'assistant';
+    const files = blocks.flatMap((block) => {
+      const part = object(block);
+      return part['type'] === 'image' || part['type'] === 'document'
+        ? [claudeContentFile(part, role === 'user' ? 'attachment' : 'artifact')] : [];
+    });
+    if (!body && !files.length) continue;
     const previous = messages.at(-1);
-    if (role === 'assistant' && previous?.role === 'assistant') previous.text += `\n\n${body}`;
-    else messages.push({ role, text: body, sourceMessageId: uuid || `position:${messages.length}` });
+    if (role === 'assistant' && previous?.role === 'assistant') {
+      previous.text = [previous.text, body].filter(Boolean).join('\n\n');
+      if (files.length) previous.files = [...(previous.files ?? []), ...files];
+    } else messages.push({ role, text: body, ...(files.length ? { files } : {}), sourceMessageId: uuid || `position:${messages.length}` });
   }
   return messages;
 }
@@ -299,8 +311,7 @@ export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code
     const sourceSessionId = provider === 'claude_code'
       ? codeEvents.map((event) => text(event['sessionId'])).find(Boolean)
         || text(codeEvents.find((event) => text(event['uuid']))?.['uuid'])
-      : text(data['uuid']) || text(data['conversation_id']) || text(data['id'])
-        || sourceUrl || (messages[0] ? workstreamImportHash({ provider, firstMessage: messages[0] }) : undefined);
+      : text(data['uuid']) || text(data['conversation_id']) || text(data['id']) || sourceUrl;
     return SessionImportPreviewSchema.parse({
       title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || text(codeTitle) || `Imported ${provider === "chatgpt" ? "ChatGPT" : provider === "claude_code" ? "Claude Code" : "Claude"} conversation`,
       source: { provider, url: sourceUrl, ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) }, content: { messages },

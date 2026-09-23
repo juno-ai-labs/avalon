@@ -154,11 +154,19 @@ describe('sidebar creation menu', () => {
   });
 
   it('offers local Claude chats without a data-export source', () => {
+    vi.stubGlobal('rally', {});
     renderMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
     const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
     expect(within(dialog).getByRole('combobox', { name: 'Source' })).toHaveTextContent('Claude chats on this Mac');
     expect(within(dialog).getByRole('combobox', { name: 'Source' })).not.toHaveTextContent('Claude data export');
+  });
+
+  it('hides Mac-only Claude chats in the browser host', () => {
+    renderMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    expect(within(dialog).getByRole('combobox', { name: 'Source' })).not.toHaveTextContent('Claude chats on this Mac');
   });
 
   it('passes a selected Claude Code JSONL file to the import decoder', async () => {
@@ -250,6 +258,31 @@ describe('sidebar creation menu', () => {
       source: { kind: 'export', provider: 'claude', text: selectedText },
     })));
     expect(readLocalClaudeSession).toHaveBeenCalledWith('b0e003e5-ffb8-4058-ac46-ee5b10b8150a');
+  });
+
+  it('disables Create when refreshing a selected Claude chat fails', async () => {
+    const id = 'b0e003e5-ffb8-4058-ac46-ee5b10b8150a';
+    const listLocalClaudeSessions = vi.fn().mockResolvedValueOnce([
+      { id, kind: 'chat', title: 'Navigation', updatedAt: 1, sourceSessionId: id },
+    ]).mockRejectedValueOnce(new Error('Cache unavailable'));
+    const readLocalClaudeSession = vi.fn(async () => ({ provider: 'claude' as const, text: '{"uuid":"chat"}' }));
+    let foregroundChanged: ((foregrounded: boolean) => void) | undefined;
+    vi.stubGlobal('rally', { listLocalClaudeSessions, readLocalClaudeSession,
+      onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => {
+        foregroundChanged = listener;
+        return () => { foregroundChanged = undefined; };
+      } });
+    renderMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Navigation' } });
+    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Source' }), { target: { value: 'claude_local' } });
+    const conversation = await within(dialog).findByRole('combobox', { name: 'Conversation' });
+    await waitFor(() => expect(within(conversation).getByRole('option', { name: 'Navigation' })).toBeInTheDocument());
+    fireEvent.change(conversation, { target: { value: id } });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create' })).toBeEnabled());
+    foregroundChanged?.(true);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled());
   });
 
   it('surfaces import errors and reuses the request identity for an unchanged retry', async () => {

@@ -83,7 +83,12 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
   const messages: PreparedConversation['messages'] = [];
   for (const [messageIndex, message] of preview.content.messages.entries()) {
     const sourceRevision = message.sourceMessageId
-      ? workstreamImportHash({ role: message.role, text: message.text, files: message.files ?? [] }) : undefined;
+      ? workstreamImportHash({ role: message.role, text: message.text, files: (message.files ?? []).map((file) => ({
+        name: file.name, mimeType: file.mimeType, kind: file.kind,
+        source: file.source.kind === 'inline' ? file.source
+          : file.source.kind === 'remote' ? { kind: 'remote' }
+            : { kind: 'unavailable', reference: /^https?:\/\//.test(file.source.reference) ? null : file.source.reference },
+      })) }) : undefined;
     if (message.sourceMessageId && existingRevisions.get(message.sourceMessageId) === sourceRevision) {
       // The owner compares the complete source checkpoint again at commit time.
       // No old attachment needs another workspace upload for this snapshot.

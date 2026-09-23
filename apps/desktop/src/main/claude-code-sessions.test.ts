@@ -34,4 +34,14 @@ describe('local Claude Code session discovery', () => {
     expect(await readLocalClaudeCodeSession('project-a/one.jsonl')).toBe(selected);
     await expect(readLocalClaudeCodeSession('../project-a/one.jsonl')).rejects.toThrow('Invalid local session selection');
   });
+
+  it('uses the first visible prompt when earlier user records are summaries or sidechains', async () => {
+    await writeFile(join(directory, 'projects', 'project-a', 'three.jsonl'), [
+      { type: 'user', isCompactSummary: true, message: { content: 'Private summary' } },
+      { type: 'user', isSidechain: true, message: { content: 'Subagent prompt' } },
+      { type: 'user', message: { content: 'Visible question' } },
+    ].map((event) => JSON.stringify(event)).join('\n'));
+    expect((await listLocalClaudeCodeSessions()).find((session) => session.id === 'project-a/three.jsonl')?.title)
+      .toBe('Visible question');
+  });
 });
