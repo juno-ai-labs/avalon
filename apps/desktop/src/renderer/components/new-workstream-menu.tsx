@@ -15,20 +15,6 @@ export type ChannelImportInput = {
   source: { kind: 'link'; url: string } | { kind: 'export'; provider: 'claude' | 'claude_code'; text: string };
 };
 
-export function claudeExportRecords(text: string): { records: unknown[]; titles: string[] } {
-  const data: unknown = JSON.parse(text);
-  const records = Array.isArray(data) ? data : Array.isArray((data as { conversations?: unknown } | null)?.conversations)
-    ? (data as { conversations: unknown[] }).conversations : [data];
-  if (!records.length || !records.every((record) => record !== null && typeof record === 'object'
-    && Array.isArray((record as { chat_messages?: unknown }).chat_messages))) {
-    throw new Error('Choose conversations.json from a Claude data export.');
-  }
-  return { records, titles: records.map((record, index) => {
-    const value = record as { name?: unknown; title?: unknown };
-    return (typeof value.name === 'string' && value.name.trim()) || (typeof value.title === 'string' && value.title.trim()) || `Conversation ${index + 1}`;
-  }) };
-}
-
 /** The one creation launcher shared by the expanded sidebar and compact rail. */
 export function NewWorkstreamMenu({
   children,
